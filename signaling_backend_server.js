@@ -1,62 +1,105 @@
-﻿const express = require("express");
+const express = require("express");
 const cors = require("cors");
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
 
-let sessions = {};
+const sessions = new Map();
+const TTL_MS = 2 * 60 * 1000;
 
-app.post("/offer", (req, res) => {
-  const { code, offer } = req.body;
-  sessions[code] = sessions[code] || {};
-  sessions[code].offer = offer;
-  res.json({ status: "ok" });
-});
-
-app.get("/offer/:code", (req, res) => {
-  const session = sessions[req.params.code];
-  if (session && session.offer) {
-    res.json({ offer: session.offer });
-  } else {
-    res.json({});
+function cleanup() {
+  const now = Date.now();
+  for (const [code, session] of sessions.entries()) {
+    if (!session || (now - session.updatedAt) > TTL_MS) {
+      sessions.delete(code);
+    }
   }
-});
+}
 
-app.post("/answer", (req, res) => {
-  const { code, answer } = req.body;
-  sessions[code] = sessions[code] || {};
-  sessions[code].answer = answer;
-  res.json({ status: "ok" });
-});
+setInterval(cleanup, 15000);
 
-app.get("/answer/:code", (req, res) => {
-  const session = sessions[req.params.code];
-  if (session && session.answer) {
-    res.json({ answer: session.answer });
-  } else {
-    res.json({});
+function getSession(code) {
+  cleanup();
+  return sessions.get(code);
+}
+
+app.post("/api/signaling/session", (req, res) => {
+  const code = String(req.body.code || "").trim();
+  const ownerId = String(req.body.ownerId || "").trim();
+
+  if (!/^\d{6}$/.test(code)) {
+    return res.status(400).send("Ongeldige code");
   }
-});
-
-app.post("/candidate", (req, res) => {
-  const { code, candidate } = req.body;
-  sessions[code] = sessions[code] || {};
-  sessions[code].candidates = sessions[code].candidates || [];
-  sessions[code].candidates.push(candidate);
-  res.json({ status: "ok" });
-});
-
-app.get("/candidate/:code", (req, res) => {
-  const session = sessions[req.params.code];
-  if (session && session.candidates) {
-    res.json({ candidates: session.candidates });
-  } else {
-    res.json({ candidates: [] });
+  if (!ownerId) {
+    return res.status(400).send("ownerId ontbreekt");
   }
+
+  sessions.set(code, {
+    code,
+    ownerId,
+    offerSdp: "",
+    answerSdp: "",
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  });
+
+  res.json({ ok: true, code });
+});
+
+app.post("/api/signaling/offer", (req, res) => {
+  const code = String(req.body.code || "").trim();
+  const ownerId = String(req.body.ownerId || "").trim();
+  const sdp = String(req.body.sdp || "").trim();
+
+  const session = getSession(code);
+  if (!session) return res.status(404).send("Sessie niet gevonden");
+  if (session.ownerId !== ownerId) return res.status(403).send("Niet toegestaan");
+  if (!sdp) return res.status(400).send("sdp ontbreekt");
+
+  session.offerSdp = sdp;
+  session.updatedAt = Date.now();
+  res.json({ ok: true });
+});
+
+app.get("/api/signaling/offer/:code", (req, res) => {
+  const session = getSession(req.params.code);
+  if (!session) return res.status(404).send("Sessie niet gevonden");
+  res.json({ sdp: session.offerSdp || "" });
+});
+
+app.post("/api/signaling/answer", (req, res) => {
+  const code = String(req.body.code || "").trim();
+  const sdp = String(req.body.sdp || "").trim();
+
+  const session = getSession(code);
+  if (!session) return res.status(404).send("Sessie niet gevonden");
+  if (!sdp) return res.status(400).send("sdp ontbreekt");
+
+  session.answerSdp = sdp;
+  session.updatedAt = Date.now();
+  res.json({ ok: true });
+});
+
+app.get("/api/signaling/answer/:code", (req, res) => {
+  const session = getSession(req.params.code);
+  if (!session) return res.status(404).send("Sessie niet gevonden");
+  res.json({ sdp: session.answerSdp || "" });
+});
+
+app.post("/api/signaling/clear", (req, res) => {
+  const code = String(req.body.code || "").trim();
+  const ownerId = String(req.body.ownerId || "").trim();
+
+  const session = getSession(code);
+  if (session && (!ownerId || session.ownerId === ownerId)) {
+    sessions.delete(code);
+  }
+
+  res.json({ ok: true });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log("Server running on port " + PORT);
+  console.log("Signaling backend draait op poort " + PORT);
 });
