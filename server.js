@@ -240,6 +240,43 @@ app.post("/api/signaling/clear", (req, res) => {
   });
 });
 
+
+
+app.get("/schiphol/flight/:flightNumber", async (req,res)=>{
+
+  try{
+
+    const flightNumber = req.params.flightNumber;
+
+    const response = await fetch(
+      "https://api.schiphol.nl/public-flights/flights/" + flightNumber,
+      {
+        headers:{
+          "app_id": process.env.SCHIPHOL_APP_ID,
+          "app_key": process.env.SCHIPHOL_APP_KEY,
+          "ResourceVersion":"v4",
+          "Accept":"application/json"
+        }
+      }
+    );
+
+    const data = await response.json();
+
+    res.json(data);
+
+  }catch(err){
+
+    console.log(err);
+
+    res.status(500).json({
+      error:"Schiphol API fout"
+    });
+
+  }
+
+});
+
+
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
