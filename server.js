@@ -257,45 +257,59 @@ function todayAmsterdamDate(){
   return year + "-" + month + "-" + day;
 }
 
-function findFlightInSchipholResponse(data, flightNumber){
-  const wanted = String(flightNumber || "").replace(/\s+/g, "").toUpperCase();
+function normalizeFlightNumber(value){
+  const raw = String(value || "").toUpperCase().replace(/\s+/g,"").trim();
+  const match = raw.match(/^([A-Z]{2,3})0*([0-9]{1,5})$/);
 
-  const flights =
-    data && data.flights ? data.flights :
-    data && data._embedded && data._embedded.flights ? data._embedded.flights :
-    Array.isArray(data) ? data :
-    [];
+  if(!match){
+    return raw;
+  }
 
-  const found = flights.find(f => {
-    const names = []
-      .concat(f.flightName || [])
-      .concat(f.flightNumber || [])
-      .concat(f.mainFlight || [])
-      .concat(f.route && f.route.destinations ? f.route.destinations : []);
-
-    return names.some(v => String(v || "").replace(/\s+/g, "").toUpperCase() === wanted);
-  });
-
-  return {
-    found: found || null,
-    totalFlightsReturned: flights.length
-  };
+  return match[1] + String(Number(match[2]));
 }
 
-app.get("/schiphol/flight/:flightNumber", async (req,res)=>{
+function flightNamesFromObject(f){
+  const values = [];
+
+  if(f.flightName) values.push(f.flightName);
+  if(f.flightNumber) values.push(f.flightNumber);
+  if(f.mainFlight) values.push(f.mainFlight);
+
+  if(f.codeshares && Array.isArray(f.codeshares.codeshares)){
+    f.codeshares.codeshares.forEach(x => values.push(x));
+  }
+
+  if(Array.isArray(f.codeshares)){
+    f.codeshares.forEach(x => values.push(x));
+  }
+
+  if(Array.isArray(f.codeshare)){
+    f.codeshare.forEach(x => values.push(x));
+  }
+
+  return values
+    .filter(Boolean)
+    .map(normalizeFlightNumber);
+}
+
+function getFlightsArray(data){
+  if(data && Array.isArray(data.flights)) return data.flights;
+  if(data && data._embedded && Array.isArray(data._embedded.flights)) return data._embedded.flights;
+  if(Array.isArray(data)) return data;
+  return [];
+}
+
+async function fetchSchipholPage(scheduleDate,page){
+  const url =
+    "https://api.schiphol.nl/public-flights/flights" +
+    "?scheduleDate=" + encodeURIComponent(scheduleDate) +
+    "&page=" + encodeURIComponent(page) +
+    "&sort=+scheduleTime";
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
 
   try{
-
-    const flightNumber = String(req.params.flightNumber || "").trim().toUpperCase();
-    const scheduleDate = String(req.query.date || todayAmsterdamDate()).trim();
-
-    const url =
-      "https://api.schiphol.nl/public-flights/flights" +
-      "?scheduleDate=" + encodeURIComponent(scheduleDate);
-
     const response = await fetch(url,{
       signal: controller.signal,
       headers:{
@@ -317,28 +331,82 @@ app.get("/schiphol/flight/:flightNumber", async (req,res)=>{
       data = { raw: raw };
     }
 
-    const match = findFlightInSchipholResponse(data, flightNumber);
-
-    res.status(response.status).json({
+    return {
       ok: response.ok,
       status: response.status,
-      flightNumber: flightNumber,
-      scheduleDate: scheduleDate,
-      found: !!match.found,
-      flight: match.found,
-      totalFlightsReturned: match.totalFlightsReturned,
-      schipholResponse: match.found ? undefined : data
+      url,
+      data,
+      flights: getFlightsArray(data)
+    };
+
+  }catch(err){
+    clearTimeout(timeout);
+    throw err;
+  }
+}
+
+app.get("/schiphol/flight/:flightNumber", async (req,res)=>{
+
+  try{
+
+    const requestedRaw = String(req.params.flightNumber || "").trim();
+    const requested = normalizeFlightNumber(requestedRaw);
+    const scheduleDate = String(req.query.date || todayAmsterdamDate()).trim();
+
+    let searchedPages = 0;
+    let found = null;
+
+    for(let page=0; page<25; page++){
+
+      const pageResult = await fetchSchipholPage(scheduleDate,page);
+      searchedPages++;
+
+      if(!pageResult.ok){
+        return res.status(pageResult.status).json({
+          ok:false,
+          status:pageResult.status,
+          flightNumber:requestedRaw,
+          normalizedFlightNumber:requested,
+          scheduleDate,
+          searchedPages,
+          schipholResponse:pageResult.data
+        });
+      }
+
+      const flights = pageResult.flights;
+
+      if(!flights.length){
+        break;
+      }
+
+      found = flights.find(f => {
+        const names = flightNamesFromObject(f);
+        return names.includes(requested);
+      });
+
+      if(found){
+        break;
+      }
+    }
+
+    res.json({
+      ok:true,
+      flightNumber:requestedRaw,
+      normalizedFlightNumber:requested,
+      scheduleDate,
+      found:!!found,
+      searchedPages,
+      flight:found,
+      message:found ? "Vlucht gevonden" : "Vlucht niet gevonden in de opgehaalde Schiphol pagina's van deze datum"
     });
 
   }catch(err){
-
-    clearTimeout(timeout);
 
     res.status(500).json({
       ok:false,
       error:"Schiphol API fout",
       details:String(err.message || err),
-      tip:"Controleer SCHIPHOL_APP_ID, SCHIPHOL_APP_KEY en of de Schiphol API toegang actief is."
+      tip:"Controleer API toegang en probeer eventueel ?date=YYYY-MM-DD toe te voegen."
     });
 
   }
@@ -350,7 +418,11 @@ app.get("/schiphol/test", async (req,res)=>{
   res.json({
     ok:true,
     message:"Schiphol endpoint staat live",
-    example:"/schiphol/flight/KL742",
+    examples:[
+      "/schiphol/flight/KL742",
+      "/schiphol/flight/KL0843",
+      "/schiphol/flight/KL843"
+    ],
     today:todayAmsterdamDate()
   });
 
