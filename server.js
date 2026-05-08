@@ -246,23 +246,24 @@ app.get("/schiphol/flight/:flightNumber", async (req,res)=>{
 
   try{
 
-    const flightNumber = req.params.flightNumber;
+    const flightNumber = String(req.params.flightNumber || "").trim().toUpperCase();
 
-    const response = await fetch(
-      "https://api.schiphol.nl/public-flights/flights/" + flightNumber,
-      {
-        headers:{
-          "app_id": process.env.SCHIPHOL_APP_ID,
-          "app_key": process.env.SCHIPHOL_APP_KEY,
-          "ResourceVersion":"v4",
-          "Accept":"application/json"
-        }
+    const url =
+      "https://api.schiphol.nl/public-flights/flights" +
+      "?flightName=" + encodeURIComponent(flightNumber);
+
+    const response = await fetch(url,{
+      headers:{
+        "app_id": process.env.SCHIPHOL_APP_ID,
+        "app_key": process.env.SCHIPHOL_APP_KEY,
+        "ResourceVersion":"v4",
+        "Accept":"application/json"
       }
-    );
+    });
 
     const data = await response.json();
 
-    res.json(data);
+    res.status(response.status).json(data);
 
   }catch(err){
 
@@ -273,6 +274,16 @@ app.get("/schiphol/flight/:flightNumber", async (req,res)=>{
     });
 
   }
+
+});
+
+app.get("/schiphol/test", async (req,res)=>{
+
+  res.json({
+    ok:true,
+    message:"Schiphol endpoint staat live",
+    example:"/schiphol/flight/KL742"
+  });
 
 });
 
