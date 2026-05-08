@@ -261,16 +261,33 @@ app.get("/schiphol/flight/:flightNumber", async (req,res)=>{
       }
     });
 
-    const data = await response.json();
+    const raw = await response.text();
 
-    res.status(response.status).json(data);
+    let data;
+    try{
+      data = JSON.parse(raw);
+    }catch(e){
+      data = {
+        raw: raw
+      };
+    }
+
+    res.status(response.status).json({
+      ok: response.ok,
+      status: response.status,
+      flightNumber: flightNumber,
+      requestUrl: url,
+      schipholResponse: data
+    });
 
   }catch(err){
 
     console.log(err);
 
     res.status(500).json({
-      error:"Schiphol API fout"
+      ok:false,
+      error:"Schiphol API fout",
+      details:String(err.message || err)
     });
 
   }
