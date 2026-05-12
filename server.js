@@ -1,8 +1,15 @@
 const express = require("express");
 const cors = require("cors");
+const http = require("http");
+const WebSocket = require("ws");
 const OpenAI = require("openai");
 
 const app = express();
+const server = http.createServer(app);
+const wss = new WebSocket.Server({
+  server,
+  path: "/ws"
+});
 
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
@@ -429,8 +436,178 @@ app.get("/schiphol/test", async (req,res)=>{
 });
 
 
+
+
+const wsClients = new Map();
+
+function safeSend(ws, data) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(data));
+  }
+}
+
+function makeClientId() {
+  return "iris_" + Date.now() + "_" + Math.random().toString(36).slice(2);
+}
+
+wss.on("connection", (ws, req) => {
+  const clientId = makeClientId();
+
+  wsClients.set(clientId, {
+    ws,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    mode: "iris_terminal",
+    language: "auto"
+  });
+
+  safeSend(ws, {
+    type: "connected",
+    ok: true,
+    clientId,
+    message: "FormForge WebSocket verbonden"
+  });
+
+  ws.on("message", async (raw) => {
+    const client = wsClients.get(clientId);
+
+    if (client) {
+      client.updatedAt = Date.now();
+    }
+
+    let data;
+
+    try {
+      data = JSON.parse(String(raw));
+    } catch (err) {
+      return safeSend(ws, {
+        type: "error",
+        ok: false,
+        error: "Ongeldige JSON"
+      });
+    }
+
+    if (data.type === "ping") {
+      return safeSend(ws, {
+        type: "pong",
+        ok: true,
+        time: Date.now()
+      });
+    }
+
+    if (data.type === "settings") {
+      if (client) {
+        client.mode = String(data.mode || client.mode || "iris_terminal");
+        client.language = String(data.language || client.language || "auto");
+      }
+
+      return safeSend(ws, {
+        type: "settings_ok",
+        ok: true
+      });
+    }
+
+    if (data.type === "translate_text") {
+      try {
+        const text = String(data.text || "").trim();
+        const from = String(data.from || "auto").trim();
+        const to = String(data.to || "nl").trim();
+
+        if (!text) {
+          return safeSend(ws, {
+            type: "translation",
+            ok: true,
+            text: "",
+            translatedText: ""
+          });
+        }
+
+        safeSend(ws, {
+          type: "processing",
+          ok: true,
+          message: "OpenAI vertaalt"
+        });
+
+        const translated = await doTranslate(text, from, to);
+
+        return safeSend(ws, {
+          type: "translation",
+          ok: true,
+          text: translated,
+          translatedText: translated,
+          translation: translated,
+          from,
+          to,
+          original: text
+        });
+
+      } catch (err) {
+        console.error("WebSocket translate_text fout:", err);
+
+        return safeSend(ws, {
+          type: "translation_error",
+          ok: false,
+          error: String(err.message || err)
+        });
+      }
+    }
+
+    if (data.type === "audio_chunk") {
+      return safeSend(ws, {
+        type: "audio_chunk_received",
+        ok: true,
+        message: "Audio chunk ontvangen. Realtime OpenAI audio wordt in de volgende stap gekoppeld.",
+        receivedAt: Date.now()
+      });
+    }
+
+    safeSend(ws, {
+      type: "unknown_type",
+      ok: false,
+      receivedType: data.type || ""
+    });
+  });
+
+  ws.on("close", () => {
+    wsClients.delete(clientId);
+  });
+
+  ws.on("error", () => {
+    wsClients.delete(clientId);
+  });
+});
+
+setInterval(() => {
+  const now = Date.now();
+
+  for (const [clientId, client] of wsClients.entries()) {
+    if (!client || !client.ws || client.ws.readyState !== WebSocket.OPEN) {
+      wsClients.delete(clientId);
+      continue;
+    }
+
+    if (now - client.updatedAt > 5 * 60 * 1000) {
+      try {
+        client.ws.close();
+      } catch (err) {}
+      wsClients.delete(clientId);
+    }
+  }
+}, 30000);
+
+app.get("/ws-test", (req, res) => {
+  res.json({
+    ok: true,
+    message: "WebSocket endpoint staat klaar",
+    websocketPath: "/ws",
+    activeClients: wsClients.size
+  });
+});
+
+
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log("FormForge GPT backend draait op poort " + PORT);
+  console.log("FormForge WebSocket draait op /ws");
 });
