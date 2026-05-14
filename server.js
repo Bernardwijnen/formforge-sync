@@ -31,13 +31,14 @@ app.get("/", (Vereiste,Res)=>{
 
 app.get("/schiphol/flight/:flight", async (Vereiste, Res) => {
   try {
+
     const flight = String(Vereiste.params.flight || "")
       .toUpperCase()
       .replace(/^KLM/, "KL")
       .replace(/^KL0+/, "KL");
 
     const response = await fetch(
-      "https://api.schiphol.nl/public-flights/flights/" + encodeURIComponent(flight),
+      "https://api.schiphol.nl/public-flights/flights?includedelays=false&page=0&sort=%2BscheduleTime&flightName=" + encodeURIComponent(flight),
       {
         headers: {
           "Accept": "application/json",
@@ -49,17 +50,32 @@ app.get("/schiphol/flight/:flight", async (Vereiste, Res) => {
     );
 
     const data = await response.json();
+    const flights = data.flights || [];
+
+    if (!flights.length) {
+
+      return Res.json({
+        notFound: true,
+        flight: flight,
+        flights: [],
+        raw: data
+      });
+
+    }
 
     Res.json({
-      flight: data,
+      flight: flights[0],
+      flights: flights,
       raw: data
     });
 
   } catch (fout) {
+
     Res.status(500).json({
       error: "Schiphol API fout",
       details: fout.message
     });
+
   }
 });
 
