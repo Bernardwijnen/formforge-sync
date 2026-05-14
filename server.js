@@ -1,88 +1,166 @@
-const express = require("express");
-const cors = require("cors");
+const Express = require("express");
+const Cors = require("cors");
+const Multer = require("multer");
+const OpenAI = require("openai");
 
-const app = express();
+const app = Express();
 
-app.use(cors({
+const upload = Multer({
+  storage: Multer.memoryStorage()
+});
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+app.use(Cors({
   origin: true,
   methods: ["GET","POST","OPTIONS"],
   allowedHeaders: ["Content-Type"]
 }));
 
-app.use(express.json({ limit: "50mb" }));
+app.use(Express.json({
+  limit: "50mb"
+}));
 
-const sessions = {};
+const Sessies = {};
 
-app.get("/", (req,res)=>{
-  res.send("FormForge ECHO backend online");
+app.get("/", (Vereiste,Res)=>{
+  Res.send("FormForge ECHO backend online");
 });
 
-app.post("/api/signaling/session", (req,res)=>{
-  const { code } = req.body;
+app.post("/api/signaling/session", (Vereiste,Res)=>{
 
-  sessions[code] = {
+  const { code } = Vereiste.body;
+
+  Sessies[code] = {
     offer:null,
     answer:null,
     createdAt:Date.now()
   };
 
-  res.json({ ok:true });
+  Res.json({
+    ok:true
+  });
+
 });
 
-app.post("/api/signaling/offer", (req,res)=>{
-  const { code, sdp } = req.body;
+app.post("/api/signaling/offer", (Vereiste,Res)=>{
 
-  if(!sessions[code]){
-    sessions[code] = {};
+  const { code, sdp } = Vereiste.body;
+
+  if(!Sessies[code]){
+    Sessies[code] = {};
   }
 
-  sessions[code].offer = sdp;
+  Sessies[code].offer = sdp;
 
-  res.json({ ok:true });
+  Res.json({
+    ok:true
+  });
+
 });
 
-app.get("/api/signaling/offer/:code", (req,res)=>{
-  const session = sessions[req.params.code];
+app.get("/api/signaling/offer/:code", (Vereiste,Res)=>{
 
-  res.json({
-    sdp: session && session.offer
-      ? session.offer
+  const sessie = Sessies[Vereiste.params.code];
+
+  Res.json({
+    sdp: sessie && sessie.offer
+      ? sessie.offer
       : null
   });
+
 });
 
-app.post("/api/signaling/answer", (req,res)=>{
-  const { code, sdp } = req.body;
+app.post("/api/signaling/answer", (Vereiste,Res)=>{
 
-  if(!sessions[code]){
-    sessions[code] = {};
+  const { code, sdp } = Vereiste.body;
+
+  if(!Sessies[code]){
+    Sessies[code] = {};
   }
 
-  sessions[code].answer = sdp;
+  Sessies[code].answer = sdp;
 
-  res.json({ ok:true });
+  Res.json({
+    ok:true
+  });
+
 });
 
-app.get("/api/signaling/answer/:code", (req,res)=>{
-  const session = sessions[req.params.code];
+app.get("/api/signaling/answer/:code", (Vereiste,Res)=>{
 
-  res.json({
-    sdp: session && session.answer
-      ? session.answer
+  const sessie = Sessies[Vereiste.params.code];
+
+  Res.json({
+    sdp: sessie && sessie.answer
+      ? sessie.answer
       : null
   });
+
 });
 
-app.post("/api/signaling/clear", (req,res)=>{
-  const { code } = req.body;
+app.post("/api/signaling/clear", (Vereiste,Res)=>{
 
-  delete sessions[code];
+  const { code } = Vereiste.body;
 
-  res.json({ ok:true });
+  delete Sessies[code];
+
+  Res.json({
+    ok:true
+  });
+
+});
+
+app.post("/api/speech/transcribe", upload.single("audio"), async (Vereiste, Res) => {
+
+  try{
+
+    if(!Vereiste.file){
+
+      return Res.status(400).json({
+        error:"Geen audio ontvangen"
+      });
+
+    }
+
+    const file = new File(
+      [Vereiste.file.buffer],
+      Vereiste.file.originalname || "speech.webm",
+      {
+        type: Vereiste.file.mimetype || "audio/webm"
+      }
+    );
+
+    const transcriptie = await openai.audio.transcriptions.create({
+      file:file,
+      model:"gpt-4o-mini-transcribe"
+    });
+
+    Res.json({
+      text: transcriptie.text || ""
+    });
+
+  }catch(fout){
+
+    console.error("Transcriptie fout:", fout);
+
+    Res.status(500).json({
+      error:"Transcriptie mislukt",
+      details:fout.message
+    });
+
+  }
+
 });
 
 const PORT = process.env.PORT || 10000;
 
 app.listen(PORT, ()=>{
-  console.log("FormForge ECHO backend draait op poort " + PORT);
+
+  console.log(
+    "FormForge ECHO backend draait op poort " + PORT
+  );
+
 });
