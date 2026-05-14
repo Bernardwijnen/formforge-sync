@@ -29,8 +29,99 @@ app.get("/", (Vereiste,Res)=>{
   Res.send("FormForge ECHO backend online");
 });
 
-app.post("/api/signaling/session", (Vereiste,Res)=>{
+app.get("/schiphol/flight/:flight", async (Vereiste, Res) => {
+  try {
+    const flight = String(Vereiste.params.flight || "")
+      .toUpperCase()
+      .replace(/^KLM/, "KL")
+      .replace(/^KL0+/, "KL");
 
+    const response = await fetch(
+      "https://api.schiphol.nl/public-flights/flights/" + encodeURIComponent(flight),
+      {
+        headers: {
+          "Accept": "application/json",
+          "ResourceVersion": "v4",
+          "app_id": process.env.SCHIPHOL_APP_ID,
+          "app_key": process.env.SCHIPHOL_APP_KEY
+        }
+      }
+    );
+
+    const data = await response.json();
+
+    Res.json({
+      flight: data,
+      raw: data
+    });
+
+  } catch (fout) {
+    Res.status(500).json({
+      error: "Schiphol API fout",
+      details: fout.message
+    });
+  }
+});
+
+app.get("/schiphol/departures", async (Vereiste, Res) => {
+  try {
+    const response = await fetch(
+      "https://api.schiphol.nl/public-flights/flights?includedelays=false&page=0&sort=%2BscheduleTime&flightDirection=D",
+      {
+        headers: {
+          "Accept": "application/json",
+          "ResourceVersion": "v4",
+          "app_id": process.env.SCHIPHOL_APP_ID,
+          "app_key": process.env.SCHIPHOL_APP_KEY
+        }
+      }
+    );
+
+    const data = await response.json();
+
+    Res.json({
+      flights: data.flights || [],
+      raw: data
+    });
+
+  } catch (fout) {
+    Res.status(500).json({
+      error: "Schiphol departures fout",
+      details: fout.message
+    });
+  }
+});
+
+app.get("/schiphol/arrivals", async (Vereiste, Res) => {
+  try {
+    const response = await fetch(
+      "https://api.schiphol.nl/public-flights/flights?includedelays=false&page=0&sort=%2BscheduleTime&flightDirection=A",
+      {
+        headers: {
+          "Accept": "application/json",
+          "ResourceVersion": "v4",
+          "app_id": process.env.SCHIPHOL_APP_ID,
+          "app_key": process.env.SCHIPHOL_APP_KEY
+        }
+      }
+    );
+
+    const data = await response.json();
+
+    Res.json({
+      flights: data.flights || [],
+      raw: data
+    });
+
+  } catch (fout) {
+    Res.status(500).json({
+      error: "Schiphol arrivals fout",
+      details: fout.message
+    });
+  }
+});
+
+app.post("/api/signaling/session", (Vereiste,Res)=>{
   const { code } = Vereiste.body;
 
   Sessies[code] = {
@@ -39,14 +130,10 @@ app.post("/api/signaling/session", (Vereiste,Res)=>{
     createdAt:Date.now()
   };
 
-  Res.json({
-    ok:true
-  });
-
+  Res.json({ ok:true });
 });
 
 app.post("/api/signaling/offer", (Vereiste,Res)=>{
-
   const { code, sdp } = Vereiste.body;
 
   if(!Sessies[code]){
@@ -55,26 +142,18 @@ app.post("/api/signaling/offer", (Vereiste,Res)=>{
 
   Sessies[code].offer = sdp;
 
-  Res.json({
-    ok:true
-  });
-
+  Res.json({ ok:true });
 });
 
 app.get("/api/signaling/offer/:code", (Vereiste,Res)=>{
-
   const sessie = Sessies[Vereiste.params.code];
 
   Res.json({
-    sdp: sessie && sessie.offer
-      ? sessie.offer
-      : null
+    sdp: sessie && sessie.offer ? sessie.offer : null
   });
-
 });
 
 app.post("/api/signaling/answer", (Vereiste,Res)=>{
-
   const { code, sdp } = Vereiste.body;
 
   if(!Sessies[code]){
@@ -83,46 +162,31 @@ app.post("/api/signaling/answer", (Vereiste,Res)=>{
 
   Sessies[code].answer = sdp;
 
-  Res.json({
-    ok:true
-  });
-
+  Res.json({ ok:true });
 });
 
 app.get("/api/signaling/answer/:code", (Vereiste,Res)=>{
-
   const sessie = Sessies[Vereiste.params.code];
 
   Res.json({
-    sdp: sessie && sessie.answer
-      ? sessie.answer
-      : null
+    sdp: sessie && sessie.answer ? sessie.answer : null
   });
-
 });
 
 app.post("/api/signaling/clear", (Vereiste,Res)=>{
-
   const { code } = Vereiste.body;
 
   delete Sessies[code];
 
-  Res.json({
-    ok:true
-  });
-
+  Res.json({ ok:true });
 });
 
 app.post("/api/speech/transcribe", upload.single("audio"), async (Vereiste, Res) => {
-
-  try{
-
+  try {
     if(!Vereiste.file){
-
       return Res.status(400).json({
         error:"Geen audio ontvangen"
       });
-
     }
 
     const file = new File(
@@ -142,25 +206,16 @@ app.post("/api/speech/transcribe", upload.single("audio"), async (Vereiste, Res)
       text: transcriptie.text || ""
     });
 
-  }catch(fout){
-
-    console.error("Transcriptie fout:", fout);
-
+  } catch(fout) {
     Res.status(500).json({
       error:"Transcriptie mislukt",
       details:fout.message
     });
-
   }
-
 });
 
 const PORT = process.env.PORT || 10000;
 
 app.listen(PORT, ()=>{
-
-  console.log(
-    "FormForge ECHO backend draait op poort " + PORT
-  );
-
+  console.log("FormForge ECHO backend draait op poort " + PORT);
 });
