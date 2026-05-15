@@ -1,82 +1,267 @@
 const express = require("express");
 const cors = require("cors");
-const crypto = require("crypto");
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-app.use(cors({ origin: true }));
-app.use(express.json({ limit: "60mb" }));
+app.use(cors());
+app.use(express.json({ limit: "25mb" }));
 
-const users = {};
-const conversations = {};
-const messages = {};
+const GROUP_ID = "familie_ben_001";
+const OWNER_NAME = "Ben";
 
-function makeId(prefix) {
-  return prefix + "_" + crypto.randomBytes(12).toString("hex");
+const GROUP_MEMBERS = [
+  {
+    id: "user_ben",
+    name: "Ben",
+    phone: "0618391659",
+    email: "bernardwijnen@gmail.com",
+    groupId: GROUP_ID,
+    role: "owner",
+    code: "725524"
+  },
+  {
+    id: "user_linda",
+    name: "Linda",
+    phone: "0642741759",
+    email: "curfslinda@gmail.com",
+    groupId: GROUP_ID,
+    role: "member",
+    code: "100001"
+  },
+  {
+    id: "user_branko",
+    name: "Branko",
+    phone: "0615474917",
+    email: "brankowijnen2@gmail.com",
+    groupId: GROUP_ID,
+    role: "member",
+    code: "100002"
+  },
+  {
+    id: "user_romy",
+    name: "Romy",
+    phone: "0615637231",
+    email: "romywijnen20062006@gmail.com",
+    groupId: GROUP_ID,
+    role: "member",
+    code: "100003"
+  },
+  {
+    id: "user_ron_bakkers",
+    name: "Ron Bakkers",
+    phone: "0653222539",
+    email: "ron@bakkersgeleen.nl",
+    groupId: GROUP_ID,
+    role: "member",
+    code: "100004"
+  },
+  {
+    id: "user_harrie_veltman",
+    name: "Harrie Veltman",
+    phone: "0648936144",
+    email: "hawveltman@home.nl",
+    groupId: GROUP_ID,
+    role: "member",
+    code: "100005"
+  },
+  {
+    id: "user_melvin",
+    name: "Melvin",
+    phone: "0637917415",
+    email: "vertinosdesign@gmail.com",
+    groupId: GROUP_ID,
+    role: "member",
+    code: "100006"
+  }
+];
+
+const users = new Map();
+const conversations = new Map();
+const messages = new Map();
+
+function normalize(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
 }
 
-function now() {
-  return new Date().toISOString();
+function normalizePhone(value) {
+  return String(value || "").replace(/\D/g, "");
 }
 
 function publicUser(user) {
-  if (!user) return null;
   return {
     id: user.id,
     name: user.name,
+    phone: user.phone,
+    email: user.email,
+    groupId: user.groupId,
+    role: user.role,
     code: user.code,
-    lastSeen: user.lastSeen
+    lastSeen: user.lastSeen || null
   };
 }
 
+function seedUsers() {
+  GROUP_MEMBERS.forEach((member) => {
+    users.set(member.id, {
+      ...member,
+      lastSeen: null
+    });
+  });
+}
+
+function findMember({ name, phone, email, code }) {
+  const n = normalize(name);
+  const p = normalizePhone(phone);
+  const e = normalize(email);
+  const c = String(code || "").trim();
+
+  return Array.from(users.values()).find((user) => {
+    const byCode = c && user.code === c;
+    const byEmail = e && normalize(user.email) === e;
+    const byPhone = p && normalizePhone(user.phone) === p;
+    const byName = n && normalize(user.name) === n;
+    return byCode || byEmail || byPhone || byName;
+  }) || null;
+}
+
+function touchUser(userId) {
+  const user = users.get(userId);
+  if (user) {
+    user.lastSeen = new Date().toISOString();
+  }
+  return user;
+}
+
+function conversationIdFor(userA, userB) {
+  return [userA.id, userB.id].sort().join("__");
+}
+
+function ensureConversation(userA, userB) {
+  if (!userA || !userB) {
+    throw new Error("Gebruiker niet gevonden");
+  }
+
+  if (userA.groupId !== userB.groupId) {
+    throw new Error("Deze gebruikers zitten niet in dezelfde gesloten groep");
+  }
+
+  const id = conversationIdFor(userA, userB);
+
+  if (!conversations.has(id)) {
+    conversations.set(id, {
+      id,
+      groupId: userA.groupId,
+      participants: [userA.id, userB.id],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      deletedFor: {}
+    });
+    messages.set(id, []);
+  }
+
+  return conversations.get(id);
+}
+
+function getOtherUser(conv, userId) {
+  const otherId = conv.participants.find((id) => id !== userId);
+  return users.get(otherId);
+}
+
+function getLastVisibleMessage(convId, userId) {
+  const list = messages.get(convId) || [];
+  const visible = list
+    .filter((msg) => !msg.deletedFor || !msg.deletedFor[userId])
+    .filter((msg) => {
+      if (msg.senderId === userId) return true;
+      return !msg.readAt;
+    });
+  return visible[visible.length - 1] || null;
+}
+
+function getUnreadCount(convId, userId) {
+  const list = messages.get(convId) || [];
+  return list.filter((msg) => {
+    return msg.senderId !== userId && !msg.readAt && (!msg.deletedFor || !msg.deletedFor[userId]);
+  }).length;
+}
+
+function asConversationForUser(conv, userId) {
+  const other = getOtherUser(conv, userId);
+
+  return {
+    id: conv.id,
+    groupId: conv.groupId,
+    updatedAt: conv.updatedAt,
+    otherUser: other ? publicUser(other) : null,
+    lastMessage: getLastVisibleMessage(conv.id, userId),
+    unread: getUnreadCount(conv.id, userId)
+  };
+}
+
+seedUsers();
+
 app.get("/", (req, res) => {
-  res.send("ECHO Messenger backend online met vaste contacten en verdwijnende berichten");
+  res.json({
+    ok: true,
+    name: "ECHO Closed Group Server",
+    groupId: GROUP_ID,
+    members: GROUP_MEMBERS.length,
+    storage: "Contacten en groepsrechten in memory. Berichten tijdelijk in memory."
+  });
+});
+
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true, time: new Date().toISOString() });
+});
+
+app.get("/api/group/members", (req, res) => {
+  res.json({
+    groupId: GROUP_ID,
+    members: Array.from(users.values()).map(publicUser)
+  });
 });
 
 app.post("/api/register", (req, res) => {
-  const name = String(req.body.name || "").trim();
+  const { name, phone, email } = req.body || {};
+  const user = findMember({ name, phone, email });
 
-  if (!name) {
-    return res.status(400).json({ error: "Naam is verplicht" });
+  if (!user) {
+    return res.status(403).json({
+      error: "Deze persoon staat niet in de gesloten ECHO groep"
+    });
   }
 
-  const userId = makeId("user");
-  const userCode = Math.floor(100000 + Math.random() * 900000).toString();
-
-  users[userId] = {
-    id: userId,
-    name,
-    code: userCode,
-    createdAt: now(),
-    lastSeen: now()
-  };
+  touchUser(user.id);
 
   res.json({
-    ok: true,
-    user: users[userId]
+    user: publicUser(user)
   });
 });
 
 app.post("/api/login", (req, res) => {
-  const userCode = String(req.body.code || "").trim();
-  const user = Object.values(users).find(u => u.code === userCode);
+  const { code, phone, email, name } = req.body || {};
+  const user = findMember({ code, phone, email, name });
 
   if (!user) {
-    return res.status(404).json({ error: "Gebruiker niet gevonden" });
+    return res.status(403).json({
+      error: "Geen toegang tot deze gesloten ECHO groep"
+    });
   }
 
-  user.lastSeen = now();
+  touchUser(user.id);
 
   res.json({
-    ok: true,
-    user
+    user: publicUser(user)
   });
 });
 
-app.get("/api/users/:code", (req, res) => {
-  const userCode = String(req.params.code || "").trim();
-  const user = Object.values(users).find(u => u.code === userCode);
+app.post("/api/presence", (req, res) => {
+  const { userId } = req.body || {};
+  const user = touchUser(userId);
 
   if (!user) {
     return res.status(404).json({ error: "Gebruiker niet gevonden" });
@@ -89,240 +274,216 @@ app.get("/api/users/:code", (req, res) => {
 });
 
 app.post("/api/conversations", (req, res) => {
-  const userId = String(req.body.userId || "").trim();
-  const otherCode = String(req.body.otherCode || "").trim();
+  const { userId, otherCode, otherUserId, phone, email, name } = req.body || {};
+  const user = users.get(userId);
 
-  const me = users[userId];
-  const other = Object.values(users).find(u => u.code === otherCode);
+  if (!user) {
+    return res.status(404).json({ error: "Gebruiker niet gevonden" });
+  }
 
-  if (!me) {
-    return res.status(404).json({ error: "Eigen gebruiker niet gevonden" });
+  let other = null;
+
+  if (otherUserId) {
+    other = users.get(otherUserId);
   }
 
   if (!other) {
-    return res.status(404).json({ error: "Ontvanger niet gevonden" });
+    other = findMember({
+      code: otherCode,
+      phone,
+      email,
+      name
+    });
   }
 
-  const existing = Object.values(conversations).find(c => {
-    return c.members.includes(me.id) && c.members.includes(other.id);
-  });
-
-  if (existing) {
-    return res.json({ ok: true, conversation: existing });
+  if (!other) {
+    return res.status(404).json({ error: "Contact staat niet in de gesloten groep" });
   }
 
-  const conversationId = makeId("conv");
+  if (other.id === user.id) {
+    return res.status(400).json({ error: "Je kunt geen gesprek met jezelf starten" });
+  }
 
-  conversations[conversationId] = {
-    id: conversationId,
-    members: [me.id, other.id],
-    createdAt: now(),
-    updatedAt: now()
-  };
+  if (other.groupId !== user.groupId) {
+    return res.status(403).json({ error: "Contact zit niet in jouw gesloten groep" });
+  }
 
-  messages[conversationId] = [];
+  const conv = ensureConversation(user, other);
+  conv.deletedFor[user.id] = false;
+  conv.deletedFor[other.id] = false;
+  conv.updatedAt = new Date().toISOString();
 
   res.json({
-    ok: true,
-    conversation: conversations[conversationId]
+    conversation: asConversationForUser(conv, user.id)
   });
 });
 
 app.get("/api/conversations/:userId", (req, res) => {
-  const userId = String(req.params.userId || "").trim();
+  const userId = req.params.userId;
+  const user = users.get(userId);
 
-  if (!users[userId]) {
+  if (!user) {
     return res.status(404).json({ error: "Gebruiker niet gevonden" });
   }
 
-  const list = Object.values(conversations)
-    .filter(c => c.members.includes(userId))
-    .map(c => {
-      const otherId = c.members.find(id => id !== userId);
-      const other = users[otherId];
-      const allMessages = messages[c.id] || [];
-      const lastMessage = allMessages[allMessages.length - 1] || null;
-      const unread = allMessages.filter(m => m.receiverId === userId && !m.readAt).length;
+  touchUser(userId);
 
-      return {
-        id: c.id,
-        otherUser: publicUser(other),
-        lastMessage,
-        unread,
-        updatedAt: c.updatedAt
-      };
-    })
-    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  const list = Array.from(conversations.values())
+    .filter((conv) => conv.participants.includes(userId))
+    .filter((conv) => !conv.deletedFor || !conv.deletedFor[userId])
+    .map((conv) => asConversationForUser(conv, userId))
+    .sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
 
-  res.json({
-    ok: true,
-    conversations: list
-  });
+  res.json({ conversations: list });
 });
 
-app.post("/api/messages", (req, res) => {
-  const conversationId = String(req.body.conversationId || "").trim();
-  const senderId = String(req.body.senderId || "").trim();
-  const type = String(req.body.type || "text").trim();
-  const text = String(req.body.text || "").trim();
-  const fileName = String(req.body.fileName || "").trim();
-  const fileType = String(req.body.fileType || "").trim();
-  const fileData = String(req.body.fileData || "").trim();
-  const fileSize = Number(req.body.fileSize || 0);
+app.get("/api/messages/:conversationId", (req, res) => {
+  const conversationId = req.params.conversationId;
+  const userId = String(req.query.userId || "");
+  const conv = conversations.get(conversationId);
 
-  const allowedTypes = ["text", "image", "file", "audio"];
-
-  if (!allowedTypes.includes(type)) {
-    return res.status(400).json({ error: "Ongeldig berichttype" });
-  }
-
-  const conversation = conversations[conversationId];
-
-  if (!conversation) {
+  if (!conv) {
     return res.status(404).json({ error: "Gesprek niet gevonden" });
   }
 
-  if (!conversation.members.includes(senderId)) {
+  if (!conv.participants.includes(userId)) {
     return res.status(403).json({ error: "Geen toegang tot dit gesprek" });
   }
 
-  if (type === "text" && !text) {
-    return res.status(400).json({ error: "Bericht is leeg" });
-  }
+  touchUser(userId);
 
-  if (type !== "text" && !fileData) {
-    return res.status(400).json({ error: "Bestand ontbreekt" });
-  }
+  const visible = (messages.get(conversationId) || [])
+    .filter((msg) => !msg.deletedFor || !msg.deletedFor[userId])
+    .filter((msg) => {
+      if (msg.senderId === userId) return true;
+      return !msg.readAt;
+    });
 
-  if (fileData && fileData.length > 45 * 1024 * 1024) {
-    return res.status(413).json({ error: "Bestand is te groot" });
-  }
+  res.json({ messages: visible });
+});
 
-  const receiverId = conversation.members.find(id => id !== senderId);
-
-  const message = {
-    id: makeId("msg"),
+app.post("/api/messages", (req, res) => {
+  const {
     conversationId,
     senderId,
-    receiverId,
     type,
     text,
     fileName,
     fileType,
     fileData,
-    fileSize,
-    createdAt: now(),
-    deliveredAt: now(),
-    readAt: null
-  };
+    fileSize
+  } = req.body || {};
 
-  messages[conversationId].push(message);
-  conversation.updatedAt = message.createdAt;
+  const conv = conversations.get(conversationId);
+  const sender = users.get(senderId);
 
-  res.json({
-    ok: true,
-    message
-  });
-});
-
-app.get("/api/messages/:conversationId", (req, res) => {
-  const conversationId = String(req.params.conversationId || "").trim();
-  const userId = String(req.query.userId || "").trim();
-
-  const conversation = conversations[conversationId];
-
-  if (!conversation) {
+  if (!conv) {
     return res.status(404).json({ error: "Gesprek niet gevonden" });
   }
 
-  if (!conversation.members.includes(userId)) {
+  if (!sender || !conv.participants.includes(sender.id)) {
     return res.status(403).json({ error: "Geen toegang tot dit gesprek" });
   }
 
-  res.json({
-    ok: true,
-    messages: messages[conversationId] || []
-  });
+  const msg = {
+    id: "msg_" + Date.now() + "_" + Math.random().toString(36).slice(2, 10),
+    conversationId,
+    senderId,
+    type: type || "text",
+    text: String(text || ""),
+    fileName: fileName || "",
+    fileType: fileType || "",
+    fileData: fileData || "",
+    fileSize: fileSize || 0,
+    createdAt: new Date().toISOString(),
+    readAt: null,
+    deletedFor: {}
+  };
+
+  if (!msg.text && msg.type === "text") {
+    return res.status(400).json({ error: "Leeg bericht" });
+  }
+
+  const list = messages.get(conversationId) || [];
+  list.push(msg);
+  messages.set(conversationId, list);
+
+  conv.updatedAt = msg.createdAt;
+  conv.deletedFor = {};
+
+  touchUser(sender.id);
+
+  res.json({ message: msg });
 });
 
 app.post("/api/messages/read", (req, res) => {
-  const conversationId = String(req.body.conversationId || "").trim();
-  const userId = String(req.body.userId || "").trim();
+  const { conversationId, userId } = req.body || {};
+  const conv = conversations.get(conversationId);
 
-  if (!messages[conversationId]) {
-    return res.json({ ok: true, deleted: 0 });
-  }
-
-  const before = messages[conversationId].length;
-
-  messages[conversationId] = messages[conversationId].filter(m => {
-    if (m.receiverId === userId) {
-      return false;
-    }
-    return true;
-  });
-
-  const after = messages[conversationId].length;
-
-  res.json({
-    ok: true,
-    deleted: before - after
-  });
-});
-
-
-app.delete("/api/conversations/:conversationId", (req, res) => {
-  const conversationId = String(req.params.conversationId || "").trim();
-  const userId = String(req.query.userId || "").trim();
-
-  const conversation = conversations[conversationId];
-
-  if (!conversation) {
+  if (!conv) {
     return res.status(404).json({ error: "Gesprek niet gevonden" });
   }
 
-  if (!conversation.members.includes(userId)) {
+  if (!conv.participants.includes(userId)) {
     return res.status(403).json({ error: "Geen toegang tot dit gesprek" });
   }
 
-  delete conversations[conversationId];
-  delete messages[conversationId];
+  const now = new Date().toISOString();
+  const list = messages.get(conversationId) || [];
+
+  list.forEach((msg) => {
+    if (msg.senderId !== userId && !msg.readAt) {
+      msg.readAt = now;
+      msg.deletedFor = msg.deletedFor || {};
+      msg.deletedFor[userId] = true;
+    }
+  });
+
+  touchUser(userId);
 
   res.json({ ok: true });
 });
 
-
 app.post("/api/messages/purge-conversation", (req, res) => {
-  const conversationId = String(req.body.conversationId || "").trim();
-  const userId = String(req.body.userId || "").trim();
+  const { conversationId, userId } = req.body || {};
+  const conv = conversations.get(conversationId);
 
-  const conversation = conversations[conversationId];
-
-  if (!conversation) {
+  if (!conv) {
     return res.status(404).json({ error: "Gesprek niet gevonden" });
   }
 
-  if (!conversation.members.includes(userId)) {
+  if (!conv.participants.includes(userId)) {
     return res.status(403).json({ error: "Geen toegang tot dit gesprek" });
   }
 
-  const deleted = messages[conversationId] ? messages[conversationId].length : 0;
-  messages[conversationId] = [];
-  conversation.updatedAt = now();
+  const list = messages.get(conversationId) || [];
+  list.forEach((msg) => {
+    msg.deletedFor = msg.deletedFor || {};
+    msg.deletedFor[userId] = true;
+  });
 
-  res.json({ ok: true, deleted });
+  res.json({ ok: true });
 });
 
-app.post("/api/presence", (req, res) => {
-  const userId = String(req.body.userId || "").trim();
+app.delete("/api/conversations/:conversationId", (req, res) => {
+  const conversationId = req.params.conversationId;
+  const userId = String(req.query.userId || "");
+  const conv = conversations.get(conversationId);
 
-  if (users[userId]) {
-    users[userId].lastSeen = now();
+  if (!conv) {
+    return res.status(404).json({ error: "Gesprek niet gevonden" });
   }
+
+  if (!conv.participants.includes(userId)) {
+    return res.status(403).json({ error: "Geen toegang tot dit gesprek" });
+  }
+
+  conv.deletedFor = conv.deletedFor || {};
+  conv.deletedFor[userId] = true;
 
   res.json({ ok: true });
 });
 
 app.listen(PORT, () => {
-  console.log("ECHO Messenger backend draait op poort " + PORT);
+  console.log("ECHO Closed Group Server draait op poort " + PORT);
 });
