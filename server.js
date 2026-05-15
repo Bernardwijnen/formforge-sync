@@ -171,21 +171,21 @@ function getOtherUser(conv, userId) {
   return users.get(otherId);
 }
 
+function getVisibleMessages(convId, userId) {
+  return (messages.get(convId) || []).filter((msg) => {
+    return !msg.deletedFor || !msg.deletedFor[userId];
+  });
+}
+
 function getLastVisibleMessage(convId, userId) {
-  const list = messages.get(convId) || [];
-  const visible = list
-    .filter((msg) => !msg.deletedFor || !msg.deletedFor[userId])
-    .filter((msg) => {
-      if (msg.senderId === userId) return true;
-      return !msg.readAt;
-    });
+  const visible = getVisibleMessages(convId, userId);
   return visible[visible.length - 1] || null;
 }
 
 function getUnreadCount(convId, userId) {
   const list = messages.get(convId) || [];
   return list.filter((msg) => {
-    return msg.senderId !== userId && !msg.readAt && (!msg.deletedFor || !msg.deletedFor[userId]);
+    return msg.senderId !== userId && !msg.readBy?.[userId] && (!msg.deletedFor || !msg.deletedFor[userId]);
   }).length;
 }
 
@@ -202,7 +202,20 @@ function asConversationForUser(conv, userId) {
   };
 }
 
+function cleanupOldMessages() {
+  const now = Date.now();
+  const maxAge = 1000 * 60 * 60 * 24;
+
+  for (const [conversationId, list] of messages.entries()) {
+    const fresh = list.filter((msg) => {
+      return now - new Date(msg.createdAt).getTime() < maxAge;
+    });
+    messages.set(conversationId, fresh);
+  }
+}
+
 seedUsers();
+setInterval(cleanupOldMessages, 1000 * 60 * 15);
 
 app.get("/", (req, res) => {
   res.json({
@@ -210,7 +223,7 @@ app.get("/", (req, res) => {
     name: "ECHO Closed Group Server",
     groupId: GROUP_ID,
     members: GROUP_MEMBERS.length,
-    storage: "Contacten en groepsrechten in memory. Berichten tijdelijk in memory."
+    storage: "Contacten en groepsrechten in memory. Berichten tijdelijk in memory, zichtbaar voor beide deelnemers."
   });
 });
 
@@ -226,8 +239,8 @@ app.get("/api/group/members", (req, res) => {
 });
 
 app.post("/api/register", (req, res) => {
-  const { name, phone, email } = req.body || {};
-  const user = findMember({ name, phone, email });
+  const { name, phone, email, code } = req.body || {};
+  const user = findMember({ name, phone, email, code });
 
   if (!user) {
     return res.status(403).json({
@@ -352,14 +365,9 @@ app.get("/api/messages/:conversationId", (req, res) => {
 
   touchUser(userId);
 
-  const visible = (messages.get(conversationId) || [])
-    .filter((msg) => !msg.deletedFor || !msg.deletedFor[userId])
-    .filter((msg) => {
-      if (msg.senderId === userId) return true;
-      return !msg.readAt;
-    });
-
-  res.json({ messages: visible });
+  res.json({
+    messages: getVisibleMessages(conversationId, userId)
+  });
 });
 
 app.post("/api/messages", (req, res) => {
@@ -397,6 +405,9 @@ app.post("/api/messages", (req, res) => {
     fileSize: fileSize || 0,
     createdAt: new Date().toISOString(),
     readAt: null,
+    readBy: {
+      [sender.id]: true
+    },
     deletedFor: {}
   };
 
@@ -432,10 +443,10 @@ app.post("/api/messages/read", (req, res) => {
   const list = messages.get(conversationId) || [];
 
   list.forEach((msg) => {
-    if (msg.senderId !== userId && !msg.readAt) {
-      msg.readAt = now;
-      msg.deletedFor = msg.deletedFor || {};
-      msg.deletedFor[userId] = true;
+    if (msg.senderId !== userId) {
+      msg.readAt = msg.readAt || now;
+      msg.readBy = msg.readBy || {};
+      msg.readBy[userId] = true;
     }
   });
 
