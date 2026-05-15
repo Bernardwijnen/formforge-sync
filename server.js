@@ -31,7 +31,7 @@ function publicUser(user) {
 }
 
 app.get("/", (req, res) => {
-  res.send("ECHO Messenger backend online met tekst, foto, bestanden en spraak");
+  res.send("ECHO Messenger backend online met vaste contacten en verdwijnende berichten");
 });
 
 app.post("/api/register", (req, res) => {
@@ -249,16 +249,24 @@ app.post("/api/messages/read", (req, res) => {
   const conversationId = String(req.body.conversationId || "").trim();
   const userId = String(req.body.userId || "").trim();
 
-  const conversationMessages = messages[conversationId] || [];
+  if (!messages[conversationId]) {
+    return res.json({ ok: true, deleted: 0 });
+  }
 
-  conversationMessages.forEach(m => {
-    if (m.receiverId === userId && !m.readAt) {
-      m.readAt = now();
+  const before = messages[conversationId].length;
+
+  messages[conversationId] = messages[conversationId].filter(m => {
+    if (m.receiverId === userId) {
+      return false;
     }
+    return true;
   });
 
+  const after = messages[conversationId].length;
+
   res.json({
-    ok: true
+    ok: true,
+    deleted: before - after
   });
 });
 
@@ -281,6 +289,28 @@ app.delete("/api/conversations/:conversationId", (req, res) => {
   delete messages[conversationId];
 
   res.json({ ok: true });
+});
+
+
+app.post("/api/messages/purge-conversation", (req, res) => {
+  const conversationId = String(req.body.conversationId || "").trim();
+  const userId = String(req.body.userId || "").trim();
+
+  const conversation = conversations[conversationId];
+
+  if (!conversation) {
+    return res.status(404).json({ error: "Gesprek niet gevonden" });
+  }
+
+  if (!conversation.members.includes(userId)) {
+    return res.status(403).json({ error: "Geen toegang tot dit gesprek" });
+  }
+
+  const deleted = messages[conversationId] ? messages[conversationId].length : 0;
+  messages[conversationId] = [];
+  conversation.updatedAt = now();
+
+  res.json({ ok: true, deleted });
 });
 
 app.post("/api/presence", (req, res) => {
