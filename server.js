@@ -1,8 +1,64 @@
 const express = require("express");
 const cors = require("cors");
+const webpush = require("web-push");
 
 const app = express();
 const PORT = process.env.PORT || 10000;
+
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:bernardwijnen@gmail.com";
+
+if(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY){
+  webpush.setVapidDetails(
+    VAPID_SUBJECT,
+    VAPID_PUBLIC_KEY,
+    VAPID_PRIVATE_KEY
+  );
+}
+
+const pushSubscriptions = new Map();
+
+function addPushSubscription(userId, subscription, pageUrl){
+  if(!userId || !subscription || !subscription.endpoint) return;
+
+  const existing = pushSubscriptions.get(userId) || [];
+  const filtered = existing.filter((item) => {
+    return item.subscription && item.subscription.endpoint !== subscription.endpoint;
+  });
+
+  filtered.push({
+    subscription,
+    pageUrl: pageUrl || "",
+    addedAt: new Date().toISOString()
+  });
+
+  pushSubscriptions.set(userId, filtered);
+}
+
+async function sendPushToUser(userId, payload){
+  if(!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
+
+  const list = pushSubscriptions.get(userId) || [];
+  if(!list.length) return;
+
+  const valid = [];
+
+  for(const item of list){
+    try{
+      await webpush.sendNotification(item.subscription, JSON.stringify(payload));
+      valid.push(item);
+    }catch(err){
+      if(err.statusCode !== 404 && err.statusCode !== 410){
+        valid.push(item);
+      }
+    }
+  }
+
+  pushSubscriptions.set(userId, valid);
+}
+
+
 
 app.use(cors());
 app.use(express.json({ limit: "25mb" }));
@@ -217,6 +273,26 @@ function cleanupOldMessages() {
 seedUsers();
 setInterval(cleanupOldMessages, 1000 * 60 * 15);
 
+
+app.get("/api/push/public-key", (req, res) => {
+  res.json({
+    publicKey: VAPID_PUBLIC_KEY
+  });
+});
+
+app.post("/api/push/subscribe", (req, res) => {
+  const { userId, subscription, pageUrl } = req.body || {};
+
+  if(!users.has(userId)){
+    return res.status(404).json({ error: "Gebruiker niet gevonden" });
+  }
+
+  addPushSubscription(userId, subscription, pageUrl);
+
+  res.json({ ok: true });
+});
+
+
 app.get("/", (req, res) => {
   res.json({
     ok: true,
@@ -423,6 +499,18 @@ app.post("/api/messages", (req, res) => {
   conv.deletedFor = {};
 
   touchUser(sender.id);
+
+  const recipients = conv.participants.filter((id) => id !== sender.id);
+
+  recipients.forEach((recipientId) => {
+    sendPushToUser(recipientId, {
+      title: "ECHO Messenger",
+      body: sender.name + " stuurde een bericht",
+      conversationId: conversationId,
+      senderId: sender.id,
+      url: "/formforge/adminmode/pages/private-group-ben.html"
+    });
+  });
 
   res.json({ message: msg });
 });
