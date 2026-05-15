@@ -262,6 +262,27 @@ app.post("/api/messages/read", (req, res) => {
   });
 });
 
+
+app.delete("/api/conversations/:conversationId", (req, res) => {
+  const conversationId = String(req.params.conversationId || "").trim();
+  const userId = String(req.query.userId || "").trim();
+
+  const conversation = conversations[conversationId];
+
+  if (!conversation) {
+    return res.status(404).json({ error: "Gesprek niet gevonden" });
+  }
+
+  if (!conversation.members.includes(userId)) {
+    return res.status(403).json({ error: "Geen toegang tot dit gesprek" });
+  }
+
+  delete conversations[conversationId];
+  delete messages[conversationId];
+
+  res.json({ ok: true });
+});
+
 app.post("/api/presence", (req, res) => {
   const userId = String(req.body.userId || "").trim();
 
