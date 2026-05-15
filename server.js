@@ -6,7 +6,7 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 
 app.use(cors({ origin: true }));
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({ limit: "60mb" }));
 
 const users = {};
 const conversations = {};
@@ -20,8 +20,18 @@ function now() {
   return new Date().toISOString();
 }
 
+function publicUser(user) {
+  if (!user) return null;
+  return {
+    id: user.id,
+    name: user.name,
+    code: user.code,
+    lastSeen: user.lastSeen
+  };
+}
+
 app.get("/", (req, res) => {
-  res.send("ECHO Messenger backend online");
+  res.send("ECHO Messenger backend online met tekst, foto, bestanden en spraak");
 });
 
 app.post("/api/register", (req, res) => {
@@ -50,7 +60,6 @@ app.post("/api/register", (req, res) => {
 
 app.post("/api/login", (req, res) => {
   const userCode = String(req.body.code || "").trim();
-
   const user = Object.values(users).find(u => u.code === userCode);
 
   if (!user) {
@@ -67,7 +76,6 @@ app.post("/api/login", (req, res) => {
 
 app.get("/api/users/:code", (req, res) => {
   const userCode = String(req.params.code || "").trim();
-
   const user = Object.values(users).find(u => u.code === userCode);
 
   if (!user) {
@@ -76,12 +84,7 @@ app.get("/api/users/:code", (req, res) => {
 
   res.json({
     ok: true,
-    user: {
-      id: user.id,
-      name: user.name,
-      code: user.code,
-      lastSeen: user.lastSeen
-    }
+    user: publicUser(user)
   });
 });
 
@@ -143,12 +146,7 @@ app.get("/api/conversations/:userId", (req, res) => {
 
       return {
         id: c.id,
-        otherUser: other ? {
-          id: other.id,
-          name: other.name,
-          code: other.code,
-          lastSeen: other.lastSeen
-        } : null,
+        otherUser: publicUser(other),
         lastMessage,
         unread,
         updatedAt: c.updatedAt
@@ -165,7 +163,18 @@ app.get("/api/conversations/:userId", (req, res) => {
 app.post("/api/messages", (req, res) => {
   const conversationId = String(req.body.conversationId || "").trim();
   const senderId = String(req.body.senderId || "").trim();
+  const type = String(req.body.type || "text").trim();
   const text = String(req.body.text || "").trim();
+  const fileName = String(req.body.fileName || "").trim();
+  const fileType = String(req.body.fileType || "").trim();
+  const fileData = String(req.body.fileData || "").trim();
+  const fileSize = Number(req.body.fileSize || 0);
+
+  const allowedTypes = ["text", "image", "file", "audio"];
+
+  if (!allowedTypes.includes(type)) {
+    return res.status(400).json({ error: "Ongeldig berichttype" });
+  }
 
   const conversation = conversations[conversationId];
 
@@ -177,8 +186,16 @@ app.post("/api/messages", (req, res) => {
     return res.status(403).json({ error: "Geen toegang tot dit gesprek" });
   }
 
-  if (!text) {
+  if (type === "text" && !text) {
     return res.status(400).json({ error: "Bericht is leeg" });
+  }
+
+  if (type !== "text" && !fileData) {
+    return res.status(400).json({ error: "Bestand ontbreekt" });
+  }
+
+  if (fileData && fileData.length > 45 * 1024 * 1024) {
+    return res.status(413).json({ error: "Bestand is te groot" });
   }
 
   const receiverId = conversation.members.find(id => id !== senderId);
@@ -188,7 +205,12 @@ app.post("/api/messages", (req, res) => {
     conversationId,
     senderId,
     receiverId,
+    type,
     text,
+    fileName,
+    fileType,
+    fileData,
+    fileSize,
     createdAt: now(),
     deliveredAt: now(),
     readAt: null
@@ -238,6 +260,16 @@ app.post("/api/messages/read", (req, res) => {
   res.json({
     ok: true
   });
+});
+
+app.post("/api/presence", (req, res) => {
+  const userId = String(req.body.userId || "").trim();
+
+  if (users[userId]) {
+    users[userId].lastSeen = now();
+  }
+
+  res.json({ ok: true });
 });
 
 app.listen(PORT, () => {
