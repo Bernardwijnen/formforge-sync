@@ -136,6 +136,56 @@ const users = new Map();
 const conversations = new Map();
 const messages = new Map();
 
+const dynamicMembers = new Map();
+
+function makeDynamicCode(){
+  let code = "";
+  do{
+    code = "9" + Math.floor(10000 + Math.random() * 89999);
+  }while(Array.from(users.values()).some((u) => u.code === code));
+  return code;
+}
+
+function createDynamicMember({ name, phone, email }){
+  const safeName = String(name || "").trim();
+  const safePhone = String(phone || "").trim();
+  const safeEmail = String(email || "").trim();
+
+  if(!safeName || !safePhone){
+    throw new Error("Naam en telefoonnummer zijn verplicht");
+  }
+
+  const existing = Array.from(users.values()).find((u) => {
+    return normalizePhone(u.phone) === normalizePhone(safePhone);
+  });
+
+  if(existing){
+    return existing;
+  }
+
+  const code = makeDynamicCode();
+  const id = "user_dynamic_" + code;
+
+  const member = {
+    id,
+    name: safeName,
+    phone: safePhone,
+    email: safeEmail,
+    groupId: GROUP_ID,
+    role: "member",
+    code,
+    dynamic: true,
+    lastSeen: null
+  };
+
+  users.set(id, member);
+  dynamicMembers.set(id, member);
+
+  return member;
+}
+
+
+
 function normalize(value) {
   return String(value || "")
     .trim()
@@ -306,6 +356,24 @@ app.get("/", (req, res) => {
 app.get("/api/health", (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
+
+
+app.post("/api/dynamic-members", (req, res) => {
+  const { ownerId, name, phone, email } = req.body || {};
+  const owner = users.get(ownerId);
+
+  if(!owner || owner.role !== "owner"){
+    return res.status(403).json({ error: "Alleen Ben kan nieuwe personen uitnodigen" });
+  }
+
+  try{
+    const member = createDynamicMember({ name, phone, email });
+    res.json({ member: publicUser(member) });
+  }catch(err){
+    res.status(400).json({ error: err.message || "Nieuw contact kon niet worden gemaakt" });
+  }
+});
+
 
 app.get("/api/group/members", (req, res) => {
   res.json({
