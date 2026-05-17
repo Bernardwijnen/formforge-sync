@@ -651,6 +651,181 @@ app.delete("/api/conversations/:conversationId", (req, res) => {
   res.json({ ok: true });
 });
 
+
+/* EchoConnect signaling routes */
+const signalingSessions = new Map();
+const SIGNALING_DEFAULT_TTL_MS = 1000 * 60 * 10;
+
+function normalizeSignalingCode(value){
+  return String(value || "").trim();
+}
+
+function getSignalingExpiry(expiresAt){
+  const parsed = Number(expiresAt || 0);
+  const fallback = Date.now() + SIGNALING_DEFAULT_TTL_MS;
+  if(!Number.isFinite(parsed) || parsed <= Date.now()) return fallback;
+  return parsed;
+}
+
+function cleanSignalingSessions(){
+  const now = Date.now();
+  for(const [code, session] of signalingSessions.entries()){
+    if(!session || Number(session.expiresAt || 0) < now){
+      signalingSessions.delete(code);
+    }
+  }
+}
+
+function getSignalingSession(code){
+  cleanSignalingSessions();
+  const safeCode = normalizeSignalingCode(code);
+  if(!safeCode) return null;
+  return signalingSessions.get(safeCode) || null;
+}
+
+setInterval(cleanSignalingSessions, 1000 * 30);
+
+app.post("/api/signaling/session", (req, res) => {
+  const { code, ownerId, expiresAt } = req.body || {};
+  const safeCode = normalizeSignalingCode(code);
+
+  if(!safeCode){
+    return res.status(400).json({ error: "Code ontbreekt" });
+  }
+
+  const session = {
+    code: safeCode,
+    ownerId: String(ownerId || ""),
+    offer: null,
+    answer: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    expiresAt: getSignalingExpiry(expiresAt)
+  };
+
+  signalingSessions.set(safeCode, session);
+
+  res.json({
+    ok: true,
+    code: safeCode,
+    expiresAt: session.expiresAt
+  });
+});
+
+app.post("/api/signaling/offer", (req, res) => {
+  const { code, ownerId, sdp, expiresAt } = req.body || {};
+  const safeCode = normalizeSignalingCode(code);
+
+  if(!safeCode){
+    return res.status(400).json({ error: "Code ontbreekt" });
+  }
+
+  if(!sdp){
+    return res.status(400).json({ error: "SDP offer ontbreekt" });
+  }
+
+  const existing = getSignalingSession(safeCode) || {
+    code: safeCode,
+    ownerId: String(ownerId || ""),
+    answer: null,
+    createdAt: new Date().toISOString()
+  };
+
+  existing.ownerId = String(ownerId || existing.ownerId || "");
+  existing.offer = {
+    type: "offer",
+    sdp: String(sdp || "")
+  };
+  existing.updatedAt = new Date().toISOString();
+  existing.expiresAt = getSignalingExpiry(expiresAt || existing.expiresAt);
+
+  signalingSessions.set(safeCode, existing);
+
+  res.json({
+    ok: true,
+    code: safeCode,
+    expiresAt: existing.expiresAt
+  });
+});
+
+app.get("/api/signaling/offer/:code", (req, res) => {
+  const session = getSignalingSession(req.params.code);
+
+  if(!session || !session.offer){
+    return res.status(404).json({ error: "Nog geen offer beschikbaar" });
+  }
+
+  res.json({
+    code: session.code,
+    ownerId: session.ownerId || "",
+    type: "offer",
+    sdp: session.offer.sdp,
+    expiresAt: session.expiresAt
+  });
+});
+
+app.post("/api/signaling/answer", (req, res) => {
+  const { code, ownerId, sdp, expiresAt } = req.body || {};
+  const safeCode = normalizeSignalingCode(code);
+
+  if(!safeCode){
+    return res.status(400).json({ error: "Code ontbreekt" });
+  }
+
+  if(!sdp){
+    return res.status(400).json({ error: "SDP answer ontbreekt" });
+  }
+
+  const existing = getSignalingSession(safeCode);
+
+  if(!existing){
+    return res.status(404).json({ error: "Sessie niet gevonden" });
+  }
+
+  existing.answer = {
+    type: "answer",
+    sdp: String(sdp || "")
+  };
+  existing.answerOwnerId = String(ownerId || "");
+  existing.updatedAt = new Date().toISOString();
+  existing.expiresAt = getSignalingExpiry(expiresAt || existing.expiresAt);
+
+  signalingSessions.set(safeCode, existing);
+
+  res.json({
+    ok: true,
+    code: safeCode,
+    expiresAt: existing.expiresAt
+  });
+});
+
+app.get("/api/signaling/answer/:code", (req, res) => {
+  const session = getSignalingSession(req.params.code);
+
+  if(!session || !session.answer){
+    return res.status(404).json({ error: "Nog geen answer beschikbaar" });
+  }
+
+  res.json({
+    code: session.code,
+    ownerId: session.answerOwnerId || "",
+    type: "answer",
+    sdp: session.answer.sdp,
+    expiresAt: session.expiresAt
+  });
+});
+
+app.post("/api/signaling/clear", (req, res) => {
+  const { code } = req.body || {};
+  const safeCode = normalizeSignalingCode(code);
+
+  if(safeCode){
+    signalingSessions.delete(safeCode);
+  }
+
+  res.json({ ok: true });
+});
+
 app.listen(PORT, () => {
   console.log("ECHO Closed Group Server draait op poort " + PORT);
 });
