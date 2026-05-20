@@ -19,8 +19,6 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 
 app.use(cors({ origin: true }));
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
@@ -29,6 +27,138 @@ const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || "";
 const STRIPE_DEFAULT_PRICE_ID = process.env.STRIPE_PRICE_ID || "";
 const STRIPE_SUCCESS_URL = process.env.STRIPE_SUCCESS_URL || "https://www.benwijnen.nl/echo-premium-gelukt";
 const STRIPE_CANCEL_URL = process.env.STRIPE_CANCEL_URL || "https://www.benwijnen.nl/echo-premium-geannuleerd";
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
+
+let stripeClient = null;
+try{
+  if(STRIPE_SECRET_KEY){
+    stripeClient = require("stripe")(STRIPE_SECRET_KEY);
+  }
+}catch(err){
+  console.warn("stripe package niet geladen. Stripe webhook verificatie blijft beperkt.");
+}
+
+const premiumAccounts = new Map();
+
+function normalizePremiumKey(value){
+  return String(value || "").trim().toLowerCase();
+}
+
+function setPremiumAccount(key, data){
+  const safeKey = normalizePremiumKey(key);
+  if(!safeKey) return null;
+  const existing = premiumAccounts.get(safeKey) || {};
+  const merged = {
+    ...existing,
+    ...data,
+    key: safeKey,
+    updatedAt: new Date().toISOString()
+  };
+  premiumAccounts.set(safeKey, merged);
+  return merged;
+}
+
+function setPremiumForStripeData({ email, clientReferenceId, customerId, subscriptionId, active, reason }){
+  const data = {
+    active: !!active,
+    email: normalizePremiumKey(email),
+    clientReferenceId: normalizePremiumKey(clientReferenceId),
+    customerId: customerId || "",
+    subscriptionId: subscriptionId || "",
+    reason: reason || "",
+    source: "stripe"
+  };
+
+  const keys = [
+    data.email,
+    data.clientReferenceId,
+    data.customerId,
+    data.subscriptionId
+  ].filter(Boolean);
+
+  keys.forEach((key) => setPremiumAccount(key, data));
+  return data;
+}
+
+function getPremiumAccount(value){
+  const safeKey = normalizePremiumKey(value);
+  if(!safeKey) return null;
+  return premiumAccounts.get(safeKey) || null;
+}
+
+app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req, res) => {
+  let event = null;
+
+  try{
+    if(STRIPE_WEBHOOK_SECRET && stripeClient){
+      const signature = req.headers["stripe-signature"];
+      event = stripeClient.webhooks.constructEvent(req.body, signature, STRIPE_WEBHOOK_SECRET);
+    }else{
+      const rawBody = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : String(req.body || "{}");
+      event = JSON.parse(rawBody || "{}");
+    }
+  }catch(err){
+    console.error("Stripe webhook verificatie fout:", err.message || String(err));
+    return res.status(400).json({ error: "Webhook verificatie mislukt" });
+  }
+
+  try{
+    const object = event && event.data && event.data.object ? event.data.object : {};
+    const type = String(event && event.type ? event.type : "");
+
+    if(type === "checkout.session.completed"){
+      setPremiumForStripeData({
+        email: object.customer_email || object.customer_details?.email || "",
+        clientReferenceId: object.client_reference_id || object.metadata?.clientReferenceId || "",
+        customerId: object.customer || "",
+        subscriptionId: object.subscription || "",
+        active: true,
+        reason: "checkout.session.completed"
+      });
+    }
+
+    if(type === "invoice.payment.paid"){
+      setPremiumForStripeData({
+        email: object.customer_email || "",
+        clientReferenceId: object.metadata?.clientReferenceId || "",
+        customerId: object.customer || "",
+        subscriptionId: object.subscription || "",
+        active: true,
+        reason: "invoice.payment.paid"
+      });
+    }
+
+    if(type === "invoice.payment_failed"){
+      setPremiumForStripeData({
+        email: object.customer_email || "",
+        clientReferenceId: object.metadata?.clientReferenceId || "",
+        customerId: object.customer || "",
+        subscriptionId: object.subscription || "",
+        active: false,
+        reason: "invoice.payment_failed"
+      });
+    }
+
+    if(type === "customer.subscription.deleted"){
+      setPremiumForStripeData({
+        email: object.customer_email || "",
+        clientReferenceId: object.metadata?.clientReferenceId || "",
+        customerId: object.customer || "",
+        subscriptionId: object.id || "",
+        active: false,
+        reason: "customer.subscription.deleted"
+      });
+    }
+
+    res.json({ received: true });
+  }catch(err){
+    console.error("Stripe webhook verwerking fout:", err.message || String(err));
+    res.status(500).json({ error: "Webhook verwerking mislukt" });
+  }
+});
+
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
@@ -399,7 +529,7 @@ app.get("/", (req, res) => {
   res.json({
     ok: true,
     name: "ECHO Central Server",
-    services: ["private-chat", "echochat-5", "echoconnect", "openai-translate", "stripe-checkout"],
+    services: ["private-chat", "echochat-5", "echoconnect", "openai-translate", "stripe-checkout", "stripe-webhook"],
     groupId: GROUP_ID,
     members: GROUP_MEMBERS.length,
     openaiConfigured: !!OPENAI_API_KEY,
@@ -418,7 +548,39 @@ app.get("/api/stripe/status", (req, res) => {
     ok: true,
     stripeConfigured: !!STRIPE_SECRET_KEY,
     defaultPriceConfigured: !!STRIPE_DEFAULT_PRICE_ID,
+    webhookSecretConfigured: !!STRIPE_WEBHOOK_SECRET,
+    premiumAccountsInMemory: premiumAccounts.size,
     mode: STRIPE_SECRET_KEY.startsWith("sk_live_") ? "live" : (STRIPE_SECRET_KEY.startsWith("sk_test_") ? "test" : "unknown")
+  });
+});
+
+app.get("/api/stripe/premium-status", (req, res) => {
+  const key = String(req.query.email || req.query.userId || req.query.customerId || req.query.subscriptionId || "").trim();
+  const account = getPremiumAccount(key);
+  res.json({
+    ok: true,
+    premium: !!(account && account.active),
+    account: account ? {
+      active: !!account.active,
+      email: account.email || "",
+      reason: account.reason || "",
+      updatedAt: account.updatedAt || ""
+    } : null
+  });
+});
+
+app.post("/api/stripe/premium-status", (req, res) => {
+  const key = String(req.body && (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) ? (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) : "").trim();
+  const account = getPremiumAccount(key);
+  res.json({
+    ok: true,
+    premium: !!(account && account.active),
+    account: account ? {
+      active: !!account.active,
+      email: account.email || "",
+      reason: account.reason || "",
+      updatedAt: account.updatedAt || ""
+    } : null
   });
 });
 
@@ -449,6 +611,12 @@ app.post("/api/stripe/create-checkout", async (req, res) => {
       metadata: {
         product: "ECHO AI Premium",
         source: "formforge-echo"
+      },
+      subscription_data: {
+        metadata: {
+          product: "ECHO AI Premium",
+          source: "formforge-echo"
+        }
       }
     };
 
@@ -458,6 +626,7 @@ app.post("/api/stripe/create-checkout", async (req, res) => {
     if(clientReferenceId){
       payload.client_reference_id = clientReferenceId;
       payload.metadata.clientReferenceId = clientReferenceId;
+      payload.subscription_data.metadata.clientReferenceId = clientReferenceId;
     }
 
     const session = await callStripe("/checkout/sessions", payload);
@@ -1053,4 +1222,5 @@ app.listen(PORT, () => {
   console.log("ECHO Central Server draait op poort " + PORT);
   console.log("OpenAI actief: " + (OPENAI_API_KEY ? "ja" : "nee"));
   console.log("Stripe actief: " + (STRIPE_SECRET_KEY ? "ja" : "nee"));
+  console.log("Stripe webhook secret actief: " + (STRIPE_WEBHOOK_SECRET ? "ja" : "nee"));
 });
