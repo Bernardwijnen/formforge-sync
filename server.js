@@ -776,6 +776,17 @@ app.post("/api/speech/transcribe", upload.single("audio"), async (req, res) => {
 
     formData.append("model", "whisper-1");
 
+    const forcedLanguage = String(req.body && req.body.language ? req.body.language : "").trim();
+    const prompt = String(req.body && req.body.prompt ? req.body.prompt : "").trim();
+
+    if(forcedLanguage){
+      formData.append("language", forcedLanguage);
+    }
+
+    if(prompt){
+      formData.append("prompt", prompt);
+    }
+
     const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
       method: "POST",
       headers: {
