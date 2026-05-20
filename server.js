@@ -25,6 +25,11 @@ app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || "";
+const STRIPE_DEFAULT_PRICE_ID = process.env.STRIPE_PRICE_ID || "";
+const STRIPE_SUCCESS_URL = process.env.STRIPE_SUCCESS_URL || "https://www.benwijnen.nl/echo-premium-gelukt";
+const STRIPE_CANCEL_URL = process.env.STRIPE_CANCEL_URL || "https://www.benwijnen.nl/echo-premium-geannuleerd";
+
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:bernardwijnen@gmail.com";
@@ -90,6 +95,47 @@ async function callOpenAI(messages, temperature){
   }
 
   return String(data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content ? data.choices[0].message.content : "").trim();
+}
+
+
+function buildFormBody(data, prefix){
+  const params = new URLSearchParams();
+  function add(value, key){
+    if(value === undefined || value === null) return;
+    if(Array.isArray(value)){
+      value.forEach((item, index) => add(item, key + "[" + index + "]"));
+      return;
+    }
+    if(typeof value === "object"){
+      Object.keys(value).forEach((childKey) => add(value[childKey], key ? key + "[" + childKey + "]" : childKey));
+      return;
+    }
+    params.append(key, String(value));
+  }
+  add(data, prefix || "");
+  return params;
+}
+
+async function callStripe(pathName, payload){
+  if(!STRIPE_SECRET_KEY){
+    throw new Error("STRIPE_SECRET_KEY ontbreekt in Render Environment Variables");
+  }
+
+  const response = await fetch("https://api.stripe.com/v1" + pathName, {
+    method: "POST",
+    headers: {
+      "Authorization": "Bearer " + STRIPE_SECRET_KEY,
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body: buildFormBody(payload).toString()
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if(!response.ok){
+    const msg = data && data.error && data.error.message ? data.error.message : "Stripe aanvraag mislukt";
+    throw new Error(msg);
+  }
+  return data;
 }
 
 app.get("/api/openai/status", (req, res) => {
@@ -353,16 +399,77 @@ app.get("/", (req, res) => {
   res.json({
     ok: true,
     name: "ECHO Central Server",
-    services: ["private-chat", "echochat-5", "echoconnect", "openai-translate"],
+    services: ["private-chat", "echochat-5", "echoconnect", "openai-translate", "stripe-checkout"],
     groupId: GROUP_ID,
     members: GROUP_MEMBERS.length,
     openaiConfigured: !!OPENAI_API_KEY,
+    stripeConfigured: !!STRIPE_SECRET_KEY,
     time: new Date().toISOString()
   });
 });
 
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, service: "ECHO Central Server", openaiConfigured: !!OPENAI_API_KEY, time: new Date().toISOString() });
+  res.json({ ok: true, service: "ECHO Central Server", openaiConfigured: !!OPENAI_API_KEY, stripeConfigured: !!STRIPE_SECRET_KEY, time: new Date().toISOString() });
+});
+
+
+app.get("/api/stripe/status", (req, res) => {
+  res.json({
+    ok: true,
+    stripeConfigured: !!STRIPE_SECRET_KEY,
+    defaultPriceConfigured: !!STRIPE_DEFAULT_PRICE_ID,
+    mode: STRIPE_SECRET_KEY.startsWith("sk_live_") ? "live" : (STRIPE_SECRET_KEY.startsWith("sk_test_") ? "test" : "unknown")
+  });
+});
+
+app.post("/api/stripe/create-checkout", async (req, res) => {
+  try{
+    const priceId = String(req.body && (req.body.priceId || req.body.price_id) ? (req.body.priceId || req.body.price_id) : STRIPE_DEFAULT_PRICE_ID).trim();
+    const customerEmail = String(req.body && req.body.email ? req.body.email : "").trim();
+    const clientReferenceId = String(req.body && (req.body.userId || req.body.clientReferenceId) ? (req.body.userId || req.body.clientReferenceId) : "").trim();
+    const successUrl = String(req.body && req.body.successUrl ? req.body.successUrl : STRIPE_SUCCESS_URL).trim();
+    const cancelUrl = String(req.body && req.body.cancelUrl ? req.body.cancelUrl : STRIPE_CANCEL_URL).trim();
+
+    if(!priceId){
+      return jsonError(res, 400, "Stripe priceId ontbreekt. Zet STRIPE_PRICE_ID in Render of stuur priceId mee vanuit de app.");
+    }
+
+    const payload = {
+      mode: "subscription",
+      "line_items": [
+        {
+          price: priceId,
+          quantity: 1
+        }
+      ],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      allow_promotion_codes: true,
+      billing_address_collection: "auto",
+      metadata: {
+        product: "ECHO AI Premium",
+        source: "formforge-echo"
+      }
+    };
+
+    if(customerEmail){
+      payload.customer_email = customerEmail;
+    }
+    if(clientReferenceId){
+      payload.client_reference_id = clientReferenceId;
+      payload.metadata.clientReferenceId = clientReferenceId;
+    }
+
+    const session = await callStripe("/checkout/sessions", payload);
+
+    res.json({
+      ok: true,
+      id: session.id,
+      url: session.url
+    });
+  }catch(err){
+    jsonError(res, 500, "Stripe checkout fout", err.message || String(err));
+  }
 });
 
 app.get("/api/push/public-key", (req, res) => {
@@ -945,4 +1052,5 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log("ECHO Central Server draait op poort " + PORT);
   console.log("OpenAI actief: " + (OPENAI_API_KEY ? "ja" : "nee"));
+  console.log("Stripe actief: " + (STRIPE_SECRET_KEY ? "ja" : "nee"));
 });
