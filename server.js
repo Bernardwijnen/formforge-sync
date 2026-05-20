@@ -1,5 +1,12 @@
 const express = require("express");
 const cors = require("cors");
+const multer = require("multer");
+const fs = require("fs");
+const path = require("path");
+
+const upload = multer({
+  dest: path.join(__dirname, "uploads")
+});
 
 let webpush = null;
 try{
@@ -743,6 +750,76 @@ app.post("/api/signaling/clear", (req, res) => {
     signalingSessions.delete(safeCode);
   }
   res.json({ ok: true });
+});
+
+
+app.post("/api/speech/transcribe", upload.single("audio"), async (req, res) => {
+  try{
+    if(!OPENAI_API_KEY){
+      return jsonError(res, 500, "OPENAI_API_KEY ontbreekt");
+    }
+
+    if(!req.file){
+      return jsonError(res, 400, "Geen audio ontvangen");
+    }
+
+    const formData = new FormData();
+
+    formData.append(
+      "file",
+      new Blob(
+        [fs.readFileSync(req.file.path)],
+        { type: req.file.mimetype || "audio/webm" }
+      ),
+      req.file.originalname || "audio.webm"
+    );
+
+    formData.append("model", "whisper-1");
+
+    const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + OPENAI_API_KEY
+      },
+      body: formData
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    try{
+      fs.unlinkSync(req.file.path);
+    }catch(e){}
+
+    if(!response.ok){
+      return jsonError(
+        res,
+        500,
+        "Transcriptie mislukt",
+        data && data.error && data.error.message
+          ? data.error.message
+          : "Whisper fout"
+      );
+    }
+
+    res.json({
+      ok: true,
+      text: String(data.text || "").trim()
+    });
+
+  }catch(err){
+    if(req.file && req.file.path){
+      try{
+        fs.unlinkSync(req.file.path);
+      }catch(e){}
+    }
+
+    jsonError(
+      res,
+      500,
+      "Transcriptie mislukt",
+      err.message || String(err)
+    );
+  }
 });
 
 app.use((req, res) => {
