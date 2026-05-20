@@ -833,6 +833,111 @@ app.post("/api/speech/transcribe", upload.single("audio"), async (req, res) => {
   }
 });
 
+
+
+app.post("/api/speech/translate-direct", upload.single("audio"), async (req, res) => {
+  try{
+    if(!OPENAI_API_KEY){
+      return jsonError(res, 500, "OPENAI_API_KEY ontbreekt");
+    }
+
+    if(!req.file){
+      return jsonError(res, 400, "Geen audio ontvangen");
+    }
+
+    const sourceLanguage = String(req.body && (req.body.sourceLanguage || req.body.from || req.body.language) ? (req.body.sourceLanguage || req.body.from || req.body.language) : "").trim().toLowerCase();
+    const targetLanguage = String(req.body && (req.body.targetLanguage || req.body.to) ? (req.body.targetLanguage || req.body.to) : "").trim().toLowerCase();
+    const prompt = String(req.body && req.body.prompt ? req.body.prompt : "Dit is een live gesprek. Verwacht natuurlijke spreektaal, korte zinnen, namen, plaatsen, bedragen, aantallen en gewone vragen.").trim();
+
+    if(!sourceLanguage || !targetLanguage){
+      try{ fs.unlinkSync(req.file.path); }catch(e){}
+      return jsonError(res, 400, "sourceLanguage en targetLanguage zijn verplicht");
+    }
+
+    const audioBuffer = fs.readFileSync(req.file.path);
+    const formData = new FormData();
+    formData.append(
+      "file",
+      new Blob(
+        [audioBuffer],
+        { type: req.file.mimetype || "audio/webm" }
+      ),
+      req.file.originalname || "audio.webm"
+    );
+    formData.append("model", "whisper-1");
+    formData.append("language", sourceLanguage);
+    if(prompt){
+      formData.append("prompt", prompt);
+    }
+
+    const transcriptionResponse = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + OPENAI_API_KEY
+      },
+      body: formData
+    });
+
+    const transcriptionData = await transcriptionResponse.json().catch(() => ({}));
+
+    try{ fs.unlinkSync(req.file.path); }catch(e){}
+
+    if(!transcriptionResponse.ok){
+      return jsonError(
+        res,
+        500,
+        "Transcriptie mislukt",
+        transcriptionData && transcriptionData.error && transcriptionData.error.message
+          ? transcriptionData.error.message
+          : "Whisper fout"
+      );
+    }
+
+    const transcript = String(transcriptionData.text || "").trim();
+
+    if(!transcript){
+      return res.json({
+        ok: true,
+        transcript: "",
+        translation: "",
+        translatedText: "",
+        text: "",
+        result: "",
+        sourceLanguage,
+        targetLanguage
+      });
+    }
+
+    const translatedText = await callOpenAI([
+      {
+        role: "system",
+        content: "Je bent de professionele live tolk van ECHO. Vertaal alleen naar de gevraagde doeltaal. Geef geen uitleg, geen bronzin, geen aanhalingstekens en geen extra tekst. Behoud namen, bedragen, adressen, aantallen, datums, tijden en intentie exact. Maak de vertaling natuurlijk en direct uitspreekbaar."
+      },
+      {
+        role: "user",
+        content: "Brontaal: " + sourceLanguage + "\nDoeltaal: " + targetLanguage + "\n\nVertaal exact deze tekst:\n" + transcript
+      }
+    ], 0.05);
+
+    res.json({
+      ok: true,
+      transcript,
+      translation: translatedText,
+      translatedText,
+      text: translatedText,
+      result: translatedText,
+      sourceLanguage,
+      targetLanguage
+    });
+
+  }catch(err){
+    if(req.file && req.file.path){
+      try{ fs.unlinkSync(req.file.path); }catch(e){}
+    }
+    jsonError(res, 500, "Directe spraakvertaling mislukt", err.message || String(err));
+  }
+});
+
 app.use((req, res) => {
   res.status(404).json({ error: "Route niet gevonden", path: req.path });
 });
