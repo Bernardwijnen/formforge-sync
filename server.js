@@ -38,7 +38,40 @@ try{
   console.warn("stripe package niet geladen. Stripe webhook verificatie blijft beperkt.");
 }
 
+const PREMIUM_MONTHLY_CREDITS = Number(process.env.ECHO_PREMIUM_MONTHLY_CREDITS || 3000);
+const PREMIUM_STORE_FILE = path.join(__dirname, "echo_premium_accounts.json");
 const premiumAccounts = new Map();
+
+function currentPremiumMonth(){
+  return new Date().toISOString().slice(0, 7);
+}
+
+function loadPremiumAccounts(){
+  try{
+    if(!fs.existsSync(PREMIUM_STORE_FILE)) return;
+    const raw = fs.readFileSync(PREMIUM_STORE_FILE, "utf8");
+    const data = JSON.parse(raw || "{}");
+    Object.keys(data || {}).forEach((key) => {
+      if(key && data[key]){
+        premiumAccounts.set(key, data[key]);
+      }
+    });
+  }catch(err){
+    console.warn("Premium accounts konden niet worden geladen:", err.message || String(err));
+  }
+}
+
+function savePremiumAccounts(){
+  try{
+    const data = {};
+    for(const [key, value] of premiumAccounts.entries()){
+      data[key] = value;
+    }
+    fs.writeFileSync(PREMIUM_STORE_FILE, JSON.stringify(data, null, 2));
+  }catch(err){
+    console.warn("Premium accounts konden niet worden opgeslagen:", err.message || String(err));
+  }
+}
 
 function normalizePremiumKey(value){
   return String(value || "").trim().toLowerCase();
@@ -48,13 +81,34 @@ function setPremiumAccount(key, data){
   const safeKey = normalizePremiumKey(key);
   if(!safeKey) return null;
   const existing = premiumAccounts.get(safeKey) || {};
+  const nowMonth = currentPremiumMonth();
+  const shouldActivate = data && data.active === true;
+  const previousMonth = existing.creditMonth || nowMonth;
+  const previousCredits = Number.isFinite(Number(existing.creditsRemaining)) ? Number(existing.creditsRemaining) : PREMIUM_MONTHLY_CREDITS;
+
+  let creditsRemaining = previousCredits;
+  let creditMonth = previousMonth;
+
+  if(shouldActivate && (!existing.active || previousMonth !== nowMonth)){
+    creditsRemaining = PREMIUM_MONTHLY_CREDITS;
+    creditMonth = nowMonth;
+  }
+
+  if(data && typeof data.creditsRemaining !== "undefined"){
+    creditsRemaining = Number(data.creditsRemaining);
+  }
+
   const merged = {
     ...existing,
     ...data,
     key: safeKey,
+    creditsRemaining: Math.max(0, Math.floor(Number(creditsRemaining) || 0)),
+    creditsTotal: PREMIUM_MONTHLY_CREDITS,
+    creditMonth,
     updatedAt: new Date().toISOString()
   };
   premiumAccounts.set(safeKey, merged);
+  savePremiumAccounts();
   return merged;
 }
 
@@ -83,8 +137,47 @@ function setPremiumForStripeData({ email, clientReferenceId, customerId, subscri
 function getPremiumAccount(value){
   const safeKey = normalizePremiumKey(value);
   if(!safeKey) return null;
-  return premiumAccounts.get(safeKey) || null;
+  const account = premiumAccounts.get(safeKey) || null;
+  if(account && account.active && account.creditMonth !== currentPremiumMonth()){
+    return setPremiumAccount(safeKey, { creditsRemaining: PREMIUM_MONTHLY_CREDITS, creditMonth: currentPremiumMonth() });
+  }
+  return account;
 }
+
+function getPremiumStatus(value){
+  const account = getPremiumAccount(value);
+  return {
+    premium: !!(account && account.active),
+    active: !!(account && account.active),
+    creditsRemaining: account ? Number(account.creditsRemaining || 0) : 0,
+    creditsTotal: account ? Number(account.creditsTotal || PREMIUM_MONTHLY_CREDITS) : PREMIUM_MONTHLY_CREDITS,
+    creditMonth: account ? String(account.creditMonth || currentPremiumMonth()) : currentPremiumMonth(),
+    email: account ? String(account.email || "") : "",
+    reason: account ? String(account.reason || "") : "",
+    updatedAt: account ? String(account.updatedAt || "") : ""
+  };
+}
+
+function consumePremiumCredit(value){
+  const safeKey = normalizePremiumKey(value);
+  if(!safeKey){
+    return { ok: false, status: 401, error: "Premium e-mailadres ontbreekt" };
+  }
+  const account = getPremiumAccount(safeKey);
+  if(!account || !account.active){
+    return { ok: false, status: 402, error: "AI Premium is niet actief voor dit account" };
+  }
+  if(Number(account.creditsRemaining || 0) <= 0){
+    return { ok: false, status: 402, error: "AI credits zijn op voor deze maand" };
+  }
+  const updated = setPremiumAccount(safeKey, {
+    creditsRemaining: Number(account.creditsRemaining || 0) - 1,
+    lastCreditUsedAt: new Date().toISOString()
+  });
+  return { ok: true, account: updated, status: getPremiumStatus(safeKey) };
+}
+
+loadPremiumAccounts();
 
 app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req, res) => {
   let event = null;
@@ -108,7 +201,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req,
 
     if(type === "checkout.session.completed"){
       setPremiumForStripeData({
-        email: object.customer_email || object.customer_details?.email || "",
+        email: object.customer_email || object.customer_details?.email || object.metadata?.email || "",
         clientReferenceId: object.client_reference_id || object.metadata?.clientReferenceId || "",
         customerId: object.customer || "",
         subscriptionId: object.subscription || "",
@@ -119,7 +212,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req,
 
     if(type === "invoice.payment.paid"){
       setPremiumForStripeData({
-        email: object.customer_email || "",
+        email: object.customer_email || object.metadata?.email || "",
         clientReferenceId: object.metadata?.clientReferenceId || "",
         customerId: object.customer || "",
         subscriptionId: object.subscription || "",
@@ -130,7 +223,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req,
 
     if(type === "invoice.payment_failed"){
       setPremiumForStripeData({
-        email: object.customer_email || "",
+        email: object.customer_email || object.metadata?.email || "",
         clientReferenceId: object.metadata?.clientReferenceId || "",
         customerId: object.customer || "",
         subscriptionId: object.subscription || "",
@@ -141,7 +234,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req,
 
     if(type === "customer.subscription.deleted"){
       setPremiumForStripeData({
-        email: object.customer_email || "",
+        email: object.customer_email || object.metadata?.email || "",
         clientReferenceId: object.metadata?.clientReferenceId || "",
         customerId: object.customer || "",
         subscriptionId: object.id || "",
@@ -550,37 +643,51 @@ app.get("/api/stripe/status", (req, res) => {
     defaultPriceConfigured: !!STRIPE_DEFAULT_PRICE_ID,
     webhookSecretConfigured: !!STRIPE_WEBHOOK_SECRET,
     premiumAccountsInMemory: premiumAccounts.size,
+    monthlyCredits: PREMIUM_MONTHLY_CREDITS,
+    premiumStoreFile: PREMIUM_STORE_FILE,
     mode: STRIPE_SECRET_KEY.startsWith("sk_live_") ? "live" : (STRIPE_SECRET_KEY.startsWith("sk_test_") ? "test" : "unknown")
   });
 });
 
 app.get("/api/stripe/premium-status", (req, res) => {
   const key = String(req.query.email || req.query.userId || req.query.customerId || req.query.subscriptionId || "").trim();
-  const account = getPremiumAccount(key);
+  const status = getPremiumStatus(key);
   res.json({
     ok: true,
-    premium: !!(account && account.active),
-    account: account ? {
-      active: !!account.active,
-      email: account.email || "",
-      reason: account.reason || "",
-      updatedAt: account.updatedAt || ""
-    } : null
+    premium: status.premium,
+    creditsRemaining: status.creditsRemaining,
+    creditsTotal: status.creditsTotal,
+    creditMonth: status.creditMonth,
+    account: status
   });
 });
 
 app.post("/api/stripe/premium-status", (req, res) => {
   const key = String(req.body && (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) ? (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) : "").trim();
-  const account = getPremiumAccount(key);
+  const status = getPremiumStatus(key);
   res.json({
     ok: true,
-    premium: !!(account && account.active),
-    account: account ? {
-      active: !!account.active,
-      email: account.email || "",
-      reason: account.reason || "",
-      updatedAt: account.updatedAt || ""
-    } : null
+    premium: status.premium,
+    creditsRemaining: status.creditsRemaining,
+    creditsTotal: status.creditsTotal,
+    creditMonth: status.creditMonth,
+    account: status
+  });
+});
+
+app.post("/api/stripe/use-credit", (req, res) => {
+  const key = String(req.body && (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) ? (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) : "").trim();
+  const result = consumePremiumCredit(key);
+  if(!result.ok){
+    return jsonError(res, result.status || 400, result.error || "Credit kon niet worden verwerkt");
+  }
+  res.json({
+    ok: true,
+    premium: true,
+    creditsRemaining: result.status.creditsRemaining,
+    creditsTotal: result.status.creditsTotal,
+    creditMonth: result.status.creditMonth,
+    account: result.status
   });
 });
 
@@ -610,12 +717,14 @@ app.post("/api/stripe/create-checkout", async (req, res) => {
       billing_address_collection: "auto",
       metadata: {
         product: "ECHO AI Premium",
-        source: "formforge-echo"
+        source: "formforge-echo",
+        email: customerEmail
       },
       subscription_data: {
         metadata: {
           product: "ECHO AI Premium",
-          source: "formforge-echo"
+          source: "formforge-echo",
+          email: customerEmail
         }
       }
     };
@@ -1123,11 +1232,18 @@ app.post("/api/speech/translate-direct", upload.single("audio"), async (req, res
 
     const sourceLanguage = String(req.body && (req.body.sourceLanguage || req.body.from || req.body.language) ? (req.body.sourceLanguage || req.body.from || req.body.language) : "").trim().toLowerCase();
     const targetLanguage = String(req.body && (req.body.targetLanguage || req.body.to) ? (req.body.targetLanguage || req.body.to) : "").trim().toLowerCase();
+    const premiumKey = String(req.body && (req.body.email || req.body.premiumEmail || req.body.userId || req.body.premiumKey) ? (req.body.email || req.body.premiumEmail || req.body.userId || req.body.premiumKey) : "").trim();
     const prompt = String(req.body && req.body.prompt ? req.body.prompt : "Dit is een live gesprek. Verwacht natuurlijke spreektaal, korte zinnen, namen, plaatsen, bedragen, aantallen en gewone vragen.").trim();
 
     if(!sourceLanguage || !targetLanguage){
       try{ fs.unlinkSync(req.file.path); }catch(e){}
       return jsonError(res, 400, "sourceLanguage en targetLanguage zijn verplicht");
+    }
+
+    const creditResult = consumePremiumCredit(premiumKey);
+    if(!creditResult.ok){
+      try{ fs.unlinkSync(req.file.path); }catch(e){}
+      return jsonError(res, creditResult.status || 402, creditResult.error || "AI Premium credit ontbreekt");
     }
 
     const audioBuffer = fs.readFileSync(req.file.path);
@@ -1203,7 +1319,10 @@ app.post("/api/speech/translate-direct", upload.single("audio"), async (req, res
       text: translatedText,
       result: translatedText,
       sourceLanguage,
-      targetLanguage
+      targetLanguage,
+      creditsRemaining: creditResult.status.creditsRemaining,
+      creditsTotal: creditResult.status.creditsTotal,
+      creditMonth: creditResult.status.creditMonth
     });
 
   }catch(err){
@@ -1223,4 +1342,6 @@ app.listen(PORT, () => {
   console.log("OpenAI actief: " + (OPENAI_API_KEY ? "ja" : "nee"));
   console.log("Stripe actief: " + (STRIPE_SECRET_KEY ? "ja" : "nee"));
   console.log("Stripe webhook secret actief: " + (STRIPE_WEBHOOK_SECRET ? "ja" : "nee"));
+  console.log("ECHO Premium credits per maand: " + PREMIUM_MONTHLY_CREDITS);
+  console.log("Premium accounts geladen: " + premiumAccounts.size);
 });
