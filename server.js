@@ -30,6 +30,9 @@ const STRIPE_SUCCESS_URL = process.env.STRIPE_SUCCESS_URL || "https://www.benwij
 const STRIPE_CANCEL_URL = process.env.STRIPE_CANCEL_URL || "https://www.benwijnen.nl/echo-premium-geannuleerd";
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
 
+const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
+const FROM_EMAIL = process.env.FROM_EMAIL || "info@formforge.nl";
+
 let stripeClient = null;
 try{
   if(STRIPE_SECRET_KEY){
@@ -424,6 +427,54 @@ function successUrlWithCheckoutSession(url){
   return safeUrl + separator + "checkout_session_id={CHECKOUT_SESSION_ID}";
 }
 
+async function sendResendEmail({ to, subject, text, html }){
+  if(!RESEND_API_KEY){
+    throw new Error("RESEND_API_KEY ontbreekt in Render Environment Variables");
+  }
+
+  if(!FROM_EMAIL){
+    throw new Error("FROM_EMAIL ontbreekt in Render Environment Variables");
+  }
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Authorization": "Bearer " + RESEND_API_KEY,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      from: FROM_EMAIL,
+      to: [to],
+      subject: subject,
+      text: text,
+      html: html
+    })
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if(!response.ok){
+    const msg = data && data.message ? data.message : (data && data.error ? data.error : "Resend mail aanvraag mislukt");
+    throw new Error(msg);
+  }
+
+  return data;
+}
+
+function premiumPinEmailText(pin){
+  return "Beste ECHO AI Premium gebruiker,\n\nJe nieuwe 6 cijferige pincode is: " + pin + "\n\nGebruik deze pincode samen met je e-mailadres om AI Premium te activeren.\n\nAls jij deze reset niet hebt aangevraagd, neem dan contact op met FormForge.\n\nFormForge ECHO";
+}
+
+function premiumPinEmailHtml(pin){
+  return "<div style=\"font-family:Arial,sans-serif;line-height:1.5;color:#111\">" +
+    "<h2>Je nieuwe ECHO AI Premium pincode</h2>" +
+    "<p>Je nieuwe 6 cijferige pincode is:</p>" +
+    "<p style=\"font-size:28px;font-weight:800;letter-spacing:4px\">" + pin + "</p>" +
+    "<p>Gebruik deze pincode samen met je e-mailadres om AI Premium te activeren.</p>" +
+    "<p>Als jij deze reset niet hebt aangevraagd, neem dan contact op met FormForge.</p>" +
+    "<p>FormForge ECHO</p>" +
+  "</div>";
+}
+
 app.get("/api/openai/status", (req, res) => {
   res.json({
     ok: true,
@@ -705,6 +756,8 @@ app.get("/api/stripe/status", (req, res) => {
     stripeConfigured: !!STRIPE_SECRET_KEY,
     defaultPriceConfigured: !!STRIPE_DEFAULT_PRICE_ID,
     webhookSecretConfigured: !!STRIPE_WEBHOOK_SECRET,
+    resendConfigured: !!RESEND_API_KEY,
+    fromEmail: FROM_EMAIL,
     premiumAccountsInMemory: premiumAccounts.size,
     monthlyCredits: PREMIUM_MONTHLY_CREDITS,
     premiumStoreFile: PREMIUM_STORE_FILE,
@@ -800,6 +853,48 @@ app.post("/api/stripe/use-credit", (req, res) => {
     creditMonth: result.status.creditMonth,
     account: result.status
   });
+});
+
+app.post("/api/stripe/request-pin-reset", async (req, res) => {
+  try{
+    const email = normalizePremiumKey(req.body && req.body.email ? req.body.email : "");
+
+    if(!email){
+      return jsonError(res, 400, "E-mailadres ontbreekt");
+    }
+
+    const account = getPremiumAccount(email);
+
+    if(!account || !account.active){
+      return res.json({
+        ok: true,
+        sent: false,
+        message: "Als dit e-mailadres een actief Premium account heeft, wordt er een nieuwe pincode verstuurd."
+      });
+    }
+
+    const newPin = makePremiumPin();
+    setPremiumAccount(email, {
+      premiumPin: newPin,
+      lastPinResetAt: new Date().toISOString(),
+      reason: "pin_reset_requested"
+    });
+
+    await sendResendEmail({
+      to: email,
+      subject: "Je nieuwe ECHO AI Premium pincode",
+      text: premiumPinEmailText(newPin),
+      html: premiumPinEmailHtml(newPin)
+    });
+
+    res.json({
+      ok: true,
+      sent: true,
+      message: "Nieuwe pincode is verstuurd naar het Premium e-mailadres."
+    });
+  }catch(err){
+    jsonError(res, 500, "Pincode reset mail kon niet worden verstuurd", err.message || String(err));
+  }
 });
 
 app.post("/api/stripe/create-checkout", async (req, res) => {
@@ -1454,6 +1549,8 @@ app.listen(PORT, () => {
   console.log("OpenAI actief: " + (OPENAI_API_KEY ? "ja" : "nee"));
   console.log("Stripe actief: " + (STRIPE_SECRET_KEY ? "ja" : "nee"));
   console.log("Stripe webhook secret actief: " + (STRIPE_WEBHOOK_SECRET ? "ja" : "nee"));
+  console.log("Resend actief: " + (RESEND_API_KEY ? "ja" : "nee"));
+  console.log("From email: " + FROM_EMAIL);
   console.log("ECHO Premium credits per maand: " + PREMIUM_MONTHLY_CREDITS);
   console.log("Premium accounts geladen: " + premiumAccounts.size);
 });
