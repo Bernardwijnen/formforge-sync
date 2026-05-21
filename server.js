@@ -3,6 +3,7 @@ const cors = require("cors");
 const multer = require("multer");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 const upload = multer({
   dest: path.join(__dirname, "uploads")
@@ -77,6 +78,23 @@ function normalizePremiumKey(value){
   return String(value || "").trim().toLowerCase();
 }
 
+function normalizePremiumPin(value){
+  return String(value || "").trim().replace(/\D/g, "");
+}
+
+function makePremiumPin(){
+  try{
+    return String(crypto.randomInt(100000, 1000000));
+  }catch(err){
+    return String(Math.floor(100000 + Math.random() * 900000));
+  }
+}
+
+function verifyPremiumPin(account, pin){
+  if(!account || !account.premiumPin) return false;
+  return normalizePremiumPin(pin) === normalizePremiumPin(account.premiumPin);
+}
+
 function setPremiumAccount(key, data){
   const safeKey = normalizePremiumKey(key);
   if(!safeKey) return null;
@@ -98,10 +116,19 @@ function setPremiumAccount(key, data){
     creditsRemaining = Number(data.creditsRemaining);
   }
 
+  let premiumPin = existing.premiumPin || "";
+  if(shouldActivate && !premiumPin){
+    premiumPin = makePremiumPin();
+  }
+  if(data && typeof data.premiumPin !== "undefined"){
+    premiumPin = normalizePremiumPin(data.premiumPin);
+  }
+
   const merged = {
     ...existing,
     ...data,
     key: safeKey,
+    premiumPin,
     creditsRemaining: Math.max(0, Math.floor(Number(creditsRemaining) || 0)),
     creditsTotal: PREMIUM_MONTHLY_CREDITS,
     creditMonth,
@@ -144,11 +171,16 @@ function getPremiumAccount(value){
   return account;
 }
 
-function getPremiumStatus(value){
+function getPremiumStatus(value, pin, options){
   const account = getPremiumAccount(value);
+  const allowWithoutPin = !!(options && options.allowWithoutPin);
+  const pinOk = account && account.active && (allowWithoutPin || verifyPremiumPin(account, pin));
+
   return {
-    premium: !!(account && account.active),
-    active: !!(account && account.active),
+    premium: !!pinOk,
+    active: !!pinOk,
+    pinRequired: !!(account && account.active && !pinOk),
+    pinOk: !!pinOk,
     creditsRemaining: account ? Number(account.creditsRemaining || 0) : 0,
     creditsTotal: account ? Number(account.creditsTotal || PREMIUM_MONTHLY_CREDITS) : PREMIUM_MONTHLY_CREDITS,
     creditMonth: account ? String(account.creditMonth || currentPremiumMonth()) : currentPremiumMonth(),
@@ -158,7 +190,7 @@ function getPremiumStatus(value){
   };
 }
 
-function consumePremiumCredit(value){
+function consumePremiumCredit(value, pin){
   const safeKey = normalizePremiumKey(value);
   if(!safeKey){
     return { ok: false, status: 401, error: "Premium e-mailadres ontbreekt" };
@@ -167,6 +199,9 @@ function consumePremiumCredit(value){
   if(!account || !account.active){
     return { ok: false, status: 402, error: "AI Premium is niet actief voor dit account" };
   }
+  if(!verifyPremiumPin(account, pin)){
+    return { ok: false, status: 403, error: "Premium pincode is ongeldig" };
+  }
   if(Number(account.creditsRemaining || 0) <= 0){
     return { ok: false, status: 402, error: "AI credits zijn op voor deze maand" };
   }
@@ -174,7 +209,7 @@ function consumePremiumCredit(value){
     creditsRemaining: Number(account.creditsRemaining || 0) - 1,
     lastCreditUsedAt: new Date().toISOString()
   });
-  return { ok: true, account: updated, status: getPremiumStatus(safeKey) };
+  return { ok: true, account: updated, status: getPremiumStatus(safeKey, pin) };
 }
 
 loadPremiumAccounts();
@@ -359,6 +394,34 @@ async function callStripe(pathName, payload){
     throw new Error(msg);
   }
   return data;
+}
+
+async function callStripeGet(pathName){
+  if(!STRIPE_SECRET_KEY){
+    throw new Error("STRIPE_SECRET_KEY ontbreekt in Render Environment Variables");
+  }
+
+  const response = await fetch("https://api.stripe.com/v1" + pathName, {
+    method: "GET",
+    headers: {
+      "Authorization": "Bearer " + STRIPE_SECRET_KEY
+    }
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if(!response.ok){
+    const msg = data && data.error && data.error.message ? data.error.message : "Stripe aanvraag mislukt";
+    throw new Error(msg);
+  }
+  return data;
+}
+
+function successUrlWithCheckoutSession(url){
+  const safeUrl = String(url || STRIPE_SUCCESS_URL || "").trim();
+  if(!safeUrl) return STRIPE_SUCCESS_URL;
+  if(safeUrl.includes("checkout_session_id=") || safeUrl.includes("session_id=")) return safeUrl;
+  const separator = safeUrl.includes("?") ? "&" : "?";
+  return safeUrl + separator + "checkout_session_id={CHECKOUT_SESSION_ID}";
 }
 
 app.get("/api/openai/status", (req, res) => {
@@ -651,10 +714,12 @@ app.get("/api/stripe/status", (req, res) => {
 
 app.get("/api/stripe/premium-status", (req, res) => {
   const key = String(req.query.email || req.query.userId || req.query.customerId || req.query.subscriptionId || "").trim();
-  const status = getPremiumStatus(key);
+  const pin = String(req.query.pin || req.query.pincode || req.query.premiumPin || "").trim();
+  const status = getPremiumStatus(key, pin);
   res.json({
     ok: true,
     premium: status.premium,
+    pinRequired: status.pinRequired,
     creditsRemaining: status.creditsRemaining,
     creditsTotal: status.creditsTotal,
     creditMonth: status.creditMonth,
@@ -664,10 +729,12 @@ app.get("/api/stripe/premium-status", (req, res) => {
 
 app.post("/api/stripe/premium-status", (req, res) => {
   const key = String(req.body && (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) ? (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) : "").trim();
-  const status = getPremiumStatus(key);
+  const pin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
+  const status = getPremiumStatus(key, pin);
   res.json({
     ok: true,
     premium: status.premium,
+    pinRequired: status.pinRequired,
     creditsRemaining: status.creditsRemaining,
     creditsTotal: status.creditsTotal,
     creditMonth: status.creditMonth,
@@ -675,9 +742,53 @@ app.post("/api/stripe/premium-status", (req, res) => {
   });
 });
 
+app.post("/api/stripe/confirm-session", async (req, res) => {
+  try{
+    const sessionId = String(req.body && (req.body.sessionId || req.body.checkout_session_id || req.body.session_id) ? (req.body.sessionId || req.body.checkout_session_id || req.body.session_id) : "").trim();
+    if(!sessionId || !sessionId.startsWith("cs_")){
+      return jsonError(res, 400, "Stripe checkout sessie ontbreekt");
+    }
+
+    const session = await callStripeGet("/checkout/sessions/" + encodeURIComponent(sessionId));
+    const email = normalizePremiumKey(session.customer_email || (session.customer_details && session.customer_details.email) || (session.metadata && session.metadata.email) || "");
+    const clientReferenceId = normalizePremiumKey(session.client_reference_id || (session.metadata && session.metadata.clientReferenceId) || email);
+    const subscriptionId = session.subscription || "";
+    const customerId = session.customer || "";
+    const sessionOk = session.status === "complete" || session.payment_status === "paid" || !!subscriptionId;
+
+    if(!sessionOk || !email){
+      return jsonError(res, 402, "Stripe betaling is nog niet bevestigd");
+    }
+
+    setPremiumForStripeData({
+      email,
+      clientReferenceId,
+      customerId,
+      subscriptionId,
+      active: true,
+      reason: "checkout.session.confirmed"
+    });
+
+    const account = getPremiumAccount(email);
+    res.json({
+      ok: true,
+      premium: true,
+      email,
+      premiumPin: account && account.premiumPin ? account.premiumPin : "",
+      pin: account && account.premiumPin ? account.premiumPin : "",
+      creditsRemaining: account ? Number(account.creditsRemaining || 0) : 0,
+      creditsTotal: account ? Number(account.creditsTotal || PREMIUM_MONTHLY_CREDITS) : PREMIUM_MONTHLY_CREDITS,
+      creditMonth: account ? String(account.creditMonth || currentPremiumMonth()) : currentPremiumMonth()
+    });
+  }catch(err){
+    jsonError(res, 500, "Stripe sessie kon niet worden bevestigd", err.message || String(err));
+  }
+});
+
 app.post("/api/stripe/use-credit", (req, res) => {
   const key = String(req.body && (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) ? (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) : "").trim();
-  const result = consumePremiumCredit(key);
+  const pin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
+  const result = consumePremiumCredit(key, pin);
   if(!result.ok){
     return jsonError(res, result.status || 400, result.error || "Credit kon niet worden verwerkt");
   }
@@ -711,7 +822,7 @@ app.post("/api/stripe/create-checkout", async (req, res) => {
           quantity: 1
         }
       ],
-      success_url: successUrl,
+      success_url: successUrlWithCheckoutSession(successUrl),
       cancel_url: cancelUrl,
       allow_promotion_codes: true,
       billing_address_collection: "auto",
@@ -1233,6 +1344,7 @@ app.post("/api/speech/translate-direct", upload.single("audio"), async (req, res
     const sourceLanguage = String(req.body && (req.body.sourceLanguage || req.body.from || req.body.language) ? (req.body.sourceLanguage || req.body.from || req.body.language) : "").trim().toLowerCase();
     const targetLanguage = String(req.body && (req.body.targetLanguage || req.body.to) ? (req.body.targetLanguage || req.body.to) : "").trim().toLowerCase();
     const premiumKey = String(req.body && (req.body.email || req.body.premiumEmail || req.body.userId || req.body.premiumKey) ? (req.body.email || req.body.premiumEmail || req.body.userId || req.body.premiumKey) : "").trim();
+    const premiumPin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
     const prompt = String(req.body && req.body.prompt ? req.body.prompt : "Dit is een live gesprek. Verwacht natuurlijke spreektaal, korte zinnen, namen, plaatsen, bedragen, aantallen en gewone vragen.").trim();
 
     if(!sourceLanguage || !targetLanguage){
@@ -1240,7 +1352,7 @@ app.post("/api/speech/translate-direct", upload.single("audio"), async (req, res
       return jsonError(res, 400, "sourceLanguage en targetLanguage zijn verplicht");
     }
 
-    const creditResult = consumePremiumCredit(premiumKey);
+    const creditResult = consumePremiumCredit(premiumKey, premiumPin);
     if(!creditResult.ok){
       try{ fs.unlinkSync(req.file.path); }catch(e){}
       return jsonError(res, creditResult.status || 402, creditResult.error || "AI Premium credit ontbreekt");
