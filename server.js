@@ -579,6 +579,108 @@ app.post("/api/openai/chat", async (req, res) => {
   }
 });
 
+
+function normalizeTtsVoice(value){
+  const requested = String(value || "").trim().toLowerCase();
+  const allowed = ["alloy","ash","ballad","coral","echo","fable","nova","onyx","sage","shimmer","verse","marin","cedar"];
+  if(allowed.includes(requested)) return requested;
+  return "nova";
+}
+
+function normalizeTtsModel(value){
+  const requested = String(value || "").trim();
+  if(requested === "tts-1" || requested === "tts-1-hd" || requested === "gpt-4o-mini-tts"){
+    return requested;
+  }
+  return process.env.OPENAI_TTS_MODEL || "gpt-4o-mini-tts";
+}
+
+function buildTtsInstructions(language){
+  const lang = String(language || "").trim().toLowerCase();
+  if(lang === "ar" || lang === "ar-sa"){
+    return "Spreek de tekst duidelijk en natuurlijk uit in modern Arabisch. Gebruik een warme, rustige professionele stem. Spreek niet te snel.";
+  }
+  if(lang === "nl" || lang === "nl-nl"){
+    return "Spreek de tekst duidelijk en natuurlijk uit in Nederlands. Gebruik een warme, rustige professionele stem. Spreek niet te snel.";
+  }
+  if(lang === "en" || lang === "en-gb" || lang === "en-us"){
+    return "Speak clearly and naturally in English. Use a warm, calm professional voice. Do not speak too fast.";
+  }
+  if(lang === "de" || lang === "de-de"){
+    return "Sprich den Text klar und natürlich auf Deutsch. Verwende eine warme, ruhige professionelle Stimme. Sprich nicht zu schnell.";
+  }
+  if(lang === "fr" || lang === "fr-fr"){
+    return "Prononce le texte clairement et naturellement en français. Utilise une voix chaleureuse, calme et professionnelle. Ne parle pas trop vite.";
+  }
+  if(lang === "es" || lang === "es-es"){
+    return "Lee el texto con claridad y naturalidad en español. Usa una voz cálida, tranquila y profesional. No hables demasiado rápido.";
+  }
+  return "Spreek de tekst duidelijk, natuurlijk en professioneel uit in de gevraagde taal. Spreek niet te snel.";
+}
+
+app.post("/api/openai/tts", async (req, res) => {
+  try{
+    if(!OPENAI_API_KEY){
+      return jsonError(res, 500, "OPENAI_API_KEY ontbreekt");
+    }
+
+    const text = String(req.body && req.body.text ? req.body.text : "").trim();
+    const language = String(req.body && (req.body.language || req.body.lang) ? (req.body.language || req.body.lang) : "").trim();
+    const premiumKey = String(req.body && (req.body.email || req.body.premiumEmail || req.body.userId || req.body.premiumKey) ? (req.body.email || req.body.premiumEmail || req.body.userId || req.body.premiumKey) : "").trim();
+    const premiumPin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
+
+    if(!text){
+      return jsonError(res, 400, "Tekst ontbreekt");
+    }
+
+    if(text.length > 1800){
+      return jsonError(res, 400, "Tekst is te lang voor AI stem");
+    }
+
+    const premiumStatus = getPremiumStatus(premiumKey, premiumPin);
+    if(!premiumStatus.premium){
+      return jsonError(res, premiumStatus.pinRequired ? 403 : 402, premiumStatus.pinRequired ? "Premium pincode is ongeldig" : "AI Premium is niet actief voor dit account");
+    }
+
+    const voice = normalizeTtsVoice(req.body && req.body.voice ? req.body.voice : process.env.OPENAI_TTS_VOICE || "nova");
+    const model = normalizeTtsModel(req.body && req.body.model ? req.body.model : process.env.OPENAI_TTS_MODEL || "gpt-4o-mini-tts");
+    const instructions = String(req.body && req.body.instructions ? req.body.instructions : buildTtsInstructions(language)).trim();
+
+    const response = await fetch("https://api.openai.com/v1/audio/speech", {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + OPENAI_API_KEY,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model,
+        voice,
+        input: text,
+        instructions,
+        response_format: "mp3"
+      })
+    });
+
+    if(!response.ok){
+      const errorText = await response.text().catch(() => "");
+      return jsonError(res, 500, "AI stem kon niet worden gemaakt", errorText || "OpenAI TTS fout");
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const audioBuffer = Buffer.from(arrayBuffer);
+
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.setHeader("Content-Length", audioBuffer.length);
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-ECHO-TTS-Voice", voice);
+    res.setHeader("X-ECHO-TTS-Model", model);
+    res.send(audioBuffer);
+
+  }catch(err){
+    jsonError(res, 500, "AI stem fout", err.message || String(err));
+  }
+});
+
 const GROUP_ID = "familie_ben_001";
 const OWNER_NAME = "Ben";
 
@@ -736,7 +838,7 @@ app.get("/", (req, res) => {
   res.json({
     ok: true,
     name: "ECHO Central Server",
-    services: ["private-chat", "echochat-5", "echoconnect", "openai-translate", "stripe-checkout", "stripe-webhook"],
+    services: ["private-chat", "echochat-5", "echoconnect", "openai-translate", "openai-tts", "stripe-checkout", "stripe-webhook"],
     groupId: GROUP_ID,
     members: GROUP_MEMBERS.length,
     openaiConfigured: !!OPENAI_API_KEY,
@@ -883,15 +985,13 @@ app.post("/api/stripe/cancel-subscription", async (req, res) => {
       return jsonError(res, 400, "Geen Stripe abonnement gevonden bij dit account");
     }
 
-    const stripeSubscription = await callStripe("/subscriptions/" + encodeURIComponent(account.subscriptionId), {
+    await callStripe("/subscriptions/" + encodeURIComponent(account.subscriptionId), {
       cancel_at_period_end: true
     });
 
     setPremiumAccount(email, {
       cancelAtPeriodEnd: true,
       cancelRequestedAt: new Date().toISOString(),
-      stripeCancelAt: stripeSubscription && stripeSubscription.cancel_at ? stripeSubscription.cancel_at : null,
-      stripeCurrentPeriodEnd: stripeSubscription && stripeSubscription.current_period_end ? stripeSubscription.current_period_end : null,
       reason: "cancel_requested_by_user"
     });
 
@@ -899,7 +999,6 @@ app.post("/api/stripe/cancel-subscription", async (req, res) => {
       ok: true,
       cancelled: true,
       cancelAtPeriodEnd: true,
-      currentPeriodEnd: stripeSubscription && stripeSubscription.current_period_end ? stripeSubscription.current_period_end : null,
       message: "Je abonnement is opgezegd en blijft actief tot het einde van de betaalde periode."
     });
 
