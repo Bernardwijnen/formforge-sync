@@ -142,13 +142,75 @@ function setPremiumAccount(key, data){
   return merged;
 }
 
-function setPremiumForStripeData({ email, clientReferenceId, customerId, subscriptionId, active, reason }){
+function unixToIso(value){
+  const n = Number(value || 0);
+  if(!Number.isFinite(n) || n <= 0) return "";
+  try{
+    return new Date(n * 1000).toISOString();
+  }catch(err){
+    return "";
+  }
+}
+
+function extractStripeSubscriptionPeriod(subscription){
+  const sub = subscription || {};
+  const firstItem = sub.items && sub.items.data && sub.items.data[0] ? sub.items.data[0] : {};
+
+  const periodStart = sub.current_period_start || firstItem.current_period_start || 0;
+  const periodEnd = sub.current_period_end || firstItem.current_period_end || 0;
+
+  return {
+    subscriptionStatus: String(sub.status || ""),
+    currentPeriodStart: unixToIso(periodStart),
+    currentPeriodEnd: unixToIso(periodEnd),
+    periodStart: unixToIso(periodStart),
+    periodEnd: unixToIso(periodEnd),
+    cancelAtPeriodEnd: !!sub.cancel_at_period_end,
+    cancelAt: unixToIso(sub.cancel_at),
+    canceledAt: unixToIso(sub.canceled_at),
+    trialEnd: unixToIso(sub.trial_end)
+  };
+}
+
+async function refreshPremiumAccountFromStripe(value){
+  const account = getPremiumAccount(value);
+  if(!account || !account.subscriptionId || !STRIPE_SECRET_KEY){
+    return account;
+  }
+
+  try{
+    const subscription = await callStripeGet("/subscriptions/" + encodeURIComponent(account.subscriptionId));
+    const periodData = extractStripeSubscriptionPeriod(subscription);
+    const active = ["active","trialing","past_due"].includes(String(subscription.status || ""));
+    return setPremiumAccount(account.email || value, {
+      ...periodData,
+      subscriptionId: subscription.id || account.subscriptionId,
+      customerId: subscription.customer || account.customerId || "",
+      active,
+      reason: "stripe.subscription.refreshed"
+    });
+  }catch(err){
+    console.warn("Stripe abonnement kon niet worden ververst:", err.message || String(err));
+    return account;
+  }
+}
+
+function setPremiumForStripeData({ email, clientReferenceId, customerId, subscriptionId, active, reason, subscriptionStatus, currentPeriodStart, currentPeriodEnd, periodStart, periodEnd, cancelAtPeriodEnd, cancelAt, canceledAt, trialEnd }){
   const data = {
     active: !!active,
     email: normalizePremiumKey(email),
     clientReferenceId: normalizePremiumKey(clientReferenceId),
     customerId: customerId || "",
     subscriptionId: subscriptionId || "",
+    subscriptionStatus: subscriptionStatus || "",
+    currentPeriodStart: currentPeriodStart || periodStart || "",
+    currentPeriodEnd: currentPeriodEnd || periodEnd || "",
+    periodStart: periodStart || currentPeriodStart || "",
+    periodEnd: periodEnd || currentPeriodEnd || "",
+    cancelAtPeriodEnd: !!cancelAtPeriodEnd,
+    cancelAt: cancelAt || "",
+    canceledAt: canceledAt || "",
+    trialEnd: trialEnd || "",
     reason: reason || "",
     source: "stripe"
   };
@@ -188,6 +250,17 @@ function getPremiumStatus(value, pin, options){
     creditsTotal: account ? Number(account.creditsTotal || PREMIUM_MONTHLY_CREDITS) : PREMIUM_MONTHLY_CREDITS,
     creditMonth: account ? String(account.creditMonth || currentPremiumMonth()) : currentPremiumMonth(),
     email: account ? String(account.email || "") : "",
+    subscriptionId: account ? String(account.subscriptionId || "") : "",
+    subscriptionStatus: account ? String(account.subscriptionStatus || "") : "",
+    periodStart: account ? String(account.periodStart || account.currentPeriodStart || "") : "",
+    periodEnd: account ? String(account.periodEnd || account.currentPeriodEnd || "") : "",
+    currentPeriodStart: account ? String(account.currentPeriodStart || account.periodStart || "") : "",
+    currentPeriodEnd: account ? String(account.currentPeriodEnd || account.periodEnd || "") : "",
+    nextPaymentDate: account && !account.cancelAtPeriodEnd ? String(account.periodEnd || account.currentPeriodEnd || "") : "",
+    cancelAtPeriodEnd: account ? !!account.cancelAtPeriodEnd : false,
+    cancelAt: account ? String(account.cancelAt || "") : "",
+    canceledAt: account ? String(account.canceledAt || "") : "",
+    trialEnd: account ? String(account.trialEnd || "") : "",
     reason: account ? String(account.reason || "") : "",
     updatedAt: account ? String(account.updatedAt || "") : ""
   };
@@ -277,7 +350,8 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req,
         customerId: object.customer || "",
         subscriptionId: object.id || "",
         active: false,
-        reason: "customer.subscription.deleted"
+        reason: "customer.subscription.deleted",
+        ...extractStripeSubscriptionPeriod(object)
       });
     }
 
@@ -867,9 +941,10 @@ app.get("/api/stripe/status", (req, res) => {
   });
 });
 
-app.get("/api/stripe/premium-status", (req, res) => {
+app.get("/api/stripe/premium-status", async (req, res) => {
   const key = String(req.query.email || req.query.userId || req.query.customerId || req.query.subscriptionId || "").trim();
   const pin = String(req.query.pin || req.query.pincode || req.query.premiumPin || "").trim();
+  await refreshPremiumAccountFromStripe(key);
   const status = getPremiumStatus(key, pin);
   res.json({
     ok: true,
@@ -878,13 +953,23 @@ app.get("/api/stripe/premium-status", (req, res) => {
     creditsRemaining: status.creditsRemaining,
     creditsTotal: status.creditsTotal,
     creditMonth: status.creditMonth,
+    subscriptionStatus: status.subscriptionStatus,
+    periodStart: status.periodStart,
+    periodEnd: status.periodEnd,
+    currentPeriodStart: status.currentPeriodStart,
+    currentPeriodEnd: status.currentPeriodEnd,
+    nextPaymentDate: status.nextPaymentDate,
+    cancelAtPeriodEnd: status.cancelAtPeriodEnd,
+    cancelAt: status.cancelAt,
+    canceledAt: status.canceledAt,
     account: status
   });
 });
 
-app.post("/api/stripe/premium-status", (req, res) => {
+app.post("/api/stripe/premium-status", async (req, res) => {
   const key = String(req.body && (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) ? (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) : "").trim();
   const pin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
+  await refreshPremiumAccountFromStripe(key);
   const status = getPremiumStatus(key, pin);
   res.json({
     ok: true,
@@ -893,6 +978,15 @@ app.post("/api/stripe/premium-status", (req, res) => {
     creditsRemaining: status.creditsRemaining,
     creditsTotal: status.creditsTotal,
     creditMonth: status.creditMonth,
+    subscriptionStatus: status.subscriptionStatus,
+    periodStart: status.periodStart,
+    periodEnd: status.periodEnd,
+    currentPeriodStart: status.currentPeriodStart,
+    currentPeriodEnd: status.currentPeriodEnd,
+    nextPaymentDate: status.nextPaymentDate,
+    cancelAtPeriodEnd: status.cancelAtPeriodEnd,
+    cancelAt: status.cancelAt,
+    canceledAt: status.canceledAt,
     account: status
   });
 });
@@ -909,6 +1003,16 @@ app.post("/api/stripe/confirm-session", async (req, res) => {
     const clientReferenceId = normalizePremiumKey(session.client_reference_id || (session.metadata && session.metadata.clientReferenceId) || email);
     const subscriptionId = session.subscription || "";
     const customerId = session.customer || "";
+    let subscriptionData = null;
+    let periodData = {};
+    if(subscriptionId){
+      try{
+        subscriptionData = await callStripeGet("/subscriptions/" + encodeURIComponent(subscriptionId));
+        periodData = extractStripeSubscriptionPeriod(subscriptionData);
+      }catch(e){
+        console.warn("Stripe abonnement details konden niet worden opgehaald:", e.message || String(e));
+      }
+    }
     const sessionOk = session.status === "complete" || session.payment_status === "paid" || !!subscriptionId;
 
     if(!sessionOk || !email){
@@ -921,7 +1025,8 @@ app.post("/api/stripe/confirm-session", async (req, res) => {
       customerId,
       subscriptionId,
       active: true,
-      reason: "checkout.session.confirmed"
+      reason: "checkout.session.confirmed",
+      ...periodData
     });
 
     const account = getPremiumAccount(email);
@@ -933,7 +1038,16 @@ app.post("/api/stripe/confirm-session", async (req, res) => {
       pin: account && account.premiumPin ? account.premiumPin : "",
       creditsRemaining: account ? Number(account.creditsRemaining || 0) : 0,
       creditsTotal: account ? Number(account.creditsTotal || PREMIUM_MONTHLY_CREDITS) : PREMIUM_MONTHLY_CREDITS,
-      creditMonth: account ? String(account.creditMonth || currentPremiumMonth()) : currentPremiumMonth()
+      creditMonth: account ? String(account.creditMonth || currentPremiumMonth()) : currentPremiumMonth(),
+      subscriptionStatus: account ? String(account.subscriptionStatus || "") : "",
+      periodStart: account ? String(account.periodStart || account.currentPeriodStart || "") : "",
+      periodEnd: account ? String(account.periodEnd || account.currentPeriodEnd || "") : "",
+      currentPeriodStart: account ? String(account.currentPeriodStart || account.periodStart || "") : "",
+      currentPeriodEnd: account ? String(account.currentPeriodEnd || account.periodEnd || "") : "",
+      nextPaymentDate: account && !account.cancelAtPeriodEnd ? String(account.periodEnd || account.currentPeriodEnd || "") : "",
+      cancelAtPeriodEnd: account ? !!account.cancelAtPeriodEnd : false,
+      cancelAt: account ? String(account.cancelAt || "") : "",
+      canceledAt: account ? String(account.canceledAt || "") : ""
     });
   }catch(err){
     jsonError(res, 500, "Stripe sessie kon niet worden bevestigd", err.message || String(err));
@@ -985,11 +1099,13 @@ app.post("/api/stripe/cancel-subscription", async (req, res) => {
       return jsonError(res, 400, "Geen Stripe abonnement gevonden bij dit account");
     }
 
-    await callStripe("/subscriptions/" + encodeURIComponent(account.subscriptionId), {
+    const cancelledSubscription = await callStripe("/subscriptions/" + encodeURIComponent(account.subscriptionId), {
       cancel_at_period_end: true
     });
+    const periodData = extractStripeSubscriptionPeriod(cancelledSubscription);
 
     setPremiumAccount(email, {
+      ...periodData,
       cancelAtPeriodEnd: true,
       cancelRequestedAt: new Date().toISOString(),
       reason: "cancel_requested_by_user"
@@ -999,6 +1115,11 @@ app.post("/api/stripe/cancel-subscription", async (req, res) => {
       ok: true,
       cancelled: true,
       cancelAtPeriodEnd: true,
+      periodStart: periodData.periodStart || periodData.currentPeriodStart || "",
+      periodEnd: periodData.periodEnd || periodData.currentPeriodEnd || "",
+      currentPeriodStart: periodData.currentPeriodStart || periodData.periodStart || "",
+      currentPeriodEnd: periodData.currentPeriodEnd || periodData.periodEnd || "",
+      subscriptionStatus: periodData.subscriptionStatus || "",
       message: "Je abonnement is opgezegd en blijft actief tot het einde van de betaalde periode."
     });
 
