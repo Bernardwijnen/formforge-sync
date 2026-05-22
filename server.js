@@ -855,6 +855,59 @@ app.post("/api/stripe/use-credit", (req, res) => {
   });
 });
 
+
+app.post("/api/stripe/cancel-subscription", async (req, res) => {
+  try{
+    const email = normalizePremiumKey(req.body && req.body.email ? req.body.email : "");
+    const pin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
+
+    if(!email){
+      return jsonError(res, 400, "E-mailadres ontbreekt");
+    }
+
+    if(!pin){
+      return jsonError(res, 400, "Pincode ontbreekt");
+    }
+
+    const account = getPremiumAccount(email);
+
+    if(!account || !account.active){
+      return jsonError(res, 404, "Geen actief Premium abonnement gevonden");
+    }
+
+    if(!verifyPremiumPin(account, pin)){
+      return jsonError(res, 403, "Pincode is ongeldig");
+    }
+
+    if(!account.subscriptionId){
+      return jsonError(res, 400, "Geen Stripe abonnement gevonden bij dit account");
+    }
+
+    const stripeSubscription = await callStripe("/subscriptions/" + encodeURIComponent(account.subscriptionId), {
+      cancel_at_period_end: true
+    });
+
+    setPremiumAccount(email, {
+      cancelAtPeriodEnd: true,
+      cancelRequestedAt: new Date().toISOString(),
+      stripeCancelAt: stripeSubscription && stripeSubscription.cancel_at ? stripeSubscription.cancel_at : null,
+      stripeCurrentPeriodEnd: stripeSubscription && stripeSubscription.current_period_end ? stripeSubscription.current_period_end : null,
+      reason: "cancel_requested_by_user"
+    });
+
+    res.json({
+      ok: true,
+      cancelled: true,
+      cancelAtPeriodEnd: true,
+      currentPeriodEnd: stripeSubscription && stripeSubscription.current_period_end ? stripeSubscription.current_period_end : null,
+      message: "Je abonnement is opgezegd en blijft actief tot het einde van de betaalde periode."
+    });
+
+  }catch(err){
+    jsonError(res, 500, "Abonnement kon niet worden opgezegd", err.message || String(err));
+  }
+});
+
 app.post("/api/stripe/request-pin-reset", async (req, res) => {
   try{
     const email = normalizePremiumKey(req.body && req.body.email ? req.body.email : "");
