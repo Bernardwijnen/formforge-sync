@@ -1731,10 +1731,19 @@ app.post("/api/speech/translate-direct", upload.single("audio"), async (req, res
       return jsonError(res, 400, "sourceLanguage en targetLanguage zijn verplicht");
     }
 
-    const creditResult = consumePremiumCredit(premiumKey, premiumPin);
-    if(!creditResult.ok){
+    const premiumStatusBefore = getPremiumStatus(premiumKey, premiumPin);
+    if(!premiumStatusBefore.premium){
       try{ fs.unlinkSync(req.file.path); }catch(e){}
-      return jsonError(res, creditResult.status || 402, creditResult.error || "AI Premium credit ontbreekt");
+      return jsonError(
+        res,
+        premiumStatusBefore.pinRequired ? 403 : 402,
+        premiumStatusBefore.pinRequired ? "Premium pincode is ongeldig" : "AI Premium is niet actief voor dit account"
+      );
+    }
+
+    if(Number(premiumStatusBefore.creditsRemaining || 0) <= 0){
+      try{ fs.unlinkSync(req.file.path); }catch(e){}
+      return jsonError(res, 402, "AI credits zijn op voor deze maand");
     }
 
     const audioBuffer = fs.readFileSync(req.file.path);
@@ -1801,6 +1810,15 @@ app.post("/api/speech/translate-direct", upload.single("audio"), async (req, res
         content: "Brontaal: " + sourceLanguage + "\nDoeltaal: " + targetLanguage + "\n\nVertaal exact deze tekst:\n" + transcript
       }
     ], 0.05);
+
+    const creditResult = consumePremiumCredit(premiumKey, premiumPin);
+    if(!creditResult.ok){
+      return jsonError(
+        res,
+        creditResult.status || 402,
+        creditResult.error || "AI Premium credit ontbreekt"
+      );
+    }
 
     res.json({
       ok: true,
