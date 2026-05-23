@@ -43,7 +43,18 @@ try{
 }
 
 const PREMIUM_MONTHLY_CREDITS = Number(process.env.ECHO_PREMIUM_MONTHLY_CREDITS || 3000);
-const PREMIUM_STORE_FILE = path.join(__dirname, "echo_premium_accounts.json");
+
+const DATA_DIR = process.env.ECHO_DATA_DIR || "/opt/render/project/src/data";
+
+try{
+  if(!fs.existsSync(DATA_DIR)){
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+}catch(err){
+  console.warn("Data map kon niet worden aangemaakt:", err.message || String(err));
+}
+
+const PREMIUM_STORE_FILE = path.join(DATA_DIR, "echo_premium_accounts.json");
 const premiumAccounts = new Map();
 
 function currentPremiumMonth(){
