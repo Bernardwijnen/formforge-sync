@@ -2204,6 +2204,7 @@ app.post("/api/speech/translate-direct", upload.single("audio"), async (req, res
     const targetLanguageName = normalizeEchoLanguageName(targetLanguageRaw);
     const premiumKey = String(req.body && (req.body.email || req.body.premiumEmail || req.body.userId || req.body.premiumKey) ? (req.body.email || req.body.premiumEmail || req.body.userId || req.body.premiumKey) : "").trim();
     const premiumPin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
+    const deviceId = String(req.body && (req.body.deviceId || req.body.device_id || req.body.clientDeviceId) ? (req.body.deviceId || req.body.device_id || req.body.clientDeviceId) : "").trim();
 
     const prompt = String(req.body && req.body.prompt ? req.body.prompt : "").trim() || (
       "De spreker spreekt " + sourceLanguageName + ". Dit is een live gesprek. " +
