@@ -42,8 +42,24 @@ try{
   console.warn("stripe package niet geladen. Stripe webhook verificatie blijft beperkt.");
 }
 
-const PREMIUM_MONTHLY_CREDITS = Number(process.env.ECHO_PREMIUM_MONTHLY_CREDITS || 3000);
 const STARTER_FREE_CREDITS = Number(process.env.ECHO_STARTER_FREE_CREDITS || 10);
+const UNLIMITED_FAIR_USE_CREDITS = Number(process.env.ECHO_UNLIMITED_FAIR_USE_CREDITS || 999999);
+
+const STRIPE_CREDITS_100_PRICE_ID = process.env.STRIPE_CREDITS_100_PRICE_ID || "price_1TaHrD5s8MDSsy0eV1krtPFL";
+const STRIPE_CREDITS_500_PRICE_ID = process.env.STRIPE_CREDITS_500_PRICE_ID || "price_1TaHxD5s8MDSsy0eVrOvmYPM";
+const STRIPE_CREDITS_1500_PRICE_ID = process.env.STRIPE_CREDITS_1500_PRICE_ID || "price_1TaHz15s8MDSsy0eMKRMDbxN";
+const STRIPE_UNLIMITED_PRICE_ID = process.env.STRIPE_UNLIMITED_PRICE_ID || "price_1TaI0q5s8MDSsy0eL2NZqIpD";
+
+const CREDIT_PACKAGES = {
+  "100": { credits: 100, priceId: STRIPE_CREDITS_100_PRICE_ID, label: "ECHO 100 AI credits" },
+  "500": { credits: 500, priceId: STRIPE_CREDITS_500_PRICE_ID, label: "ECHO 500 AI credits" },
+  "1500": { credits: 1500, priceId: STRIPE_CREDITS_1500_PRICE_ID, label: "ECHO 1500 AI credits" }
+};
+
+function getCreditPackageByPriceId(priceId){
+  const safePriceId = String(priceId || "").trim();
+  return Object.values(CREDIT_PACKAGES).find((pkg) => pkg.priceId === safePriceId) || null;
+}
 
 const DATA_DIR = process.env.ECHO_DATA_DIR || "/opt/render/project/src/data";
 
@@ -118,8 +134,8 @@ function setPremiumAccount(key, data){
   const shouldActivate = data && data.active === true;
   const incomingPlan = data && data.plan ? String(data.plan) : "";
   const existingPlan = existing.plan ? String(existing.plan) : "";
-  const finalPlan = incomingPlan || existingPlan || (data && data.source === "stripe" ? "premium" : (existing.source === "stripe" || existing.subscriptionId ? "premium" : "premium"));
-  const planCreditsTotal = finalPlan === "starter" ? STARTER_FREE_CREDITS : PREMIUM_MONTHLY_CREDITS;
+  const finalPlan = incomingPlan || existingPlan || (data && data.source === "stripe" ? "unlimited" : (existing.source === "stripe" || existing.subscriptionId ? "unlimited" : "credits"));
+  const planCreditsTotal = finalPlan === "starter" ? STARTER_FREE_CREDITS : (finalPlan === "unlimited" ? UNLIMITED_FAIR_USE_CREDITS : 0);
   const previousMonth = existing.creditMonth || nowMonth;
   const previousCredits = Number.isFinite(Number(existing.creditsRemaining)) ? Number(existing.creditsRemaining) : planCreditsTotal;
 
@@ -128,8 +144,8 @@ function setPremiumAccount(key, data){
   let creditsTotal = Number.isFinite(Number(existing.creditsTotal)) ? Number(existing.creditsTotal) : planCreditsTotal;
 
   if(shouldActivate && finalPlan !== "starter" && (!existing.active || previousMonth !== nowMonth)){
-    creditsRemaining = PREMIUM_MONTHLY_CREDITS;
-    creditsTotal = PREMIUM_MONTHLY_CREDITS;
+    creditsRemaining = UNLIMITED_FAIR_USE_CREDITS;
+    creditsTotal = UNLIMITED_FAIR_USE_CREDITS;
     creditMonth = nowMonth;
   }
 
@@ -239,7 +255,8 @@ function setPremiumForStripeData({ email, clientReferenceId, customerId, subscri
     canceledAt: canceledAt || "",
     trialEnd: trialEnd || "",
     reason: reason || "",
-    source: "stripe"
+    source: "stripe",
+    plan: "unlimited"
   };
 
   const keys = [
@@ -249,7 +266,7 @@ function setPremiumForStripeData({ email, clientReferenceId, customerId, subscri
     data.subscriptionId
   ].filter(Boolean);
 
-  keys.forEach((key) => setPremiumAccount(key, data));
+  keys.forEach((key) => activateUnlimitedAccount(key, data));
   return data;
 }
 
@@ -259,7 +276,7 @@ function getPremiumAccount(value){
   const account = premiumAccounts.get(safeKey) || null;
   const plan = account && account.plan ? String(account.plan) : "premium";
   if(account && account.active && plan !== "starter" && account.creditMonth !== currentPremiumMonth()){
-    return setPremiumAccount(safeKey, { creditsRemaining: PREMIUM_MONTHLY_CREDITS, creditsTotal: PREMIUM_MONTHLY_CREDITS, creditMonth: currentPremiumMonth(), plan: "premium" });
+    return setPremiumAccount(safeKey, { creditsRemaining: UNLIMITED_FAIR_USE_CREDITS, creditsTotal: UNLIMITED_FAIR_USE_CREDITS, creditMonth: currentPremiumMonth(), plan: "unlimited" });
   }
   return account;
 }
@@ -275,7 +292,7 @@ function getPremiumStatus(value, pin, options){
     pinRequired: !!(account && account.active && !pinOk),
     pinOk: !!pinOk,
     creditsRemaining: account ? Number(account.creditsRemaining || 0) : 0,
-    creditsTotal: account ? Number(account.creditsTotal || PREMIUM_MONTHLY_CREDITS) : PREMIUM_MONTHLY_CREDITS,
+    creditsTotal: account ? Number(account.creditsTotal || 0) : 0,
     creditMonth: account ? String(account.creditMonth || currentPremiumMonth()) : currentPremiumMonth(),
     plan: account ? String(account.plan || "premium") : "",
     starterCreditsGranted: account ? !!account.starterCreditsGranted : false,
@@ -318,6 +335,50 @@ function consumePremiumCredit(value, pin){
   return { ok: true, account: updated, status: getPremiumStatus(safeKey, pin) };
 }
 
+
+function addCreditsToAccount(email, credits, reason){
+  const safeEmail = normalizePremiumKey(email);
+  const amount = Math.max(0, Math.floor(Number(credits) || 0));
+  if(!safeEmail || amount <= 0) return null;
+
+  const existing = getPremiumAccount(safeEmail) || {};
+  const existingCredits = Number(existing.creditsRemaining || 0);
+  const existingTotal = Number(existing.creditsTotal || 0);
+  const pin = existing.premiumPin || makePremiumPin();
+
+  return setPremiumAccount(safeEmail, {
+    active: true,
+    email: safeEmail,
+    premiumPin: pin,
+    creditsRemaining: existingCredits + amount,
+    creditsTotal: existingTotal + amount,
+    plan: existing.plan === "unlimited" ? "unlimited" : "credits",
+    source: "stripe_credits",
+    lastCreditPurchaseAt: new Date().toISOString(),
+    lastCreditPurchaseAmount: amount,
+    reason: reason || "stripe_credit_purchase"
+  });
+}
+
+function activateUnlimitedAccount(email, data){
+  const safeEmail = normalizePremiumKey(email);
+  if(!safeEmail) return null;
+  const existing = getPremiumAccount(safeEmail) || {};
+  const pin = existing.premiumPin || makePremiumPin();
+  return setPremiumAccount(safeEmail, {
+    ...(data || {}),
+    active: true,
+    email: safeEmail,
+    premiumPin: pin,
+    creditsRemaining: UNLIMITED_FAIR_USE_CREDITS,
+    creditsTotal: UNLIMITED_FAIR_USE_CREDITS,
+    creditMonth: currentPremiumMonth(),
+    plan: "unlimited",
+    source: "stripe_unlimited",
+    reason: (data && data.reason) || "stripe_unlimited_active"
+  });
+}
+
 loadPremiumAccounts();
 
 app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req, res) => {
@@ -341,14 +402,24 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req,
     const type = String(event && event.type ? event.type : "");
 
     if(type === "checkout.session.completed"){
-      setPremiumForStripeData({
-        email: object.customer_email || object.customer_details?.email || object.metadata?.email || "",
-        clientReferenceId: object.client_reference_id || object.metadata?.clientReferenceId || "",
-        customerId: object.customer || "",
-        subscriptionId: object.subscription || "",
-        active: true,
-        reason: "checkout.session.completed"
-      });
+      const email = object.customer_email || object.customer_details?.email || object.metadata?.email || "";
+      const mode = String(object.mode || "");
+      const metadata = object.metadata || {};
+      const packageCredits = Number(metadata.credits || 0);
+      const packageType = String(metadata.packageType || "");
+
+      if(mode === "payment" && packageType === "credits" && packageCredits > 0){
+        addCreditsToAccount(email, packageCredits, "checkout.session.completed.credit_pack");
+      }else{
+        setPremiumForStripeData({
+          email,
+          clientReferenceId: object.client_reference_id || metadata.clientReferenceId || "",
+          customerId: object.customer || "",
+          subscriptionId: object.subscription || "",
+          active: true,
+          reason: "checkout.session.completed"
+        });
+      }
     }
 
     if(type === "invoice.payment.paid"){
@@ -982,8 +1053,14 @@ app.get("/api/stripe/status", (req, res) => {
     resendConfigured: !!RESEND_API_KEY,
     fromEmail: FROM_EMAIL,
     premiumAccountsInMemory: premiumAccounts.size,
-    monthlyCredits: PREMIUM_MONTHLY_CREDITS,
+    unlimitedFairUseCredits: UNLIMITED_FAIR_USE_CREDITS,
     starterFreeCredits: STARTER_FREE_CREDITS,
+    creditPackages: {
+      credits100: !!STRIPE_CREDITS_100_PRICE_ID,
+      credits500: !!STRIPE_CREDITS_500_PRICE_ID,
+      credits1500: !!STRIPE_CREDITS_1500_PRICE_ID,
+      unlimited: !!STRIPE_UNLIMITED_PRICE_ID
+    },
     premiumStoreFile: PREMIUM_STORE_FILE,
     mode: STRIPE_SECRET_KEY.startsWith("sk_live_") ? "live" : (STRIPE_SECRET_KEY.startsWith("sk_test_") ? "test" : "unknown")
   });
@@ -1055,6 +1132,10 @@ app.post("/api/stripe/confirm-session", async (req, res) => {
     const clientReferenceId = normalizePremiumKey(session.client_reference_id || (session.metadata && session.metadata.clientReferenceId) || email);
     const subscriptionId = session.subscription || "";
     const customerId = session.customer || "";
+    const mode = String(session.mode || "");
+    const metadata = session.metadata || {};
+    const packageCredits = Number(metadata.credits || 0);
+    const packageType = String(metadata.packageType || "");
     let subscriptionData = null;
     let periodData = {};
     if(subscriptionId){
@@ -1069,6 +1150,23 @@ app.post("/api/stripe/confirm-session", async (req, res) => {
 
     if(!sessionOk || !email){
       return jsonError(res, 402, "Stripe betaling is nog niet bevestigd");
+    }
+
+    if(mode === "payment" && packageType === "credits" && packageCredits > 0){
+      const creditAccount = addCreditsToAccount(email, packageCredits, "checkout.session.confirmed.credit_pack");
+      return res.json({
+        ok: true,
+        premium: true,
+        email,
+        premiumPin: creditAccount && creditAccount.premiumPin ? creditAccount.premiumPin : "",
+        pin: creditAccount && creditAccount.premiumPin ? creditAccount.premiumPin : "",
+        creditsRemaining: creditAccount ? Number(creditAccount.creditsRemaining || 0) : 0,
+        creditsTotal: creditAccount ? Number(creditAccount.creditsTotal || 0) : 0,
+        creditMonth: creditAccount ? String(creditAccount.creditMonth || currentPremiumMonth()) : currentPremiumMonth(),
+        plan: creditAccount ? String(creditAccount.plan || "credits") : "credits",
+        addedCredits: packageCredits,
+        message: packageCredits + " AI credits zijn toegevoegd."
+      });
     }
 
     setPremiumForStripeData({
@@ -1089,7 +1187,7 @@ app.post("/api/stripe/confirm-session", async (req, res) => {
       premiumPin: account && account.premiumPin ? account.premiumPin : "",
       pin: account && account.premiumPin ? account.premiumPin : "",
       creditsRemaining: account ? Number(account.creditsRemaining || 0) : 0,
-      creditsTotal: account ? Number(account.creditsTotal || PREMIUM_MONTHLY_CREDITS) : PREMIUM_MONTHLY_CREDITS,
+      creditsTotal: account ? Number(account.creditsTotal || 0) : 0,
       creditMonth: account ? String(account.creditMonth || currentPremiumMonth()) : currentPremiumMonth(),
       subscriptionStatus: account ? String(account.subscriptionStatus || "") : "",
       periodStart: account ? String(account.periodStart || account.currentPeriodStart || "") : "",
@@ -1248,7 +1346,7 @@ app.post("/api/stripe/activate-starter", async (req, res) => {
         premiumPin: account.premiumPin || "",
         pin: account.premiumPin || "",
         creditsRemaining: Number(account.creditsRemaining || 0),
-        creditsTotal: Number(account.creditsTotal || PREMIUM_MONTHLY_CREDITS),
+        creditsTotal: Number(account.creditsTotal || UNLIMITED_FAIR_USE_CREDITS),
         creditMonth: String(account.creditMonth || currentPremiumMonth()),
         plan: String(account.plan || "premium"),
         starterCreditsGranted: !!account.starterCreditsGranted,
@@ -1325,9 +1423,65 @@ app.post("/api/stripe/activate-starter", async (req, res) => {
   }
 });
 
+
+app.post("/api/stripe/create-credit-checkout", async (req, res) => {
+  try{
+    const email = normalizePremiumKey(req.body && req.body.email ? req.body.email : "");
+    const packageKey = String(req.body && (req.body.package || req.body.packageKey || req.body.credits) ? (req.body.package || req.body.packageKey || req.body.credits) : "").trim();
+    const pkg = CREDIT_PACKAGES[packageKey];
+
+    if(!email){
+      return jsonError(res, 400, "E-mailadres ontbreekt");
+    }
+
+    if(!pkg || !pkg.priceId){
+      return jsonError(res, 400, "Ongeldig creditpakket");
+    }
+
+    const successUrl = String(req.body && req.body.successUrl ? req.body.successUrl : STRIPE_SUCCESS_URL).trim();
+    const cancelUrl = String(req.body && req.body.cancelUrl ? req.body.cancelUrl : STRIPE_CANCEL_URL).trim();
+
+    const payload = {
+      mode: "payment",
+      line_items: [
+        {
+          price: pkg.priceId,
+          quantity: 1
+        }
+      ],
+      success_url: successUrlWithCheckoutSession(successUrl),
+      cancel_url: cancelUrl,
+      allow_promotion_codes: true,
+      billing_address_collection: "auto",
+      customer_email: email,
+      client_reference_id: email,
+      metadata: {
+        product: pkg.label,
+        source: "formforge-echo",
+        packageType: "credits",
+        packageKey,
+        credits: String(pkg.credits),
+        email
+      }
+    };
+
+    const session = await callStripe("/checkout/sessions", payload);
+
+    res.json({
+      ok: true,
+      id: session.id,
+      url: session.url,
+      packageKey,
+      credits: pkg.credits
+    });
+  }catch(err){
+    jsonError(res, 500, "Credit checkout fout", err.message || String(err));
+  }
+});
+
 app.post("/api/stripe/create-checkout", async (req, res) => {
   try{
-    const priceId = String(req.body && (req.body.priceId || req.body.price_id) ? (req.body.priceId || req.body.price_id) : STRIPE_DEFAULT_PRICE_ID).trim();
+    const priceId = String(req.body && (req.body.priceId || req.body.price_id) ? (req.body.priceId || req.body.price_id) : (STRIPE_UNLIMITED_PRICE_ID || STRIPE_DEFAULT_PRICE_ID)).trim();
     const customerEmail = String(req.body && req.body.email ? req.body.email : "").trim();
     const clientReferenceId = String(req.body && (req.body.userId || req.body.clientReferenceId) ? (req.body.userId || req.body.clientReferenceId) : "").trim();
     const successUrl = String(req.body && req.body.successUrl ? req.body.successUrl : STRIPE_SUCCESS_URL).trim();
@@ -1350,13 +1504,13 @@ app.post("/api/stripe/create-checkout", async (req, res) => {
       allow_promotion_codes: true,
       billing_address_collection: "auto",
       metadata: {
-        product: "ECHO AI Premium",
+        product: "ECHO Unlimited Premium",
         source: "formforge-echo",
         email: customerEmail
       },
       subscription_data: {
         metadata: {
-          product: "ECHO AI Premium",
+          product: "ECHO Unlimited Premium",
           source: "formforge-echo",
           email: customerEmail
         }
@@ -1854,6 +2008,66 @@ app.post("/api/speech/transcribe", upload.single("audio"), async (req, res) => {
 
 
 
+
+function normalizeEchoLanguageName(value){
+  const raw = String(value || "").trim();
+  const key = raw.toLowerCase();
+  const map = {
+    "nl":"Nederlands","nl-nl":"Nederlands","dutch":"Nederlands","nederlands":"Nederlands",
+    "en":"Engels","en-gb":"Engels","en-us":"Engels","english":"Engels","engels":"Engels",
+    "de":"Duits","de-de":"Duits","german":"Duits","duits":"Duits",
+    "fr":"Frans","fr-fr":"Frans","french":"Frans","frans":"Frans",
+    "es":"Spaans","es-es":"Spaans","spanish":"Spaans","spaans":"Spaans",
+    "it":"Italiaans","it-it":"Italiaans","italian":"Italiaans","italiaans":"Italiaans",
+    "pt":"Portugees","pt-pt":"Portugees","portuguese":"Portugees","portugees":"Portugees",
+    "pl":"Pools","pl-pl":"Pools","polish":"Pools","pools":"Pools",
+    "tr":"Turks","tr-tr":"Turks","turkish":"Turks","turks":"Turks",
+    "ar":"Arabisch","ar-sa":"Arabisch","arabic":"Arabisch","arabisch":"Arabisch",
+    "uk":"Oekraïens","uk-ua":"Oekraïens","ukrainian":"Oekraïens","oekraiens":"Oekraïens","oekraïens":"Oekraïens",
+    "ru":"Russisch","ru-ru":"Russisch","russian":"Russisch","russisch":"Russisch",
+    "zh":"Chinees","zh-cn":"Chinees","chinese":"Chinees","chinees":"Chinees",
+    "ja":"Japans","ja-jp":"Japans","japanese":"Japans","japans":"Japans",
+    "ko":"Koreaans","ko-kr":"Koreaans","korean":"Koreaans","koreaans":"Koreaans",
+    "hi":"Hindi","hi-in":"Hindi","hindi":"Hindi",
+    "id":"Indonesisch","id-id":"Indonesisch","indonesian":"Indonesisch","indonesisch":"Indonesisch",
+    "th":"Thais","th-th":"Thais","thai":"Thais","thais":"Thais",
+    "vi":"Vietnamees","vi-vn":"Vietnamees","vietnamese":"Vietnamees","vietnamees":"Vietnamees",
+    "ro":"Roemeens","ro-ro":"Roemeens","romanian":"Roemeens","roemeens":"Roemeens",
+    "cs":"Tsjechisch","cs-cz":"Tsjechisch","czech":"Tsjechisch","tsjechisch":"Tsjechisch",
+    "sv":"Zweeds","sv-se":"Zweeds","swedish":"Zweeds","zweeds":"Zweeds"
+  };
+  return map[key] || raw || "de doeltaal";
+}
+
+function normalizeWhisperLanguageCode(value){
+  const raw = String(value || "").trim().toLowerCase();
+  const map = {
+    "dutch":"nl","nederlands":"nl","nl-nl":"nl","nl":"nl",
+    "english":"en","engels":"en","en-gb":"en","en-us":"en","en":"en",
+    "german":"de","duits":"de","de-de":"de","de":"de",
+    "french":"fr","frans":"fr","fr-fr":"fr","fr":"fr",
+    "spanish":"es","spaans":"es","es-es":"es","es":"es",
+    "italian":"it","italiaans":"it","it-it":"it","it":"it",
+    "portuguese":"pt","portugees":"pt","pt-pt":"pt","pt":"pt",
+    "polish":"pl","pools":"pl","pl-pl":"pl","pl":"pl",
+    "turkish":"tr","turks":"tr","tr-tr":"tr","tr":"tr",
+    "arabic":"ar","arabisch":"ar","ar-sa":"ar","ar":"ar",
+    "ukrainian":"uk","oekraiens":"uk","oekraïens":"uk","uk-ua":"uk","uk":"uk",
+    "russian":"ru","russisch":"ru","ru-ru":"ru","ru":"ru",
+    "chinese":"zh","chinees":"zh","zh-cn":"zh","zh":"zh",
+    "japanese":"ja","japans":"ja","ja-jp":"ja","ja":"ja",
+    "korean":"ko","koreaans":"ko","ko-kr":"ko","ko":"ko",
+    "hindi":"hi","hi-in":"hi","hi":"hi",
+    "indonesian":"id","indonesisch":"id","id-id":"id","id":"id",
+    "thai":"th","thais":"th","th-th":"th","th":"th",
+    "vietnamese":"vi","vietnamees":"vi","vi-vn":"vi","vi":"vi",
+    "romanian":"ro","roemeens":"ro","ro-ro":"ro","ro":"ro",
+    "czech":"cs","tsjechisch":"cs","cs-cz":"cs","cs":"cs",
+    "swedish":"sv","zweeds":"sv","sv-se":"sv","sv":"sv"
+  };
+  return map[raw] || raw.split("-")[0] || "";
+}
+
 app.post("/api/speech/translate-direct", upload.single("audio"), async (req, res) => {
   try{
     if(!OPENAI_API_KEY){
@@ -1864,13 +2078,21 @@ app.post("/api/speech/translate-direct", upload.single("audio"), async (req, res
       return jsonError(res, 400, "Geen audio ontvangen");
     }
 
-    const sourceLanguage = String(req.body && (req.body.sourceLanguage || req.body.from || req.body.language) ? (req.body.sourceLanguage || req.body.from || req.body.language) : "").trim().toLowerCase();
-    const targetLanguage = String(req.body && (req.body.targetLanguage || req.body.to) ? (req.body.targetLanguage || req.body.to) : "").trim().toLowerCase();
+    const sourceLanguageRaw = String(req.body && (req.body.sourceLanguage || req.body.from || req.body.language) ? (req.body.sourceLanguage || req.body.from || req.body.language) : "").trim();
+    const targetLanguageRaw = String(req.body && (req.body.targetLanguage || req.body.to) ? (req.body.targetLanguage || req.body.to) : "").trim();
+    const sourceLanguage = normalizeWhisperLanguageCode(sourceLanguageRaw);
+    const sourceLanguageName = normalizeEchoLanguageName(sourceLanguageRaw || sourceLanguage);
+    const targetLanguageName = normalizeEchoLanguageName(targetLanguageRaw);
     const premiumKey = String(req.body && (req.body.email || req.body.premiumEmail || req.body.userId || req.body.premiumKey) ? (req.body.email || req.body.premiumEmail || req.body.userId || req.body.premiumKey) : "").trim();
     const premiumPin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
-    const prompt = String(req.body && req.body.prompt ? req.body.prompt : "Dit is een live gesprek. Verwacht natuurlijke spreektaal, korte zinnen, namen, plaatsen, bedragen, aantallen en gewone vragen.").trim();
 
-    if(!sourceLanguage || !targetLanguage){
+    const prompt = String(req.body && req.body.prompt ? req.body.prompt : "").trim() || (
+      "De spreker spreekt " + sourceLanguageName + ". Dit is een live gesprek. " +
+      "Verwacht gewone spreektaal, korte zinnen, namen, plaatsnamen, bedrijfsnamen, bedragen, aantallen en normale vragen. " +
+      "Schrijf alleen op wat er echt gezegd wordt."
+    );
+
+    if(!sourceLanguage || !targetLanguageName){
       try{ fs.unlinkSync(req.file.path); }catch(e){}
       return jsonError(res, 400, "sourceLanguage en targetLanguage zijn verplicht");
     }
@@ -1902,6 +2124,7 @@ app.post("/api/speech/translate-direct", upload.single("audio"), async (req, res
     );
     formData.append("model", "whisper-1");
     formData.append("language", sourceLanguage);
+    formData.append("response_format", "json");
     if(prompt){
       formData.append("prompt", prompt);
     }
@@ -1940,20 +2163,40 @@ app.post("/api/speech/translate-direct", upload.single("audio"), async (req, res
         text: "",
         result: "",
         sourceLanguage,
-        targetLanguage
+        sourceLanguageName,
+        targetLanguage: targetLanguageName,
+        targetLanguageName
       });
     }
 
     const translatedText = await callOpenAI([
       {
         role: "system",
-        content: "Je bent de professionele live tolk van ECHO. Vertaal alleen naar de gevraagde doeltaal. Geef geen uitleg, geen bronzin, geen aanhalingstekens en geen extra tekst. Behoud namen, bedragen, adressen, aantallen, datums, tijden en intentie exact. Maak de vertaling natuurlijk en direct uitspreekbaar."
+        content:
+          "Je bent ECHO, een professionele universele live tolk. Je vertaalt gesproken tekst voor een echt gesprek tussen twee mensen. " +
+          "Vertaal altijd exact van " + sourceLanguageName + " naar " + targetLanguageName + ". " +
+          "Dit geldt voor Nederlands naar elke andere taal en voor elke andere taal terug naar Nederlands. " +
+          "Geef uitsluitend de vertaling in " + targetLanguageName + ". " +
+          "Geen uitleg, geen opmerkingen, geen aanhalingstekens, geen bronzin en geen extra tekst. " +
+          "Gebruik natuurlijke spreektaal zoals een menselijke tolk. " +
+          "Vertaal nooit woord voor woord als dat onnatuurlijk klinkt. Vertaal de bedoeling, toon, vraagvorm en emotie correct. " +
+          "Behoud namen, plaatsnamen, bedrijfsnamen, bedragen, getallen, datums, tijden, telefoonnummers en e-mailadressen exact. " +
+          "Als de zin informeel is, vertaal informeel. Als de zin zakelijk is, vertaal zakelijk. " +
+          "Corrigeer alleen duidelijke transcriptiefouten wanneer de bedoeling overduidelijk is."
       },
       {
         role: "user",
-        content: "Brontaal: " + sourceLanguage + "\nDoeltaal: " + targetLanguage + "\n\nVertaal exact deze tekst:\n" + transcript
+        content:
+          "Brontaal: " + sourceLanguageName + "\n" +
+          "Doeltaal: " + targetLanguageName + "\n\n" +
+          "Gesproken transcript:\n" + transcript + "\n\n" +
+          "Vertaling in " + targetLanguageName + ":"
       }
-    ], 0.05);
+    ], 0);
+
+    const cleanTranslation = String(translatedText || "")
+      .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
+      .trim();
 
     const creditResult = consumePremiumCredit(premiumKey, premiumPin);
     if(!creditResult.ok){
@@ -1967,12 +2210,14 @@ app.post("/api/speech/translate-direct", upload.single("audio"), async (req, res
     res.json({
       ok: true,
       transcript,
-      translation: translatedText,
-      translatedText,
-      text: translatedText,
-      result: translatedText,
+      translation: cleanTranslation,
+      translatedText: cleanTranslation,
+      text: cleanTranslation,
+      result: cleanTranslation,
       sourceLanguage,
-      targetLanguage,
+      sourceLanguageName,
+      targetLanguage: targetLanguageName,
+      targetLanguageName,
       creditsRemaining: creditResult.status.creditsRemaining,
       creditsTotal: creditResult.status.creditsTotal,
       creditMonth: creditResult.status.creditMonth
@@ -1997,6 +2242,6 @@ app.listen(PORT, () => {
   console.log("Stripe webhook secret actief: " + (STRIPE_WEBHOOK_SECRET ? "ja" : "nee"));
   console.log("Resend actief: " + (RESEND_API_KEY ? "ja" : "nee"));
   console.log("From email: " + FROM_EMAIL);
-  console.log("ECHO Premium credits per maand: " + PREMIUM_MONTHLY_CREDITS);
+  console.log("ECHO Premium credits per maand: " + UNLIMITED_FAIR_USE_CREDITS);
   console.log("Premium accounts geladen: " + premiumAccounts.size);
 });
