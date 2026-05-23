@@ -336,15 +336,31 @@ function consumePremiumCredit(value, pin){
 }
 
 
-function addCreditsToAccount(email, credits, reason){
+function addCreditsToAccount(email, credits, reason, stripeSessionId){
   const safeEmail = normalizePremiumKey(email);
   const amount = Math.max(0, Math.floor(Number(credits) || 0));
+  const safeSessionId = String(stripeSessionId || "").trim();
+
   if(!safeEmail || amount <= 0) return null;
 
   const existing = getPremiumAccount(safeEmail) || {};
+  const processedSessions = Array.isArray(existing.processedStripeSessions) ? existing.processedStripeSessions : [];
+
+  if(safeSessionId && processedSessions.includes(safeSessionId)){
+    return {
+      ...existing,
+      duplicateStripeSession: true,
+      duplicateStripeSessionId: safeSessionId
+    };
+  }
+
   const existingCredits = Number(existing.creditsRemaining || 0);
   const existingTotal = Number(existing.creditsTotal || 0);
   const pin = existing.premiumPin || makePremiumPin();
+
+  const nextProcessedSessions = safeSessionId
+    ? processedSessions.concat([safeSessionId]).slice(-100)
+    : processedSessions;
 
   return setPremiumAccount(safeEmail, {
     active: true,
@@ -354,6 +370,8 @@ function addCreditsToAccount(email, credits, reason){
     creditsTotal: existingTotal + amount,
     plan: existing.plan === "unlimited" ? "unlimited" : "credits",
     source: "stripe_credits",
+    processedStripeSessions: nextProcessedSessions,
+    lastStripeSessionId: safeSessionId,
     lastCreditPurchaseAt: new Date().toISOString(),
     lastCreditPurchaseAmount: amount,
     reason: reason || "stripe_credit_purchase"
@@ -409,7 +427,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req,
       const packageType = String(metadata.packageType || "");
 
       if(mode === "payment" && packageType === "credits" && packageCredits > 0){
-        addCreditsToAccount(email, packageCredits, "checkout.session.completed.credit_pack");
+        addCreditsToAccount(email, packageCredits, "checkout.session.completed.credit_pack", object.id || "");
       }else{
         setPremiumForStripeData({
           email,
@@ -1153,7 +1171,7 @@ app.post("/api/stripe/confirm-session", async (req, res) => {
     }
 
     if(mode === "payment" && packageType === "credits" && packageCredits > 0){
-      const creditAccount = addCreditsToAccount(email, packageCredits, "checkout.session.confirmed.credit_pack");
+      const creditAccount = addCreditsToAccount(email, packageCredits, "checkout.session.confirmed.credit_pack", session.id || "");
       return res.json({
         ok: true,
         premium: true,
@@ -1165,7 +1183,7 @@ app.post("/api/stripe/confirm-session", async (req, res) => {
         creditMonth: creditAccount ? String(creditAccount.creditMonth || currentPremiumMonth()) : currentPremiumMonth(),
         plan: creditAccount ? String(creditAccount.plan || "credits") : "credits",
         addedCredits: packageCredits,
-        message: packageCredits + " AI credits zijn toegevoegd."
+        message: creditAccount && creditAccount.duplicateStripeSession ? "Deze betaling was al verwerkt. Credits zijn niet dubbel toegevoegd." : packageCredits + " AI credits zijn toegevoegd."
       });
     }
 
