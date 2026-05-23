@@ -43,6 +43,7 @@ try{
 }
 
 const PREMIUM_MONTHLY_CREDITS = Number(process.env.ECHO_PREMIUM_MONTHLY_CREDITS || 3000);
+const STARTER_FREE_CREDITS = Number(process.env.ECHO_STARTER_FREE_CREDITS || 10);
 
 const DATA_DIR = process.env.ECHO_DATA_DIR || "/opt/render/project/src/data";
 
@@ -115,19 +116,33 @@ function setPremiumAccount(key, data){
   const existing = premiumAccounts.get(safeKey) || {};
   const nowMonth = currentPremiumMonth();
   const shouldActivate = data && data.active === true;
+  const incomingPlan = data && data.plan ? String(data.plan) : "";
+  const existingPlan = existing.plan ? String(existing.plan) : "";
+  const finalPlan = incomingPlan || existingPlan || (data && data.source === "stripe" ? "premium" : (existing.source === "stripe" || existing.subscriptionId ? "premium" : "premium"));
+  const planCreditsTotal = finalPlan === "starter" ? STARTER_FREE_CREDITS : PREMIUM_MONTHLY_CREDITS;
   const previousMonth = existing.creditMonth || nowMonth;
-  const previousCredits = Number.isFinite(Number(existing.creditsRemaining)) ? Number(existing.creditsRemaining) : PREMIUM_MONTHLY_CREDITS;
+  const previousCredits = Number.isFinite(Number(existing.creditsRemaining)) ? Number(existing.creditsRemaining) : planCreditsTotal;
 
   let creditsRemaining = previousCredits;
   let creditMonth = previousMonth;
+  let creditsTotal = Number.isFinite(Number(existing.creditsTotal)) ? Number(existing.creditsTotal) : planCreditsTotal;
 
-  if(shouldActivate && (!existing.active || previousMonth !== nowMonth)){
+  if(shouldActivate && finalPlan !== "starter" && (!existing.active || previousMonth !== nowMonth)){
     creditsRemaining = PREMIUM_MONTHLY_CREDITS;
+    creditsTotal = PREMIUM_MONTHLY_CREDITS;
     creditMonth = nowMonth;
+  }
+
+  if(finalPlan === "starter"){
+    creditsTotal = STARTER_FREE_CREDITS;
   }
 
   if(data && typeof data.creditsRemaining !== "undefined"){
     creditsRemaining = Number(data.creditsRemaining);
+  }
+
+  if(data && typeof data.creditsTotal !== "undefined"){
+    creditsTotal = Number(data.creditsTotal);
   }
 
   let premiumPin = existing.premiumPin || "";
@@ -142,9 +157,10 @@ function setPremiumAccount(key, data){
     ...existing,
     ...data,
     key: safeKey,
+    plan: finalPlan,
     premiumPin,
     creditsRemaining: Math.max(0, Math.floor(Number(creditsRemaining) || 0)),
-    creditsTotal: PREMIUM_MONTHLY_CREDITS,
+    creditsTotal: Math.max(0, Math.floor(Number(creditsTotal) || 0)),
     creditMonth,
     updatedAt: new Date().toISOString()
   };
@@ -241,8 +257,9 @@ function getPremiumAccount(value){
   const safeKey = normalizePremiumKey(value);
   if(!safeKey) return null;
   const account = premiumAccounts.get(safeKey) || null;
-  if(account && account.active && account.creditMonth !== currentPremiumMonth()){
-    return setPremiumAccount(safeKey, { creditsRemaining: PREMIUM_MONTHLY_CREDITS, creditMonth: currentPremiumMonth() });
+  const plan = account && account.plan ? String(account.plan) : "premium";
+  if(account && account.active && plan !== "starter" && account.creditMonth !== currentPremiumMonth()){
+    return setPremiumAccount(safeKey, { creditsRemaining: PREMIUM_MONTHLY_CREDITS, creditsTotal: PREMIUM_MONTHLY_CREDITS, creditMonth: currentPremiumMonth(), plan: "premium" });
   }
   return account;
 }
@@ -260,6 +277,8 @@ function getPremiumStatus(value, pin, options){
     creditsRemaining: account ? Number(account.creditsRemaining || 0) : 0,
     creditsTotal: account ? Number(account.creditsTotal || PREMIUM_MONTHLY_CREDITS) : PREMIUM_MONTHLY_CREDITS,
     creditMonth: account ? String(account.creditMonth || currentPremiumMonth()) : currentPremiumMonth(),
+    plan: account ? String(account.plan || "premium") : "",
+    starterCreditsGranted: account ? !!account.starterCreditsGranted : false,
     email: account ? String(account.email || "") : "",
     subscriptionId: account ? String(account.subscriptionId || "") : "",
     subscriptionStatus: account ? String(account.subscriptionStatus || "") : "",
@@ -556,6 +575,23 @@ function premiumPinEmailHtml(pin){
     "<p style=\"font-size:28px;font-weight:800;letter-spacing:4px\">" + pin + "</p>" +
     "<p>Gebruik deze pincode samen met je e-mailadres om AI Premium te activeren.</p>" +
     "<p>Als jij deze reset niet hebt aangevraagd, neem dan contact op met FormForge.</p>" +
+    "<p>FormForge ECHO</p>" +
+  "</div>";
+}
+
+
+function starterCreditsEmailText(pin, credits){
+  return "Beste ECHO gebruiker,\n\nJe ECHO account is aangemaakt.\n\nJe 6 cijferige pincode is: " + pin + "\nJe hebt " + credits + " gratis AI credits ontvangen.\n\nGebruik deze pincode samen met je e-mailadres om ECHO AI te activeren.\n\nFormForge ECHO";
+}
+
+function starterCreditsEmailHtml(pin, credits){
+  return "<div style=\"font-family:Arial,sans-serif;line-height:1.5;color:#111\">" +
+    "<h2>Je ECHO startercredits</h2>" +
+    "<p>Je ECHO account is aangemaakt.</p>" +
+    "<p>Je 6 cijferige pincode is:</p>" +
+    "<p style=\"font-size:28px;font-weight:800;letter-spacing:4px\">" + pin + "</p>" +
+    "<p>Je hebt <strong>" + credits + " gratis AI credits</strong> ontvangen.</p>" +
+    "<p>Gebruik deze pincode samen met je e-mailadres om ECHO AI te activeren.</p>" +
     "<p>FormForge ECHO</p>" +
   "</div>";
 }
@@ -947,6 +983,7 @@ app.get("/api/stripe/status", (req, res) => {
     fromEmail: FROM_EMAIL,
     premiumAccountsInMemory: premiumAccounts.size,
     monthlyCredits: PREMIUM_MONTHLY_CREDITS,
+    starterFreeCredits: STARTER_FREE_CREDITS,
     premiumStoreFile: PREMIUM_STORE_FILE,
     mode: STRIPE_SECRET_KEY.startsWith("sk_live_") ? "live" : (STRIPE_SECRET_KEY.startsWith("sk_test_") ? "test" : "unknown")
   });
@@ -964,6 +1001,8 @@ app.get("/api/stripe/premium-status", async (req, res) => {
     creditsRemaining: status.creditsRemaining,
     creditsTotal: status.creditsTotal,
     creditMonth: status.creditMonth,
+    plan: status.plan,
+    starterCreditsGranted: status.starterCreditsGranted,
     subscriptionStatus: status.subscriptionStatus,
     periodStart: status.periodStart,
     periodEnd: status.periodEnd,
@@ -989,6 +1028,8 @@ app.post("/api/stripe/premium-status", async (req, res) => {
     creditsRemaining: status.creditsRemaining,
     creditsTotal: status.creditsTotal,
     creditMonth: status.creditMonth,
+    plan: status.plan,
+    starterCreditsGranted: status.starterCreditsGranted,
     subscriptionStatus: status.subscriptionStatus,
     periodStart: status.periodStart,
     periodEnd: status.periodEnd,
@@ -1178,6 +1219,109 @@ app.post("/api/stripe/request-pin-reset", async (req, res) => {
     });
   }catch(err){
     jsonError(res, 500, "Pincode reset mail kon niet worden verstuurd", err.message || String(err));
+  }
+});
+
+app.post("/api/stripe/activate-starter", async (req, res) => {
+  try{
+    const email = normalizePremiumKey(req.body && req.body.email ? req.body.email : "");
+    const suppliedPin = normalizePremiumPin(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "");
+
+    if(!email){
+      return jsonError(res, 400, "E-mailadres ontbreekt");
+    }
+
+    let account = getPremiumAccount(email);
+
+    if(account && account.premiumPin && suppliedPin && !verifyPremiumPin(account, suppliedPin)){
+      return jsonError(res, 403, "Pincode is ongeldig voor dit e-mailadres");
+    }
+
+    if(account && account.active && account.plan !== "starter"){
+      const status = getPremiumStatus(email, suppliedPin || account.premiumPin, { allowWithoutPin: !suppliedPin });
+      return res.json({
+        ok: true,
+        alreadyActive: true,
+        premium: status.premium || !!account.active,
+        active: !!account.active,
+        email,
+        premiumPin: account.premiumPin || "",
+        pin: account.premiumPin || "",
+        creditsRemaining: Number(account.creditsRemaining || 0),
+        creditsTotal: Number(account.creditsTotal || PREMIUM_MONTHLY_CREDITS),
+        creditMonth: String(account.creditMonth || currentPremiumMonth()),
+        plan: String(account.plan || "premium"),
+        starterCreditsGranted: !!account.starterCreditsGranted,
+        message: "Dit e-mailadres heeft al een actief AI account."
+      });
+    }
+
+    if(account && account.starterCreditsGranted){
+      return res.json({
+        ok: true,
+        alreadyActive: true,
+        premium: true,
+        active: true,
+        email,
+        premiumPin: account.premiumPin || "",
+        pin: account.premiumPin || "",
+        creditsRemaining: Number(account.creditsRemaining || 0),
+        creditsTotal: Number(account.creditsTotal || STARTER_FREE_CREDITS),
+        creditMonth: String(account.creditMonth || currentPremiumMonth()),
+        plan: "starter",
+        starterCreditsGranted: true,
+        message: "Startercredits waren al geactiveerd voor dit e-mailadres."
+      });
+    }
+
+    const pin = suppliedPin && suppliedPin.length === 6 ? suppliedPin : (account && account.premiumPin ? account.premiumPin : makePremiumPin());
+
+    account = setPremiumAccount(email, {
+      active: true,
+      email,
+      premiumPin: pin,
+      creditsRemaining: STARTER_FREE_CREDITS,
+      creditsTotal: STARTER_FREE_CREDITS,
+      creditMonth: currentPremiumMonth(),
+      plan: "starter",
+      source: "starter",
+      starterCreditsGranted: true,
+      starterCreditsGrantedAt: new Date().toISOString(),
+      reason: "starter_credits_activated"
+    });
+
+    let emailSent = false;
+    if(RESEND_API_KEY){
+      try{
+        await sendResendEmail({
+          to: email,
+          subject: "Je ECHO startercredits en pincode",
+          text: starterCreditsEmailText(pin, STARTER_FREE_CREDITS),
+          html: starterCreditsEmailHtml(pin, STARTER_FREE_CREDITS)
+        });
+        emailSent = true;
+      }catch(mailErr){
+        console.warn("Startercredits mail kon niet worden verstuurd:", mailErr.message || String(mailErr));
+      }
+    }
+
+    res.json({
+      ok: true,
+      premium: true,
+      active: true,
+      email,
+      premiumPin: pin,
+      pin,
+      creditsRemaining: Number(account.creditsRemaining || 0),
+      creditsTotal: Number(account.creditsTotal || STARTER_FREE_CREDITS),
+      creditMonth: String(account.creditMonth || currentPremiumMonth()),
+      plan: "starter",
+      starterCreditsGranted: true,
+      emailSent,
+      message: STARTER_FREE_CREDITS + " gratis AI credits zijn geactiveerd."
+    });
+  }catch(err){
+    jsonError(res, 500, "Startercredits konden niet worden geactiveerd", err.message || String(err));
   }
 });
 
