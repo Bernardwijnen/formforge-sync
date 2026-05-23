@@ -313,25 +313,58 @@ function getPremiumStatus(value, pin, options){
   };
 }
 
-function consumePremiumCredit(value, pin){
+function consumePremiumCredit(value, pin, deviceId){
   const safeKey = normalizePremiumKey(value);
+  const safeDeviceId = String(deviceId || "").trim();
+
   if(!safeKey){
     return { ok: false, status: 401, error: "Premium e-mailadres ontbreekt" };
   }
+
   const account = getPremiumAccount(safeKey);
+
   if(!account || !account.active){
     return { ok: false, status: 402, error: "AI Premium is niet actief voor dit account" };
   }
+
   if(!verifyPremiumPin(account, pin)){
     return { ok: false, status: 403, error: "Premium pincode is ongeldig" };
   }
+
+  if(String(account.plan || "") === "unlimited"){
+    if(!safeDeviceId){
+      return { ok: false, status: 403, error: "Unlimited Premium vereist apparaatcontrole" };
+    }
+
+    const registeredDeviceId = String(account.unlimitedDeviceId || "").trim();
+
+    if(registeredDeviceId && registeredDeviceId !== safeDeviceId){
+      return {
+        ok: false,
+        status: 403,
+        error: "Unlimited Premium is al actief op een ander apparaat. Dit abonnement werkt op één toestel tegelijk."
+      };
+    }
+
+    if(!registeredDeviceId){
+      setPremiumAccount(safeKey, {
+        unlimitedDeviceId: safeDeviceId,
+        unlimitedDeviceActivatedAt: new Date().toISOString(),
+        reason: "unlimited_device_registered"
+      });
+    }
+  }
+
   if(Number(account.creditsRemaining || 0) <= 0){
     return { ok: false, status: 402, error: "AI credits zijn op voor deze maand" };
   }
+
   const updated = setPremiumAccount(safeKey, {
     creditsRemaining: Number(account.creditsRemaining || 0) - 1,
-    lastCreditUsedAt: new Date().toISOString()
+    lastCreditUsedAt: new Date().toISOString(),
+    lastDeviceId: safeDeviceId || account.lastDeviceId || ""
   });
+
   return { ok: true, account: updated, status: getPremiumStatus(safeKey, pin) };
 }
 
@@ -852,6 +885,25 @@ app.post("/api/openai/tts", async (req, res) => {
       return jsonError(res, premiumStatus.pinRequired ? 403 : 402, premiumStatus.pinRequired ? "Premium pincode is ongeldig" : "AI Premium is niet actief voor dit account");
     }
 
+    const deviceId = String(req.body && (req.body.deviceId || req.body.device_id || req.body.clientDeviceId) ? (req.body.deviceId || req.body.device_id || req.body.clientDeviceId) : "").trim();
+    const account = getPremiumAccount(premiumKey);
+    if(account && String(account.plan || "") === "unlimited"){
+      const registeredDeviceId = String(account.unlimitedDeviceId || "").trim();
+      if(!deviceId){
+        return jsonError(res, 403, "Unlimited Premium vereist apparaatcontrole");
+      }
+      if(registeredDeviceId && registeredDeviceId !== deviceId){
+        return jsonError(res, 403, "Unlimited Premium is al actief op een ander apparaat. Dit abonnement werkt op één toestel tegelijk.");
+      }
+      if(!registeredDeviceId){
+        setPremiumAccount(premiumKey, {
+          unlimitedDeviceId: deviceId,
+          unlimitedDeviceActivatedAt: new Date().toISOString(),
+          reason: "unlimited_device_registered_tts"
+        });
+      }
+    }
+
     const voice = normalizeTtsVoice(req.body && req.body.voice ? req.body.voice : process.env.OPENAI_TTS_VOICE || "nova");
     const model = normalizeTtsModel(req.body && req.body.model ? req.body.model : process.env.OPENAI_TTS_MODEL || "gpt-4o-mini-tts");
     const instructions = String(req.body && req.body.instructions ? req.body.instructions : buildTtsInstructions(language)).trim();
@@ -1225,7 +1277,8 @@ app.post("/api/stripe/confirm-session", async (req, res) => {
 app.post("/api/stripe/use-credit", (req, res) => {
   const key = String(req.body && (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) ? (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) : "").trim();
   const pin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
-  const result = consumePremiumCredit(key, pin);
+  const deviceId = String(req.body && (req.body.deviceId || req.body.device_id || req.body.clientDeviceId) ? (req.body.deviceId || req.body.device_id || req.body.clientDeviceId) : "").trim();
+  const result = consumePremiumCredit(key, pin, deviceId);
   if(!result.ok){
     return jsonError(res, result.status || 400, result.error || "Credit kon niet worden verwerkt");
   }
@@ -1239,6 +1292,54 @@ app.post("/api/stripe/use-credit", (req, res) => {
   });
 });
 
+
+
+app.post("/api/stripe/reset-unlimited-device", (req, res) => {
+  try{
+    const email = normalizePremiumKey(req.body && req.body.email ? req.body.email : "");
+    const pin = normalizePremiumPin(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "");
+
+    if(!email){
+      return jsonError(res, 400, "E-mailadres ontbreekt");
+    }
+
+    if(!pin){
+      return jsonError(res, 400, "Pincode ontbreekt");
+    }
+
+    const account = getPremiumAccount(email);
+
+    if(!account || !account.active){
+      return jsonError(res, 404, "Geen actief account gevonden");
+    }
+
+    if(!verifyPremiumPin(account, pin)){
+      return jsonError(res, 403, "Pincode is ongeldig");
+    }
+
+    if(String(account.plan || "") !== "unlimited"){
+      return jsonError(res, 400, "Dit is geen Unlimited Premium account");
+    }
+
+    const updated = setPremiumAccount(email, {
+      unlimitedDeviceId: "",
+      unlimitedDeviceResetAt: new Date().toISOString(),
+      reason: "unlimited_device_reset_by_user"
+    });
+
+    res.json({
+      ok: true,
+      reset: true,
+      premium: true,
+      plan: "unlimited",
+      creditsRemaining: Number(updated.creditsRemaining || 0),
+      creditsTotal: Number(updated.creditsTotal || 0),
+      message: "Apparaatkoppeling is gereset. Het volgende toestel dat vertaalt wordt het actieve Unlimited toestel."
+    });
+  }catch(err){
+    jsonError(res, 500, "Apparaatkoppeling kon niet worden gereset", err.message || String(err));
+  }
+});
 
 app.post("/api/stripe/cancel-subscription", async (req, res) => {
   try{
@@ -2216,7 +2317,7 @@ app.post("/api/speech/translate-direct", upload.single("audio"), async (req, res
       .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
       .trim();
 
-    const creditResult = consumePremiumCredit(premiumKey, premiumPin);
+    const creditResult = consumePremiumCredit(premiumKey, premiumPin, deviceId);
     if(!creditResult.ok){
       return jsonError(
         res,
