@@ -281,72 +281,15 @@ function getPremiumAccount(value){
   return account;
 }
 
-function normalizeDeviceId(value){
-  return String(value || "")
-    .trim()
-    .replace(/[^a-zA-Z0-9._:-]/g, "")
-    .slice(0, 128);
-}
-
-function getRequestDeviceId(req){
-  if(!req) return "";
-  return normalizeDeviceId(
-    (req.body && (req.body.deviceId || req.body.echoDeviceId || req.body.device_id)) ||
-    (req.query && (req.query.deviceId || req.query.echoDeviceId || req.query.device_id)) ||
-    (req.headers && (req.headers["x-echo-device-id"] || req.headers["x-device-id"])) ||
-    ""
-  );
-}
-
-function isUnlimitedAccount(account){
-  return !!(account && String(account.plan || "").toLowerCase() === "unlimited");
-}
-
 function getPremiumStatus(value, pin, options){
-  const safeKey = normalizePremiumKey(value);
-  let account = getPremiumAccount(safeKey);
+  const account = getPremiumAccount(value);
   const allowWithoutPin = !!(options && options.allowWithoutPin);
-  const deviceId = normalizeDeviceId(options && options.deviceId);
-  let pinOk = account && account.active && (allowWithoutPin || verifyPremiumPin(account, pin));
-  let deviceOk = true;
-  let deviceRequired = false;
-  let deviceBlocked = false;
-  let deviceMessage = "";
-
-  if(pinOk && isUnlimitedAccount(account)){
-    if(!deviceId){
-      pinOk = false;
-      deviceOk = false;
-      deviceRequired = true;
-      deviceMessage = "Apparaatcontrole ontbreekt";
-    }else if(!account.deviceId){
-      account = setPremiumAccount(safeKey, {
-        deviceId,
-        deviceBoundAt: new Date().toISOString(),
-        lastDeviceSeenAt: new Date().toISOString(),
-        reason: "unlimited_device_bound"
-      });
-    }else if(String(account.deviceId) !== deviceId){
-      pinOk = false;
-      deviceOk = false;
-      deviceBlocked = true;
-      deviceMessage = "Dit Unlimited Premium account is al gekoppeld aan een ander toestel";
-    }else{
-      account = setPremiumAccount(safeKey, {
-        lastDeviceSeenAt: new Date().toISOString()
-      });
-    }
-  }
+  const pinOk = account && account.active && (allowWithoutPin || verifyPremiumPin(account, pin));
 
   return {
     premium: !!pinOk,
     active: !!pinOk,
-    pinRequired: !!(account && account.active && !pinOk && !deviceRequired && !deviceBlocked),
-    deviceOk: !!deviceOk,
-    deviceRequired: !!deviceRequired,
-    deviceBlocked: !!deviceBlocked,
-    deviceMessage,
-    deviceId: account && account.deviceId ? String(account.deviceId) : "",
+    pinRequired: !!(account && account.active && !pinOk),
     pinOk: !!pinOk,
     creditsRemaining: account ? Number(account.creditsRemaining || 0) : 0,
     creditsTotal: account ? Number(account.creditsTotal || 0) : 0,
@@ -370,42 +313,26 @@ function getPremiumStatus(value, pin, options){
   };
 }
 
-function consumePremiumCredit(value, pin, deviceId){
+function consumePremiumCredit(value, pin){
   const safeKey = normalizePremiumKey(value);
   if(!safeKey){
     return { ok: false, status: 401, error: "Premium e-mailadres ontbreekt" };
   }
-
-  const premiumStatus = getPremiumStatus(safeKey, pin, { deviceId });
-  if(!premiumStatus.premium){
-    if(premiumStatus.deviceRequired){
-      return { ok: false, status: 403, error: "Apparaatcontrole ontbreekt voor Unlimited Premium" };
-    }
-    if(premiumStatus.deviceBlocked){
-      return { ok: false, status: 403, error: premiumStatus.deviceMessage || "Dit Unlimited Premium account is al gekoppeld aan een ander toestel" };
-    }
-    return { ok: false, status: premiumStatus.pinRequired ? 403 : 402, error: premiumStatus.pinRequired ? "Premium pincode is ongeldig" : "AI Premium is niet actief voor dit account" };
-  }
-
   const account = getPremiumAccount(safeKey);
   if(!account || !account.active){
     return { ok: false, status: 402, error: "AI Premium is niet actief voor dit account" };
   }
-
+  if(!verifyPremiumPin(account, pin)){
+    return { ok: false, status: 403, error: "Premium pincode is ongeldig" };
+  }
   if(Number(account.creditsRemaining || 0) <= 0){
     return { ok: false, status: 402, error: "AI credits zijn op voor deze maand" };
   }
-
-  const nextCredits = isUnlimitedAccount(account)
-    ? Number(account.creditsRemaining || 0)
-    : Number(account.creditsRemaining || 0) - 1;
-
   const updated = setPremiumAccount(safeKey, {
-    creditsRemaining: nextCredits,
+    creditsRemaining: Number(account.creditsRemaining || 0) - 1,
     lastCreditUsedAt: new Date().toISOString()
   });
-
-  return { ok: true, account: updated, status: getPremiumStatus(safeKey, pin, { deviceId }) };
+  return { ok: true, account: updated, status: getPremiumStatus(safeKey, pin) };
 }
 
 
@@ -911,7 +838,6 @@ app.post("/api/openai/tts", async (req, res) => {
     const language = String(req.body && (req.body.language || req.body.lang) ? (req.body.language || req.body.lang) : "").trim();
     const premiumKey = String(req.body && (req.body.email || req.body.premiumEmail || req.body.userId || req.body.premiumKey) ? (req.body.email || req.body.premiumEmail || req.body.userId || req.body.premiumKey) : "").trim();
     const premiumPin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
-    const deviceId = getRequestDeviceId(req);
 
     if(!text){
       return jsonError(res, 400, "Tekst ontbreekt");
@@ -921,14 +847,8 @@ app.post("/api/openai/tts", async (req, res) => {
       return jsonError(res, 400, "Tekst is te lang voor AI stem");
     }
 
-    const premiumStatus = getPremiumStatus(premiumKey, premiumPin, { deviceId });
+    const premiumStatus = getPremiumStatus(premiumKey, premiumPin);
     if(!premiumStatus.premium){
-      if(premiumStatus.deviceRequired){
-        return jsonError(res, 403, "Apparaatcontrole ontbreekt voor Unlimited Premium");
-      }
-      if(premiumStatus.deviceBlocked){
-        return jsonError(res, 403, premiumStatus.deviceMessage || "Dit Unlimited Premium account is al gekoppeld aan een ander toestel");
-      }
       return jsonError(res, premiumStatus.pinRequired ? 403 : 402, premiumStatus.pinRequired ? "Premium pincode is ongeldig" : "AI Premium is niet actief voor dit account");
     }
 
@@ -1150,9 +1070,6 @@ app.get("/api/stripe/status", (req, res) => {
     webhookSecretConfigured: !!STRIPE_WEBHOOK_SECRET,
     resendConfigured: !!RESEND_API_KEY,
     fromEmail: FROM_EMAIL,
-    deviceLockEnabled: true,
-    deviceLockMode: "unlimited_one_device",
-    deviceLockField: "deviceId",
     premiumAccountsInMemory: premiumAccounts.size,
     unlimitedFairUseCredits: UNLIMITED_FAIR_USE_CREDITS,
     starterFreeCredits: STARTER_FREE_CREDITS,
@@ -1170,17 +1087,12 @@ app.get("/api/stripe/status", (req, res) => {
 app.get("/api/stripe/premium-status", async (req, res) => {
   const key = String(req.query.email || req.query.userId || req.query.customerId || req.query.subscriptionId || "").trim();
   const pin = String(req.query.pin || req.query.pincode || req.query.premiumPin || "").trim();
-  const deviceId = getRequestDeviceId(req);
   await refreshPremiumAccountFromStripe(key);
-  const status = getPremiumStatus(key, pin, { deviceId });
+  const status = getPremiumStatus(key, pin);
   res.json({
     ok: true,
     premium: status.premium,
     pinRequired: status.pinRequired,
-    deviceOk: status.deviceOk,
-    deviceRequired: status.deviceRequired,
-    deviceBlocked: status.deviceBlocked,
-    deviceMessage: status.deviceMessage,
     creditsRemaining: status.creditsRemaining,
     creditsTotal: status.creditsTotal,
     creditMonth: status.creditMonth,
@@ -1202,17 +1114,12 @@ app.get("/api/stripe/premium-status", async (req, res) => {
 app.post("/api/stripe/premium-status", async (req, res) => {
   const key = String(req.body && (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) ? (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) : "").trim();
   const pin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
-  const deviceId = getRequestDeviceId(req);
   await refreshPremiumAccountFromStripe(key);
-  const status = getPremiumStatus(key, pin, { deviceId });
+  const status = getPremiumStatus(key, pin);
   res.json({
     ok: true,
     premium: status.premium,
     pinRequired: status.pinRequired,
-    deviceOk: status.deviceOk,
-    deviceRequired: status.deviceRequired,
-    deviceBlocked: status.deviceBlocked,
-    deviceMessage: status.deviceMessage,
     creditsRemaining: status.creditsRemaining,
     creditsTotal: status.creditsTotal,
     creditMonth: status.creditMonth,
@@ -1318,8 +1225,7 @@ app.post("/api/stripe/confirm-session", async (req, res) => {
 app.post("/api/stripe/use-credit", (req, res) => {
   const key = String(req.body && (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) ? (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) : "").trim();
   const pin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
-  const deviceId = getRequestDeviceId(req);
-  const result = consumePremiumCredit(key, pin, deviceId);
+  const result = consumePremiumCredit(key, pin);
   if(!result.ok){
     return jsonError(res, result.status || 400, result.error || "Credit kon niet worden verwerkt");
   }
@@ -1345,16 +1251,6 @@ app.post("/api/stripe/cancel-subscription", async (req, res) => {
 
     if(!pin){
       return jsonError(res, 400, "Pincode ontbreekt");
-    }
-
-    const deviceId = getRequestDeviceId(req);
-    const status = getPremiumStatus(email, pin, { deviceId });
-
-    if(status.deviceRequired){
-      return jsonError(res, 403, "Apparaatcontrole ontbreekt voor Unlimited Premium");
-    }
-    if(status.deviceBlocked){
-      return jsonError(res, 403, status.deviceMessage || "Dit Unlimited Premium account is al gekoppeld aan een ander toestel");
     }
 
     const account = getPremiumAccount(email);
@@ -2207,7 +2103,6 @@ app.post("/api/speech/translate-direct", upload.single("audio"), async (req, res
     const targetLanguageName = normalizeEchoLanguageName(targetLanguageRaw);
     const premiumKey = String(req.body && (req.body.email || req.body.premiumEmail || req.body.userId || req.body.premiumKey) ? (req.body.email || req.body.premiumEmail || req.body.userId || req.body.premiumKey) : "").trim();
     const premiumPin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
-    const deviceId = getRequestDeviceId(req);
 
     const prompt = String(req.body && req.body.prompt ? req.body.prompt : "").trim() || (
       "De spreker spreekt " + sourceLanguageName + ". Dit is een live gesprek. " +
@@ -2220,15 +2115,9 @@ app.post("/api/speech/translate-direct", upload.single("audio"), async (req, res
       return jsonError(res, 400, "sourceLanguage en targetLanguage zijn verplicht");
     }
 
-    const premiumStatusBefore = getPremiumStatus(premiumKey, premiumPin, { deviceId });
+    const premiumStatusBefore = getPremiumStatus(premiumKey, premiumPin);
     if(!premiumStatusBefore.premium){
       try{ fs.unlinkSync(req.file.path); }catch(e){}
-      if(premiumStatusBefore.deviceRequired){
-        return jsonError(res, 403, "Apparaatcontrole ontbreekt voor Unlimited Premium");
-      }
-      if(premiumStatusBefore.deviceBlocked){
-        return jsonError(res, 403, premiumStatusBefore.deviceMessage || "Dit Unlimited Premium account is al gekoppeld aan een ander toestel");
-      }
       return jsonError(
         res,
         premiumStatusBefore.pinRequired ? 403 : 402,
@@ -2327,7 +2216,7 @@ app.post("/api/speech/translate-direct", upload.single("audio"), async (req, res
       .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
       .trim();
 
-    const creditResult = consumePremiumCredit(premiumKey, premiumPin, deviceId);
+    const creditResult = consumePremiumCredit(premiumKey, premiumPin);
     if(!creditResult.ok){
       return jsonError(
         res,
