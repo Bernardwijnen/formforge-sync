@@ -42,7 +42,7 @@ try{
   console.warn("stripe package niet geladen. Stripe webhook verificatie blijft beperkt.");
 }
 
-const STARTER_FREE_CREDITS = Number(process.env.ECHO_STARTER_FREE_CREDITS || 100);
+const STARTER_FREE_CREDITS = Number(process.env.ECHO_STARTER_FREE_CREDITS || 10);
 const UNLIMITED_FAIR_USE_CREDITS = Number(process.env.ECHO_UNLIMITED_FAIR_USE_CREDITS || 999999);
 
 const STRIPE_CREDITS_100_PRICE_ID = process.env.STRIPE_CREDITS_100_PRICE_ID || "price_1TaHrD5s8MDSsy0eV1krtPFL";
@@ -669,57 +669,14 @@ function premiumPinEmailHtml(pin){
 }
 
 
-function makeStarterVerificationToken(){
-  try{
-    return crypto.randomBytes(32).toString("hex");
-  }catch(err){
-    return String(Date.now()) + String(Math.random()).replace(/\D/g, "");
-  }
-}
-
-function sha256(value){
-  return crypto.createHash("sha256").update(String(value || "")).digest("hex");
-}
-
-function getPublicBaseUrl(req){
-  const configured = String(process.env.ECHO_PUBLIC_BASE_URL || process.env.PUBLIC_BASE_URL || "").trim();
-  if(configured){
-    return configured.replace(/\/$/, "");
-  }
-  const proto = String(req.headers["x-forwarded-proto"] || req.protocol || "https").split(",")[0].trim();
-  const host = String(req.headers["x-forwarded-host"] || req.get("host") || "").split(",")[0].trim();
-  return (proto || "https") + "://" + host;
-}
-
-function makeStarterVerificationLink(req, token){
-  return getPublicBaseUrl(req) + "/api/stripe/verify-starter?token=" + encodeURIComponent(token);
-}
-
-function starterVerificationEmailText(link, credits){
-  return "Beste ECHO gebruiker,\n\nKlik op de onderstaande verificatielink om je e-mailadres te bevestigen. Pas daarna worden je " + credits + " gratis AI credits actief.\n\n" + link + "\n\nHeb jij dit niet aangevraagd? Dan hoef je niets te doen.\n\nFormForge ECHO";
-}
-
-function starterVerificationEmailHtml(link, credits){
-  return "<div style=\"font-family:Arial,sans-serif;line-height:1.5;color:#111\">" +
-    "<h2>Bevestig je ECHO e-mailadres</h2>" +
-    "<p>Klik op de onderstaande knop om je e-mailadres te bevestigen.</p>" +
-    "<p>Pas na deze bevestiging worden je <strong>" + credits + " gratis AI credits</strong> actief.</p>" +
-    "<p><a href=\"" + link + "\" style=\"display:inline-block;background:#080808;color:#fff;text-decoration:none;padding:14px 22px;border-radius:12px;font-weight:800\">E-mailadres bevestigen</a></p>" +
-    "<p>Werkt de knop niet? Kopieer dan deze link in je browser:</p>" +
-    "<p style=\"word-break:break-all\">" + link + "</p>" +
-    "<p>Heb jij dit niet aangevraagd? Dan hoef je niets te doen.</p>" +
-    "<p>FormForge ECHO</p>" +
-  "</div>";
-}
-
 function starterCreditsEmailText(pin, credits){
-  return "Beste ECHO gebruiker,\n\nJe e-mailadres is bevestigd.\n\nJe 6 cijferige pincode is: " + pin + "\nJe hebt " + credits + " gratis AI credits ontvangen.\n\nGebruik deze pincode samen met je e-mailadres om ECHO AI te activeren.\n\nFormForge ECHO";
+  return "Beste ECHO gebruiker,\n\nJe ECHO account is aangemaakt.\n\nJe 6 cijferige pincode is: " + pin + "\nJe hebt " + credits + " gratis AI credits ontvangen.\n\nGebruik deze pincode samen met je e-mailadres om ECHO AI te activeren.\n\nFormForge ECHO";
 }
 
 function starterCreditsEmailHtml(pin, credits){
   return "<div style=\"font-family:Arial,sans-serif;line-height:1.5;color:#111\">" +
-    "<h2>Je ECHO startercredits zijn actief</h2>" +
-    "<p>Je e-mailadres is bevestigd.</p>" +
+    "<h2>Je ECHO startercredits</h2>" +
+    "<p>Je ECHO account is aangemaakt.</p>" +
     "<p>Je 6 cijferige pincode is:</p>" +
     "<p style=\"font-size:28px;font-weight:800;letter-spacing:4px\">" + pin + "</p>" +
     "<p>Je hebt <strong>" + credits + " gratis AI credits</strong> ontvangen.</p>" +
@@ -1384,6 +1341,7 @@ app.post("/api/stripe/request-pin-reset", async (req, res) => {
 app.post("/api/stripe/activate-starter", async (req, res) => {
   try{
     const email = normalizePremiumKey(req.body && req.body.email ? req.body.email : "");
+    const suppliedPin = normalizePremiumPin(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "");
 
     if(!email){
       return jsonError(res, 400, "E-mailadres ontbreekt");
@@ -1391,14 +1349,20 @@ app.post("/api/stripe/activate-starter", async (req, res) => {
 
     let account = getPremiumAccount(email);
 
+    if(account && account.premiumPin && suppliedPin && !verifyPremiumPin(account, suppliedPin)){
+      return jsonError(res, 403, "Pincode is ongeldig voor dit e-mailadres");
+    }
+
     if(account && account.active && account.plan !== "starter"){
-      const status = getPremiumStatus(email, account.premiumPin || "", { allowWithoutPin: true });
+      const status = getPremiumStatus(email, suppliedPin || account.premiumPin, { allowWithoutPin: !suppliedPin });
       return res.json({
         ok: true,
         alreadyActive: true,
         premium: status.premium || !!account.active,
         active: !!account.active,
         email,
+        premiumPin: account.premiumPin || "",
+        pin: account.premiumPin || "",
         creditsRemaining: Number(account.creditsRemaining || 0),
         creditsTotal: Number(account.creditsTotal || UNLIMITED_FAIR_USE_CREDITS),
         creditMonth: String(account.creditMonth || currentPremiumMonth()),
@@ -1415,100 +1379,20 @@ app.post("/api/stripe/activate-starter", async (req, res) => {
         premium: true,
         active: true,
         email,
+        premiumPin: account.premiumPin || "",
+        pin: account.premiumPin || "",
         creditsRemaining: Number(account.creditsRemaining || 0),
         creditsTotal: Number(account.creditsTotal || STARTER_FREE_CREDITS),
         creditMonth: String(account.creditMonth || currentPremiumMonth()),
         plan: "starter",
         starterCreditsGranted: true,
-        message: "Startercredits waren al geactiveerd voor dit e-mailadres. Gebruik pincode kwijt als je je pincode niet meer weet."
+        message: "Startercredits waren al geactiveerd voor dit e-mailadres."
       });
     }
 
-    const token = makeStarterVerificationToken();
-    const tokenHash = sha256(token);
-    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString();
-    const pin = account && account.premiumPin ? account.premiumPin : makePremiumPin();
+    const pin = suppliedPin && suppliedPin.length === 6 ? suppliedPin : (account && account.premiumPin ? account.premiumPin : makePremiumPin());
 
     account = setPremiumAccount(email, {
-      active: false,
-      email,
-      premiumPin: pin,
-      creditsRemaining: 0,
-      creditsTotal: STARTER_FREE_CREDITS,
-      creditMonth: currentPremiumMonth(),
-      plan: "starter",
-      source: "starter_pending",
-      starterCreditsGranted: false,
-      starterVerificationTokenHash: tokenHash,
-      starterVerificationExpiresAt: expiresAt,
-      starterVerificationRequestedAt: new Date().toISOString(),
-      reason: "starter_verification_requested"
-    });
-
-    const verificationLink = makeStarterVerificationLink(req, token);
-
-    if(!RESEND_API_KEY){
-      return jsonError(res, 500, "RESEND_API_KEY ontbreekt. De verificatielink kan niet worden verzonden.");
-    }
-
-    await sendResendEmail({
-      to: email,
-      subject: "Bevestig je ECHO e-mailadres",
-      text: starterVerificationEmailText(verificationLink, STARTER_FREE_CREDITS),
-      html: starterVerificationEmailHtml(verificationLink, STARTER_FREE_CREDITS)
-    });
-
-    res.json({
-      ok: true,
-      pendingVerification: true,
-      active: false,
-      premium: false,
-      email,
-      creditsTotal: STARTER_FREE_CREDITS,
-      plan: "starter",
-      message: "Er is een verificatielink verzonden naar je e-mailadres. Klik op die link om je gratis AI credits te activeren."
-    });
-  }catch(err){
-    jsonError(res, 500, "Verificatielink kon niet worden verzonden", err.message || String(err));
-  }
-});
-
-app.get("/api/stripe/verify-starter", async (req, res) => {
-  try{
-    const token = String(req.query && req.query.token ? req.query.token : "").trim();
-
-    if(!token){
-      return res.status(400).send("<h1>Verificatielink ongeldig</h1><p>De verificatielink ontbreekt.</p>");
-    }
-
-    const tokenHash = sha256(token);
-    let email = "";
-    let account = null;
-
-    for(const [key, value] of premiumAccounts.entries()){
-      if(value && value.starterVerificationTokenHash === tokenHash){
-        email = key;
-        account = value;
-        break;
-      }
-    }
-
-    if(!email || !account){
-      return res.status(404).send("<h1>Verificatielink niet gevonden</h1><p>Vraag opnieuw gratis credits aan in ECHO.</p>");
-    }
-
-    if(account.starterCreditsGranted){
-      return res.send("<h1>Je ECHO account is al actief</h1><p>Gebruik je e-mailadres en pincode om in te loggen. Ben je je pincode kwijt? Klik dan in ECHO op pincode kwijt.</p>");
-    }
-
-    const expires = new Date(account.starterVerificationExpiresAt || 0).getTime();
-    if(!expires || Date.now() > expires){
-      return res.status(410).send("<h1>Verificatielink verlopen</h1><p>Vraag opnieuw gratis credits aan in ECHO.</p>");
-    }
-
-    const pin = account.premiumPin || makePremiumPin();
-
-    const updated = setPremiumAccount(email, {
       active: true,
       email,
       premiumPin: pin,
@@ -1516,13 +1400,10 @@ app.get("/api/stripe/verify-starter", async (req, res) => {
       creditsTotal: STARTER_FREE_CREDITS,
       creditMonth: currentPremiumMonth(),
       plan: "starter",
-      source: "starter_verified",
+      source: "starter",
       starterCreditsGranted: true,
       starterCreditsGrantedAt: new Date().toISOString(),
-      starterEmailVerifiedAt: new Date().toISOString(),
-      starterVerificationTokenHash: "",
-      starterVerificationExpiresAt: "",
-      reason: "starter_email_verified"
+      reason: "starter_credits_activated"
     });
 
     let emailSent = false;
@@ -1540,23 +1421,26 @@ app.get("/api/stripe/verify-starter", async (req, res) => {
       }
     }
 
-    res.send(
-      "<!doctype html><html lang=\"nl\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>ECHO account actief</title></head>" +
-      "<body style=\"font-family:Arial,sans-serif;background:#fff;color:#111;padding:32px;line-height:1.5\">" +
-      "<div style=\"max-width:640px;margin:0 auto;border:1px solid #e5e7eb;border-radius:24px;padding:28px\">" +
-      "<h1 style=\"margin-top:0\">Je ECHO account is actief</h1>" +
-      "<p>Je e-mailadres is bevestigd.</p>" +
-      "<p>Je hebt " + STARTER_FREE_CREDITS + " gratis AI credits ontvangen.</p>" +
-      "<p>Je 6 cijferige pincode is:</p>" +
-      "<p style=\"font-size:34px;font-weight:800;letter-spacing:4px;margin:12px 0\">" + pin + "</p>" +
-      "<p>Bewaar deze pincode goed. Gebruik hem samen met je e-mailadres in ECHO.</p>" +
-      (emailSent ? "<p>De pincode is ook naar je e-mailadres verzonden.</p>" : "") +
-      "</div></body></html>"
-    );
+    res.json({
+      ok: true,
+      premium: true,
+      active: true,
+      email,
+      premiumPin: pin,
+      pin,
+      creditsRemaining: Number(account.creditsRemaining || 0),
+      creditsTotal: Number(account.creditsTotal || STARTER_FREE_CREDITS),
+      creditMonth: String(account.creditMonth || currentPremiumMonth()),
+      plan: "starter",
+      starterCreditsGranted: true,
+      emailSent,
+      message: STARTER_FREE_CREDITS + " gratis AI credits zijn geactiveerd."
+    });
   }catch(err){
-    res.status(500).send("<h1>Verificatie mislukt</h1><p>" + String(err.message || err) + "</p>");
+    jsonError(res, 500, "Startercredits konden niet worden geactiveerd", err.message || String(err));
   }
 });
+
 
 app.post("/api/stripe/create-credit-checkout", async (req, res) => {
   try{
