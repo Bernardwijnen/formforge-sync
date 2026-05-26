@@ -42,7 +42,7 @@ try{
   console.warn("stripe package niet geladen. Stripe webhook verificatie blijft beperkt.");
 }
 
-const STARTER_FREE_CREDITS = Number(process.env.ECHO_STARTER_FREE_CREDITS || 10);
+const STARTER_FREE_CREDITS = Number(process.env.ECHO_STARTER_FREE_CREDITS || 100);
 const UNLIMITED_FAIR_USE_CREDITS = Number(process.env.ECHO_UNLIMITED_FAIR_USE_CREDITS || 999999);
 
 const STRIPE_CREDITS_100_PRICE_ID = process.env.STRIPE_CREDITS_100_PRICE_ID || "price_1TaHrD5s8MDSsy0eV1krtPFL";
