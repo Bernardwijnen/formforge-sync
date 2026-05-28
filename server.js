@@ -2662,76 +2662,6 @@ app.delete("/api/pdf-studio/documents/:id", (req, res) => {
 
 
 
-/* =========================
-   PDF STUDIO FRONTEND KLANTLINK ROUTES
-========================= */
-
-const pdfStudioFrontendLinks = new Map();
-
-app.post("/api/pdfstudio/documents/save", (req, res) => {
-  try{
-    const body = req.body || {};
-    const id = "pdf_" + Date.now() + "_" + Math.random().toString(36).slice(2,8);
-
-    const documentData = {
-      id,
-      createdAt: new Date().toISOString(),
-      data: body
-    };
-
-    pdfStudioFrontendLinks.set(id, documentData);
-
-    res.json({
-      ok:true,
-      saved:true,
-      id
-    });
-
-  }catch(err){
-    res.status(500).json({
-      error:"Document opslaan mislukt",
-      details: err.message || String(err)
-    });
-  }
-});
-
-app.post("/api/pdfstudio/signing/create-link", (req, res) => {
-  try{
-    const documentId = String(req.body && req.body.documentId ? req.body.documentId : "").trim();
-
-    if(!documentId){
-      return res.status(400).json({
-        error:"Document ID ontbreekt"
-      });
-    }
-
-    const token = crypto.randomBytes(16).toString("hex");
-
-    res.json({
-      ok:true,
-      token,
-      signingUrl:"/api/pdfstudio/sign/" + token
-    });
-
-  }catch(err){
-    res.status(500).json({
-      error:"Klantlink maken mislukt",
-      details: err.message || String(err)
-    });
-  }
-});
-
-app.get("/api/pdfstudio/sign/:token", (req,res)=>{
-  res.json({
-    ok:true,
-    message:"PDF Studio klantlink actief",
-    token:req.params.token
-  });
-});
-
-/* =========================
-   EINDE PDF STUDIO FRONTEND KLANTLINK ROUTES
-========================= */
 
 
 
@@ -2942,6 +2872,237 @@ app.post("/api/pdfstudio/ai/ask", async (req, res) => {
 
 /* =========================
    EINDE UNIVERSELE PDF STUDIO OPENAI ROUTES
+========================= */
+
+
+
+
+/* =========================
+   PDF STUDIO RENDER KLANTLINK OPSLAG
+   Externe klantlinks werken via Render, niet via localStorage.
+========================= */
+
+const PDFSTUDIO_RENDER_STORE_FILE = path.join(DATA_DIR, "pdfstudio_render_links.json");
+const pdfStudioRenderDocs = new Map();
+const pdfStudioRenderTokens = new Map();
+
+function loadPdfStudioRenderStore(){
+  try{
+    if(!fs.existsSync(PDFSTUDIO_RENDER_STORE_FILE)) return;
+    const raw = fs.readFileSync(PDFSTUDIO_RENDER_STORE_FILE, "utf8");
+    const data = JSON.parse(raw || "{}");
+
+    Object.values(data.documents || {}).forEach((doc) => {
+      if(doc && doc.id) pdfStudioRenderDocs.set(doc.id, doc);
+    });
+
+    Object.values(data.tokens || {}).forEach((tok) => {
+      if(tok && tok.token) pdfStudioRenderTokens.set(tok.token, tok);
+    });
+
+  }catch(err){
+    console.warn("PDF Studio Render opslag kon niet worden geladen:", err.message || String(err));
+  }
+}
+
+function savePdfStudioRenderStore(){
+  try{
+    const documents = {};
+    const tokens = {};
+
+    for(const [id, doc] of pdfStudioRenderDocs.entries()){
+      documents[id] = doc;
+    }
+
+    for(const [token, tok] of pdfStudioRenderTokens.entries()){
+      tokens[token] = tok;
+    }
+
+    fs.writeFileSync(PDFSTUDIO_RENDER_STORE_FILE, JSON.stringify({ documents, tokens }, null, 2));
+  }catch(err){
+    console.warn("PDF Studio Render opslag kon niet worden opgeslagen:", err.message || String(err));
+  }
+}
+
+function makePdfStudioRenderId(){
+  return "doc_" + Date.now() + "_" + crypto.randomBytes(8).toString("hex");
+}
+
+function makePdfStudioRenderToken(){
+  return crypto.randomBytes(24).toString("hex");
+}
+
+loadPdfStudioRenderStore();
+
+app.post("/api/pdfstudio/documents/save", (req, res) => {
+  try{
+    const body = req.body || {};
+    const documentData = body.document || body.data || body;
+
+    const id = body.id && String(body.id).trim().startsWith("doc_")
+      ? String(body.id).trim()
+      : makePdfStudioRenderId();
+
+    const now = new Date().toISOString();
+
+    const doc = {
+      id,
+      ownerKey: String(body.ownerKey || body.ownerEmail || body.companyEmail || "").trim(),
+      type: String(body.type || documentData.type || "quote"),
+      status: String(body.status || "draft"),
+      document: documentData,
+      createdAt: body.createdAt || now,
+      updatedAt: now
+    };
+
+    pdfStudioRenderDocs.set(id, doc);
+    savePdfStudioRenderStore();
+
+    res.json({
+      ok:true,
+      saved:true,
+      id,
+      document:doc
+    });
+
+  }catch(err){
+    jsonError(res, 500, "PDF Studio document opslaan mislukt", err.message || String(err));
+  }
+});
+
+app.get("/api/pdfstudio/documents/:id", (req, res) => {
+  const id = String(req.params.id || "").trim();
+  const doc = pdfStudioRenderDocs.get(id);
+
+  if(!doc){
+    return jsonError(res, 404, "Document niet gevonden");
+  }
+
+  res.json({
+    ok:true,
+    document:doc.document,
+    record:doc
+  });
+});
+
+app.post("/api/pdfstudio/signing/create-link", (req, res) => {
+  try{
+    const documentId = String(req.body && req.body.documentId ? req.body.documentId : "").trim();
+
+    if(!documentId){
+      return jsonError(res, 400, "documentId ontbreekt");
+    }
+
+    const doc = pdfStudioRenderDocs.get(documentId);
+
+    if(!doc){
+      return jsonError(res, 404, "Document niet gevonden");
+    }
+
+    const token = makePdfStudioRenderToken();
+
+    const signing = {
+      token,
+      documentId,
+      status:"open",
+      createdAt:new Date().toISOString(),
+      expiresAt:req.body && req.body.expiresAt ? req.body.expiresAt : new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString(),
+      clientSignature:"",
+      clientSigner:"",
+      signedAt:""
+    };
+
+    pdfStudioRenderTokens.set(token, signing);
+
+    doc.status = "sent";
+    doc.updatedAt = new Date().toISOString();
+    pdfStudioRenderDocs.set(documentId, doc);
+
+    savePdfStudioRenderStore();
+
+    res.json({
+      ok:true,
+      token,
+      signingUrl:"/api/pdfstudio/sign/" + token,
+      documentId
+    });
+
+  }catch(err){
+    jsonError(res, 500, "Klantlink maken mislukt", err.message || String(err));
+  }
+});
+
+app.get("/api/pdfstudio/sign/:token", (req, res) => {
+  const token = String(req.params.token || "").trim();
+  const signing = pdfStudioRenderTokens.get(token);
+
+  if(!signing){
+    return jsonError(res, 404, "Token niet gevonden");
+  }
+
+  if(signing.expiresAt && new Date(signing.expiresAt).getTime() < Date.now()){
+    return jsonError(res, 410, "Klantlink verlopen");
+  }
+
+  const doc = pdfStudioRenderDocs.get(signing.documentId);
+
+  if(!doc){
+    return jsonError(res, 404, "Document niet gevonden");
+  }
+
+  res.json({
+    ok:true,
+    signing,
+    document:doc.document,
+    record:doc
+  });
+});
+
+app.post("/api/pdfstudio/sign/:token/approve", (req, res) => {
+  try{
+    const token = String(req.params.token || "").trim();
+    const signing = pdfStudioRenderTokens.get(token);
+
+    if(!signing){
+      return jsonError(res, 404, "Token niet gevonden");
+    }
+
+    const doc = pdfStudioRenderDocs.get(signing.documentId);
+
+    if(!doc){
+      return jsonError(res, 404, "Document niet gevonden");
+    }
+
+    signing.status = "signed";
+    signing.clientSignature = req.body && req.body.signature ? req.body.signature : "";
+    signing.clientSigner = req.body && req.body.name ? req.body.name : "";
+    signing.signedAt = new Date().toISOString();
+
+    doc.status = "signed";
+    doc.updatedAt = new Date().toISOString();
+    doc.clientSignature = signing.clientSignature;
+    doc.clientSigner = signing.clientSigner;
+    doc.signedAt = signing.signedAt;
+
+    pdfStudioRenderTokens.set(token, signing);
+    pdfStudioRenderDocs.set(doc.id, doc);
+    savePdfStudioRenderStore();
+
+    res.json({
+      ok:true,
+      signed:true,
+      signing,
+      document:doc.document,
+      record:doc
+    });
+
+  }catch(err){
+    jsonError(res, 500, "Ondertekenen mislukt", err.message || String(err));
+  }
+});
+
+/* =========================
+   EINDE PDF STUDIO RENDER KLANTLINK OPSLAG
 ========================= */
 
 
