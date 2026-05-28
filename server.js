@@ -2659,12 +2659,6 @@ app.delete("/api/pdf-studio/documents/:id", (req, res) => {
 });
 
 
-app.use((req, res) => {
-  res.status(404).json({ error: "Route niet gevonden", path: req.path });
-});
-
-
-
 /* =========================
    PDF STUDIO OPENAI ROUTES
 ========================= */
@@ -2831,6 +2825,14 @@ app.post("/api/pdfstudio/ai/calculate-from-room", async (req, res) => {
 /* =========================
    EINDE PDF STUDIO OPENAI ROUTES
 ========================= */
+
+app.use((req, res) => {
+  res.status(404).json({ error: "Route niet gevonden", path: req.path });
+});
+
+
+
+
 
 
 app.listen(PORT, () => {
