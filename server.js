@@ -2249,9 +2249,589 @@ app.post("/api/speech/translate-direct", upload.single("audio"), async (req, res
   }
 });
 
+
+
+
+// ============================================================
+// FORMFORGE PDF STUDIO BACKEND
+// Extra routes voor offerte en factuurmaker.
+// Bestaande ECHO, Stripe, OpenAI, push en formulieren blijven ongemoeid.
+// ============================================================
+
+const PDF_STUDIO_STORE_FILE = path.join(DATA_DIR, "formforge_pdf_studio_documents.json");
+const pdfStudioDocuments = new Map();
+
+function loadPdfStudioDocuments(){
+  try{
+    if(!fs.existsSync(PDF_STUDIO_STORE_FILE)) return;
+    const raw = fs.readFileSync(PDF_STUDIO_STORE_FILE, "utf8");
+    const data = JSON.parse(raw || "{}");
+    Object.keys(data || {}).forEach((key) => {
+      if(key && data[key]){
+        pdfStudioDocuments.set(key, data[key]);
+      }
+    });
+  }catch(err){
+    console.warn("PDF Studio documenten konden niet worden geladen:", err.message || String(err));
+  }
+}
+
+function savePdfStudioDocuments(){
+  try{
+    const data = {};
+    for(const [key, value] of pdfStudioDocuments.entries()){
+      data[key] = value;
+    }
+    fs.writeFileSync(PDF_STUDIO_STORE_FILE, JSON.stringify(data, null, 2));
+  }catch(err){
+    console.warn("PDF Studio documenten konden niet worden opgeslagen:", err.message || String(err));
+  }
+}
+
+function normalizePdfStudioEmail(value){
+  return String(value || "").trim().toLowerCase();
+}
+
+function makePdfStudioId(prefix){
+  const safePrefix = String(prefix || "doc").replace(/[^a-z0-9_]/gi, "").toLowerCase() || "doc";
+  return safePrefix + "_" + crypto.randomBytes(16).toString("hex");
+}
+
+function makePdfStudioToken(){
+  return crypto.randomBytes(32).toString("hex");
+}
+
+function safePdfStudioText(value, maxLength){
+  const text = String(value || "").trim();
+  const max = Number(maxLength || 0);
+  if(max > 0 && text.length > max) return text.slice(0, max);
+  return text;
+}
+
+function publicPdfStudioDocument(rec){
+  if(!rec) return null;
+  return {
+    id: rec.id,
+    type: rec.type,
+    number: rec.number,
+    date: rec.date,
+    clientName: rec.clientName,
+    clientEmail: rec.clientEmail,
+    projectName: rec.projectName,
+    total: rec.total,
+    status: rec.status,
+    createdAt: rec.createdAt,
+    updatedAt: rec.updatedAt,
+    signedAt: rec.signedAt || "",
+    signerName: rec.signerName || "",
+    expiresAt: rec.expiresAt || ""
+  };
+}
+
+function getPdfStudioOwnerKey(req){
+  return normalizePdfStudioEmail(
+    (req.body && (req.body.ownerEmail || req.body.email || req.body.companyEmail)) ||
+    (req.query && (req.query.ownerEmail || req.query.email || req.query.companyEmail)) ||
+    ""
+  );
+}
+
+function cleanOldPdfStudioDocuments(){
+  const now = Date.now();
+  let changed = false;
+  for(const [id, rec] of pdfStudioDocuments.entries()){
+    if(rec && rec.expiresAt){
+      const expires = new Date(rec.expiresAt).getTime();
+      if(Number.isFinite(expires) && expires > 0 && now > expires + 1000 * 60 * 60 * 24 * 30){
+        pdfStudioDocuments.delete(id);
+        changed = true;
+      }
+    }
+  }
+  if(changed) savePdfStudioDocuments();
+}
+
+function buildPdfStudioSignEmailText({ clientName, companyName, link, number, typeText }){
+  return "Beste " + (clientName || "klant") + ",\n\n" +
+    "Er staat een " + (typeText || "document") + " voor je klaar van " + (companyName || "de ondernemer") + ".\n\n" +
+    "Documentnummer: " + (number || "") + "\n\n" +
+    "Open de link om het document te bekijken en digitaal akkoord te geven:\n" +
+    link + "\n\n" +
+    "FormForge PDF Studio";
+}
+
+function buildPdfStudioSignEmailHtml({ clientName, companyName, link, number, typeText }){
+  return "<div style=\"font-family:Arial,sans-serif;line-height:1.5;color:#12344d\">" +
+    "<h2>Document klaar voor akkoord</h2>" +
+    "<p>Beste " + escapeHtml(clientName || "klant") + ",</p>" +
+    "<p>Er staat een " + escapeHtml(typeText || "document") + " voor je klaar van <strong>" + escapeHtml(companyName || "de ondernemer") + "</strong>.</p>" +
+    "<p><strong>Documentnummer:</strong> " + escapeHtml(number || "") + "</p>" +
+    "<p><a href=\"" + escapeHtml(link) + "\" style=\"display:inline-block;background:#21a9d8;color:#fff;padding:12px 18px;border-radius:999px;text-decoration:none;font-weight:bold\">Bekijk en onderteken</a></p>" +
+    "<p style=\"font-size:13px;color:#557083\">Werkt de knop niet? Kopieer deze link:<br>" + escapeHtml(link) + "</p>" +
+    "<p>FormForge PDF Studio</p>" +
+  "</div>";
+}
+
+loadPdfStudioDocuments();
+setInterval(cleanOldPdfStudioDocuments, 1000 * 60 * 60);
+
+app.get("/api/pdf-studio/status", (req, res) => {
+  res.json({
+    ok: true,
+    service: "FormForge PDF Studio Backend",
+    documents: pdfStudioDocuments.size,
+    resendConfigured: !!RESEND_API_KEY,
+    storeFile: PDF_STUDIO_STORE_FILE,
+    time: new Date().toISOString()
+  });
+});
+
+app.post("/api/pdf-studio/documents", (req, res) => {
+  try{
+    const body = req.body || {};
+    const documentData = body.document || body.data || body;
+    const type = String(documentData.type || body.type || "quote").trim() === "invoice" ? "invoice" : "quote";
+    const typeText = type === "invoice" ? "factuur" : "offerte";
+    const number = safePdfStudioText(documentData.number || body.number, 80);
+    const ownerEmail = normalizePdfStudioEmail(
+      body.ownerEmail ||
+      documentData.ownerEmail ||
+      (documentData.company && documentData.company.companyEmail) ||
+      documentData.companyEmail
+    );
+    const clientEmail = normalizePdfStudioEmail(
+      body.clientEmail ||
+      documentData.clientEmail ||
+      (documentData.client && documentData.client.email) ||
+      ""
+    );
+    const clientName = safePdfStudioText(
+      body.clientName ||
+      documentData.clientName ||
+      (documentData.client && documentData.client.name) ||
+      "",
+      180
+    );
+    const projectName = safePdfStudioText(documentData.projectName || body.projectName, 240);
+    const total = Number(
+      body.total ||
+      documentData.total ||
+      (documentData.totals && documentData.totals.total) ||
+      0
+    );
+
+    if(!number){
+      return jsonError(res, 400, "Documentnummer ontbreekt");
+    }
+    if(!ownerEmail){
+      return jsonError(res, 400, "E-mailadres ondernemer ontbreekt");
+    }
+    if(!clientName && !clientEmail){
+      return jsonError(res, 400, "Klantnaam of klantmail ontbreekt");
+    }
+
+    const id = makePdfStudioId(type);
+    const now = new Date().toISOString();
+    const rec = {
+      id,
+      token: makePdfStudioToken(),
+      ownerEmail,
+      clientEmail,
+      clientName,
+      type,
+      typeText,
+      number,
+      date: safePdfStudioText(documentData.date || body.date || now.slice(0, 10), 40),
+      projectName,
+      total: Number.isFinite(total) ? total : 0,
+      status: "draft",
+      document: documentData,
+      pdfHtml: String(body.pdfHtml || documentData.pdfHtml || ""),
+      createdAt: now,
+      updatedAt: now,
+      expiresAt: body.expiresAt || new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString()
+    };
+
+    pdfStudioDocuments.set(id, rec);
+    savePdfStudioDocuments();
+
+    res.json({
+      ok: true,
+      document: publicPdfStudioDocument(rec),
+      id: rec.id
+    });
+  }catch(err){
+    jsonError(res, 500, "PDF Studio document kon niet worden opgeslagen", err.message || String(err));
+  }
+});
+
+app.get("/api/pdf-studio/documents", (req, res) => {
+  const ownerEmail = getPdfStudioOwnerKey(req);
+  if(!ownerEmail){
+    return jsonError(res, 400, "E-mailadres ondernemer ontbreekt");
+  }
+
+  const list = Array.from(pdfStudioDocuments.values())
+    .filter((rec) => rec.ownerEmail === ownerEmail)
+    .map(publicPdfStudioDocument)
+    .sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+
+  res.json({ ok: true, documents: list });
+});
+
+app.get("/api/pdf-studio/documents/:id", (req, res) => {
+  const ownerEmail = getPdfStudioOwnerKey(req);
+  const rec = pdfStudioDocuments.get(String(req.params.id || ""));
+  if(!rec){
+    return jsonError(res, 404, "Document niet gevonden");
+  }
+  if(ownerEmail && rec.ownerEmail !== ownerEmail){
+    return jsonError(res, 403, "Geen toegang tot dit document");
+  }
+  res.json({ ok: true, document: publicPdfStudioDocument(rec), data: rec.document, pdfHtml: rec.pdfHtml || "" });
+});
+
+app.post("/api/pdf-studio/documents/:id/sign-link", async (req, res) => {
+  try{
+    const id = String(req.params.id || "");
+    const rec = pdfStudioDocuments.get(id);
+    if(!rec){
+      return jsonError(res, 404, "Document niet gevonden");
+    }
+
+    const ownerEmail = getPdfStudioOwnerKey(req);
+    if(ownerEmail && rec.ownerEmail !== ownerEmail){
+      return jsonError(res, 403, "Geen toegang tot dit document");
+    }
+
+    rec.token = rec.token || makePdfStudioToken();
+    rec.status = rec.status === "signed" ? "signed" : "sent";
+    rec.updatedAt = new Date().toISOString();
+    rec.expiresAt = req.body && req.body.expiresAt ? req.body.expiresAt : (rec.expiresAt || new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString());
+    pdfStudioDocuments.set(id, rec);
+    savePdfStudioDocuments();
+
+    const baseUrl = safePdfStudioText((req.body && (req.body.frontendUrl || req.body.baseUrl)) || "", 500);
+    const signUrl = baseUrl
+      ? baseUrl.replace(/[#?]$/, "") + "#sign=" + rec.token
+      : (req.protocol + "://" + req.get("host") + "/api/pdf-studio/sign/" + rec.token);
+
+    let emailSent = false;
+    if(req.body && req.body.sendEmail === true && rec.clientEmail){
+      await sendResendEmail({
+        to: rec.clientEmail,
+        subject: "Document klaar voor akkoord: " + rec.number,
+        text: buildPdfStudioSignEmailText({
+          clientName: rec.clientName,
+          companyName: rec.document && rec.document.company ? rec.document.company.companyName : "",
+          link: signUrl,
+          number: rec.number,
+          typeText: rec.typeText
+        }),
+        html: buildPdfStudioSignEmailHtml({
+          clientName: rec.clientName,
+          companyName: rec.document && rec.document.company ? rec.document.company.companyName : "",
+          link: signUrl,
+          number: rec.number,
+          typeText: rec.typeText
+        })
+      });
+      emailSent = true;
+    }
+
+    res.json({
+      ok: true,
+      document: publicPdfStudioDocument(rec),
+      signUrl,
+      token: rec.token,
+      emailSent
+    });
+  }catch(err){
+    jsonError(res, 500, "Ondertekenlink kon niet worden gemaakt", err.message || String(err));
+  }
+});
+
+app.get("/api/pdf-studio/sign/:token", (req, res) => {
+  const token = String(req.params.token || "").trim();
+  const rec = Array.from(pdfStudioDocuments.values()).find((doc) => doc.token === token);
+  if(!rec){
+    return jsonError(res, 404, "Ondertekenlink niet gevonden");
+  }
+  if(rec.expiresAt && Date.now() > new Date(rec.expiresAt).getTime()){
+    return jsonError(res, 410, "Ondertekenlink is verlopen");
+  }
+
+  res.json({
+    ok: true,
+    document: publicPdfStudioDocument(rec),
+    data: rec.document,
+    pdfHtml: rec.pdfHtml || "",
+    alreadySigned: rec.status === "signed",
+    signedAt: rec.signedAt || "",
+    signerName: rec.signerName || ""
+  });
+});
+
+app.post("/api/pdf-studio/sign/:token/approve", (req, res) => {
+  try{
+    const token = String(req.params.token || "").trim();
+    const rec = Array.from(pdfStudioDocuments.values()).find((doc) => doc.token === token);
+    if(!rec){
+      return jsonError(res, 404, "Ondertekenlink niet gevonden");
+    }
+    if(rec.expiresAt && Date.now() > new Date(rec.expiresAt).getTime()){
+      return jsonError(res, 410, "Ondertekenlink is verlopen");
+    }
+    if(rec.status === "signed"){
+      return res.json({ ok: true, alreadySigned: true, document: publicPdfStudioDocument(rec) });
+    }
+
+    const signerName = safePdfStudioText(req.body && req.body.signerName, 180);
+    const signature = String(req.body && (req.body.signature || req.body.signatureData) ? (req.body.signature || req.body.signatureData) : "");
+    const signedPdfHtml = String(req.body && req.body.pdfHtml ? req.body.pdfHtml : "");
+
+    if(!signerName){
+      return jsonError(res, 400, "Naam ondertekenaar ontbreekt");
+    }
+    if(!signature || !signature.startsWith("data:image/")){
+      return jsonError(res, 400, "Handtekening ontbreekt");
+    }
+
+    rec.status = "signed";
+    rec.signerName = signerName;
+    rec.clientSignature = signature;
+    rec.signedPdfHtml = signedPdfHtml;
+    rec.signedAt = new Date().toISOString();
+    rec.updatedAt = rec.signedAt;
+    rec.audit = rec.audit || [];
+    rec.audit.push({
+      action: "signed",
+      signerName,
+      ip: req.headers["x-forwarded-for"] || req.socket.remoteAddress || "",
+      userAgent: req.headers["user-agent"] || "",
+      at: rec.signedAt
+    });
+
+    pdfStudioDocuments.set(rec.id, rec);
+    savePdfStudioDocuments();
+
+    res.json({
+      ok: true,
+      signed: true,
+      document: publicPdfStudioDocument(rec)
+    });
+  }catch(err){
+    jsonError(res, 500, "Document kon niet worden ondertekend", err.message || String(err));
+  }
+});
+
+app.get("/api/pdf-studio/documents/:id/status", (req, res) => {
+  const rec = pdfStudioDocuments.get(String(req.params.id || ""));
+  if(!rec){
+    return jsonError(res, 404, "Document niet gevonden");
+  }
+  const ownerEmail = getPdfStudioOwnerKey(req);
+  if(ownerEmail && rec.ownerEmail !== ownerEmail){
+    return jsonError(res, 403, "Geen toegang tot dit document");
+  }
+  res.json({
+    ok: true,
+    status: rec.status,
+    signed: rec.status === "signed",
+    signedAt: rec.signedAt || "",
+    signerName: rec.signerName || "",
+    document: publicPdfStudioDocument(rec)
+  });
+});
+
+app.delete("/api/pdf-studio/documents/:id", (req, res) => {
+  const rec = pdfStudioDocuments.get(String(req.params.id || ""));
+  if(!rec){
+    return jsonError(res, 404, "Document niet gevonden");
+  }
+  const ownerEmail = getPdfStudioOwnerKey(req);
+  if(ownerEmail && rec.ownerEmail !== ownerEmail){
+    return jsonError(res, 403, "Geen toegang tot dit document");
+  }
+  pdfStudioDocuments.delete(rec.id);
+  savePdfStudioDocuments();
+  res.json({ ok: true, deleted: true });
+});
+
+
 app.use((req, res) => {
   res.status(404).json({ error: "Route niet gevonden", path: req.path });
 });
+
+
+
+/* =========================
+   PDF STUDIO OPENAI ROUTES
+========================= */
+
+function extractJsonObjectFromText(value){
+  const text = String(value || "").trim();
+  if(!text) return {};
+  try{
+    return JSON.parse(text);
+  }catch(err){}
+  const first = text.indexOf("{");
+  const last = text.lastIndexOf("}");
+  if(first >= 0 && last > first){
+    try{
+      return JSON.parse(text.slice(first, last + 1));
+    }catch(err){}
+  }
+  return {};
+}
+
+app.post("/api/pdfstudio/ai/workorder", async (req, res) => {
+  try{
+    const rawText = String(req.body && (req.body.text || req.body.note || req.body.input) ? (req.body.text || req.body.note || req.body.input) : "").trim();
+    const documentType = String(req.body && req.body.type ? req.body.type : "offerte").trim();
+
+    if(!rawText){
+      return jsonError(res, 400, "Tekst ontbreekt");
+    }
+
+    const answer = await callOpenAI([
+      {
+        role: "system",
+        content:
+          "Je bent de AI werkvoorbereider voor FormForge PDF Studio. " +
+          "Zet ruwe opname tekst om naar een nette offerte of factuur. " +
+          "Geef uitsluitend geldig JSON terug. Geen uitleg. Geen markdown. " +
+          "Gebruik Nederlandse omschrijvingen. Bedragen zijn exclusief btw tenzij de gebruiker anders zegt. " +
+          "Gebruik standaard 9 procent btw voor schilderwerk, behangen, renovlies, stucwerk en arbeidswerkzaamheden. " +
+          "Gebruik 21 procent btw voor losse producten, materialen of algemene zakelijke diensten als dat logischer is. " +
+          "Maak geen bedragen die niet uit de tekst afgeleid kunnen worden. " +
+          "Als informatie ontbreekt, laat velden leeg of zet aantal op 1 en prijs op 0."
+      },
+      {
+        role: "user",
+        content:
+          "Documenttype: " + documentType + "\n\n" +
+          "Ruwe tekst:\n" + rawText + "\n\n" +
+          "Geef JSON terug met exact deze structuur:\n" +
+          "{\n" +
+          "  \"projectName\":\"\",\n" +
+          "  \"description\":\"\",\n" +
+          "  \"client\":{\"name\":\"\",\"contact\":\"\",\"address\":\"\",\"city\":\"\",\"email\":\"\",\"phone\":\"\"},\n" +
+          "  \"items\":[{\"description\":\"\",\"qty\":1,\"unit\":\"stuks\",\"price\":0,\"vat\":9}],\n" +
+          "  \"notes\":\"\"\n" +
+          "}"
+      }
+    ], 0.15);
+
+    const parsed = extractJsonObjectFromText(answer);
+
+    const safeItems = Array.isArray(parsed.items) ? parsed.items.map((item) => ({
+      description: String(item.description || "").trim(),
+      qty: Number(item.qty || 0),
+      unit: String(item.unit || "stuks").trim(),
+      price: Number(item.price || 0),
+      vat: Number(item.vat === 0 ? 0 : (item.vat || 9))
+    })).filter((item) => item.description || item.qty || item.price) : [];
+
+    res.json({
+      ok: true,
+      projectName: String(parsed.projectName || "").trim(),
+      description: String(parsed.description || "").trim(),
+      client: parsed.client || {},
+      items: safeItems,
+      notes: String(parsed.notes || "").trim(),
+      raw: parsed
+    });
+
+  }catch(err){
+    jsonError(res, 500, "PDF Studio AI fout", err.message || String(err));
+  }
+});
+
+app.post("/api/pdfstudio/ai/polish-description", async (req, res) => {
+  try{
+    const text = String(req.body && req.body.text ? req.body.text : "").trim();
+
+    if(!text){
+      return jsonError(res, 400, "Tekst ontbreekt");
+    }
+
+    const answer = await callOpenAI([
+      {
+        role: "system",
+        content:
+          "Je schrijft korte professionele Nederlandse offerte en factuurteksten voor zelfstandige ondernemers. " +
+          "Maak de tekst netjes, duidelijk en zakelijk. Geen lange uitleg. Geen opsomming als dat niet nodig is."
+      },
+      {
+        role: "user",
+        content: text
+      }
+    ], 0.25);
+
+    res.json({
+      ok: true,
+      text: answer,
+      result: answer
+    });
+
+  }catch(err){
+    jsonError(res, 500, "Omschrijving verbeteren mislukt", err.message || String(err));
+  }
+});
+
+app.post("/api/pdfstudio/ai/calculate-from-room", async (req, res) => {
+  try{
+    const text = String(req.body && req.body.text ? req.body.text : "").trim();
+
+    if(!text){
+      return jsonError(res, 400, "Tekst ontbreekt");
+    }
+
+    const answer = await callOpenAI([
+      {
+        role: "system",
+        content:
+          "Je bent een calculatie assistent voor schilders. " +
+          "Bereken wandoppervlak, plafondoppervlak en maak offerte regels als dat uit de tekst kan. " +
+          "Geef uitsluitend geldig JSON terug. Geen markdown. Geen uitleg buiten JSON."
+      },
+      {
+        role: "user",
+        content:
+          "Tekst:\n" + text + "\n\n" +
+          "Geef JSON terug met exact deze structuur:\n" +
+          "{\n" +
+          "  \"summary\":\"\",\n" +
+          "  \"wallM2\":0,\n" +
+          "  \"ceilingM2\":0,\n" +
+          "  \"items\":[{\"description\":\"\",\"qty\":0,\"unit\":\"m2\",\"price\":0,\"vat\":9}],\n" +
+          "  \"assumptions\":[\"\"]\n" +
+          "}"
+      }
+    ], 0.1);
+
+    const parsed = extractJsonObjectFromText(answer);
+
+    res.json({
+      ok: true,
+      summary: String(parsed.summary || "").trim(),
+      wallM2: Number(parsed.wallM2 || 0),
+      ceilingM2: Number(parsed.ceilingM2 || 0),
+      items: Array.isArray(parsed.items) ? parsed.items : [],
+      assumptions: Array.isArray(parsed.assumptions) ? parsed.assumptions : [],
+      raw: parsed
+    });
+
+  }catch(err){
+    jsonError(res, 500, "Calculatie met AI mislukt", err.message || String(err));
+  }
+});
+
+/* =========================
+   EINDE PDF STUDIO OPENAI ROUTES
+========================= */
+
 
 app.listen(PORT, () => {
   console.log("ECHO Central Server draait op poort " + PORT);
