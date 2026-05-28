@@ -2659,172 +2659,6 @@ app.delete("/api/pdf-studio/documents/:id", (req, res) => {
 });
 
 
-/* =========================
-   PDF STUDIO OPENAI ROUTES
-========================= */
-
-function extractJsonObjectFromText(value){
-  const text = String(value || "").trim();
-  if(!text) return {};
-  try{
-    return JSON.parse(text);
-  }catch(err){}
-  const first = text.indexOf("{");
-  const last = text.lastIndexOf("}");
-  if(first >= 0 && last > first){
-    try{
-      return JSON.parse(text.slice(first, last + 1));
-    }catch(err){}
-  }
-  return {};
-}
-
-app.post("/api/pdfstudio/ai/workorder", async (req, res) => {
-  try{
-    const rawText = String(req.body && (req.body.text || req.body.note || req.body.input) ? (req.body.text || req.body.note || req.body.input) : "").trim();
-    const documentType = String(req.body && req.body.type ? req.body.type : "offerte").trim();
-
-    if(!rawText){
-      return jsonError(res, 400, "Tekst ontbreekt");
-    }
-
-    const answer = await callOpenAI([
-      {
-        role: "system",
-        content:
-          "Je bent de AI werkvoorbereider voor FormForge PDF Studio. " +
-          "Zet ruwe opname tekst om naar een nette offerte of factuur. " +
-          "Geef uitsluitend geldig JSON terug. Geen uitleg. Geen markdown. " +
-          "Gebruik Nederlandse omschrijvingen. Bedragen zijn exclusief btw tenzij de gebruiker anders zegt. " +
-          "Gebruik standaard 9 procent btw voor schilderwerk, behangen, renovlies, stucwerk en arbeidswerkzaamheden. " +
-          "Gebruik 21 procent btw voor losse producten, materialen of algemene zakelijke diensten als dat logischer is. " +
-          "Maak geen bedragen die niet uit de tekst afgeleid kunnen worden. " +
-          "Als informatie ontbreekt, laat velden leeg of zet aantal op 1 en prijs op 0."
-      },
-      {
-        role: "user",
-        content:
-          "Documenttype: " + documentType + "\n\n" +
-          "Ruwe tekst:\n" + rawText + "\n\n" +
-          "Geef JSON terug met exact deze structuur:\n" +
-          "{\n" +
-          "  \"projectName\":\"\",\n" +
-          "  \"description\":\"\",\n" +
-          "  \"client\":{\"name\":\"\",\"contact\":\"\",\"address\":\"\",\"city\":\"\",\"email\":\"\",\"phone\":\"\"},\n" +
-          "  \"items\":[{\"description\":\"\",\"qty\":1,\"unit\":\"stuks\",\"price\":0,\"vat\":9}],\n" +
-          "  \"notes\":\"\"\n" +
-          "}"
-      }
-    ], 0.15);
-
-    const parsed = extractJsonObjectFromText(answer);
-
-    const safeItems = Array.isArray(parsed.items) ? parsed.items.map((item) => ({
-      description: String(item.description || "").trim(),
-      qty: Number(item.qty || 0),
-      unit: String(item.unit || "stuks").trim(),
-      price: Number(item.price || 0),
-      vat: Number(item.vat === 0 ? 0 : (item.vat || 9))
-    })).filter((item) => item.description || item.qty || item.price) : [];
-
-    res.json({
-      ok: true,
-      projectName: String(parsed.projectName || "").trim(),
-      description: String(parsed.description || "").trim(),
-      client: parsed.client || {},
-      items: safeItems,
-      notes: String(parsed.notes || "").trim(),
-      raw: parsed
-    });
-
-  }catch(err){
-    jsonError(res, 500, "PDF Studio AI fout", err.message || String(err));
-  }
-});
-
-app.post("/api/pdfstudio/ai/polish-description", async (req, res) => {
-  try{
-    const text = String(req.body && req.body.text ? req.body.text : "").trim();
-
-    if(!text){
-      return jsonError(res, 400, "Tekst ontbreekt");
-    }
-
-    const answer = await callOpenAI([
-      {
-        role: "system",
-        content:
-          "Je schrijft korte professionele Nederlandse offerte en factuurteksten voor zelfstandige ondernemers. " +
-          "Maak de tekst netjes, duidelijk en zakelijk. Geen lange uitleg. Geen opsomming als dat niet nodig is."
-      },
-      {
-        role: "user",
-        content: text
-      }
-    ], 0.25);
-
-    res.json({
-      ok: true,
-      text: answer,
-      result: answer
-    });
-
-  }catch(err){
-    jsonError(res, 500, "Omschrijving verbeteren mislukt", err.message || String(err));
-  }
-});
-
-app.post("/api/pdfstudio/ai/calculate-from-room", async (req, res) => {
-  try{
-    const text = String(req.body && req.body.text ? req.body.text : "").trim();
-
-    if(!text){
-      return jsonError(res, 400, "Tekst ontbreekt");
-    }
-
-    const answer = await callOpenAI([
-      {
-        role: "system",
-        content:
-          "Je bent een calculatie assistent voor schilders. " +
-          "Bereken wandoppervlak, plafondoppervlak en maak offerte regels als dat uit de tekst kan. " +
-          "Geef uitsluitend geldig JSON terug. Geen markdown. Geen uitleg buiten JSON."
-      },
-      {
-        role: "user",
-        content:
-          "Tekst:\n" + text + "\n\n" +
-          "Geef JSON terug met exact deze structuur:\n" +
-          "{\n" +
-          "  \"summary\":\"\",\n" +
-          "  \"wallM2\":0,\n" +
-          "  \"ceilingM2\":0,\n" +
-          "  \"items\":[{\"description\":\"\",\"qty\":0,\"unit\":\"m2\",\"price\":0,\"vat\":9}],\n" +
-          "  \"assumptions\":[\"\"]\n" +
-          "}"
-      }
-    ], 0.1);
-
-    const parsed = extractJsonObjectFromText(answer);
-
-    res.json({
-      ok: true,
-      summary: String(parsed.summary || "").trim(),
-      wallM2: Number(parsed.wallM2 || 0),
-      ceilingM2: Number(parsed.ceilingM2 || 0),
-      items: Array.isArray(parsed.items) ? parsed.items : [],
-      assumptions: Array.isArray(parsed.assumptions) ? parsed.assumptions : [],
-      raw: parsed
-    });
-
-  }catch(err){
-    jsonError(res, 500, "Calculatie met AI mislukt", err.message || String(err));
-  }
-});
-
-/* =========================
-   EINDE PDF STUDIO OPENAI ROUTES
-========================= */
 
 
 
@@ -2897,6 +2731,217 @@ app.get("/api/pdfstudio/sign/:token", (req,res)=>{
 
 /* =========================
    EINDE PDF STUDIO FRONTEND KLANTLINK ROUTES
+========================= */
+
+
+
+
+/* =========================
+   UNIVERSELE PDF STUDIO OPENAI ROUTES
+   Voor ieder beroep, iedere vraag, offerte, factuur, advies, calculatie en vertaling.
+========================= */
+
+function extractJsonObjectFromText(value){
+  const text = String(value || "").trim();
+  if(!text) return {};
+  try{
+    return JSON.parse(text);
+  }catch(err){}
+  const first = text.indexOf("{");
+  const last = text.lastIndexOf("}");
+  if(first >= 0 && last > first){
+    try{
+      return JSON.parse(text.slice(first, last + 1));
+    }catch(err){}
+  }
+  return {};
+}
+
+app.post("/api/pdfstudio/ai/workorder", async (req, res) => {
+  try{
+    const rawText = String(req.body && (req.body.text || req.body.note || req.body.input || req.body.question) ? (req.body.text || req.body.note || req.body.input || req.body.question) : "").trim();
+    const documentType = String(req.body && req.body.type ? req.body.type : "offerte").trim();
+
+    if(!rawText){
+      return jsonError(res, 400, "Tekst ontbreekt");
+    }
+
+    const answer = await callOpenAI([
+      {
+        role: "system",
+        content:
+          "Je bent de universele AI assistent van FormForge PDF Studio. " +
+          "Dit systeem is een offerte en factuur formulier voor iedereen, ongeacht beroep of branche. " +
+          "Je helpt schilders, kappers, schoonheidsspecialisten, tandartsen, coaches, juristen, hoveniers, monteurs, installateurs, intercedenten, fotografen, consultants, freelancers, zzp'ers, mkb bedrijven en iedere andere beroepsgroep. " +
+          "Je taak is: begrijp de vrije tekst van de gebruiker, herken de branche, herken of het advies, calculatie, offerte, factuur, intake of vertaling is, en geef bruikbare output terug. " +
+          "Als de gebruiker een vraag stelt, geef professioneel advies dat past bij de branche. " +
+          "Als er aantallen, uren, stuks, m2, m1, behandelingen, sessies, producten, tarieven of prijzen staan, maak offerte of factuurregels. " +
+          "Als er onvoldoende gegevens zijn voor een harde calculatie, geef advies en benoem helder welke gegevens ontbreken. " +
+          "Je mag aannames doen als dat nuttig is, maar zet die aannames in warnings. " +
+          "Reken bedragen exclusief btw, tenzij de gebruiker expliciet inclusief btw zegt. " +
+          "Gebruik voor btw in Nederland standaard 21 procent, behalve wanneer de tekst duidelijk wijst op een verlaagd tarief of 0 procent. Bij twijfel zet 21 procent en vermeld twijfel in warnings. " +
+          "Voor schilderwerk, stukadoorswerk, kappersdiensten, schoonheidsbehandelingen, consulten, uren, producten, tandartsbehandelingen en zakelijke diensten moet je professioneel en neutraal blijven. " +
+          "Voor medische of juridische onderwerpen geef je geen definitieve diagnose of juridisch bindend advies, maar wel veilige algemene uitleg en verwijs bij risico naar een bevoegde professional. " +
+          "Geef uitsluitend geldig JSON terug. Geen markdown. Geen tekst buiten JSON. " +
+          "Bedragen en aantallen moeten numeriek zijn. Rond geld af op 2 decimalen. Rond m2 of uren logisch af op maximaal 2 decimalen."
+      },
+      {
+        role: "user",
+        content:
+          "Documenttype: " + documentType + "\n\n" +
+          "Vrije tekst van gebruiker:\n" + rawText + "\n\n" +
+          "Geef JSON terug met exact deze structuur:\n" +
+          "{\n" +
+          "  \"detectedSector\":\"\",\n" +
+          "  \"detectedIntent\":\"advies | calculatie | offerte | factuur | intake | vertaling | combinatie\",\n" +
+          "  \"projectName\":\"\",\n" +
+          "  \"description\":\"\",\n" +
+          "  \"advice\":\"\",\n" +
+          "  \"calculationExplanation\":[\"\"],\n" +
+          "  \"client\":{\"name\":\"\",\"contact\":\"\",\"address\":\"\",\"city\":\"\",\"email\":\"\",\"phone\":\"\"},\n" +
+          "  \"items\":[{\"description\":\"\",\"qty\":0,\"unit\":\"stuks\",\"price\":0,\"vat\":21,\"lineTotalExVat\":0}],\n" +
+          "  \"totals\":{\"subtotalExVat\":0,\"vatTotal\":0,\"totalIncVat\":0},\n" +
+          "  \"warnings\":[\"\"]\n" +
+          "}\n\n" +
+          "Belangrijk: als het alleen een adviesvraag is zonder prijs of aantal, laat items leeg en vul advice goed in. " +
+          "Als het wel een offerte of factuur kan worden, vul items met duidelijke regels. " +
+          "Voorbeelden: '10 deuren per stuk 153' wordt qty 10, unit stuks, price 153. " +
+          "'36 uur per week tarief 38 per uur' wordt qty 36, unit uur, price 38. " +
+          "'hydrafacial 95 euro' wordt qty 1, unit behandeling, price 95. " +
+          "'balayage inclusief knippen 185 euro' wordt qty 1, unit behandeling, price 185. " +
+          "'kamer 6 x 4 hoogte 2.40 texwerk 18 per m2' mag je voor schilderwerk berekenen als wanden = 2 x 6 x 2.40 + 2 x 4 x 2.40 = 48 m2."
+      }
+    ], 0.15);
+
+    const parsed = extractJsonObjectFromText(answer);
+
+    const safeItems = Array.isArray(parsed.items) ? parsed.items.map((item) => {
+      const qty = Number(item.qty || 0);
+      const price = Number(item.price || 0);
+      const vat = Number(item.vat === 0 ? 0 : (item.vat || 21));
+      return {
+        description: String(item.description || "").trim(),
+        qty,
+        unit: String(item.unit || "stuks").trim(),
+        price,
+        vat,
+        lineTotalExVat: Number(item.lineTotalExVat || (qty * price))
+      };
+    }).filter((item) => item.description || item.qty || item.price) : [];
+
+    let subtotalExVat = Number(parsed.totals && parsed.totals.subtotalExVat ? parsed.totals.subtotalExVat : 0);
+    let vatTotal = Number(parsed.totals && parsed.totals.vatTotal ? parsed.totals.vatTotal : 0);
+
+    if(!subtotalExVat && safeItems.length){
+      subtotalExVat = safeItems.reduce((sum,item) => sum + (Number(item.qty || 0) * Number(item.price || 0)), 0);
+      vatTotal = safeItems.reduce((sum,item) => sum + ((Number(item.qty || 0) * Number(item.price || 0)) * (Number(item.vat || 0) / 100)), 0);
+    }
+
+    res.json({
+      ok: true,
+      detectedSector: String(parsed.detectedSector || "").trim(),
+      detectedIntent: String(parsed.detectedIntent || "").trim(),
+      projectName: String(parsed.projectName || "").trim(),
+      description: String(parsed.description || "").trim(),
+      advice: String(parsed.advice || "").trim(),
+      calculationExplanation: Array.isArray(parsed.calculationExplanation) ? parsed.calculationExplanation : [],
+      client: parsed.client || {},
+      items: safeItems,
+      totals: {
+        subtotalExVat: Number(subtotalExVat.toFixed ? subtotalExVat.toFixed(2) : subtotalExVat),
+        vatTotal: Number(vatTotal.toFixed ? vatTotal.toFixed(2) : vatTotal),
+        totalIncVat: Number((subtotalExVat + vatTotal).toFixed ? (subtotalExVat + vatTotal).toFixed(2) : (subtotalExVat + vatTotal))
+      },
+      warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
+      raw: parsed
+    });
+
+  }catch(err){
+    jsonError(res, 500, "Universele PDF Studio AI fout", err.message || String(err));
+  }
+});
+
+app.post("/api/pdfstudio/ai/translate-document", async (req, res) => {
+  try{
+    const documentData = req.body && req.body.document ? req.body.document : req.body;
+    const targetLanguage = String(req.body && req.body.targetLanguage ? req.body.targetLanguage : "English").trim();
+
+    if(!documentData){
+      return jsonError(res, 400, "Document ontbreekt");
+    }
+
+    const answer = await callOpenAI([
+      {
+        role: "system",
+        content:
+          "Je bent een professionele zakelijke vertaler voor offertes en facturen. " +
+          "Vertaal alle tekstvelden naar de gevraagde taal. " +
+          "Behoud alle bedragen, aantallen, btw percentages, datums, documentnummers, e-mailadressen, telefoonnummers, IBAN, KVK en btw nummers exact hetzelfde. " +
+          "Vertaal geen merknamen, bedrijfsnamen of persoonsnamen. " +
+          "Geef uitsluitend geldig JSON terug met dezelfde structuur als de invoer."
+      },
+      {
+        role: "user",
+        content:
+          "Doeltaal: " + targetLanguage + "\n\n" +
+          "Vertaal dit document volledig naar de doeltaal maar behoud getallen en bedragen exact:\n" +
+          JSON.stringify(documentData, null, 2)
+      }
+    ], 0.05);
+
+    const parsed = extractJsonObjectFromText(answer);
+
+    res.json({
+      ok: true,
+      targetLanguage,
+      document: parsed,
+      raw: parsed
+    });
+
+  }catch(err){
+    jsonError(res, 500, "Document vertalen mislukt", err.message || String(err));
+  }
+});
+
+app.post("/api/pdfstudio/ai/ask", async (req, res) => {
+  try{
+    const question = String(req.body && (req.body.question || req.body.text || req.body.input) ? (req.body.question || req.body.text || req.body.input) : "").trim();
+
+    if(!question){
+      return jsonError(res, 400, "Vraag ontbreekt");
+    }
+
+    const answer = await callOpenAI([
+      {
+        role: "system",
+        content:
+          "Je bent een universele zakelijke AI assistent voor ieder beroep en iedere branche. " +
+          "Help met advies, offerte voorbereiding, factuurregels, prijsopbouw, klantcommunicatie, vertaling, intake, planning en calculatie. " +
+          "Blijf praktisch, professioneel en duidelijk. " +
+          "Als iets branche specifiek is, pas je advies aan die branche aan. " +
+          "Als informatie ontbreekt, zeg wat ontbreekt. " +
+          "Bij medische, juridische of financiële risico's geef je veilige algemene informatie en verwijs je naar een bevoegde professional."
+      },
+      {
+        role: "user",
+        content: question
+      }
+    ], 0.3);
+
+    res.json({
+      ok: true,
+      answer,
+      text: answer,
+      result: answer
+    });
+
+  }catch(err){
+    jsonError(res, 500, "AI vraag mislukt", err.message || String(err));
+  }
+});
+
+/* =========================
+   EINDE UNIVERSELE PDF STUDIO OPENAI ROUTES
 ========================= */
 
 
