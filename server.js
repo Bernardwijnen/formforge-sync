@@ -2826,6 +2826,80 @@ app.post("/api/pdfstudio/ai/calculate-from-room", async (req, res) => {
    EINDE PDF STUDIO OPENAI ROUTES
 ========================= */
 
+
+
+/* =========================
+   PDF STUDIO FRONTEND KLANTLINK ROUTES
+========================= */
+
+const pdfStudioFrontendLinks = new Map();
+
+app.post("/api/pdfstudio/documents/save", (req, res) => {
+  try{
+    const body = req.body || {};
+    const id = "pdf_" + Date.now() + "_" + Math.random().toString(36).slice(2,8);
+
+    const documentData = {
+      id,
+      createdAt: new Date().toISOString(),
+      data: body
+    };
+
+    pdfStudioFrontendLinks.set(id, documentData);
+
+    res.json({
+      ok:true,
+      saved:true,
+      id
+    });
+
+  }catch(err){
+    res.status(500).json({
+      error:"Document opslaan mislukt",
+      details: err.message || String(err)
+    });
+  }
+});
+
+app.post("/api/pdfstudio/signing/create-link", (req, res) => {
+  try{
+    const documentId = String(req.body && req.body.documentId ? req.body.documentId : "").trim();
+
+    if(!documentId){
+      return res.status(400).json({
+        error:"Document ID ontbreekt"
+      });
+    }
+
+    const token = crypto.randomBytes(16).toString("hex");
+
+    res.json({
+      ok:true,
+      token,
+      signingUrl:"/api/pdfstudio/sign/" + token
+    });
+
+  }catch(err){
+    res.status(500).json({
+      error:"Klantlink maken mislukt",
+      details: err.message || String(err)
+    });
+  }
+});
+
+app.get("/api/pdfstudio/sign/:token", (req,res)=>{
+  res.json({
+    ok:true,
+    message:"PDF Studio klantlink actief",
+    token:req.params.token
+  });
+});
+
+/* =========================
+   EINDE PDF STUDIO FRONTEND KLANTLINK ROUTES
+========================= */
+
+
 app.use((req, res) => {
   res.status(404).json({ error: "Route niet gevonden", path: req.path });
 });
