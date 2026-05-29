@@ -2704,6 +2704,9 @@ app.post("/api/pdfstudio/ai/workorder", async (req, res) => {
           "Dit systeem is een offerte en factuur formulier voor iedereen, ongeacht beroep of branche. " +
           "Je helpt schilders, kappers, schoonheidsspecialisten, tandartsen, coaches, juristen, hoveniers, monteurs, installateurs, intercedenten, fotografen, consultants, freelancers, zzp'ers, mkb bedrijven en iedere andere beroepsgroep. " +
           "Je taak is: begrijp de vrije tekst van de gebruiker, herken de branche, herken of het advies, calculatie, offerte, factuur, intake of vertaling is, en geef bruikbare output terug. " +
+          "Zet vrije, rommelige of korte werkomschrijvingen altijd om naar professionele offerte of factuurtekst in het veld description. " +
+          "Ook als je berekeningen en items maakt, moet description gevuld worden met een nette zakelijke werkomschrijving op basis van de ingevoerde tekst. " +
+          "Schrijf description alsof een professionele ondernemer dit aan een klant aanbiedt: helder, netjes, concreet en zonder overdreven verkooppraat. " +
           "Als de gebruiker een vraag stelt, geef professioneel advies dat past bij de branche. " +
           "Als er aantallen, uren, stuks, m2, m1, behandelingen, sessies, producten, tarieven of prijzen staan, maak offerte of factuurregels. " +
           "Als er onvoldoende gegevens zijn voor een harde calculatie, geef advies en benoem helder welke gegevens ontbreken. " +
@@ -2733,7 +2736,10 @@ app.post("/api/pdfstudio/ai/workorder", async (req, res) => {
           "  \"totals\":{\"subtotalExVat\":0,\"vatTotal\":0,\"totalIncVat\":0},\n" +
           "  \"warnings\":[\"\"]\n" +
           "}\n\n" +
-          "Belangrijk: als het alleen een adviesvraag is zonder prijs of aantal, laat items leeg en vul advice goed in. " +
+          "Belangrijk: vul description altijd met een professionele werkomschrijving, ook wanneer er calculatieregels worden gemaakt. " +
+          "Als de gebruiker bijvoorbeeld schrijft: houtwerk schuren, afwassen, kitten en lakken, schrijf dan in description netjes uit dat het houtwerk wordt gereinigd, ontvet, geschuurd, waar nodig gekit en afgewerkt met lak voor een duurzame en verzorgde afwerking. " +
+          "Gebruik geen opsomming met symbolen in description, maar gewone zakelijke tekst. " +
+          "Als het alleen een adviesvraag is zonder prijs of aantal, laat items leeg en vul advice goed in. " +
           "Als het wel een offerte of factuur kan worden, vul items met duidelijke regels. " +
           "Voorbeelden: '10 deuren per stuk 153' wordt qty 10, unit stuks, price 153. " +
           "'36 uur per week tarief 38 per uur' wordt qty 36, unit uur, price 38. " +
