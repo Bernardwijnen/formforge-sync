@@ -167,6 +167,96 @@ function verifyPremiumPin(account, pin){
   return normalizePremiumPin(pin) === normalizePremiumPin(account.premiumPin);
 }
 
+function normalizeDeviceId(value){
+  return String(value || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9._:-]/g, "")
+    .slice(0, 120);
+}
+
+function deviceLabel(deviceId){
+  const safe = normalizeDeviceId(deviceId);
+  if(!safe) return "";
+  if(safe.length <= 12) return safe;
+  return safe.slice(0, 6) + "..." + safe.slice(-6);
+}
+
+function getRequestDeviceId(req){
+  const body = req && req.body ? req.body : {};
+  const query = req && req.query ? req.query : {};
+  return normalizeDeviceId(
+    body.deviceId ||
+    body.device_id ||
+    body.formforgeDeviceId ||
+    query.deviceId ||
+    query.device_id ||
+    query.formforgeDeviceId ||
+    ""
+  );
+}
+
+function checkAccountDevice(account, deviceId, options){
+  const opts = options || {};
+  const safeDeviceId = normalizeDeviceId(deviceId);
+  const accountDeviceId = normalizeDeviceId(account && (account.deviceId || account.activeDeviceId) ? (account.deviceId || account.activeDeviceId) : "");
+  const requireDevice = opts.requireDevice !== false;
+
+  if(!account || !account.active){
+    return { ok: true, deviceId: safeDeviceId, accountDeviceId };
+  }
+
+  if(requireDevice && !safeDeviceId){
+    return {
+      ok: false,
+      status: 428,
+      code: "DEVICE_REQUIRED",
+      deviceRequired: true,
+      message: "Apparaatcontrole is actief. Open FormForge opnieuw of ververs de pagina zodat dit toestel gekoppeld kan worden."
+    };
+  }
+
+  if(accountDeviceId && safeDeviceId && accountDeviceId !== safeDeviceId){
+    return {
+      ok: false,
+      status: 409,
+      code: "DEVICE_CONFLICT",
+      deviceConflict: true,
+      deviceId: safeDeviceId,
+      accountDeviceId,
+      message: "Dit FormForge AI abonnement is al actief op een ander toestel."
+    };
+  }
+
+  return { ok: true, deviceId: safeDeviceId, accountDeviceId };
+}
+
+function bindAccountDeviceIfNeeded(key, account, deviceId){
+  const safeKey = normalizePremiumKey(key || (account && account.email) || "");
+  const safeDeviceId = normalizeDeviceId(deviceId);
+  if(!safeKey || !account || !account.active || !safeDeviceId) return account;
+
+  const existingDeviceId = normalizeDeviceId(account.deviceId || account.activeDeviceId || "");
+  if(existingDeviceId) return account;
+
+  return setPremiumAccount(safeKey, {
+    deviceId: safeDeviceId,
+    activeDeviceId: safeDeviceId,
+    deviceBoundAt: new Date().toISOString(),
+    deviceLastSeenAt: new Date().toISOString()
+  });
+}
+
+function touchAccountDevice(key, account, deviceId){
+  const safeKey = normalizePremiumKey(key || (account && account.email) || "");
+  const safeDeviceId = normalizeDeviceId(deviceId);
+  if(!safeKey || !account || !account.active || !safeDeviceId) return account;
+  const existingDeviceId = normalizeDeviceId(account.deviceId || account.activeDeviceId || "");
+  if(existingDeviceId !== safeDeviceId) return account;
+  return setPremiumAccount(safeKey, {
+    deviceLastSeenAt: new Date().toISOString()
+  });
+}
+
 function setPremiumAccount(key, data){
   const safeKey = normalizePremiumKey(key);
   if(!safeKey) return null;
@@ -270,7 +360,7 @@ async function refreshPremiumAccountFromStripe(value){
   }
 }
 
-function setPremiumForStripeData({ email, clientReferenceId, customerId, subscriptionId, active, reason, subscriptionStatus, currentPeriodStart, currentPeriodEnd, periodStart, periodEnd, cancelAtPeriodEnd, cancelAt, canceledAt, trialEnd, plan, priceId }){
+function setPremiumForStripeData({ email, clientReferenceId, customerId, subscriptionId, active, reason, subscriptionStatus, currentPeriodStart, currentPeriodEnd, periodStart, periodEnd, cancelAtPeriodEnd, cancelAt, canceledAt, trialEnd, plan, priceId, deviceId, activeDeviceId, deviceBoundAt, deviceLastSeenAt }){
   const finalPlan = normalizeAiPlan(plan || getAiPlanByPriceId(priceId) || "pro");
   const data = {
     active: !!active,
@@ -290,7 +380,11 @@ function setPremiumForStripeData({ email, clientReferenceId, customerId, subscri
     reason: reason || "",
     source: "stripe",
     plan: finalPlan,
-    priceId: priceId || ""
+    priceId: priceId || "",
+    deviceId: normalizeDeviceId(deviceId || activeDeviceId || ""),
+    activeDeviceId: normalizeDeviceId(activeDeviceId || deviceId || ""),
+    deviceBoundAt: deviceBoundAt || "",
+    deviceLastSeenAt: deviceLastSeenAt || ""
   };
 
   const keys = [
@@ -327,17 +421,37 @@ function getPremiumAccount(value){
 }
 
 function getPremiumStatus(value, pin, options){
-  const account = getPremiumAccount(value);
+  let account = getPremiumAccount(value);
   const allowWithoutPin = !!(options && options.allowWithoutPin);
-  const pinOk = account && account.active && (allowWithoutPin || verifyPremiumPin(account, pin));
+  const deviceId = normalizeDeviceId(options && options.deviceId ? options.deviceId : "");
+  const requireDevice = !(options && options.requireDevice === false);
+  const pinOkBeforeDevice = account && account.active && (allowWithoutPin || verifyPremiumPin(account, pin));
+
+  let deviceCheck = { ok: true };
+  if(pinOkBeforeDevice){
+    account = bindAccountDeviceIfNeeded(value, account, deviceId);
+    deviceCheck = checkAccountDevice(account, deviceId, { requireDevice });
+    if(deviceCheck.ok){
+      account = touchAccountDevice(value, account, deviceId);
+    }
+  }
+
+  const pinOk = !!(pinOkBeforeDevice && deviceCheck.ok);
   const usage = account ? getDailyUsage(account) : { day: currentPremiumDay(), used: 0, limit: STARTER_FREE_CREDITS, remaining: 0 };
   const plan = account ? normalizeAiPlan(account.plan || "starter") : "";
+  const accountDeviceId = account ? normalizeDeviceId(account.deviceId || account.activeDeviceId || "") : "";
 
   return {
     premium: !!pinOk,
     active: !!pinOk,
-    pinRequired: !!(account && account.active && !pinOk),
+    pinRequired: !!(account && account.active && !pinOkBeforeDevice),
     pinOk: !!pinOk,
+    deviceRequired: !!(pinOkBeforeDevice && deviceCheck.deviceRequired),
+    deviceConflict: !!(pinOkBeforeDevice && deviceCheck.deviceConflict),
+    deviceMessage: deviceCheck.message || "",
+    deviceId: deviceId,
+    activeDeviceId: accountDeviceId,
+    activeDeviceLabel: deviceLabel(accountDeviceId),
     creditsRemaining: account ? usage.remaining : 0,
     creditsTotal: account ? usage.limit : STARTER_FREE_CREDITS,
     creditMonth: usage.day,
@@ -364,12 +478,13 @@ function getPremiumStatus(value, pin, options){
   };
 }
 
-function consumePremiumCredit(value, pin){
+function consumePremiumCredit(value, pin, deviceId){
   const safeKey = normalizePremiumKey(value);
+  const safeDeviceId = normalizeDeviceId(deviceId);
   if(!safeKey){
     return { ok: false, status: 401, error: "E-mailadres ontbreekt" };
   }
-  const account = getPremiumAccount(safeKey);
+  let account = getPremiumAccount(safeKey);
   if(!account || !account.active){
     return { ok: false, status: 402, error: "FormForge AI is niet actief voor dit account" };
   }
@@ -377,23 +492,32 @@ function consumePremiumCredit(value, pin){
     return { ok: false, status: 403, error: "Pincode is ongeldig" };
   }
 
+  account = bindAccountDeviceIfNeeded(safeKey, account, safeDeviceId);
+  const deviceCheck = checkAccountDevice(account, safeDeviceId, { requireDevice: true });
+  if(!deviceCheck.ok){
+    return { ok: false, status: deviceCheck.status || 409, error: deviceCheck.message || "Dit abonnement kan maar op één toestel actief zijn", code: deviceCheck.code || "DEVICE_ERROR" };
+  }
+  account = touchAccountDevice(safeKey, account, safeDeviceId);
+
   const usage = getDailyUsage(account);
   const plan = normalizeAiPlan(account.plan || "starter");
   if(plan !== "pro" && usage.used >= usage.limit){
     return { ok: false, status: 402, error: "Je dagelijkse AI opdrachten zijn op. Upgrade naar AI Plus of AI Pro." };
   }
 
-  const nextUsed = plan === "pro" ? usage.used + 1 : usage.used + 1;
+  const nextUsed = usage.used + 1;
   const updated = setPremiumAccount(safeKey, {
     aiUsageDate: usage.day,
     aiUsedToday: nextUsed,
     lastCreditUsedAt: new Date().toISOString(),
-    plan
+    plan,
+    deviceId: safeDeviceId,
+    activeDeviceId: safeDeviceId,
+    deviceLastSeenAt: new Date().toISOString()
   });
 
-  return { ok: true, account: updated, status: getPremiumStatus(safeKey, pin) };
+  return { ok: true, account: updated, status: getPremiumStatus(safeKey, pin, { deviceId: safeDeviceId }) };
 }
-
 
 function addCreditsToAccount(email, credits, reason, stripeSessionId){
   const safeEmail = normalizePremiumKey(email);
@@ -921,7 +1045,7 @@ app.post("/api/openai/tts", async (req, res) => {
       return jsonError(res, 400, "Tekst is te lang voor AI stem");
     }
 
-    const premiumStatus = getPremiumStatus(premiumKey, premiumPin);
+    const premiumStatus = getPremiumStatus(premiumKey, premiumPin, { deviceId: getRequestDeviceId(req) });
     if(!premiumStatus.premium){
       return jsonError(res, premiumStatus.pinRequired ? 403 : 402, premiumStatus.pinRequired ? "Premium pincode is ongeldig" : "AI Premium is niet actief voor dit account");
     }
@@ -1148,9 +1272,8 @@ app.get("/api/stripe/status", (req, res) => {
     unlimitedFairUseCredits: UNLIMITED_FAIR_USE_CREDITS,
     starterFreeCredits: STARTER_FREE_CREDITS,
     creditPackages: {
-      credits100: !!STRIPE_CREDITS_100_PRICE_ID,
-      credits500: !!STRIPE_CREDITS_500_PRICE_ID,
-      credits1500: !!STRIPE_CREDITS_1500_PRICE_ID,
+      aiPlus: !!STRIPE_FORMFORGE_AI_PLUS_PRICE_ID,
+      aiPro: !!STRIPE_FORMFORGE_AI_PRO_PRICE_ID,
       unlimited: !!STRIPE_UNLIMITED_PRICE_ID
     },
     premiumStoreFile: PREMIUM_STORE_FILE,
@@ -1161,12 +1284,18 @@ app.get("/api/stripe/status", (req, res) => {
 app.get("/api/stripe/premium-status", async (req, res) => {
   const key = String(req.query.email || req.query.userId || req.query.customerId || req.query.subscriptionId || "").trim();
   const pin = String(req.query.pin || req.query.pincode || req.query.premiumPin || "").trim();
+  const deviceId = getRequestDeviceId(req);
   await refreshPremiumAccountFromStripe(key);
-  const status = getPremiumStatus(key, pin);
+  const status = getPremiumStatus(key, pin, { deviceId });
   res.json({
     ok: true,
     premium: status.premium,
     pinRequired: status.pinRequired,
+    deviceRequired: status.deviceRequired,
+    deviceConflict: status.deviceConflict,
+    deviceMessage: status.deviceMessage,
+    activeDeviceId: status.activeDeviceId,
+    activeDeviceLabel: status.activeDeviceLabel,
     creditsRemaining: status.creditsRemaining,
     creditsTotal: status.creditsTotal,
     creditMonth: status.creditMonth,
@@ -1192,12 +1321,18 @@ app.get("/api/stripe/premium-status", async (req, res) => {
 app.post("/api/stripe/premium-status", async (req, res) => {
   const key = String(req.body && (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) ? (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) : "").trim();
   const pin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
+  const deviceId = getRequestDeviceId(req);
   await refreshPremiumAccountFromStripe(key);
-  const status = getPremiumStatus(key, pin);
+  const status = getPremiumStatus(key, pin, { deviceId });
   res.json({
     ok: true,
     premium: status.premium,
     pinRequired: status.pinRequired,
+    deviceRequired: status.deviceRequired,
+    deviceConflict: status.deviceConflict,
+    deviceMessage: status.deviceMessage,
+    activeDeviceId: status.activeDeviceId,
+    activeDeviceLabel: status.activeDeviceLabel,
     creditsRemaining: status.creditsRemaining,
     creditsTotal: status.creditsTotal,
     creditMonth: status.creditMonth,
@@ -1223,6 +1358,7 @@ app.post("/api/stripe/premium-status", async (req, res) => {
 app.post("/api/stripe/confirm-session", async (req, res) => {
   try{
     const sessionId = String(req.body && (req.body.sessionId || req.body.checkout_session_id || req.body.session_id) ? (req.body.sessionId || req.body.checkout_session_id || req.body.session_id) : "").trim();
+    const deviceId = getRequestDeviceId(req);
     if(!sessionId || !sessionId.startsWith("cs_")){
       return jsonError(res, 400, "Stripe checkout sessie ontbreekt");
     }
@@ -1279,6 +1415,10 @@ app.post("/api/stripe/confirm-session", async (req, res) => {
       reason: "checkout.session.confirmed",
       plan: plan || "pro",
       priceId: metadata.priceId || "",
+      deviceId: deviceId,
+      activeDeviceId: deviceId,
+      deviceBoundAt: deviceId ? new Date().toISOString() : "",
+      deviceLastSeenAt: deviceId ? new Date().toISOString() : "",
       ...periodData
     });
 
@@ -1310,7 +1450,8 @@ app.post("/api/stripe/confirm-session", async (req, res) => {
 app.post("/api/stripe/use-credit", (req, res) => {
   const key = String(req.body && (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) ? (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) : "").trim();
   const pin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
-  const result = consumePremiumCredit(key, pin);
+  const deviceId = getRequestDeviceId(req);
+  const result = consumePremiumCredit(key, pin, deviceId);
   if(!result.ok){
     return jsonError(res, result.status || 400, result.error || "Credit kon niet worden verwerkt");
   }
@@ -1324,6 +1465,50 @@ app.post("/api/stripe/use-credit", (req, res) => {
   });
 });
 
+
+
+app.post("/api/stripe/transfer-device", async (req, res) => {
+  try{
+    const email = normalizePremiumKey(req.body && req.body.email ? req.body.email : "");
+    const pin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
+    const deviceId = getRequestDeviceId(req);
+
+    if(!email){
+      return jsonError(res, 400, "E-mailadres ontbreekt");
+    }
+    if(!pin){
+      return jsonError(res, 400, "Pincode ontbreekt");
+    }
+    if(!deviceId){
+      return jsonError(res, 428, "Apparaat ID ontbreekt");
+    }
+
+    let account = getPremiumAccount(email);
+    if(!account || !account.active){
+      return jsonError(res, 404, "Geen actief FormForge AI account gevonden");
+    }
+    if(!verifyPremiumPin(account, pin)){
+      return jsonError(res, 403, "Pincode is ongeldig");
+    }
+
+    account = setPremiumAccount(email, {
+      deviceId,
+      activeDeviceId: deviceId,
+      deviceBoundAt: new Date().toISOString(),
+      deviceLastSeenAt: new Date().toISOString(),
+      deviceTransferredAt: new Date().toISOString()
+    });
+
+    res.json({
+      ok: true,
+      transferred: true,
+      message: "Dit toestel is nu gekoppeld aan jouw FormForge AI account.",
+      account: getPremiumStatus(email, pin, { deviceId })
+    });
+  }catch(err){
+    jsonError(res, 500, "Toestel overzetten mislukt", err.message || String(err));
+  }
+});
 
 app.post("/api/stripe/cancel-subscription", async (req, res) => {
   try{
@@ -1427,6 +1612,7 @@ app.post("/api/stripe/activate-starter", async (req, res) => {
   try{
     const email = normalizePremiumKey(req.body && req.body.email ? req.body.email : "");
     const suppliedPin = normalizePremiumPin(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "");
+    const deviceId = getRequestDeviceId(req);
 
     if(!email){
       return jsonError(res, 400, "E-mailadres ontbreekt");
@@ -1434,12 +1620,21 @@ app.post("/api/stripe/activate-starter", async (req, res) => {
 
     let account = getPremiumAccount(email);
 
+    if(account && account.active){
+      const deviceCheck = checkAccountDevice(account, deviceId, { requireDevice: true });
+      if(!deviceCheck.ok){
+        return jsonError(res, deviceCheck.status || 409, deviceCheck.message || "Dit FormForge AI account is al actief op een ander toestel", deviceCheck.code || "DEVICE_ERROR");
+      }
+      account = bindAccountDeviceIfNeeded(email, account, deviceId);
+      account = touchAccountDevice(email, account, deviceId);
+    }
+
     if(account && account.premiumPin && suppliedPin && !verifyPremiumPin(account, suppliedPin)){
       return jsonError(res, 403, "Pincode is ongeldig voor dit e-mailadres");
     }
 
     if(account && account.active && account.plan !== "starter"){
-      const status = getPremiumStatus(email, suppliedPin || account.premiumPin, { allowWithoutPin: !suppliedPin });
+      const status = getPremiumStatus(email, suppliedPin || account.premiumPin, { allowWithoutPin: !suppliedPin, deviceId });
       return res.json({
         ok: true,
         alreadyActive: true,
@@ -1488,6 +1683,10 @@ app.post("/api/stripe/activate-starter", async (req, res) => {
       aiUsedToday: 0,
       aiDailyLimit: STARTER_FREE_CREDITS,
       aiRemainingToday: STARTER_FREE_CREDITS,
+      deviceId: deviceId,
+      activeDeviceId: deviceId,
+      deviceBoundAt: deviceId ? new Date().toISOString() : "",
+      deviceLastSeenAt: deviceId ? new Date().toISOString() : "",
       plan: "starter",
       source: "starter",
       starterCreditsGranted: true,
@@ -1591,6 +1790,7 @@ app.post("/api/stripe/create-checkout", async (req, res) => {
     const requestedPlan = normalizeAiPlan(req.body && (req.body.plan || req.body.aiPlan) ? (req.body.plan || req.body.aiPlan) : "");
     const defaultPlanPriceId = requestedPlan === "plus" ? STRIPE_FORMFORGE_AI_PLUS_PRICE_ID : STRIPE_FORMFORGE_AI_PRO_PRICE_ID;
     const priceId = String(req.body && (req.body.priceId || req.body.price_id) ? (req.body.priceId || req.body.price_id) : (defaultPlanPriceId || STRIPE_UNLIMITED_PRICE_ID || STRIPE_DEFAULT_PRICE_ID)).trim();
+    const deviceId = getRequestDeviceId(req);
     const plan = requestedPlan || getAiPlanByPriceId(priceId) || "pro";
     const customerEmail = String(req.body && req.body.email ? req.body.email : "").trim();
     const clientReferenceId = String(req.body && (req.body.userId || req.body.clientReferenceId) ? (req.body.userId || req.body.clientReferenceId) : "").trim();
@@ -1619,7 +1819,8 @@ app.post("/api/stripe/create-checkout", async (req, res) => {
         email: customerEmail,
         plan,
         aiPlan: plan,
-        priceId
+        priceId,
+        deviceId
       },
       subscription_data: {
         metadata: {
@@ -1628,7 +1829,8 @@ app.post("/api/stripe/create-checkout", async (req, res) => {
           email: customerEmail,
           plan,
           aiPlan: plan,
-          priceId
+          priceId,
+          deviceId
         }
       }
     };
@@ -2213,7 +2415,7 @@ app.post("/api/speech/translate-direct", upload.single("audio"), async (req, res
       return jsonError(res, 400, "sourceLanguage en targetLanguage zijn verplicht");
     }
 
-    const premiumStatusBefore = getPremiumStatus(premiumKey, premiumPin);
+    const premiumStatusBefore = getPremiumStatus(premiumKey, premiumPin, { deviceId: getRequestDeviceId(req) });
     if(!premiumStatusBefore.premium){
       try{ fs.unlinkSync(req.file.path); }catch(e){}
       return jsonError(
@@ -2314,7 +2516,7 @@ app.post("/api/speech/translate-direct", upload.single("audio"), async (req, res
       .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
       .trim();
 
-    const creditResult = consumePremiumCredit(premiumKey, premiumPin);
+    const creditResult = consumePremiumCredit(premiumKey, premiumPin, getRequestDeviceId(req));
     if(!creditResult.ok){
       return jsonError(
         res,
@@ -2796,7 +2998,7 @@ app.post("/api/pdfstudio/ai/workorder", async (req, res) => {
 
     const premiumKey = String(req.body && (req.body.email || req.body.premiumEmail || req.body.userId || req.body.premiumKey) ? (req.body.email || req.body.premiumEmail || req.body.userId || req.body.premiumKey) : "").trim();
     const premiumPin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
-    const creditResult = consumePremiumCredit(premiumKey, premiumPin);
+    const creditResult = consumePremiumCredit(premiumKey, premiumPin, getRequestDeviceId(req));
     if(!creditResult.ok){
       return jsonError(res, creditResult.status || 402, creditResult.error || "FormForge AI is niet actief");
     }
