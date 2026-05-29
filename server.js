@@ -52,10 +52,19 @@ const STRIPE_FORMFORGE_AI_PLUS_PRICE_ID = process.env.STRIPE_FORMFORGE_AI_PLUS_P
 const STRIPE_FORMFORGE_AI_PRO_PRICE_ID = process.env.STRIPE_FORMFORGE_AI_PRO_PRICE_ID || "price_1TcRZk5s8MDSsy0ehhdgwvs2";
 const STRIPE_UNLIMITED_PRICE_ID = process.env.STRIPE_UNLIMITED_PRICE_ID || STRIPE_FORMFORGE_AI_PRO_PRICE_ID;
 
-const CREDIT_PACKAGES = {};
+const STRIPE_CREDITS_100_PRICE_ID = process.env.STRIPE_CREDITS_100_PRICE_ID || "price_1TaHrD5s8MDSsy0eV1krtPFL";
+const STRIPE_CREDITS_500_PRICE_ID = process.env.STRIPE_CREDITS_500_PRICE_ID || "price_1TaHxD5s8MDSsy0eVrOvmYPM";
+const STRIPE_CREDITS_1500_PRICE_ID = process.env.STRIPE_CREDITS_1500_PRICE_ID || "price_1TaHz15s8MDSsy0eMKRMDbxN";
+
+const CREDIT_PACKAGES = {
+  "100": { credits: 100, priceId: STRIPE_CREDITS_100_PRICE_ID, label: "FormForge ECHO 100 AI credits" },
+  "500": { credits: 500, priceId: STRIPE_CREDITS_500_PRICE_ID, label: "FormForge ECHO 500 AI credits" },
+  "1500": { credits: 1500, priceId: STRIPE_CREDITS_1500_PRICE_ID, label: "FormForge ECHO 1500 AI credits" }
+};
 
 function getCreditPackageByPriceId(priceId){
-  return null;
+  const safePriceId = String(priceId || "").trim();
+  return Object.values(CREDIT_PACKAGES).find((pkg) => pkg.priceId === safePriceId) || null;
 }
 
 function currentPremiumDay(){
@@ -66,6 +75,7 @@ function normalizeAiPlan(value){
   const plan = String(value || "").trim().toLowerCase();
   if(plan === "ai_plus" || plan === "plus" || plan === "formforge_ai_plus") return "plus";
   if(plan === "ai_pro" || plan === "pro" || plan === "unlimited" || plan === "formforge_ai_pro") return "pro";
+  if(plan === "credits" || plan === "credit" || plan === "losse_credits" || plan === "credit_pack") return "credits";
   if(plan === "starter" || plan === "free" || plan === "gratis") return "starter";
   return plan || "starter";
 }
@@ -75,6 +85,7 @@ function getAiPlanByPriceId(priceId){
   if(id && id === STRIPE_FORMFORGE_AI_PLUS_PRICE_ID) return "plus";
   if(id && id === STRIPE_FORMFORGE_AI_PRO_PRICE_ID) return "pro";
   if(id && id === STRIPE_UNLIMITED_PRICE_ID) return "pro";
+  if(getCreditPackageByPriceId(id)) return "credits";
   return "";
 }
 
@@ -89,6 +100,7 @@ function getAiPlanLabel(plan){
   const normalized = normalizeAiPlan(plan);
   if(normalized === "plus") return "FormForge AI Plus";
   if(normalized === "pro") return "FormForge AI Pro";
+  if(normalized === "credits") return "Losse AI credits";
   return "Gratis";
 }
 
@@ -97,6 +109,13 @@ function getDailyUsage(account){
   const savedDay = String(account && account.aiUsageDate ? account.aiUsageDate : "");
   const used = savedDay === day ? Number(account && account.aiUsedToday ? account.aiUsedToday : 0) : 0;
   const plan = normalizeAiPlan(account && account.plan ? account.plan : "starter");
+
+  if(plan === "credits"){
+    const creditRemaining = Math.max(0, Math.floor(Number(account && account.creditsRemaining ? account.creditsRemaining : 0)));
+    const creditTotal = Math.max(creditRemaining, Math.floor(Number(account && account.creditsTotal ? account.creditsTotal : creditRemaining)));
+    return { day, used, limit: creditTotal, remaining: creditRemaining };
+  }
+
   const limit = getAiPlanDailyLimit(plan);
   const remaining = plan === "pro" ? limit : Math.max(0, limit - used);
   return { day, used, limit, remaining };
@@ -271,7 +290,10 @@ function setPremiumAccount(key, data){
   const incomingUsageDate = data && typeof data.aiUsageDate !== "undefined" ? String(data.aiUsageDate || "") : existingUsage.day;
   const incomingUsedToday = data && typeof data.aiUsedToday !== "undefined" ? Number(data.aiUsedToday || 0) : existingUsage.used;
   const usedToday = incomingUsageDate === day ? Math.max(0, Math.floor(incomingUsedToday || 0)) : 0;
-  const remainingToday = finalPlan === "pro" ? dailyLimit : Math.max(0, dailyLimit - usedToday);
+  const creditRemaining = finalPlan === "credits" ? Math.max(0, Math.floor(Number(data && typeof data.creditsRemaining !== "undefined" ? data.creditsRemaining : existing.creditsRemaining || 0))) : 0;
+  const creditTotal = finalPlan === "credits" ? Math.max(creditRemaining, Math.floor(Number(data && typeof data.creditsTotal !== "undefined" ? data.creditsTotal : existing.creditsTotal || creditRemaining))) : 0;
+  const remainingToday = finalPlan === "credits" ? creditRemaining : (finalPlan === "pro" ? dailyLimit : Math.max(0, dailyLimit - usedToday));
+  const totalCredits = finalPlan === "credits" ? creditTotal : dailyLimit;
 
   let premiumPin = existing.premiumPin || "";
   if(shouldActivate && !premiumPin){
@@ -290,10 +312,10 @@ function setPremiumAccount(key, data){
     premiumPin,
     aiUsageDate: day,
     aiUsedToday: usedToday,
-    aiDailyLimit: dailyLimit,
+    aiDailyLimit: finalPlan === "credits" ? totalCredits : dailyLimit,
     aiRemainingToday: remainingToday,
     creditsRemaining: remainingToday,
-    creditsTotal: dailyLimit,
+    creditsTotal: totalCredits,
     creditMonth: day,
     updatedAt: new Date().toISOString()
   };
@@ -501,12 +523,8 @@ function consumePremiumCredit(value, pin, deviceId){
 
   const usage = getDailyUsage(account);
   const plan = normalizeAiPlan(account.plan || "starter");
-  if(plan !== "pro" && usage.used >= usage.limit){
-    return { ok: false, status: 402, error: "Je dagelijkse AI opdrachten zijn op. Upgrade naar AI Plus of AI Pro." };
-  }
-
-  const nextUsed = usage.used + 1;
-  const updated = setPremiumAccount(safeKey, {
+  let nextUsed = usage.used + 1;
+  let updatePayload = {
     aiUsageDate: usage.day,
     aiUsedToday: nextUsed,
     lastCreditUsedAt: new Date().toISOString(),
@@ -514,7 +532,21 @@ function consumePremiumCredit(value, pin, deviceId){
     deviceId: safeDeviceId,
     activeDeviceId: safeDeviceId,
     deviceLastSeenAt: new Date().toISOString()
-  });
+  };
+
+  if(plan === "credits"){
+    if(usage.remaining <= 0){
+      return { ok: false, status: 402, error: "Je losse AI credits zijn op. Koop nieuwe credits of neem Unlimited." };
+    }
+    updatePayload.creditsRemaining = Math.max(0, usage.remaining - 1);
+    updatePayload.creditsTotal = usage.limit;
+    updatePayload.aiRemainingToday = Math.max(0, usage.remaining - 1);
+    updatePayload.aiDailyLimit = usage.limit;
+  }else if(plan !== "pro" && usage.used >= usage.limit){
+    return { ok: false, status: 402, error: "Je dagelijkse AI opdrachten zijn op. Upgrade naar AI Plus of AI Pro." };
+  }
+
+  const updated = setPremiumAccount(safeKey, updatePayload);
 
   return { ok: true, account: updated, status: getPremiumStatus(safeKey, pin, { deviceId: safeDeviceId }) };
 }
@@ -551,7 +583,7 @@ function addCreditsToAccount(email, credits, reason, stripeSessionId){
     premiumPin: pin,
     creditsRemaining: existingCredits + amount,
     creditsTotal: existingTotal + amount,
-    plan: existing.plan === "unlimited" ? "unlimited" : "credits",
+    plan: normalizeAiPlan(existing.plan) === "pro" ? "pro" : "credits",
     source: "stripe_credits",
     processedStripeSessions: nextProcessedSessions,
     lastStripeSessionId: safeSessionId,
