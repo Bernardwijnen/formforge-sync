@@ -224,6 +224,11 @@ function checkAccountDevice(account, deviceId, options){
     return { ok: true, deviceId: safeDeviceId, accountDeviceId };
   }
 
+  const lockedPlan = normalizeAiPlan(account.plan || "starter");
+  if(lockedPlan === "starter" || lockedPlan === "credits"){
+    return { ok: true, deviceId: safeDeviceId, accountDeviceId };
+  }
+
   if(requireDevice && !safeDeviceId){
     return {
       ok: false,
@@ -253,6 +258,8 @@ function bindAccountDeviceIfNeeded(key, account, deviceId){
   const safeKey = normalizePremiumKey(key || (account && account.email) || "");
   const safeDeviceId = normalizeDeviceId(deviceId);
   if(!safeKey || !account || !account.active || !safeDeviceId) return account;
+  const plan = normalizeAiPlan(account.plan || "starter");
+  if(plan === "starter" || plan === "credits") return account;
 
   const existingDeviceId = normalizeDeviceId(account.deviceId || account.activeDeviceId || "");
   if(existingDeviceId) return account;
@@ -269,6 +276,8 @@ function touchAccountDevice(key, account, deviceId){
   const safeKey = normalizePremiumKey(key || (account && account.email) || "");
   const safeDeviceId = normalizeDeviceId(deviceId);
   if(!safeKey || !account || !account.active || !safeDeviceId) return account;
+  const plan = normalizeAiPlan(account.plan || "starter");
+  if(plan === "starter" || plan === "credits") return account;
   const existingDeviceId = normalizeDeviceId(account.deviceId || account.activeDeviceId || "");
   if(existingDeviceId !== safeDeviceId) return account;
   return setPremiumAccount(safeKey, {
@@ -528,11 +537,14 @@ function consumePremiumCredit(value, pin, deviceId){
     aiUsageDate: usage.day,
     aiUsedToday: nextUsed,
     lastCreditUsedAt: new Date().toISOString(),
-    plan,
-    deviceId: safeDeviceId,
-    activeDeviceId: safeDeviceId,
-    deviceLastSeenAt: new Date().toISOString()
+    plan
   };
+
+  if(plan !== "starter" && plan !== "credits"){
+    updatePayload.deviceId = safeDeviceId;
+    updatePayload.activeDeviceId = safeDeviceId;
+    updatePayload.deviceLastSeenAt = new Date().toISOString();
+  }
 
   if(plan === "credits"){
     if(usage.remaining <= 0){
