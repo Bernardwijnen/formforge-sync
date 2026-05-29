@@ -42,23 +42,64 @@ try{
   console.warn("stripe package niet geladen. Stripe webhook verificatie blijft beperkt.");
 }
 
-const STARTER_FREE_CREDITS = Number(process.env.ECHO_STARTER_FREE_CREDITS || 10);
-const UNLIMITED_FAIR_USE_CREDITS = Number(process.env.ECHO_UNLIMITED_FAIR_USE_CREDITS || 999999);
+const STARTER_FREE_CREDITS = Number(process.env.FORMFORGE_FREE_DAILY_LIMIT || process.env.ECHO_STARTER_FREE_CREDITS || 1);
+const UNLIMITED_FAIR_USE_CREDITS = Number(process.env.FORMFORGE_PRO_DAILY_LIMIT || process.env.ECHO_UNLIMITED_FAIR_USE_CREDITS || 999999);
 
-const STRIPE_CREDITS_100_PRICE_ID = process.env.STRIPE_CREDITS_100_PRICE_ID || "price_1TaHrD5s8MDSsy0eV1krtPFL";
-const STRIPE_CREDITS_500_PRICE_ID = process.env.STRIPE_CREDITS_500_PRICE_ID || "price_1TaHxD5s8MDSsy0eVrOvmYPM";
-const STRIPE_CREDITS_1500_PRICE_ID = process.env.STRIPE_CREDITS_1500_PRICE_ID || "price_1TaHz15s8MDSsy0eMKRMDbxN";
-const STRIPE_UNLIMITED_PRICE_ID = process.env.STRIPE_UNLIMITED_PRICE_ID || "price_1TaI0q5s8MDSsy0eL2NZqIpD";
+const FORMFORGE_AI_PLUS_DAILY_LIMIT = Number(process.env.FORMFORGE_AI_PLUS_DAILY_LIMIT || 25);
+const FORMFORGE_AI_PRO_DAILY_LIMIT = Number(process.env.FORMFORGE_AI_PRO_DAILY_LIMIT || 999999);
 
-const CREDIT_PACKAGES = {
-  "100": { credits: 100, priceId: STRIPE_CREDITS_100_PRICE_ID, label: "ECHO 100 AI credits" },
-  "500": { credits: 500, priceId: STRIPE_CREDITS_500_PRICE_ID, label: "ECHO 500 AI credits" },
-  "1500": { credits: 1500, priceId: STRIPE_CREDITS_1500_PRICE_ID, label: "ECHO 1500 AI credits" }
-};
+const STRIPE_FORMFORGE_AI_PLUS_PRICE_ID = process.env.STRIPE_FORMFORGE_AI_PLUS_PRICE_ID || "price_1TcRWw5s8MDSsy0eIJ0cB63N";
+const STRIPE_FORMFORGE_AI_PRO_PRICE_ID = process.env.STRIPE_FORMFORGE_AI_PRO_PRICE_ID || "price_1TcRZk5s8MDSsy0ehhdgwvs2";
+const STRIPE_UNLIMITED_PRICE_ID = process.env.STRIPE_UNLIMITED_PRICE_ID || STRIPE_FORMFORGE_AI_PRO_PRICE_ID;
+
+const CREDIT_PACKAGES = {};
 
 function getCreditPackageByPriceId(priceId){
-  const safePriceId = String(priceId || "").trim();
-  return Object.values(CREDIT_PACKAGES).find((pkg) => pkg.priceId === safePriceId) || null;
+  return null;
+}
+
+function currentPremiumDay(){
+  return new Date().toISOString().slice(0, 10);
+}
+
+function normalizeAiPlan(value){
+  const plan = String(value || "").trim().toLowerCase();
+  if(plan === "ai_plus" || plan === "plus" || plan === "formforge_ai_plus") return "plus";
+  if(plan === "ai_pro" || plan === "pro" || plan === "unlimited" || plan === "formforge_ai_pro") return "pro";
+  if(plan === "starter" || plan === "free" || plan === "gratis") return "starter";
+  return plan || "starter";
+}
+
+function getAiPlanByPriceId(priceId){
+  const id = String(priceId || "").trim();
+  if(id && id === STRIPE_FORMFORGE_AI_PLUS_PRICE_ID) return "plus";
+  if(id && id === STRIPE_FORMFORGE_AI_PRO_PRICE_ID) return "pro";
+  if(id && id === STRIPE_UNLIMITED_PRICE_ID) return "pro";
+  return "";
+}
+
+function getAiPlanDailyLimit(plan){
+  const normalized = normalizeAiPlan(plan);
+  if(normalized === "plus") return FORMFORGE_AI_PLUS_DAILY_LIMIT;
+  if(normalized === "pro") return FORMFORGE_AI_PRO_DAILY_LIMIT;
+  return STARTER_FREE_CREDITS;
+}
+
+function getAiPlanLabel(plan){
+  const normalized = normalizeAiPlan(plan);
+  if(normalized === "plus") return "FormForge AI Plus";
+  if(normalized === "pro") return "FormForge AI Pro";
+  return "Gratis";
+}
+
+function getDailyUsage(account){
+  const day = currentPremiumDay();
+  const savedDay = String(account && account.aiUsageDate ? account.aiUsageDate : "");
+  const used = savedDay === day ? Number(account && account.aiUsedToday ? account.aiUsedToday : 0) : 0;
+  const plan = normalizeAiPlan(account && account.plan ? account.plan : "starter");
+  const limit = getAiPlanDailyLimit(plan);
+  const remaining = plan === "pro" ? limit : Math.max(0, limit - used);
+  return { day, used, limit, remaining };
 }
 
 const DATA_DIR = process.env.ECHO_DATA_DIR || "/opt/render/project/src/data";
@@ -130,36 +171,17 @@ function setPremiumAccount(key, data){
   const safeKey = normalizePremiumKey(key);
   if(!safeKey) return null;
   const existing = premiumAccounts.get(safeKey) || {};
-  const nowMonth = currentPremiumMonth();
   const shouldActivate = data && data.active === true;
-  const incomingPlan = data && data.plan ? String(data.plan) : "";
-  const existingPlan = existing.plan ? String(existing.plan) : "";
-  const finalPlan = incomingPlan || existingPlan || (data && data.source === "stripe" ? "unlimited" : (existing.source === "stripe" || existing.subscriptionId ? "unlimited" : "credits"));
-  const planCreditsTotal = finalPlan === "starter" ? STARTER_FREE_CREDITS : (finalPlan === "unlimited" ? UNLIMITED_FAIR_USE_CREDITS : 0);
-  const previousMonth = existing.creditMonth || nowMonth;
-  const previousCredits = Number.isFinite(Number(existing.creditsRemaining)) ? Number(existing.creditsRemaining) : planCreditsTotal;
-
-  let creditsRemaining = previousCredits;
-  let creditMonth = previousMonth;
-  let creditsTotal = Number.isFinite(Number(existing.creditsTotal)) ? Number(existing.creditsTotal) : planCreditsTotal;
-
-  if(shouldActivate && finalPlan !== "starter" && (!existing.active || previousMonth !== nowMonth)){
-    creditsRemaining = UNLIMITED_FAIR_USE_CREDITS;
-    creditsTotal = UNLIMITED_FAIR_USE_CREDITS;
-    creditMonth = nowMonth;
-  }
-
-  if(finalPlan === "starter"){
-    creditsTotal = STARTER_FREE_CREDITS;
-  }
-
-  if(data && typeof data.creditsRemaining !== "undefined"){
-    creditsRemaining = Number(data.creditsRemaining);
-  }
-
-  if(data && typeof data.creditsTotal !== "undefined"){
-    creditsTotal = Number(data.creditsTotal);
-  }
+  const incomingPlan = data && data.plan ? normalizeAiPlan(data.plan) : "";
+  const existingPlan = existing.plan ? normalizeAiPlan(existing.plan) : "";
+  const finalPlan = incomingPlan || existingPlan || "starter";
+  const dailyLimit = getAiPlanDailyLimit(finalPlan);
+  const day = currentPremiumDay();
+  const existingUsage = getDailyUsage(existing);
+  const incomingUsageDate = data && typeof data.aiUsageDate !== "undefined" ? String(data.aiUsageDate || "") : existingUsage.day;
+  const incomingUsedToday = data && typeof data.aiUsedToday !== "undefined" ? Number(data.aiUsedToday || 0) : existingUsage.used;
+  const usedToday = incomingUsageDate === day ? Math.max(0, Math.floor(incomingUsedToday || 0)) : 0;
+  const remainingToday = finalPlan === "pro" ? dailyLimit : Math.max(0, dailyLimit - usedToday);
 
   let premiumPin = existing.premiumPin || "";
   if(shouldActivate && !premiumPin){
@@ -174,10 +196,15 @@ function setPremiumAccount(key, data){
     ...data,
     key: safeKey,
     plan: finalPlan,
+    planLabel: getAiPlanLabel(finalPlan),
     premiumPin,
-    creditsRemaining: Math.max(0, Math.floor(Number(creditsRemaining) || 0)),
-    creditsTotal: Math.max(0, Math.floor(Number(creditsTotal) || 0)),
-    creditMonth,
+    aiUsageDate: day,
+    aiUsedToday: usedToday,
+    aiDailyLimit: dailyLimit,
+    aiRemainingToday: remainingToday,
+    creditsRemaining: remainingToday,
+    creditsTotal: dailyLimit,
+    creditMonth: day,
     updatedAt: new Date().toISOString()
   };
   premiumAccounts.set(safeKey, merged);
@@ -225,11 +252,16 @@ async function refreshPremiumAccountFromStripe(value){
     const subscription = await callStripeGet("/subscriptions/" + encodeURIComponent(account.subscriptionId));
     const periodData = extractStripeSubscriptionPeriod(subscription);
     const active = ["active","trialing","past_due"].includes(String(subscription.status || ""));
+    const firstItem = subscription.items && subscription.items.data && subscription.items.data[0] ? subscription.items.data[0] : {};
+    const priceId = firstItem.price && firstItem.price.id ? firstItem.price.id : "";
+    const plan = getAiPlanByPriceId(priceId) || account.plan || "pro";
     return setPremiumAccount(account.email || value, {
       ...periodData,
       subscriptionId: subscription.id || account.subscriptionId,
       customerId: subscription.customer || account.customerId || "",
       active,
+      plan,
+      priceId,
       reason: "stripe.subscription.refreshed"
     });
   }catch(err){
@@ -238,7 +270,8 @@ async function refreshPremiumAccountFromStripe(value){
   }
 }
 
-function setPremiumForStripeData({ email, clientReferenceId, customerId, subscriptionId, active, reason, subscriptionStatus, currentPeriodStart, currentPeriodEnd, periodStart, periodEnd, cancelAtPeriodEnd, cancelAt, canceledAt, trialEnd }){
+function setPremiumForStripeData({ email, clientReferenceId, customerId, subscriptionId, active, reason, subscriptionStatus, currentPeriodStart, currentPeriodEnd, periodStart, periodEnd, cancelAtPeriodEnd, cancelAt, canceledAt, trialEnd, plan, priceId }){
+  const finalPlan = normalizeAiPlan(plan || getAiPlanByPriceId(priceId) || "pro");
   const data = {
     active: !!active,
     email: normalizePremiumKey(email),
@@ -256,7 +289,8 @@ function setPremiumForStripeData({ email, clientReferenceId, customerId, subscri
     trialEnd: trialEnd || "",
     reason: reason || "",
     source: "stripe",
-    plan: "unlimited"
+    plan: finalPlan,
+    priceId: priceId || ""
   };
 
   const keys = [
@@ -266,7 +300,7 @@ function setPremiumForStripeData({ email, clientReferenceId, customerId, subscri
     data.subscriptionId
   ].filter(Boolean);
 
-  keys.forEach((key) => activateUnlimitedAccount(key, data));
+  keys.forEach((key) => activateSubscriptionAccount(key, data));
   return data;
 }
 
@@ -274,9 +308,20 @@ function getPremiumAccount(value){
   const safeKey = normalizePremiumKey(value);
   if(!safeKey) return null;
   const account = premiumAccounts.get(safeKey) || null;
-  const plan = account && account.plan ? String(account.plan) : "premium";
-  if(account && account.active && plan !== "starter" && account.creditMonth !== currentPremiumMonth()){
-    return setPremiumAccount(safeKey, { creditsRemaining: UNLIMITED_FAIR_USE_CREDITS, creditsTotal: UNLIMITED_FAIR_USE_CREDITS, creditMonth: currentPremiumMonth(), plan: "unlimited" });
+  if(account && account.active){
+    const usage = getDailyUsage(account);
+    if(String(account.aiUsageDate || "") !== usage.day || Number(account.aiUsedToday || 0) !== usage.used || Number(account.aiDailyLimit || 0) !== usage.limit){
+      return setPremiumAccount(safeKey, {
+        aiUsageDate: usage.day,
+        aiUsedToday: usage.used,
+        aiDailyLimit: usage.limit,
+        aiRemainingToday: usage.remaining,
+        creditsRemaining: usage.remaining,
+        creditsTotal: usage.limit,
+        creditMonth: usage.day,
+        plan: normalizeAiPlan(account.plan || "starter")
+      });
+    }
   }
   return account;
 }
@@ -285,16 +330,22 @@ function getPremiumStatus(value, pin, options){
   const account = getPremiumAccount(value);
   const allowWithoutPin = !!(options && options.allowWithoutPin);
   const pinOk = account && account.active && (allowWithoutPin || verifyPremiumPin(account, pin));
+  const usage = account ? getDailyUsage(account) : { day: currentPremiumDay(), used: 0, limit: STARTER_FREE_CREDITS, remaining: 0 };
+  const plan = account ? normalizeAiPlan(account.plan || "starter") : "";
 
   return {
     premium: !!pinOk,
     active: !!pinOk,
     pinRequired: !!(account && account.active && !pinOk),
     pinOk: !!pinOk,
-    creditsRemaining: account ? Number(account.creditsRemaining || 0) : 0,
-    creditsTotal: account ? Number(account.creditsTotal || 0) : 0,
-    creditMonth: account ? String(account.creditMonth || currentPremiumMonth()) : currentPremiumMonth(),
-    plan: account ? String(account.plan || "premium") : "",
+    creditsRemaining: account ? usage.remaining : 0,
+    creditsTotal: account ? usage.limit : STARTER_FREE_CREDITS,
+    creditMonth: usage.day,
+    aiUsedToday: account ? usage.used : 0,
+    aiDailyLimit: account ? usage.limit : STARTER_FREE_CREDITS,
+    aiRemainingToday: account ? usage.remaining : 0,
+    plan,
+    planLabel: account ? getAiPlanLabel(plan) : "",
     starterCreditsGranted: account ? !!account.starterCreditsGranted : false,
     email: account ? String(account.email || "") : "",
     subscriptionId: account ? String(account.subscriptionId || "") : "",
@@ -316,22 +367,30 @@ function getPremiumStatus(value, pin, options){
 function consumePremiumCredit(value, pin){
   const safeKey = normalizePremiumKey(value);
   if(!safeKey){
-    return { ok: false, status: 401, error: "Premium e-mailadres ontbreekt" };
+    return { ok: false, status: 401, error: "E-mailadres ontbreekt" };
   }
   const account = getPremiumAccount(safeKey);
   if(!account || !account.active){
-    return { ok: false, status: 402, error: "AI Premium is niet actief voor dit account" };
+    return { ok: false, status: 402, error: "FormForge AI is niet actief voor dit account" };
   }
   if(!verifyPremiumPin(account, pin)){
-    return { ok: false, status: 403, error: "Premium pincode is ongeldig" };
+    return { ok: false, status: 403, error: "Pincode is ongeldig" };
   }
-  if(Number(account.creditsRemaining || 0) <= 0){
-    return { ok: false, status: 402, error: "AI credits zijn op voor deze maand" };
+
+  const usage = getDailyUsage(account);
+  const plan = normalizeAiPlan(account.plan || "starter");
+  if(plan !== "pro" && usage.used >= usage.limit){
+    return { ok: false, status: 402, error: "Je dagelijkse AI opdrachten zijn op. Upgrade naar AI Plus of AI Pro." };
   }
+
+  const nextUsed = plan === "pro" ? usage.used + 1 : usage.used + 1;
   const updated = setPremiumAccount(safeKey, {
-    creditsRemaining: Number(account.creditsRemaining || 0) - 1,
-    lastCreditUsedAt: new Date().toISOString()
+    aiUsageDate: usage.day,
+    aiUsedToday: nextUsed,
+    lastCreditUsedAt: new Date().toISOString(),
+    plan
   });
+
   return { ok: true, account: updated, status: getPremiumStatus(safeKey, pin) };
 }
 
@@ -378,23 +437,34 @@ function addCreditsToAccount(email, credits, reason, stripeSessionId){
   });
 }
 
-function activateUnlimitedAccount(email, data){
+function activateSubscriptionAccount(email, data){
   const safeEmail = normalizePremiumKey(email);
   if(!safeEmail) return null;
   const existing = getPremiumAccount(safeEmail) || {};
   const pin = existing.premiumPin || makePremiumPin();
+  const plan = normalizeAiPlan((data && data.plan) || "pro");
+  const limit = getAiPlanDailyLimit(plan);
+  const usage = getDailyUsage({ ...(existing || {}), plan });
   return setPremiumAccount(safeEmail, {
     ...(data || {}),
     active: true,
     email: safeEmail,
     premiumPin: pin,
-    creditsRemaining: UNLIMITED_FAIR_USE_CREDITS,
-    creditsTotal: UNLIMITED_FAIR_USE_CREDITS,
-    creditMonth: currentPremiumMonth(),
-    plan: "unlimited",
-    source: "stripe_unlimited",
-    reason: (data && data.reason) || "stripe_unlimited_active"
+    aiUsageDate: usage.day,
+    aiUsedToday: usage.used,
+    aiDailyLimit: limit,
+    aiRemainingToday: plan === "pro" ? limit : Math.max(0, limit - usage.used),
+    creditsRemaining: plan === "pro" ? limit : Math.max(0, limit - usage.used),
+    creditsTotal: limit,
+    creditMonth: usage.day,
+    plan,
+    source: "stripe_subscription",
+    reason: (data && data.reason) || "stripe_subscription_active"
   });
+}
+
+function activateUnlimitedAccount(email, data){
+  return activateSubscriptionAccount(email, { ...(data || {}), plan: (data && data.plan) || "pro" });
 }
 
 loadPremiumAccounts();
@@ -435,6 +505,8 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req,
           customerId: object.customer || "",
           subscriptionId: object.subscription || "",
           active: true,
+          plan: metadata.plan || metadata.aiPlan || "",
+          priceId: metadata.priceId || "",
           reason: "checkout.session.completed"
         });
       }
@@ -447,6 +519,8 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req,
         customerId: object.customer || "",
         subscriptionId: object.subscription || "",
         active: true,
+        plan: object.metadata?.plan || object.metadata?.aiPlan || "",
+        priceId: object.metadata?.priceId || "",
         reason: "invoice.payment.paid"
       });
     }
@@ -670,7 +744,7 @@ function premiumPinEmailHtml(pin){
 
 
 function starterCreditsEmailText(pin, credits){
-  return "Beste ECHO gebruiker,\n\nJe ECHO account is aangemaakt.\n\nJe 6 cijferige pincode is: " + pin + "\nJe hebt " + credits + " gratis AI credits ontvangen.\n\nGebruik deze pincode samen met je e-mailadres om ECHO AI te activeren.\n\nFormForge ECHO";
+  return "Beste ECHO gebruiker,\n\nJe ECHO account is aangemaakt.\n\nJe 6 cijferige pincode is: " + pin + "\nJe hebt iedere dag " + credits + " gratis AI opdracht ontvangen.\n\nGebruik deze pincode samen met je e-mailadres om ECHO AI te activeren.\n\nFormForge ECHO";
 }
 
 function starterCreditsEmailHtml(pin, credits){
@@ -679,7 +753,7 @@ function starterCreditsEmailHtml(pin, credits){
     "<p>Je ECHO account is aangemaakt.</p>" +
     "<p>Je 6 cijferige pincode is:</p>" +
     "<p style=\"font-size:28px;font-weight:800;letter-spacing:4px\">" + pin + "</p>" +
-    "<p>Je hebt <strong>" + credits + " gratis AI credits</strong> ontvangen.</p>" +
+    "<p>Je hebt <strong>iedere dag " + credits + " gratis AI opdracht</strong>.</p>" +
     "<p>Gebruik deze pincode samen met je e-mailadres om ECHO AI te activeren.</p>" +
     "<p>FormForge ECHO</p>" +
   "</div>";
@@ -1096,7 +1170,11 @@ app.get("/api/stripe/premium-status", async (req, res) => {
     creditsRemaining: status.creditsRemaining,
     creditsTotal: status.creditsTotal,
     creditMonth: status.creditMonth,
+    aiUsedToday: status.aiUsedToday,
+    aiDailyLimit: status.aiDailyLimit,
+    aiRemainingToday: status.aiRemainingToday,
     plan: status.plan,
+    planLabel: status.planLabel,
     starterCreditsGranted: status.starterCreditsGranted,
     subscriptionStatus: status.subscriptionStatus,
     periodStart: status.periodStart,
@@ -1123,7 +1201,11 @@ app.post("/api/stripe/premium-status", async (req, res) => {
     creditsRemaining: status.creditsRemaining,
     creditsTotal: status.creditsTotal,
     creditMonth: status.creditMonth,
+    aiUsedToday: status.aiUsedToday,
+    aiDailyLimit: status.aiDailyLimit,
+    aiRemainingToday: status.aiRemainingToday,
     plan: status.plan,
+    planLabel: status.planLabel,
     starterCreditsGranted: status.starterCreditsGranted,
     subscriptionStatus: status.subscriptionStatus,
     periodStart: status.periodStart,
@@ -1154,6 +1236,7 @@ app.post("/api/stripe/confirm-session", async (req, res) => {
     const metadata = session.metadata || {};
     const packageCredits = Number(metadata.credits || 0);
     const packageType = String(metadata.packageType || "");
+    const plan = normalizeAiPlan(metadata.plan || metadata.aiPlan || "");
     let subscriptionData = null;
     let periodData = {};
     if(subscriptionId){
@@ -1194,6 +1277,8 @@ app.post("/api/stripe/confirm-session", async (req, res) => {
       subscriptionId,
       active: true,
       reason: "checkout.session.confirmed",
+      plan: plan || "pro",
+      priceId: metadata.priceId || "",
       ...periodData
     });
 
@@ -1398,7 +1483,11 @@ app.post("/api/stripe/activate-starter", async (req, res) => {
       premiumPin: pin,
       creditsRemaining: STARTER_FREE_CREDITS,
       creditsTotal: STARTER_FREE_CREDITS,
-      creditMonth: currentPremiumMonth(),
+      creditMonth: currentPremiumDay(),
+      aiUsageDate: currentPremiumDay(),
+      aiUsedToday: 0,
+      aiDailyLimit: STARTER_FREE_CREDITS,
+      aiRemainingToday: STARTER_FREE_CREDITS,
       plan: "starter",
       source: "starter",
       starterCreditsGranted: true,
@@ -1411,7 +1500,7 @@ app.post("/api/stripe/activate-starter", async (req, res) => {
       try{
         await sendResendEmail({
           to: email,
-          subject: "Je ECHO startercredits en pincode",
+          subject: "Je FormForge AI pincode",
           text: starterCreditsEmailText(pin, STARTER_FREE_CREDITS),
           html: starterCreditsEmailHtml(pin, STARTER_FREE_CREDITS)
         });
@@ -1434,7 +1523,7 @@ app.post("/api/stripe/activate-starter", async (req, res) => {
       plan: "starter",
       starterCreditsGranted: true,
       emailSent,
-      message: STARTER_FREE_CREDITS + " gratis AI credits zijn geactiveerd."
+      message: "Gratis FormForge AI is geactiveerd. Je hebt iedere dag " + STARTER_FREE_CREDITS + " AI opdracht."
     });
   }catch(err){
     jsonError(res, 500, "Startercredits konden niet worden geactiveerd", err.message || String(err));
@@ -1499,7 +1588,10 @@ app.post("/api/stripe/create-credit-checkout", async (req, res) => {
 
 app.post("/api/stripe/create-checkout", async (req, res) => {
   try{
-    const priceId = String(req.body && (req.body.priceId || req.body.price_id) ? (req.body.priceId || req.body.price_id) : (STRIPE_UNLIMITED_PRICE_ID || STRIPE_DEFAULT_PRICE_ID)).trim();
+    const requestedPlan = normalizeAiPlan(req.body && (req.body.plan || req.body.aiPlan) ? (req.body.plan || req.body.aiPlan) : "");
+    const defaultPlanPriceId = requestedPlan === "plus" ? STRIPE_FORMFORGE_AI_PLUS_PRICE_ID : STRIPE_FORMFORGE_AI_PRO_PRICE_ID;
+    const priceId = String(req.body && (req.body.priceId || req.body.price_id) ? (req.body.priceId || req.body.price_id) : (defaultPlanPriceId || STRIPE_UNLIMITED_PRICE_ID || STRIPE_DEFAULT_PRICE_ID)).trim();
+    const plan = requestedPlan || getAiPlanByPriceId(priceId) || "pro";
     const customerEmail = String(req.body && req.body.email ? req.body.email : "").trim();
     const clientReferenceId = String(req.body && (req.body.userId || req.body.clientReferenceId) ? (req.body.userId || req.body.clientReferenceId) : "").trim();
     const successUrl = String(req.body && req.body.successUrl ? req.body.successUrl : STRIPE_SUCCESS_URL).trim();
@@ -1522,15 +1614,21 @@ app.post("/api/stripe/create-checkout", async (req, res) => {
       allow_promotion_codes: true,
       billing_address_collection: "auto",
       metadata: {
-        product: "ECHO Unlimited Premium",
-        source: "formforge-echo",
-        email: customerEmail
+        product: getAiPlanLabel(plan),
+        source: "formforge-offerte-factuur",
+        email: customerEmail,
+        plan,
+        aiPlan: plan,
+        priceId
       },
       subscription_data: {
         metadata: {
-          product: "ECHO Unlimited Premium",
-          source: "formforge-echo",
-          email: customerEmail
+          product: getAiPlanLabel(plan),
+          source: "formforge-offerte-factuur",
+          email: customerEmail,
+          plan,
+          aiPlan: plan,
+          priceId
         }
       }
     };
@@ -2696,6 +2794,13 @@ app.post("/api/pdfstudio/ai/workorder", async (req, res) => {
       return jsonError(res, 400, "Tekst ontbreekt");
     }
 
+    const premiumKey = String(req.body && (req.body.email || req.body.premiumEmail || req.body.userId || req.body.premiumKey) ? (req.body.email || req.body.premiumEmail || req.body.userId || req.body.premiumKey) : "").trim();
+    const premiumPin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
+    const creditResult = consumePremiumCredit(premiumKey, premiumPin);
+    if(!creditResult.ok){
+      return jsonError(res, creditResult.status || 402, creditResult.error || "FormForge AI is niet actief");
+    }
+
     const answer = await callOpenAI([
       {
         role: "system",
@@ -2789,6 +2894,15 @@ app.post("/api/pdfstudio/ai/workorder", async (req, res) => {
         totalIncVat: Number((subtotalExVat + vatTotal).toFixed ? (subtotalExVat + vatTotal).toFixed(2) : (subtotalExVat + vatTotal))
       },
       warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
+      premium: true,
+      plan: creditResult.status.plan,
+      planLabel: creditResult.status.planLabel,
+      creditsRemaining: creditResult.status.creditsRemaining,
+      creditsTotal: creditResult.status.creditsTotal,
+      aiUsedToday: creditResult.status.aiUsedToday,
+      aiDailyLimit: creditResult.status.aiDailyLimit,
+      aiRemainingToday: creditResult.status.aiRemainingToday,
+      account: creditResult.status,
       raw: parsed
     });
 
