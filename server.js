@@ -169,6 +169,85 @@ function normalizePremiumKey(value){
   return String(value || "").trim().toLowerCase();
 }
 
+const OWNER_PREMIUM_EMAIL = "info@generaalprojecten.nl";
+const OWNER_PREMIUM_PIN = "654321";
+
+function isOwnerPremiumEmail(value){
+  return normalizePremiumKey(value) === OWNER_PREMIUM_EMAIL;
+}
+
+function buildOwnerPremiumAccount(){
+  return {
+    active: true,
+    email: OWNER_PREMIUM_EMAIL,
+    key: OWNER_PREMIUM_EMAIL,
+    plan: "pro",
+    planLabel: "FormForge AI Pro",
+    premiumPin: OWNER_PREMIUM_PIN,
+    subscriptionStatus: "active",
+    source: "owner",
+    reason: "owner-account-always-active",
+    aiUsageDate: currentPremiumDay(),
+    aiUsedToday: 0,
+    aiDailyLimit: FORMFORGE_AI_PRO_DAILY_LIMIT,
+    aiRemainingToday: FORMFORGE_AI_PRO_DAILY_LIMIT,
+    creditsRemaining: FORMFORGE_AI_PRO_DAILY_LIMIT,
+    creditsTotal: FORMFORGE_AI_PRO_DAILY_LIMIT,
+    creditMonth: currentPremiumDay(),
+    starterCreditsGranted: true,
+    deviceId: "",
+    activeDeviceId: "",
+    deviceBoundAt: "",
+    deviceLastSeenAt: "",
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function ensureOwnerPremiumAccount(){
+  return setPremiumAccount(OWNER_PREMIUM_EMAIL, buildOwnerPremiumAccount());
+}
+
+function getOwnerPremiumStatus(){
+  const account = ensureOwnerPremiumAccount();
+  const usage = getDailyUsage(account);
+  return {
+    premium: true,
+    active: true,
+    pinRequired: false,
+    pinOk: true,
+    deviceRequired: false,
+    deviceConflict: false,
+    deviceMessage: "",
+    deviceId: "",
+    activeDeviceId: "",
+    activeDeviceLabel: "Eigenaar",
+    creditsRemaining: FORMFORGE_AI_PRO_DAILY_LIMIT,
+    creditsTotal: FORMFORGE_AI_PRO_DAILY_LIMIT,
+    creditMonth: usage.day,
+    aiUsedToday: 0,
+    aiDailyLimit: FORMFORGE_AI_PRO_DAILY_LIMIT,
+    aiRemainingToday: FORMFORGE_AI_PRO_DAILY_LIMIT,
+    plan: "pro",
+    planLabel: "FormForge AI Pro",
+    starterCreditsGranted: true,
+    email: OWNER_PREMIUM_EMAIL,
+    subscriptionId: "",
+    subscriptionStatus: "active",
+    periodStart: "",
+    periodEnd: "",
+    currentPeriodStart: "",
+    currentPeriodEnd: "",
+    nextPaymentDate: "",
+    cancelAtPeriodEnd: false,
+    cancelAt: "",
+    canceledAt: "",
+    trialEnd: "",
+    reason: "owner-account-always-active",
+    updatedAt: account ? String(account.updatedAt || "") : new Date().toISOString()
+  };
+}
+
+
 function normalizePremiumPin(value){
   return String(value || "").trim().replace(/\D/g, "");
 }
@@ -452,6 +531,9 @@ function getPremiumAccount(value){
 }
 
 function getPremiumStatus(value, pin, options){
+  if(isOwnerPremiumEmail(value)){
+    return getOwnerPremiumStatus();
+  }
   let account = getPremiumAccount(value);
   const allowWithoutPin = !!(options && options.allowWithoutPin);
   const deviceId = normalizeDeviceId(options && options.deviceId ? options.deviceId : "");
@@ -512,6 +594,11 @@ function getPremiumStatus(value, pin, options){
 function consumePremiumCredit(value, pin, deviceId){
   const safeKey = normalizePremiumKey(value);
   const safeDeviceId = normalizeDeviceId(deviceId);
+  if(isOwnerPremiumEmail(safeKey)){
+    const account = ensureOwnerPremiumAccount();
+    return { ok: true, account, status: getOwnerPremiumStatus() };
+  }
+
   if(!safeKey){
     return { ok: false, status: 401, error: "E-mailadres ontbreekt" };
   }
@@ -636,6 +723,7 @@ function activateUnlimitedAccount(email, data){
 }
 
 loadPremiumAccounts();
+ensureOwnerPremiumAccount();
 
 app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req, res) => {
   let event = null;
