@@ -44,7 +44,7 @@ try{
 
 const ECHO_STARTER_FREE_CREDITS = Number(process.env.ECHO_STARTER_FREE_CREDITS || 10);
 const FORMFORGE_FREE_DAILY_LIMIT = Number(process.env.FORMFORGE_FREE_DAILY_LIMIT || 1);
-const STARTER_FREE_CREDITS = FORMFORGE_FREE_DAILY_LIMIT;
+const STARTER_FREE_CREDITS = ECHO_STARTER_FREE_CREDITS;
 const UNLIMITED_FAIR_USE_CREDITS = Number(process.env.FORMFORGE_PRO_DAILY_LIMIT || process.env.ECHO_UNLIMITED_FAIR_USE_CREDITS || 999999);
 
 const FORMFORGE_AI_PLUS_DAILY_LIMIT = Number(process.env.FORMFORGE_AI_PLUS_DAILY_LIMIT || 25);
@@ -91,11 +91,14 @@ function getAiPlanByPriceId(priceId){
   return "";
 }
 
-function getAiPlanDailyLimit(plan){
+function getAiPlanDailyLimit(plan, source){
   const normalized = normalizeAiPlan(plan);
+  const sourceText = String(source || "").trim().toLowerCase();
   if(normalized === "plus") return FORMFORGE_AI_PLUS_DAILY_LIMIT;
   if(normalized === "pro") return FORMFORGE_AI_PRO_DAILY_LIMIT;
-  return FORMFORGE_FREE_DAILY_LIMIT;
+  if(sourceText === "formforge" || sourceText === "offerte" || sourceText === "factuur") return FORMFORGE_FREE_DAILY_LIMIT;
+  if(normalized === "starter") return FORMFORGE_FREE_DAILY_LIMIT;
+  return ECHO_STARTER_FREE_CREDITS;
 }
 
 function getAiPlanLabel(plan){
@@ -106,18 +109,29 @@ function getAiPlanLabel(plan){
   return "Gratis";
 }
 
+
 function detectStarterProduct(req){
   const body = req && req.body ? req.body : {};
+  const exact = String(body.source || body.product || body.app || body.module || "").trim().toLowerCase();
+
+  if(exact === "echo" || exact === "echo_live" || exact === "echo-live" || exact === "translator" || exact === "live-translator"){
+    return "echo";
+  }
+
+  if(exact === "formforge" || exact === "offerte" || exact === "factuur" || exact === "offerte-factuur" || exact === "offertes-facturen"){
+    return "formforge";
+  }
+
   const raw = [
-    body.source,
-    body.product,
-    body.app,
-    body.module,
     body.context,
     body.page,
     req && req.headers ? req.headers.referer : "",
     req && req.headers ? req.headers.referrer : ""
   ].map((value) => String(value || "").toLowerCase()).join(" ");
+
+  if(raw.includes("echo") || raw.includes("translator") || raw.includes("vertaler")){
+    return "echo";
+  }
 
   if(raw.includes("offerte") || raw.includes("factuur") || raw.includes("invoice") || raw.includes("quote") || raw.includes("offertenenfacturen")){
     return "formforge";
@@ -394,7 +408,7 @@ function setPremiumAccount(key, data){
   const incomingPlan = data && data.plan ? normalizeAiPlan(data.plan) : "";
   const existingPlan = existing.plan ? normalizeAiPlan(existing.plan) : "";
   const finalPlan = incomingPlan || existingPlan || "starter";
-  const dailyLimit = getAiPlanDailyLimit(finalPlan);
+  const dailyLimit = getAiPlanDailyLimit(finalPlan, data && data.source ? data.source : existing.source);
   const day = currentPremiumDay();
   const existingUsage = getDailyUsage(existing);
   const incomingUsageDate = data && typeof data.aiUsageDate !== "undefined" ? String(data.aiUsageDate || "") : existingUsage.day;
@@ -1022,7 +1036,7 @@ function premiumPinEmailHtml(pin){
 
 
 function starterCreditsEmailText(pin, credits){
-  return "Beste ECHO gebruiker,\n\nJe ECHO account is aangemaakt.\n\nJe 6 cijferige pincode is: " + pin + "\nJe hebt iedere dag " + credits + " gratis AI opdracht ontvangen.\n\nGebruik deze pincode samen met je e-mailadres om ECHO AI te activeren.\n\nFormForge ECHO";
+  return "Beste ECHO gebruiker,\n\nJe ECHO account is aangemaakt.\n\nJe 6 cijferige pincode is: " + pin + "\nJe hebt eenmalig " + credits + " gratis AI credits ontvangen.\n\nGebruik deze pincode samen met je e-mailadres om ECHO AI te activeren.\n\nFormForge ECHO";
 }
 
 function starterCreditsEmailHtml(pin, credits){
@@ -1031,7 +1045,7 @@ function starterCreditsEmailHtml(pin, credits){
     "<p>Je ECHO account is aangemaakt.</p>" +
     "<p>Je 6 cijferige pincode is:</p>" +
     "<p style=\"font-size:28px;font-weight:800;letter-spacing:4px\">" + pin + "</p>" +
-    "<p>Je hebt <strong>iedere dag " + credits + " gratis AI opdracht</strong>.</p>" +
+    "<p>Je hebt <strong>" + credits + " gratis AI credits</strong> ontvangen.</p>" +
     "<p>Gebruik deze pincode samen met je e-mailadres om ECHO AI te activeren.</p>" +
     "<p>FormForge ECHO</p>" +
   "</div>";
@@ -1773,6 +1787,7 @@ app.post("/api/stripe/activate-starter", async (req, res) => {
     const isFormForgeStarter = starterProduct === "formforge";
     const starterAmount = isFormForgeStarter ? FORMFORGE_FREE_DAILY_LIMIT : ECHO_STARTER_FREE_CREDITS;
     const starterPlan = isFormForgeStarter ? "starter" : "credits";
+    const starterSource = isFormForgeStarter ? "formforge_starter" : "echo_starter";
 
     if(!email){
       return jsonError(res, 400, "E-mailadres ontbreekt");
@@ -1781,62 +1796,67 @@ app.post("/api/stripe/activate-starter", async (req, res) => {
     let account = getPremiumAccount(email);
 
     if(account && account.active){
-      const deviceCheck = checkAccountDevice(account, deviceId, { requireDevice: true });
-      if(!deviceCheck.ok){
-        return jsonError(res, deviceCheck.status || 409, deviceCheck.message || "Dit FormForge AI account is al actief op een ander toestel", deviceCheck.code || "DEVICE_ERROR");
+      const existingPlan = normalizeAiPlan(account.plan || "starter");
+      const existingSource = String(account.source || "").toLowerCase();
+      const sameStarterKind = isFormForgeStarter
+        ? (existingPlan === "starter" || existingSource.includes("formforge"))
+        : (existingPlan === "credits" || existingSource.includes("echo"));
+
+      if(account.premiumPin && suppliedPin && !verifyPremiumPin(account, suppliedPin)){
+        return jsonError(res, 403, "Pincode is ongeldig voor dit e-mailadres");
       }
-      account = bindAccountDeviceIfNeeded(email, account, deviceId);
-      account = touchAccountDevice(email, account, deviceId);
+
+      if(!sameStarterKind && existingPlan !== "plus" && existingPlan !== "pro"){
+        account = setPremiumAccount(email, {
+          active: true,
+          email,
+          premiumPin: account.premiumPin || makePremiumPin(),
+          creditsRemaining: starterAmount,
+          creditsTotal: starterAmount,
+          creditMonth: currentPremiumDay(),
+          aiUsageDate: currentPremiumDay(),
+          aiUsedToday: 0,
+          aiDailyLimit: starterAmount,
+          aiRemainingToday: starterAmount,
+          plan: starterPlan,
+          source: starterSource,
+          starterCreditsGranted: true,
+          starterCreditsGrantedAt: new Date().toISOString(),
+          reason: isFormForgeStarter ? "formforge_daily_free_ai_activated" : "echo_starter_credits_activated"
+        });
+      }
+
+      if(sameStarterKind || existingPlan === "plus" || existingPlan === "pro"){
+        const status = getPremiumStatus(email, suppliedPin || account.premiumPin, { allowWithoutPin: !suppliedPin, deviceId, requireDevice: false });
+        return res.json({
+          ok: true,
+          alreadyActive: true,
+          premium: true,
+          active: true,
+          email,
+          premiumPin: account.premiumPin || "",
+          pin: account.premiumPin || "",
+          creditsRemaining: status.creditsRemaining,
+          creditsTotal: status.creditsTotal,
+          creditMonth: status.creditMonth,
+          aiUsedToday: status.aiUsedToday,
+          aiDailyLimit: status.aiDailyLimit,
+          aiRemainingToday: status.aiRemainingToday,
+          plan: status.plan || starterPlan,
+          planLabel: status.planLabel || getAiPlanLabel(starterPlan),
+          starterCreditsGranted: !!account.starterCreditsGranted,
+          message: isFormForgeStarter ? "Gratis FormForge AI is actief. Je hebt iedere dag " + FORMFORGE_FREE_DAILY_LIMIT + " AI opdracht." : "ECHO startercredits waren al geactiveerd voor dit e-mailadres."
+        });
+      }
     }
 
     if(account && account.premiumPin && suppliedPin && !verifyPremiumPin(account, suppliedPin)){
       return jsonError(res, 403, "Pincode is ongeldig voor dit e-mailadres");
     }
 
-    if(account && account.active && account.plan !== "starter" && account.plan !== "credits"){
-      const status = getPremiumStatus(email, suppliedPin || account.premiumPin, { allowWithoutPin: !suppliedPin, deviceId });
-      return res.json({
-        ok: true,
-        alreadyActive: true,
-        premium: status.premium || !!account.active,
-        active: !!account.active,
-        email,
-        premiumPin: account.premiumPin || "",
-        pin: account.premiumPin || "",
-        creditsRemaining: Number(account.creditsRemaining || 0),
-        creditsTotal: Number(account.creditsTotal || UNLIMITED_FAIR_USE_CREDITS),
-        creditMonth: String(account.creditMonth || currentPremiumMonth()),
-        plan: String(account.plan || "premium"),
-        starterCreditsGranted: !!account.starterCreditsGranted,
-        message: "Dit e-mailadres heeft al een actief AI account."
-      });
-    }
-
-    if(account && account.starterCreditsGranted){
-      const usage = getDailyUsage(account);
-      return res.json({
-        ok: true,
-        alreadyActive: true,
-        premium: true,
-        active: true,
-        email,
-        premiumPin: account.premiumPin || "",
-        pin: account.premiumPin || "",
-        creditsRemaining: usage.remaining,
-        creditsTotal: usage.limit,
-        creditMonth: String(account.creditMonth || currentPremiumDay()),
-        aiUsedToday: usage.used,
-        aiDailyLimit: usage.limit,
-        aiRemainingToday: usage.remaining,
-        plan: normalizeAiPlan(account.plan || starterPlan),
-        starterCreditsGranted: true,
-        message: "Startercredits waren al geactiveerd voor dit e-mailadres."
-      });
-    }
-
     const pin = suppliedPin && suppliedPin.length === 6 ? suppliedPin : (account && account.premiumPin ? account.premiumPin : makePremiumPin());
 
-    const starterPayload = {
+    account = setPremiumAccount(email, {
       active: true,
       email,
       premiumPin: pin,
@@ -1847,18 +1867,16 @@ app.post("/api/stripe/activate-starter", async (req, res) => {
       aiUsedToday: 0,
       aiDailyLimit: starterAmount,
       aiRemainingToday: starterAmount,
-      deviceId: deviceId,
-      activeDeviceId: deviceId,
-      deviceBoundAt: deviceId ? new Date().toISOString() : "",
-      deviceLastSeenAt: deviceId ? new Date().toISOString() : "",
+      deviceId: "",
+      activeDeviceId: "",
+      deviceBoundAt: "",
+      deviceLastSeenAt: "",
       plan: starterPlan,
-      source: isFormForgeStarter ? "formforge_starter" : "echo_starter",
+      source: starterSource,
       starterCreditsGranted: true,
       starterCreditsGrantedAt: new Date().toISOString(),
       reason: isFormForgeStarter ? "formforge_daily_free_ai_activated" : "echo_starter_credits_activated"
-    };
-
-    account = setPremiumAccount(email, starterPayload);
+    });
 
     let emailSent = false;
     if(RESEND_API_KEY){
@@ -1866,8 +1884,12 @@ app.post("/api/stripe/activate-starter", async (req, res) => {
         await sendResendEmail({
           to: email,
           subject: isFormForgeStarter ? "Je FormForge AI pincode" : "Je ECHO startercredits en pincode",
-          text: starterCreditsEmailText(pin, starterAmount),
-          html: starterCreditsEmailHtml(pin, starterAmount)
+          text: isFormForgeStarter
+            ? "Beste FormForge gebruiker,\n\nJe FormForge AI account is aangemaakt.\n\nJe 6 cijferige pincode is: " + pin + "\nJe hebt iedere dag " + FORMFORGE_FREE_DAILY_LIMIT + " gratis AI opdracht.\n\nGebruik deze pincode samen met je e-mailadres om FormForge AI te activeren.\n\nFormForge"
+            : starterCreditsEmailText(pin, ECHO_STARTER_FREE_CREDITS),
+          html: isFormForgeStarter
+            ? `<div style="font-family:Arial,sans-serif;line-height:1.5;color:#111"><h2>Je FormForge AI pincode</h2><p>Je FormForge AI account is aangemaakt.</p><p>Je 6 cijferige pincode is:</p><p style="font-size:28px;font-weight:800;letter-spacing:4px">${pin}</p><p>Je hebt <strong>iedere dag ${FORMFORGE_FREE_DAILY_LIMIT} gratis AI opdracht</strong>.</p><p>Gebruik deze pincode samen met je e-mailadres om FormForge AI te activeren.</p><p>FormForge</p></div>`
+            : starterCreditsEmailHtml(pin, ECHO_STARTER_FREE_CREDITS)
         });
         emailSent = true;
       }catch(mailErr){
@@ -1890,6 +1912,7 @@ app.post("/api/stripe/activate-starter", async (req, res) => {
       aiDailyLimit: usage.limit,
       aiRemainingToday: usage.remaining,
       plan: normalizeAiPlan(account.plan || starterPlan),
+      planLabel: getAiPlanLabel(starterPlan),
       starterCreditsGranted: true,
       emailSent,
       message: isFormForgeStarter ? "Gratis FormForge AI is geactiveerd. Je hebt iedere dag " + FORMFORGE_FREE_DAILY_LIMIT + " AI opdracht." : ECHO_STARTER_FREE_CREDITS + " gratis ECHO AI credits zijn geactiveerd."
@@ -1898,7 +1921,6 @@ app.post("/api/stripe/activate-starter", async (req, res) => {
     jsonError(res, 500, "Startercredits konden niet worden geactiveerd", err.message || String(err));
   }
 });
-
 
 app.post("/api/stripe/create-credit-checkout", async (req, res) => {
   try{
