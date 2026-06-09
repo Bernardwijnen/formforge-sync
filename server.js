@@ -42,7 +42,9 @@ try{
   console.warn("stripe package niet geladen. Stripe webhook verificatie blijft beperkt.");
 }
 
-const STARTER_FREE_CREDITS = Number(process.env.FORMFORGE_FREE_DAILY_LIMIT || process.env.ECHO_STARTER_FREE_CREDITS || 1);
+const ECHO_STARTER_FREE_CREDITS = Number(process.env.ECHO_STARTER_FREE_CREDITS || 10);
+const FORMFORGE_FREE_DAILY_LIMIT = Number(process.env.FORMFORGE_FREE_DAILY_LIMIT || 1);
+const STARTER_FREE_CREDITS = FORMFORGE_FREE_DAILY_LIMIT;
 const UNLIMITED_FAIR_USE_CREDITS = Number(process.env.FORMFORGE_PRO_DAILY_LIMIT || process.env.ECHO_UNLIMITED_FAIR_USE_CREDITS || 999999);
 
 const FORMFORGE_AI_PLUS_DAILY_LIMIT = Number(process.env.FORMFORGE_AI_PLUS_DAILY_LIMIT || 25);
@@ -93,7 +95,7 @@ function getAiPlanDailyLimit(plan){
   const normalized = normalizeAiPlan(plan);
   if(normalized === "plus") return FORMFORGE_AI_PLUS_DAILY_LIMIT;
   if(normalized === "pro") return FORMFORGE_AI_PRO_DAILY_LIMIT;
-  return STARTER_FREE_CREDITS;
+  return FORMFORGE_FREE_DAILY_LIMIT;
 }
 
 function getAiPlanLabel(plan){
@@ -102,6 +104,26 @@ function getAiPlanLabel(plan){
   if(normalized === "pro") return "FormForge AI Pro";
   if(normalized === "credits") return "Losse AI credits";
   return "Gratis";
+}
+
+function detectStarterProduct(req){
+  const body = req && req.body ? req.body : {};
+  const raw = [
+    body.source,
+    body.product,
+    body.app,
+    body.module,
+    body.context,
+    body.page,
+    req && req.headers ? req.headers.referer : "",
+    req && req.headers ? req.headers.referrer : ""
+  ].map((value) => String(value || "").toLowerCase()).join(" ");
+
+  if(raw.includes("offerte") || raw.includes("factuur") || raw.includes("invoice") || raw.includes("quote") || raw.includes("offertenenfacturen")){
+    return "formforge";
+  }
+
+  return "echo";
 }
 
 function getDailyUsage(account){
@@ -1403,6 +1425,8 @@ app.get("/api/stripe/status", (req, res) => {
     premiumAccountsInMemory: premiumAccounts.size,
     unlimitedFairUseCredits: UNLIMITED_FAIR_USE_CREDITS,
     starterFreeCredits: STARTER_FREE_CREDITS,
+    echoStarterFreeCredits: ECHO_STARTER_FREE_CREDITS,
+    formforgeFreeDailyLimit: FORMFORGE_FREE_DAILY_LIMIT,
     creditPackages: {
       aiPlus: !!STRIPE_FORMFORGE_AI_PLUS_PRICE_ID,
       aiPro: !!STRIPE_FORMFORGE_AI_PRO_PRICE_ID,
@@ -1745,6 +1769,10 @@ app.post("/api/stripe/activate-starter", async (req, res) => {
     const email = normalizePremiumKey(req.body && req.body.email ? req.body.email : "");
     const suppliedPin = normalizePremiumPin(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "");
     const deviceId = getRequestDeviceId(req);
+    const starterProduct = detectStarterProduct(req);
+    const isFormForgeStarter = starterProduct === "formforge";
+    const starterAmount = isFormForgeStarter ? FORMFORGE_FREE_DAILY_LIMIT : ECHO_STARTER_FREE_CREDITS;
+    const starterPlan = isFormForgeStarter ? "starter" : "credits";
 
     if(!email){
       return jsonError(res, 400, "E-mailadres ontbreekt");
@@ -1765,7 +1793,7 @@ app.post("/api/stripe/activate-starter", async (req, res) => {
       return jsonError(res, 403, "Pincode is ongeldig voor dit e-mailadres");
     }
 
-    if(account && account.active && account.plan !== "starter"){
+    if(account && account.active && account.plan !== "starter" && account.plan !== "credits"){
       const status = getPremiumStatus(email, suppliedPin || account.premiumPin, { allowWithoutPin: !suppliedPin, deviceId });
       return res.json({
         ok: true,
@@ -1785,6 +1813,7 @@ app.post("/api/stripe/activate-starter", async (req, res) => {
     }
 
     if(account && account.starterCreditsGranted){
+      const usage = getDailyUsage(account);
       return res.json({
         ok: true,
         alreadyActive: true,
@@ -1793,10 +1822,13 @@ app.post("/api/stripe/activate-starter", async (req, res) => {
         email,
         premiumPin: account.premiumPin || "",
         pin: account.premiumPin || "",
-        creditsRemaining: Number(account.creditsRemaining || 0),
-        creditsTotal: Number(account.creditsTotal || STARTER_FREE_CREDITS),
-        creditMonth: String(account.creditMonth || currentPremiumMonth()),
-        plan: "starter",
+        creditsRemaining: usage.remaining,
+        creditsTotal: usage.limit,
+        creditMonth: String(account.creditMonth || currentPremiumDay()),
+        aiUsedToday: usage.used,
+        aiDailyLimit: usage.limit,
+        aiRemainingToday: usage.remaining,
+        plan: normalizeAiPlan(account.plan || starterPlan),
         starterCreditsGranted: true,
         message: "Startercredits waren al geactiveerd voor dit e-mailadres."
       });
@@ -1804,36 +1836,38 @@ app.post("/api/stripe/activate-starter", async (req, res) => {
 
     const pin = suppliedPin && suppliedPin.length === 6 ? suppliedPin : (account && account.premiumPin ? account.premiumPin : makePremiumPin());
 
-    account = setPremiumAccount(email, {
+    const starterPayload = {
       active: true,
       email,
       premiumPin: pin,
-      creditsRemaining: STARTER_FREE_CREDITS,
-      creditsTotal: STARTER_FREE_CREDITS,
+      creditsRemaining: starterAmount,
+      creditsTotal: starterAmount,
       creditMonth: currentPremiumDay(),
       aiUsageDate: currentPremiumDay(),
       aiUsedToday: 0,
-      aiDailyLimit: STARTER_FREE_CREDITS,
-      aiRemainingToday: STARTER_FREE_CREDITS,
+      aiDailyLimit: starterAmount,
+      aiRemainingToday: starterAmount,
       deviceId: deviceId,
       activeDeviceId: deviceId,
       deviceBoundAt: deviceId ? new Date().toISOString() : "",
       deviceLastSeenAt: deviceId ? new Date().toISOString() : "",
-      plan: "starter",
-      source: "starter",
+      plan: starterPlan,
+      source: isFormForgeStarter ? "formforge_starter" : "echo_starter",
       starterCreditsGranted: true,
       starterCreditsGrantedAt: new Date().toISOString(),
-      reason: "starter_credits_activated"
-    });
+      reason: isFormForgeStarter ? "formforge_daily_free_ai_activated" : "echo_starter_credits_activated"
+    };
+
+    account = setPremiumAccount(email, starterPayload);
 
     let emailSent = false;
     if(RESEND_API_KEY){
       try{
         await sendResendEmail({
           to: email,
-          subject: "Je FormForge AI pincode",
-          text: starterCreditsEmailText(pin, STARTER_FREE_CREDITS),
-          html: starterCreditsEmailHtml(pin, STARTER_FREE_CREDITS)
+          subject: isFormForgeStarter ? "Je FormForge AI pincode" : "Je ECHO startercredits en pincode",
+          text: starterCreditsEmailText(pin, starterAmount),
+          html: starterCreditsEmailHtml(pin, starterAmount)
         });
         emailSent = true;
       }catch(mailErr){
@@ -1841,6 +1875,7 @@ app.post("/api/stripe/activate-starter", async (req, res) => {
       }
     }
 
+    const usage = getDailyUsage(account);
     res.json({
       ok: true,
       premium: true,
@@ -1848,13 +1883,16 @@ app.post("/api/stripe/activate-starter", async (req, res) => {
       email,
       premiumPin: pin,
       pin,
-      creditsRemaining: Number(account.creditsRemaining || 0),
-      creditsTotal: Number(account.creditsTotal || STARTER_FREE_CREDITS),
-      creditMonth: String(account.creditMonth || currentPremiumMonth()),
-      plan: "starter",
+      creditsRemaining: usage.remaining,
+      creditsTotal: usage.limit,
+      creditMonth: String(account.creditMonth || currentPremiumDay()),
+      aiUsedToday: usage.used,
+      aiDailyLimit: usage.limit,
+      aiRemainingToday: usage.remaining,
+      plan: normalizeAiPlan(account.plan || starterPlan),
       starterCreditsGranted: true,
       emailSent,
-      message: "Gratis FormForge AI is geactiveerd. Je hebt iedere dag " + STARTER_FREE_CREDITS + " AI opdracht."
+      message: isFormForgeStarter ? "Gratis FormForge AI is geactiveerd. Je hebt iedere dag " + FORMFORGE_FREE_DAILY_LIMIT + " AI opdracht." : ECHO_STARTER_FREE_CREDITS + " gratis ECHO AI credits zijn geactiveerd."
     });
   }catch(err){
     jsonError(res, 500, "Startercredits konden niet worden geactiveerd", err.message || String(err));
