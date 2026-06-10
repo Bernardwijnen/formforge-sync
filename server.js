@@ -3620,6 +3620,79 @@ app.post("/api/pdfstudio/sign/:token/approve", (req, res) => {
 ========================= */
 
 
+/* =========================
+   FORMFORGE MARKETPLACE BOD FORMULIER
+   Losstaande route. Raakt geen bestaande functies.
+========================= */
+
+app.post("/api/marketplace-bod", async (req, res) => {
+  try{
+    const body = req.body || {};
+
+    const project = String(body.project || "").trim();
+    const name = String(body.name || "").trim();
+    const company = String(body.company || "").trim();
+    const email = String(body.email || "").trim();
+    const phone = String(body.phone || "").trim();
+    const amount = String(body.amount || "").trim();
+    const message = String(body.message || "").trim();
+
+    if(!project || !name || !email || !amount){
+      return res.status(400).json({
+        ok: false,
+        error: "Niet alle verplichte velden zijn ingevuld."
+      });
+    }
+
+    const subject = "Nieuw bod via FormForge Marketplace: " + project;
+
+    const text =
+      "Nieuw bod via FormForge Marketplace\n\n" +
+      "Project:\n" + project + "\n\n" +
+      "Naam:\n" + name + "\n\n" +
+      "Bedrijf:\n" + (company || "Niet ingevuld") + "\n\n" +
+      "E-mailadres:\n" + email + "\n\n" +
+      "Telefoonnummer:\n" + (phone || "Niet ingevuld") + "\n\n" +
+      "Bodbedrag:\nEUR " + amount + "\n\n" +
+      "Toelichting:\n" + (message || "Geen toelichting ingevuld");
+
+    const html =
+      "<div style=\"font-family:Arial,sans-serif;line-height:1.6;color:#111\">" +
+      "<h2>Nieuw bod via FormForge Marketplace</h2>" +
+      "<p><strong>Project:</strong><br>" + project + "</p>" +
+      "<p><strong>Naam:</strong><br>" + name + "</p>" +
+      "<p><strong>Bedrijf:</strong><br>" + (company || "Niet ingevuld") + "</p>" +
+      "<p><strong>E-mailadres:</strong><br>" + email + "</p>" +
+      "<p><strong>Telefoonnummer:</strong><br>" + (phone || "Niet ingevuld") + "</p>" +
+      "<p><strong>Bodbedrag:</strong><br>EUR " + amount + "</p>" +
+      "<p><strong>Toelichting:</strong><br>" + (message || "Geen toelichting ingevuld") + "</p>" +
+      "</div>";
+
+    await sendResendEmail({
+      to: "info@formforge.nl",
+      subject,
+      text,
+      html
+    });
+
+    res.json({
+      ok: true,
+      message: "Bod verzonden"
+    });
+  }catch(err){
+    console.error("FormForge Marketplace bod fout:", err.message || String(err));
+    res.status(500).json({
+      ok: false,
+      error: "Bod verzenden is mislukt."
+    });
+  }
+});
+
+/* =========================
+   EINDE FORMFORGE MARKETPLACE BOD FORMULIER
+========================= */
+
+
 app.use((req, res) => {
   res.status(404).json({ error: "Route niet gevonden", path: req.path });
 });
