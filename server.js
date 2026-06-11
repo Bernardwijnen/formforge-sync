@@ -3693,15 +3693,6 @@ app.post("/api/marketplace-bod", async (req, res) => {
 ========================= */
 
 
-app.use((req, res) => {
-  res.status(404).json({ error: "Route niet gevonden", path: req.path });
-});
-
-
-
-
-
-
 /* ===== UNIVERSELE VERTAALCHAT (kamers, vluchtig) =====
    Iedereen kan een kamer maken met een 6-cijferige code en die delen.
    Deelnemers kiezen hun eigen taal. Berichten leven max ROOM_TTL_MS en
@@ -3943,6 +3934,16 @@ app.post("/api/room/leave", (req, res) => {
   if(room){ room.members.delete(memberId); }
   res.json({ ok:true });
 });
+
+
+app.use((req, res) => {
+  res.status(404).json({ error: "Route niet gevonden", path: req.path });
+});
+
+
+
+
+
 
 app.listen(PORT, () => {
   console.log("ECHO Central Server draait op poort " + PORT);
