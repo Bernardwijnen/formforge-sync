@@ -3702,83 +3702,246 @@ app.use((req, res) => {
 
 
 
-/* ===== VLUCHTIGE GROEPSCHAT (ephemeral) =====
-   Berichten worden NIET permanent opgeslagen. Ze leven maximaal
-   EPHEMERAL_TTL_MS in het geheugen en worden daarna automatisch gewist.
-   Iedereen in de gesloten groep leest dezelfde chat. */
-const EPHEMERAL_TTL_MS = 15 * 1000;
-let ephemeralMessages = [];
+/* ===== UNIVERSELE VERTAALCHAT (kamers, vluchtig) =====
+   Iedereen kan een kamer maken met een 6-cijferige code en die delen.
+   Deelnemers kiezen hun eigen taal. Berichten leven max ROOM_TTL_MS en
+   worden daarna automatisch gewist (niets blijft permanent bewaard).
+   Vertaling gebeurt per lezer-taal en wordt kort gecachet om kosten te sparen. */
+const ROOM_TTL_MS = 15 * 1000;
+const ROOM_IDLE_MS = 1000 * 60 * 30; // lege/stille kamers na 30 min opruimen
+const ROOM_DAILY_TRANSLATION_LIMIT = 100; // max ECHTE vertalingen per kamer per dag (cache-treffers tellen niet mee)
+const rooms = new Map(); // code -> { code, createdAt, lastActive, members:Map(id->member), messages:[] }
 
-function pruneEphemeral(){
-  const cutoff = Date.now() - EPHEMERAL_TTL_MS;
-  ephemeralMessages = ephemeralMessages.filter((m) => m.ts > cutoff);
+// Controleer of een e-mail + pincode een ACTIEF Unlimited (pro) abonnement is.
+function requireUnlimited(req){
+  const email = String((req.body && (req.body.email || req.body.premiumEmail)) || "").trim();
+  const pin = String((req.body && (req.body.pin || req.body.pincode || req.body.premiumPin)) || "").trim();
+  if(!email) return { ok:false, status:400, error:"Vul je Premium e-mailadres in." };
+  if(!pin) return { ok:false, status:400, error:"Vul je 6-cijferige pincode in." };
+  const deviceId = getRequestDeviceId(req);
+  const appSource = detectAppSourceFromReq(req);
+  const accountKey = buildPremiumAccountKey(email, appSource);
+  let status;
+  try{
+    status = getPremiumStatus(accountKey, pin, { deviceId });
+  }catch(e){
+    return { ok:false, status:500, error:"Kon abonnement niet controleren." };
+  }
+  if(!status || !status.premium){
+    return { ok:false, status:403, error:"Geen actief Premium account gevonden. Controleer e-mail en pincode." };
+  }
+  const plan = String(status.plan || "");
+  if(plan !== "pro"){
+    return { ok:false, status:403, error:"Hiervoor is een Unlimited abonnement nodig. Je huidige plan: " + (status.planLabel || plan || "geen") + "." };
+  }
+  return { ok:true, accountKey, email };
 }
 
-setInterval(pruneEphemeral, 3000);
+function roomToday(){
+  // datum als YYYY-MM-DD in lokale tijd, voor dagelijkse reset
+  const d = new Date();
+  return d.getFullYear() + "-" + (d.getMonth()+1) + "-" + d.getDate();
+}
 
-// Haal de op dit moment nog zichtbare berichten op
-app.get("/api/group-chat", (req, res) => {
-  const userId = String(req.query.userId || "");
-  const user = users.get(userId);
-  if(!user){
-    return jsonError(res, 403, "Geen toegang tot de gesloten groep");
+// Hoeveel ECHTE vertalingen mag deze kamer vandaag nog doen? (reset per dag)
+function roomTranslationsLeft(room){
+  const today = roomToday();
+  if(room.translationDay !== today){
+    room.translationDay = today;
+    room.translationsToday = 0;
   }
-  touchUser(userId);
-  pruneEphemeral();
+  return Math.max(0, ROOM_DAILY_TRANSLATION_LIMIT - room.translationsToday);
+}
+
+function makeRoomCode(){
+  let code="";
+  do{ code=String(Math.floor(100000 + Math.random()*900000)); }while(rooms.has(code));
+  return code;
+}
+
+function pruneRoom(room){
+  const cutoff = Date.now() - ROOM_TTL_MS;
+  room.messages = room.messages.filter((m) => m.ts > cutoff);
+  // verwijder deelnemers die >20s niet gezien zijn
+  const seenCutoff = Date.now() - 20000;
+  for(const [id,mem] of room.members.entries()){
+    if(mem.lastSeen < seenCutoff) room.members.delete(id);
+  }
+}
+
+function cleanupRooms(){
   const now = Date.now();
-  const list = ephemeralMessages
-    .filter((m) => m.groupId === user.groupId)
-    .map((m) => ({
+  for(const [code,room] of rooms.entries()){
+    pruneRoom(room);
+    if(room.members.size === 0 && (now - room.lastActive) > ROOM_IDLE_MS){
+      rooms.delete(code);
+    }
+  }
+}
+setInterval(cleanupRooms, 5000);
+
+// Eenvoudige vertaalcache: sleutel = van|naar|tekst  -> { text, ts }
+const roomTransCache = new Map();
+function transCacheKey(from,to,text){ return from+"|"+to+"|"+text; }
+function getCachedTranslation(from,to,text){
+  const k=transCacheKey(from,to,text);
+  const hit=roomTransCache.get(k);
+  if(hit && (Date.now()-hit.ts) < 60000) return hit.text;
+  return null;
+}
+function setCachedTranslation(from,to,text,translated){
+  roomTransCache.set(transCacheKey(from,to,text), { text: translated, ts: Date.now() });
+  if(roomTransCache.size > 500){
+    // simpele opschoning
+    const firstKey = roomTransCache.keys().next().value;
+    roomTransCache.delete(firstKey);
+  }
+}
+
+async function translateText(text, from, to){
+  if(!text) return "";
+  if(from === to) return text;
+  const cached = getCachedTranslation(from,to,text);
+  if(cached !== null) return cached;
+  const out = await callOpenAI([
+    { role:"system", content:"Je bent een vertaalmotor voor een live chat. Vertaal het bericht natuurlijk en volledig. Geef ALLEEN de vertaling terug, geen uitleg. Behoud namen, getallen, emoji en links." },
+    { role:"user", content:"Vertaal van "+from+" naar "+to+":\n"+text }
+  ], 0.1);
+  setCachedTranslation(from,to,text,out);
+  return out;
+}
+
+// Kamer maken
+app.post("/api/room/create", (req, res) => {
+  const gate = requireUnlimited(req);
+  if(!gate.ok) return jsonError(res, gate.status, gate.error);
+  const name = String(req.body && req.body.name ? req.body.name : "").trim().slice(0,40);
+  const lang = String(req.body && req.body.lang ? req.body.lang : "").trim() || "en";
+  if(!name) return jsonError(res, 400, "Naam ontbreekt");
+  const code = makeRoomCode();
+  const memberId = "m_" + Date.now() + "_" + Math.random().toString(36).slice(2,8);
+  const room = { code, createdAt: Date.now(), lastActive: Date.now(), members: new Map(), messages: [], translationsToday: 0, translationDay: roomToday() };
+  room.members.set(memberId, { id: memberId, name, lang, lastSeen: Date.now() });
+  rooms.set(code, room);
+  res.json({ ok:true, code, memberId, name, lang });
+});
+
+// Kamer joinen
+app.post("/api/room/join", (req, res) => {
+  const code = String(req.body && req.body.code ? req.body.code : "").trim();
+  const name = String(req.body && req.body.name ? req.body.name : "").trim().slice(0,40);
+  const lang = String(req.body && req.body.lang ? req.body.lang : "").trim() || "en";
+  if(!name) return jsonError(res, 400, "Naam ontbreekt");
+  const room = rooms.get(code);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden. Controleer de code.");
+  const memberId = "m_" + Date.now() + "_" + Math.random().toString(36).slice(2,8);
+  room.members.set(memberId, { id: memberId, name, lang, lastSeen: Date.now() });
+  room.lastActive = Date.now();
+  res.json({ ok:true, code, memberId, name, lang });
+});
+
+// Bericht sturen
+app.post("/api/room/send", (req, res) => {
+  const code = String(req.body && req.body.code ? req.body.code : "").trim();
+  const memberId = String(req.body && req.body.memberId ? req.body.memberId : "").trim();
+  const text = String(req.body && req.body.text ? req.body.text : "").trim().slice(0,2000);
+  const room = rooms.get(code);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden");
+  const member = room.members.get(memberId);
+  if(!member) return jsonError(res, 403, "Je zit niet (meer) in deze kamer. Join opnieuw.");
+  if(!text) return jsonError(res, 400, "Leeg bericht");
+  member.lastSeen = Date.now();
+  room.lastActive = Date.now();
+  const msg = {
+    id: "rm_" + Date.now() + "_" + Math.random().toString(36).slice(2,8),
+    senderId: member.id,
+    senderName: member.name,
+    srcLang: member.lang,
+    text,
+    ts: Date.now(),
+    translations: {} // wordt gevuld bij ophalen per lezer-taal
+  };
+  room.messages.push(msg);
+  res.json({ ok:true, id: msg.id });
+});
+
+// Berichten ophalen, vertaald naar de taal van de lezer
+app.post("/api/room/poll", async (req, res) => {
+  const code = String(req.body && req.body.code ? req.body.code : "").trim();
+  const memberId = String(req.body && req.body.memberId ? req.body.memberId : "").trim();
+  const room = rooms.get(code);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden");
+  const member = room.members.get(memberId);
+  if(!member) return jsonError(res, 403, "Je zit niet (meer) in deze kamer. Join opnieuw.");
+  member.lastSeen = Date.now();
+  pruneRoom(room);
+  const now = Date.now();
+  const myLang = member.lang;
+  let limitReached = false;
+
+  // Vertaal elk bericht naar de taal van deze lezer (met cache)
+  const out = [];
+  for(const m of room.messages){
+    let shown = m.text;
+    let translated = false;
+    if(m.srcLang !== myLang){
+      if(m.translations[myLang]){
+        // Al eerder vertaald: gratis uit cache, telt niet mee
+        shown = m.translations[myLang];
+        translated = true;
+      }else if(roomTranslationsLeft(room) > 0){
+        try{
+          shown = await translateText(m.text, m.srcLang, myLang);
+          m.translations[myLang] = shown;
+          room.translationsToday += 1; // alleen ECHTE vertalingen tellen mee
+          translated = true;
+        }catch(e){
+          shown = m.text; // bij fout: toon origineel
+          translated = false;
+        }
+      }else{
+        // Dagelijkse vertaallimiet bereikt: toon origineel, blijf chatten
+        shown = m.text;
+        translated = false;
+        limitReached = true;
+      }
+    }
+    out.push({
       id: m.id,
       senderId: m.senderId,
       senderName: m.senderName,
-      text: m.text,
+      srcLang: m.srcLang,
+      mine: m.senderId === member.id,
+      text: shown,
+      original: m.text,
+      translated,
       ts: m.ts,
-      expiresAt: m.ts + EPHEMERAL_TTL_MS,
-      remainingMs: Math.max(0, (m.ts + EPHEMERAL_TTL_MS) - now)
-    }));
-  res.json({ ok: true, ttl: EPHEMERAL_TTL_MS, serverTime: now, messages: list });
+      expiresAt: m.ts + ROOM_TTL_MS,
+      remainingMs: Math.max(0, (m.ts + ROOM_TTL_MS) - now)
+    });
+  }
+
+  const members = Array.from(room.members.values()).map((x) => ({ name: x.name, lang: x.lang }));
+  res.json({
+    ok:true,
+    ttl: ROOM_TTL_MS,
+    serverTime: now,
+    messages: out,
+    members,
+    limitReached,
+    translationsToday: room.translationsToday,
+    dailyLimit: ROOM_DAILY_TRANSLATION_LIMIT,
+    translationsLeft: roomTranslationsLeft(room)
+  });
 });
 
-// Stuur een nieuw bericht (wordt doorgegeven, niet bewaard)
-app.post("/api/group-chat", (req, res) => {
-  const { userId, text } = req.body || {};
-  const user = users.get(userId);
-  if(!user){
-    return jsonError(res, 403, "Geen toegang tot de gesloten groep");
-  }
-  const clean = String(text || "").trim().slice(0, 2000);
-  if(!clean){
-    return jsonError(res, 400, "Leeg bericht");
-  }
-  touchUser(userId);
-  pruneEphemeral();
-  const msg = {
-    id: "eph_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
-    groupId: user.groupId,
-    senderId: user.id,
-    senderName: user.name,
-    text: clean,
-    ts: Date.now()
-  };
-  ephemeralMessages.push(msg);
-  res.json({ ok: true, message: { id: msg.id, senderId: msg.senderId, senderName: msg.senderName, text: msg.text, ts: msg.ts, expiresAt: msg.ts + EPHEMERAL_TTL_MS } });
-});
-
-// Wie is er nu online (in de afgelopen 20 sec gezien)
-app.get("/api/group-presence", (req, res) => {
-  const userId = String(req.query.userId || "");
-  const user = users.get(userId);
-  if(!user){
-    return jsonError(res, 403, "Geen toegang");
-  }
-  touchUser(userId);
-  const now = Date.now();
-  const online = Array.from(users.values())
-    .filter((u) => u.groupId === user.groupId)
-    .filter((u) => u.lastSeen && (now - new Date(u.lastSeen).getTime()) < 20000)
-    .map((u) => ({ id: u.id, name: u.name }));
-  res.json({ ok: true, online });
+// Kamer verlaten
+app.post("/api/room/leave", (req, res) => {
+  const code = String(req.body && req.body.code ? req.body.code : "").trim();
+  const memberId = String(req.body && req.body.memberId ? req.body.memberId : "").trim();
+  const room = rooms.get(code);
+  if(room){ room.members.delete(memberId); }
+  res.json({ ok:true });
 });
 
 app.listen(PORT, () => {
