@@ -52,7 +52,6 @@ const FORMFORGE_AI_PRO_DAILY_LIMIT = Number(process.env.FORMFORGE_AI_PRO_DAILY_L
 
 const STRIPE_FORMFORGE_AI_PLUS_PRICE_ID = process.env.STRIPE_FORMFORGE_AI_PLUS_PRICE_ID || "price_1TcRWw5s8MDSsy0eIJ0cB63N";
 const STRIPE_FORMFORGE_AI_PRO_PRICE_ID = process.env.STRIPE_FORMFORGE_AI_PRO_PRICE_ID || "price_1TcRZk5s8MDSsy0ehhdgwvs2";
-const STRIPE_FORMFORGE_PLANNER_PRO_PRICE_ID = process.env.STRIPE_FORMFORGE_PLANNER_PRO_PRICE_ID || "";
 const STRIPE_UNLIMITED_PRICE_ID = process.env.STRIPE_UNLIMITED_PRICE_ID || STRIPE_FORMFORGE_AI_PRO_PRICE_ID;
 
 const STRIPE_CREDITS_100_PRICE_ID = process.env.STRIPE_CREDITS_100_PRICE_ID || "price_1TaHrD5s8MDSsy0eV1krtPFL";
@@ -87,7 +86,6 @@ function getAiPlanByPriceId(priceId){
   const id = String(priceId || "").trim();
   if(id && id === STRIPE_FORMFORGE_AI_PLUS_PRICE_ID) return "plus";
   if(id && id === STRIPE_FORMFORGE_AI_PRO_PRICE_ID) return "pro";
-  if(id && STRIPE_FORMFORGE_PLANNER_PRO_PRICE_ID && id === STRIPE_FORMFORGE_PLANNER_PRO_PRICE_ID) return "pro";
   if(id && id === STRIPE_UNLIMITED_PRICE_ID) return "pro";
   if(getCreditPackageByPriceId(id)) return "credits";
   return "";
@@ -176,7 +174,6 @@ function normalizePremiumKey(value){
 function normalizeAppSource(value){
   const source = String(value || "").trim().toLowerCase();
   if(source === "echo" || source === "translator" || source === "vertaler" || source === "echo_live" || source === "echo-live") return "echo";
-  if(source === "planner" || source === "planning" || source === "planningbord" || source === "formforge_planner" || source === "formforge-planner") return "planner";
   if(source === "formforge" || source === "offerte" || source === "offertes" || source === "factuur" || source === "facturen" || source === "quote" || source === "invoice") return "formforge";
   return "formforge";
 }
@@ -187,7 +184,6 @@ function detectAppSourceFromReq(req){
   const direct = body.source || body.appSource || body.app || body.product || body.module || query.source || query.appSource || query.app || query.product || query.module || "";
   if(direct) return normalizeAppSource(direct);
   const ref = String((req && req.headers && (req.headers.referer || req.headers.referrer)) || "").toLowerCase();
-  if(ref.includes("planner") || ref.includes("planning")) return "planner";
   if(ref.includes("offerte") || ref.includes("factuur") || ref.includes("invoice") || ref.includes("quote")) return "formforge";
   if(ref.includes("translator") || ref.includes("vertaler") || ref.includes("echo")) return "echo";
   return "formforge";
@@ -501,7 +497,7 @@ async function refreshPremiumAccountFromStripe(value){
   }
 }
 
-function setPremiumForStripeData({ email, clientReferenceId, customerId, subscriptionId, active, reason, subscriptionStatus, currentPeriodStart, currentPeriodEnd, periodStart, periodEnd, cancelAtPeriodEnd, cancelAt, canceledAt, trialEnd, plan, priceId, deviceId, activeDeviceId, deviceBoundAt, deviceLastSeenAt, source }){
+function setPremiumForStripeData({ email, clientReferenceId, customerId, subscriptionId, active, reason, subscriptionStatus, currentPeriodStart, currentPeriodEnd, periodStart, periodEnd, cancelAtPeriodEnd, cancelAt, canceledAt, trialEnd, plan, priceId, deviceId, activeDeviceId, deviceBoundAt, deviceLastSeenAt }){
   const finalPlan = normalizeAiPlan(plan || getAiPlanByPriceId(priceId) || "pro");
   const data = {
     active: !!active,
@@ -519,7 +515,7 @@ function setPremiumForStripeData({ email, clientReferenceId, customerId, subscri
     canceledAt: canceledAt || "",
     trialEnd: trialEnd || "",
     reason: reason || "",
-    source: normalizeAppSource(source || "formforge"),
+    source: "stripe",
     plan: finalPlan,
     priceId: priceId || "",
     deviceId: normalizeDeviceId(deviceId || activeDeviceId || ""),
@@ -528,9 +524,7 @@ function setPremiumForStripeData({ email, clientReferenceId, customerId, subscri
     deviceLastSeenAt: deviceLastSeenAt || ""
   };
 
-  const moduleAccountKey = data.email ? buildPremiumAccountKey(data.email, data.source) : "";
   const keys = [
-    moduleAccountKey,
     data.email,
     data.clientReferenceId,
     data.customerId,
@@ -796,8 +790,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req,
           active: true,
           plan: metadata.plan || metadata.aiPlan || "",
           priceId: metadata.priceId || "",
-          reason: "checkout.session.completed",
-          source: metadata.source || metadata.appSource || metadata.app || ""
+          reason: "checkout.session.completed"
         });
       }
     }
@@ -811,8 +804,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req,
         active: true,
         plan: object.metadata?.plan || object.metadata?.aiPlan || "",
         priceId: object.metadata?.priceId || "",
-        reason: "invoice.payment.paid",
-        source: object.metadata?.source || object.metadata?.appSource || object.metadata?.app || ""
+        reason: "invoice.payment.paid"
       });
     }
 
@@ -823,8 +815,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req,
         customerId: object.customer || "",
         subscriptionId: object.subscription || "",
         active: false,
-        reason: "invoice.payment_failed",
-        source: object.metadata?.source || object.metadata?.appSource || object.metadata?.app || ""
+        reason: "invoice.payment_failed"
       });
     }
 
@@ -836,7 +827,6 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req,
         subscriptionId: object.id || "",
         active: false,
         reason: "customer.subscription.deleted",
-        source: object.metadata?.source || object.metadata?.appSource || object.metadata?.app || "",
         ...extractStripeSubscriptionPeriod(object)
       });
     }
@@ -1454,7 +1444,6 @@ app.get("/api/stripe/status", (req, res) => {
     creditPackages: {
       aiPlus: !!STRIPE_FORMFORGE_AI_PLUS_PRICE_ID,
       aiPro: !!STRIPE_FORMFORGE_AI_PRO_PRICE_ID,
-      plannerPro: !!STRIPE_FORMFORGE_PLANNER_PRO_PRICE_ID,
       unlimited: !!STRIPE_UNLIMITED_PRICE_ID
     },
     premiumStoreFile: PREMIUM_STORE_FILE,
@@ -1598,7 +1587,6 @@ app.post("/api/stripe/confirm-session", async (req, res) => {
       subscriptionId,
       active: true,
       reason: "checkout.session.confirmed",
-      source: metadata.source || metadata.appSource || metadata.app || "",
       plan: plan || "pro",
       priceId: metadata.priceId || "",
       deviceId: deviceId,
@@ -1992,8 +1980,7 @@ app.post("/api/stripe/create-credit-checkout", async (req, res) => {
 app.post("/api/stripe/create-checkout", async (req, res) => {
   try{
     const requestedPlan = normalizeAiPlan(req.body && (req.body.plan || req.body.aiPlan) ? (req.body.plan || req.body.aiPlan) : "");
-    const appSource = normalizeAppSource(req.body && (req.body.source || req.body.appSource || req.body.app || req.body.product) ? (req.body.source || req.body.appSource || req.body.app || req.body.product) : "formforge");
-    const defaultPlanPriceId = appSource === "planner" && STRIPE_FORMFORGE_PLANNER_PRO_PRICE_ID ? STRIPE_FORMFORGE_PLANNER_PRO_PRICE_ID : (requestedPlan === "plus" ? STRIPE_FORMFORGE_AI_PLUS_PRICE_ID : STRIPE_FORMFORGE_AI_PRO_PRICE_ID);
+    const defaultPlanPriceId = requestedPlan === "plus" ? STRIPE_FORMFORGE_AI_PLUS_PRICE_ID : STRIPE_FORMFORGE_AI_PRO_PRICE_ID;
     const priceId = String(req.body && (req.body.priceId || req.body.price_id) ? (req.body.priceId || req.body.price_id) : (defaultPlanPriceId || STRIPE_UNLIMITED_PRICE_ID || STRIPE_DEFAULT_PRICE_ID)).trim();
     const deviceId = getRequestDeviceId(req);
     const plan = requestedPlan || getAiPlanByPriceId(priceId) || "pro";
@@ -2001,8 +1988,6 @@ app.post("/api/stripe/create-checkout", async (req, res) => {
     const clientReferenceId = String(req.body && (req.body.userId || req.body.clientReferenceId) ? (req.body.userId || req.body.clientReferenceId) : "").trim();
     const successUrl = String(req.body && req.body.successUrl ? req.body.successUrl : STRIPE_SUCCESS_URL).trim();
     const cancelUrl = String(req.body && req.body.cancelUrl ? req.body.cancelUrl : STRIPE_CANCEL_URL).trim();
-    const productLabel = appSource === "planner" ? "FormForge Planner AI Unlimited" : getAiPlanLabel(plan);
-    const sourceLabel = appSource === "planner" ? "formforge-planner" : "formforge-offerte-factuur";
 
     if(!priceId){
       return jsonError(res, 400, "Stripe priceId ontbreekt. Zet STRIPE_PRICE_ID in Render of stuur priceId mee vanuit de app.");
@@ -2021,8 +2006,8 @@ app.post("/api/stripe/create-checkout", async (req, res) => {
       allow_promotion_codes: true,
       billing_address_collection: "auto",
       metadata: {
-        product: productLabel,
-        source: sourceLabel,
+        product: getAiPlanLabel(plan),
+        source: "formforge-offerte-factuur",
         email: customerEmail,
         plan,
         aiPlan: plan,
@@ -2031,8 +2016,8 @@ app.post("/api/stripe/create-checkout", async (req, res) => {
       },
       subscription_data: {
         metadata: {
-          product: productLabel,
-          source: sourceLabel,
+          product: getAiPlanLabel(plan),
+          source: "formforge-offerte-factuur",
           email: customerEmail,
           plan,
           aiPlan: plan,
@@ -3716,6 +3701,85 @@ app.use((req, res) => {
 
 
 
+
+/* ===== VLUCHTIGE GROEPSCHAT (ephemeral) =====
+   Berichten worden NIET permanent opgeslagen. Ze leven maximaal
+   EPHEMERAL_TTL_MS in het geheugen en worden daarna automatisch gewist.
+   Iedereen in de gesloten groep leest dezelfde chat. */
+const EPHEMERAL_TTL_MS = 15 * 1000;
+let ephemeralMessages = [];
+
+function pruneEphemeral(){
+  const cutoff = Date.now() - EPHEMERAL_TTL_MS;
+  ephemeralMessages = ephemeralMessages.filter((m) => m.ts > cutoff);
+}
+
+setInterval(pruneEphemeral, 3000);
+
+// Haal de op dit moment nog zichtbare berichten op
+app.get("/api/group-chat", (req, res) => {
+  const userId = String(req.query.userId || "");
+  const user = users.get(userId);
+  if(!user){
+    return jsonError(res, 403, "Geen toegang tot de gesloten groep");
+  }
+  touchUser(userId);
+  pruneEphemeral();
+  const now = Date.now();
+  const list = ephemeralMessages
+    .filter((m) => m.groupId === user.groupId)
+    .map((m) => ({
+      id: m.id,
+      senderId: m.senderId,
+      senderName: m.senderName,
+      text: m.text,
+      ts: m.ts,
+      expiresAt: m.ts + EPHEMERAL_TTL_MS,
+      remainingMs: Math.max(0, (m.ts + EPHEMERAL_TTL_MS) - now)
+    }));
+  res.json({ ok: true, ttl: EPHEMERAL_TTL_MS, serverTime: now, messages: list });
+});
+
+// Stuur een nieuw bericht (wordt doorgegeven, niet bewaard)
+app.post("/api/group-chat", (req, res) => {
+  const { userId, text } = req.body || {};
+  const user = users.get(userId);
+  if(!user){
+    return jsonError(res, 403, "Geen toegang tot de gesloten groep");
+  }
+  const clean = String(text || "").trim().slice(0, 2000);
+  if(!clean){
+    return jsonError(res, 400, "Leeg bericht");
+  }
+  touchUser(userId);
+  pruneEphemeral();
+  const msg = {
+    id: "eph_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
+    groupId: user.groupId,
+    senderId: user.id,
+    senderName: user.name,
+    text: clean,
+    ts: Date.now()
+  };
+  ephemeralMessages.push(msg);
+  res.json({ ok: true, message: { id: msg.id, senderId: msg.senderId, senderName: msg.senderName, text: msg.text, ts: msg.ts, expiresAt: msg.ts + EPHEMERAL_TTL_MS } });
+});
+
+// Wie is er nu online (in de afgelopen 20 sec gezien)
+app.get("/api/group-presence", (req, res) => {
+  const userId = String(req.query.userId || "");
+  const user = users.get(userId);
+  if(!user){
+    return jsonError(res, 403, "Geen toegang");
+  }
+  touchUser(userId);
+  const now = Date.now();
+  const online = Array.from(users.values())
+    .filter((u) => u.groupId === user.groupId)
+    .filter((u) => u.lastSeen && (now - new Date(u.lastSeen).getTime()) < 20000)
+    .map((u) => ({ id: u.id, name: u.name }));
+  res.json({ ok: true, online });
+});
 
 app.listen(PORT, () => {
   console.log("ECHO Central Server draait op poort " + PORT);
