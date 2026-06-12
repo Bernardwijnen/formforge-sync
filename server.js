@@ -1839,7 +1839,12 @@ app.post("/api/stripe/link-subscription", async (req, res) => {
     const plan = getAiPlanByPriceId(priceId) || "pro";
     const periodData = extractStripeSubscriptionPeriod(subscription);
 
-    setPremiumForStripeData({
+    // BELANGRIJK: opslaan onder dezelfde accountKey die het inloggen gebruikt
+    // (appSource:email), anders vindt requireUnlimited het account niet terug.
+    const appSource = detectAppSourceFromReq(req);
+    const accountKey = buildPremiumAccountKey(email, appSource);
+
+    setPremiumAccount(accountKey, {
       email,
       customerId: subscription.customer || "",
       subscriptionId: subscription.id || subscriptionId,
@@ -1854,7 +1859,7 @@ app.post("/api/stripe/link-subscription", async (req, res) => {
       ...periodData
     });
 
-    const account = getPremiumAccount(email);
+    const account = getPremiumAccount(accountKey);
     res.json({
       ok: true,
       linked: true,
@@ -3884,12 +3889,26 @@ function requireUnlimited(req){
   const deviceId = getRequestDeviceId(req);
   const appSource = detectAppSourceFromReq(req);
   const accountKey = buildPremiumAccountKey(email, appSource);
-  let status;
-  try{
-    status = getPremiumStatus(accountKey, pin, { deviceId });
-  }catch(e){
-    return { ok:false, status:500, error:"Kon abonnement niet controleren." };
+
+  // Probeer eerst de gewone sleutel (appSource:email). Vindt die niets,
+  // val dan terug op de kale e-mail, want sommige activaties (Stripe-webhook,
+  // confirm-session, handmatige koppeling) slaan op onder de kale e-mail.
+  const candidateKeys = [accountKey];
+  const bareEmail = normalizePremiumKey(email);
+  if(bareEmail && !candidateKeys.includes(bareEmail)) candidateKeys.push(bareEmail);
+
+  let status = null;
+  let usedKey = accountKey;
+  for(const key of candidateKeys){
+    try{
+      const s = getPremiumStatus(key, pin, { deviceId });
+      if(s && s.premium){ status = s; usedKey = key; break; }
+      if(!status) status = s; // bewaar eerste resultaat voor de foutmelding
+    }catch(e){
+      return { ok:false, status:500, error:"Kon abonnement niet controleren." };
+    }
   }
+
   if(!status || !status.premium){
     return { ok:false, status:403, error:"Geen actief Premium account gevonden. Controleer e-mail en pincode." };
   }
@@ -3897,7 +3916,7 @@ function requireUnlimited(req){
   if(plan !== "pro"){
     return { ok:false, status:403, error:"Hiervoor is een Unlimited abonnement nodig. Je huidige plan: " + (status.planLabel || plan || "geen") + "." };
   }
-  return { ok:true, accountKey, email };
+  return { ok:true, accountKey: usedKey, email };
 }
 
 function roomToday(){
