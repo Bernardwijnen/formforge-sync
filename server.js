@@ -34,8 +34,8 @@ const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || "";
 const STRIPE_DEFAULT_PRICE_ID = process.env.STRIPE_PRICE_ID || "";
-const STRIPE_SUCCESS_URL = process.env.STRIPE_SUCCESS_URL || "https://www.benwijnen.nl/echo-premium-gelukt";
-const STRIPE_CANCEL_URL = process.env.STRIPE_CANCEL_URL || "https://www.benwijnen.nl/echo-premium-geannuleerd";
+const STRIPE_SUCCESS_URL = process.env.STRIPE_SUCCESS_URL || "https://formforge.nl/e-c-h-o-connect/?paid=1";
+const STRIPE_CANCEL_URL = process.env.STRIPE_CANCEL_URL || "https://formforge.nl/e-c-h-o-connect/?canceled=1";
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
