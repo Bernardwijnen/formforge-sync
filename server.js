@@ -1795,6 +1795,82 @@ app.post("/api/stripe/request-pin-reset", async (req, res) => {
   }
 });
 
+// Een bestaand (al betaald) Stripe-abonnement koppelen aan dit account.
+// Nodig wanneer een betaling het account niet automatisch heeft geactiveerd.
+app.post("/api/stripe/link-subscription", async (req, res) => {
+  try{
+    const email = normalizePremiumKey(req.body && req.body.email ? req.body.email : "");
+    const subscriptionId = String(req.body && req.body.subscriptionId ? req.body.subscriptionId : "").trim();
+    const deviceId = getRequestDeviceId(req);
+    if(!email) return jsonError(res, 400, "E-mailadres ontbreekt");
+    if(!subscriptionId || !subscriptionId.startsWith("sub_")) return jsonError(res, 400, "Geldig subscription-ID (sub_...) ontbreekt");
+    if(!STRIPE_SECRET_KEY) return jsonError(res, 500, "Stripe niet geconfigureerd");
+
+    // Haal het abonnement op uit Stripe en controleer dat het echt is + actief
+    let subscription;
+    try{
+      subscription = await callStripeGet("/subscriptions/" + encodeURIComponent(subscriptionId));
+    }catch(e){
+      return jsonError(res, 404, "Abonnement niet gevonden in Stripe");
+    }
+
+    // Controleer dat het abonnement bij DIT e-mailadres hoort (veiligheid)
+    let custEmail = "";
+    try{
+      const customerId = subscription.customer || "";
+      if(customerId){
+        const customer = await callStripeGet("/customers/" + encodeURIComponent(customerId));
+        custEmail = normalizePremiumKey(customer.email || "");
+      }
+    }catch(e){ /* als klant niet op te halen is, gaan we door op subscription-data */ }
+
+    if(custEmail && custEmail !== email){
+      return jsonError(res, 403, "Dit abonnement hoort bij een ander e-mailadres.");
+    }
+
+    const status = String(subscription.status || "");
+    const active = ["active","trialing","past_due"].includes(status);
+    if(!active){
+      return jsonError(res, 400, "Dit abonnement is niet actief (status: " + (status || "onbekend") + ").");
+    }
+
+    const firstItem = subscription.items && subscription.items.data && subscription.items.data[0] ? subscription.items.data[0] : {};
+    const priceId = firstItem.price && firstItem.price.id ? firstItem.price.id : "";
+    const plan = getAiPlanByPriceId(priceId) || "pro";
+    const periodData = extractStripeSubscriptionPeriod(subscription);
+
+    setPremiumForStripeData({
+      email,
+      customerId: subscription.customer || "",
+      subscriptionId: subscription.id || subscriptionId,
+      active: true,
+      plan,
+      priceId,
+      reason: "manual.link_subscription",
+      deviceId,
+      activeDeviceId: deviceId,
+      deviceBoundAt: deviceId ? new Date().toISOString() : "",
+      deviceLastSeenAt: deviceId ? new Date().toISOString() : "",
+      ...periodData
+    });
+
+    const account = getPremiumAccount(email);
+    res.json({
+      ok: true,
+      linked: true,
+      plan,
+      premium: true,
+      email,
+      premiumPin: account && account.premiumPin ? account.premiumPin : "",
+      pin: account && account.premiumPin ? account.premiumPin : "",
+      subscriptionStatus: status,
+      message: "Je abonnement is gekoppeld. Je bent nu Unlimited."
+    });
+  }catch(err){
+    jsonError(res, 500, "Koppelen mislukt", err.message || String(err));
+  }
+});
+
 app.post("/api/stripe/activate-starter", async (req, res) => {
   try{
     const email = normalizePremiumKey(req.body && req.body.email ? req.body.email : "");
