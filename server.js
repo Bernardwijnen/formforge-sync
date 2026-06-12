@@ -3967,12 +3967,31 @@ function makeRoomCode(){
 // Verwijderde personen blijven 5 minuten geweerd; daarna mogen ze weer joinen.
 const ROOM_BAN_MS = 5 * 60 * 1000;
 
-// ===== EENMALIGE / VERLOPENDE UITNODIGINGEN =====
-// invites: token -> { code, maxUses, uses, expiresAt }
+// ===== UITNODIGINGEN =====
+// invites: token -> { code, maxUses, uses, expiresAt, kind }
+//   kind "single"  : voor 1 persoon, vervalt zodra hij gebruikt is (geen tijdslimiet)
+//   kind "company" : blijvend + herbruikbaar (voor gedrukte brief met QR)
 const roomInvites = new Map();
-const INVITE_DEFAULT_TTL_MS = 10 * 60 * 1000; // 10 minuten geldig
-const INVITE_MAX_TTL_MS = 24 * 60 * 60 * 1000; // host mag hooguit 24 uur kiezen
-const INVITE_MAX_USES_CAP = 20;                // host mag hooguit 20 gebruiken kiezen
+const INVITE_DEFAULT_TTL_MS = 10 * 60 * 1000;       // standaard 10 minuten
+const INVITE_MAX_TTL_MS = 10 * 365 * 24 * 60 * 60 * 1000; // tot 10 jaar (bedrijf)
+const INVITE_MAX_USES_CAP = 100000;                 // bedrijf: effectief onbeperkt
+const INVITE_STORE_FILE = path.join(DATA_DIR, "echo_invites.json");
+
+function saveInvites(){
+  try{
+    const data = {};
+    for(const [t, inv] of roomInvites.entries()){ data[t] = inv; }
+    fs.writeFileSync(INVITE_STORE_FILE, JSON.stringify(data));
+  }catch(e){}
+}
+function loadInvites(){
+  try{
+    if(!fs.existsSync(INVITE_STORE_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(INVITE_STORE_FILE, "utf8") || "{}");
+    Object.keys(data || {}).forEach((t) => { if(t && data[t]) roomInvites.set(t, data[t]); });
+    console.log("Uitnodigingen geladen: " + roomInvites.size);
+  }catch(e){}
+}
 
 function makeInviteToken(){
   let t;
@@ -3984,32 +4003,135 @@ function makeInviteToken(){
 
 function pruneInvites(){
   const now = Date.now();
+  let changed = false;
   for(const [t, inv] of Array.from(roomInvites.entries())){
     if(inv.expiresAt <= now || inv.uses >= inv.maxUses || !rooms.has(inv.code)){
-      roomInvites.delete(t);
+      roomInvites.delete(t); changed = true;
     }
   }
+  if(changed) saveInvites();
 }
 setInterval(pruneInvites, 30000);
+loadInvites();
 
 // Reconnect-tokens: laten een AL toegelaten persoon stilletjes herverbinden
-// (bv. na korte stilte of serverherstart) ZONDER een nieuwe uitnodiging.
+// (bv. na korte stilte, serverherstart, of dagen later via de webapp) ZONDER
+// een nieuwe uitnodiging. Worden op schijf bewaard zodat ze een herstart overleven.
 // reconnectTokens: token -> { code, name, lang, isHost, expiresAt }
 const reconnectTokens = new Map();
-const RECONNECT_TTL_MS = 12 * 60 * 60 * 1000; // 12 uur
+const RECONNECT_TTL_MS = 365 * 24 * 60 * 60 * 1000; // 1 jaar
+const RECONNECT_STORE_FILE = path.join(DATA_DIR, "echo_reconnect.json");
+
+function saveReconnect(){
+  try{
+    const data = {};
+    for(const [t, r] of reconnectTokens.entries()){ data[t] = r; }
+    fs.writeFileSync(RECONNECT_STORE_FILE, JSON.stringify(data));
+  }catch(e){ /* niet kritiek */ }
+}
+function loadReconnect(){
+  try{
+    if(!fs.existsSync(RECONNECT_STORE_FILE)) return;
+    const raw = fs.readFileSync(RECONNECT_STORE_FILE, "utf8");
+    const data = JSON.parse(raw || "{}");
+    Object.keys(data || {}).forEach((t) => { if(t && data[t]) reconnectTokens.set(t, data[t]); });
+    console.log("Reconnect-tokens geladen: " + reconnectTokens.size);
+  }catch(e){ /* niet kritiek */ }
+}
 
 function issueReconnectToken(code, name, lang, isHost){
   const t = "rc_" + Math.random().toString(36).slice(2,10) + Math.random().toString(36).slice(2,10);
   reconnectTokens.set(t, { code, name, lang, isHost: !!isHost, expiresAt: Date.now() + RECONNECT_TTL_MS });
+  saveReconnect();
   return t;
 }
 function pruneReconnect(){
   const now = Date.now();
+  let changed = false;
   for(const [t, r] of Array.from(reconnectTokens.entries())){
-    if(r.expiresAt <= now || !rooms.has(r.code)) reconnectTokens.delete(t);
+    // alleen verwijderen bij echte verlooptijd of als de kamer niet meer bestaat
+    if(r.expiresAt <= now || !rooms.has(r.code)){ reconnectTokens.delete(t); changed = true; }
   }
+  if(changed) saveReconnect();
 }
 setInterval(pruneReconnect, 60000);
+loadReconnect();
+
+// ===== GAST-ACCOUNTS =====
+// Een gast kiest eenmalig naam + pincode. De server onthoudt zijn kamers, zodat
+// hij op elk toestel (browser of webapp) zijn kamers terugziet. Geen abonnement nodig.
+// guestAccounts: guestKey ("g:" + naam-lowercase + ":" + pin) -> { name, pin, rooms:[{code,reconnect,label,ts}], createdAt }
+const guestAccounts = new Map();
+const GUEST_STORE_FILE = path.join(DATA_DIR, "echo_guests.json");
+
+function guestKeyOf(name, pin){
+  return "g:" + String(name||"").trim().toLowerCase() + ":" + String(pin||"").trim();
+}
+function saveGuests(){
+  try{
+    const data = {};
+    for(const [k, v] of guestAccounts.entries()){ data[k] = v; }
+    fs.writeFileSync(GUEST_STORE_FILE, JSON.stringify(data));
+  }catch(e){}
+}
+function loadGuests(){
+  try{
+    if(!fs.existsSync(GUEST_STORE_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(GUEST_STORE_FILE, "utf8") || "{}");
+    Object.keys(data || {}).forEach((k) => { if(k && data[k]) guestAccounts.set(k, data[k]); });
+    console.log("Gast-accounts geladen: " + guestAccounts.size);
+  }catch(e){}
+}
+function getGuestAccount(name, pin){
+  return guestAccounts.get(guestKeyOf(name, pin)) || null;
+}
+function upsertGuestRoom(name, pin, roomInfo){
+  const key = guestKeyOf(name, pin);
+  let acc = guestAccounts.get(key);
+  if(!acc){ acc = { name:String(name||"").trim(), pin:String(pin||"").trim(), rooms:[], createdAt:Date.now() }; guestAccounts.set(key, acc); }
+  if(roomInfo && roomInfo.code){
+    acc.rooms = (acc.rooms || []).filter(r => r.code !== roomInfo.code);
+    acc.rooms.unshift(roomInfo);
+    if(acc.rooms.length > 30) acc.rooms = acc.rooms.slice(0,30);
+  }
+  saveGuests();
+  return acc;
+}
+// kamers die niet meer bestaan opschonen uit een gast-account
+function cleanGuestRooms(acc){
+  if(!acc || !acc.rooms) return acc;
+  const before = acc.rooms.length;
+  acc.rooms = acc.rooms.filter(r => rooms.has(r.code));
+  if(acc.rooms.length !== before) saveGuests();
+  return acc;
+}
+loadGuests();
+
+// Gast registreert/voegt huidige kamer toe aan zijn gast-account
+app.post("/api/guest/save-room", (req, res) => {
+  const name = String(req.body && req.body.name ? req.body.name : "").trim();
+  const pin = String(req.body && req.body.pin ? req.body.pin : "").trim();
+  const code = String(req.body && req.body.code ? req.body.code : "").trim();
+  const reconnect = String(req.body && req.body.reconnect ? req.body.reconnect : "").trim();
+  const label = String(req.body && req.body.label ? req.body.label : "").trim();
+  const lang = String(req.body && req.body.lang ? req.body.lang : "").trim();
+  if(!name || !pin) return jsonError(res, 400, "Naam en pincode zijn nodig.");
+  if(pin.length < 4) return jsonError(res, 400, "Kies een pincode van minstens 4 cijfers.");
+  if(!code) return jsonError(res, 400, "Kamercode ontbreekt.");
+  const acc = upsertGuestRoom(name, pin, { code, reconnect, label, lang, ts: Date.now() });
+  res.json({ ok:true, rooms: acc.rooms });
+});
+
+// Gast haalt zijn kamers op met naam + pincode (werkt op elk toestel)
+app.post("/api/guest/my-rooms", (req, res) => {
+  const name = String(req.body && req.body.name ? req.body.name : "").trim();
+  const pin = String(req.body && req.body.pin ? req.body.pin : "").trim();
+  if(!name || !pin) return jsonError(res, 400, "Naam en pincode zijn nodig.");
+  let acc = getGuestAccount(name, pin);
+  if(!acc) return res.json({ ok:true, found:false, rooms:[] });
+  acc = cleanGuestRooms(acc);
+  res.json({ ok:true, found:true, rooms: acc.rooms || [] });
+});
 
 
 function pruneBans(room){
@@ -4037,11 +4159,9 @@ function pruneRoom(room){
     // Tekst: zoals voorheen, 15s na verzenden.
     return (now - m.ts) < ROOM_TTL_MS;
   });
-  // verwijder deelnemers die >20s niet gezien zijn
-  const seenCutoff = now - 20000;
-  for(const [id,mem] of room.members.entries()){
-    if(mem.lastSeen < seenCutoff) room.members.delete(id);
-  }
+  // Deelnemers blijven in de kamer staan (ook als hun scherm uit staat of de app
+  // op de achtergrond draait). Ze verdwijnen alleen als ze zelf weggaan of worden
+  // verwijderd door de host. Geen automatische opruiming op stilte.
 }
 
 function cleanupRooms(){
@@ -4141,6 +4261,7 @@ app.post("/api/room/join", (req, res) => {
   // Token verbruiken
   inv.uses += 1;
   if(inv.uses >= inv.maxUses) roomInvites.delete(token);
+  saveInvites();
 
   const memberId = "m_" + Date.now() + "_" + Math.random().toString(36).slice(2,8);
   room.members.set(memberId, { id: memberId, name, lang, lastSeen: Date.now() });
@@ -4178,18 +4299,30 @@ app.post("/api/room/invite", (req, res) => {
   const me = room.members.get(memberId);
   if(!me || !me.isHost) return jsonError(res, 403, "Alleen de host kan een uitnodiging maken.");
 
-  let maxUses = parseInt(req.body && req.body.maxUses, 10);
-  if(!Number.isFinite(maxUses) || maxUses < 1) maxUses = 1;
-  if(maxUses > INVITE_MAX_USES_CAP) maxUses = INVITE_MAX_USES_CAP;
+  const kind = String(req.body && req.body.kind ? req.body.kind : "single").toLowerCase();
 
-  let ttlMs = parseInt(req.body && req.body.ttlMs, 10);
-  if(!Number.isFinite(ttlMs) || ttlMs < 30000) ttlMs = INVITE_DEFAULT_TTL_MS;
-  if(ttlMs > INVITE_MAX_TTL_MS) ttlMs = INVITE_MAX_TTL_MS;
+  let maxUses, ttlMs;
+  if(kind === "company"){
+    // Blijvende, herbruikbare bedrijfscode voor een gedrukte brief/QR.
+    maxUses = INVITE_MAX_USES_CAP;      // effectief onbeperkt aantal mensen
+    ttlMs = INVITE_MAX_TTL_MS;          // jarenlang geldig
+  }else{
+    // Eén persoon: geen tijdsdruk, vervalt zodra hij gebruikt is.
+    maxUses = 1;
+    ttlMs = INVITE_MAX_TTL_MS;          // geen 10-minuten-limiet meer; vervalt op gebruik
+  }
+
+  // host mag desgewenst zelf maxUses/ttl meegeven (binnen de caps)
+  const reqUses = parseInt(req.body && req.body.maxUses, 10);
+  if(Number.isFinite(reqUses) && reqUses >= 1) maxUses = Math.min(reqUses, INVITE_MAX_USES_CAP);
+  const reqTtl = parseInt(req.body && req.body.ttlMs, 10);
+  if(Number.isFinite(reqTtl) && reqTtl >= 30000) ttlMs = Math.min(reqTtl, INVITE_MAX_TTL_MS);
 
   const token = makeInviteToken();
   const expiresAt = Date.now() + ttlMs;
-  roomInvites.set(token, { code, maxUses, uses: 0, expiresAt });
-  res.json({ ok:true, token, maxUses, expiresAt, ttlMs });
+  roomInvites.set(token, { code, maxUses, uses: 0, expiresAt, kind });
+  saveInvites();
+  res.json({ ok:true, token, maxUses, expiresAt, ttlMs, kind });
 });
 
 // Bericht sturen
