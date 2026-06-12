@@ -9,6 +9,14 @@ const upload = multer({
   dest: path.join(__dirname, "uploads")
 });
 
+// Aparte multer voor kamer-media: in GEHEUGEN (vluchtig, verdwijnt vanzelf),
+// met een groottelimiet zodat de server niet volloopt.
+const ROOM_MEDIA_MAX_BYTES = 25 * 1024 * 1024; // 25 MB
+const roomMediaUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: ROOM_MEDIA_MAX_BYTES }
+});
+
 let webpush = null;
 try{
   webpush = require("web-push");
@@ -3699,6 +3707,7 @@ app.post("/api/marketplace-bod", async (req, res) => {
    worden daarna automatisch gewist (niets blijft permanent bewaard).
    Vertaling gebeurt per lezer-taal en wordt kort gecachet om kosten te sparen. */
 const ROOM_TTL_MS = 15 * 1000;
+const ROOM_MEDIA_TTL_MS = 60 * 1000; // foto's/video's/bestanden blijven 1 minuut zichtbaar
 const ROOM_IDLE_MS = 1000 * 60 * 30; // lege/stille kamers na 30 min opruimen
 const ROOM_DAILY_TRANSLATION_LIMIT = 100; // max ECHTE vertalingen per kamer per dag (cache-treffers tellen niet mee)
 const rooms = new Map(); // code -> { code, createdAt, lastActive, members:Map(id->member), messages:[] }
@@ -3832,10 +3841,21 @@ function makeRoomCode(){
 }
 
 function pruneRoom(room){
-  const cutoff = Date.now() - ROOM_TTL_MS;
-  room.messages = room.messages.filter((m) => m.ts > cutoff);
+  const now = Date.now();
+  room.messages = room.messages.filter((m) => {
+    if(m.media){
+      // Media: klok start pas zodra een ontvanger het bestand echt heeft opgehaald.
+      // Nog niet opgehaald? Hooguit 2 minuten bewaren als vangnet.
+      if(!m.media.firstSeenAt){
+        return (now - m.ts) < 120000;
+      }
+      return (now - m.media.firstSeenAt) < ROOM_MEDIA_TTL_MS;
+    }
+    // Tekst: zoals voorheen, 15s na verzenden.
+    return (now - m.ts) < ROOM_TTL_MS;
+  });
   // verwijder deelnemers die >20s niet gezien zijn
-  const seenCutoff = Date.now() - 20000;
+  const seenCutoff = now - 20000;
   for(const [id,mem] of room.members.entries()){
     if(mem.lastSeen < seenCutoff) room.members.delete(id);
   }
@@ -4000,6 +4020,13 @@ app.post("/api/room/poll", async (req, res) => {
         limitReached = true;
       }
     }
+    // Verloop-tijd: media gebruikt firstSeenAt (klok start bij ophalen), tekst gebruikt ts
+    let expiresAt;
+    if(m.media){
+      expiresAt = m.media.firstSeenAt ? (m.media.firstSeenAt + ROOM_MEDIA_TTL_MS) : (now + ROOM_MEDIA_TTL_MS);
+    }else{
+      expiresAt = m.ts + ROOM_TTL_MS;
+    }
     out.push({
       id: m.id,
       senderId: m.senderId,
@@ -4010,8 +4037,15 @@ app.post("/api/room/poll", async (req, res) => {
       original: m.text,
       translated,
       ts: m.ts,
-      expiresAt: m.ts + ROOM_TTL_MS,
-      remainingMs: Math.max(0, (m.ts + ROOM_TTL_MS) - now)
+      media: m.media ? {
+        kind: m.media.kind,
+        mime: m.media.mime,
+        name: m.media.name,
+        size: m.media.size,
+        url: "/api/room/media/" + code + "/" + m.id
+      } : null,
+      expiresAt,
+      remainingMs: Math.max(0, expiresAt - now)
     });
   }
 
@@ -4045,6 +4079,75 @@ app.post("/api/room/push-subscribe", (req, res) => {
 // Publieke VAPID-sleutel ophalen (heeft de app nodig om zich aan te melden)
 app.get("/api/room/push-key", (req, res) => {
   res.json({ ok:true, publicKey: VAPID_PUBLIC_KEY });
+});
+
+// Media versturen (foto/video/bestand). Blijft in geheugen, verdwijnt na 15s.
+app.post("/api/room/send-media", roomMediaUpload.single("file"), (req, res) => {
+  const code = String(req.body && req.body.code ? req.body.code : "").trim();
+  const memberId = String(req.body && req.body.memberId ? req.body.memberId : "").trim();
+  const room = rooms.get(code);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden");
+  const member = room.members.get(memberId);
+  if(!member) return jsonError(res, 403, "Je zit niet (meer) in deze kamer. Join opnieuw.");
+  if(!req.file || !req.file.buffer) return jsonError(res, 400, "Geen bestand ontvangen");
+
+  member.lastSeen = Date.now();
+  room.lastActive = Date.now();
+
+  const mime = req.file.mimetype || "application/octet-stream";
+  let kind = "file";
+  if(mime.startsWith("image/")) kind = "image";
+  else if(mime.startsWith("video/")) kind = "video";
+
+  const caption = String(req.body && req.body.caption ? req.body.caption : "").trim().slice(0,500);
+
+  const msg = {
+    id: "rm_" + Date.now() + "_" + Math.random().toString(36).slice(2,8),
+    senderId: member.id,
+    senderName: member.name,
+    srcLang: member.lang,
+    text: caption,            // optioneel bijschrift (wordt vertaald zoals gewone tekst)
+    ts: Date.now(),
+    translations: {},
+    media: {
+      kind,                                  // "image" | "video" | "file"
+      mime,
+      name: String(req.file.originalname || "bestand").slice(0,120),
+      size: req.file.size || (req.file.buffer ? req.file.buffer.length : 0),
+      buffer: req.file.buffer,               // ruwe bytes in geheugen
+      firstSeenAt: 0                         // 15s-klok start bij eerste ophalen
+    }
+  };
+  room.messages.push(msg);
+
+  notifyRoom(code, member.id, {
+    title: member.name + " in kamer " + code,
+    body: kind === "image" ? "📷 Foto" : (kind === "video" ? "🎬 Video" : "📎 Bestand"),
+    code: code,
+    tag: "room-" + code
+  }).catch(()=>{});
+
+  res.json({ ok:true, id: msg.id });
+});
+
+// Media-bytes serveren zolang het bericht leeft. Start de 15s-klok bij eerste ophalen.
+app.get("/api/room/media/:code/:id", (req, res) => {
+  const code = String(req.params.code || "").trim();
+  const id = String(req.params.id || "").trim();
+  const room = rooms.get(code);
+  if(!room) return res.status(404).end();
+  const msg = room.messages.find((m) => m.id === id && m.media);
+  if(!msg) return res.status(404).end();
+
+  // start de vluchtige klok bij de eerste echte aflevering
+  if(!msg.media.firstSeenAt) msg.media.firstSeenAt = Date.now();
+
+  res.setHeader("Content-Type", msg.media.mime || "application/octet-stream");
+  res.setHeader("Cache-Control", "no-store");
+  if(msg.media.kind === "file"){
+    res.setHeader("Content-Disposition", "attachment; filename=\"" + encodeURIComponent(msg.media.name) + "\"");
+  }
+  res.end(msg.media.buffer);
 });
 
 // Kamer verlaten
