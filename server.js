@@ -3724,6 +3724,8 @@ function saveRooms(){
         createdAt: room.createdAt,
         hostName: room.hostName || "",
         hostLang: room.hostLang || "en",
+        hostKey: room.hostKey || "",
+        hostEmail: room.hostEmail || "",
         translationsToday: room.translationsToday || 0,
         translationDay: room.translationDay || roomToday()
       };
@@ -3748,6 +3750,10 @@ function loadRooms(){
         lastActive: Date.now(),
         hostName: r.hostName || "",
         hostLang: r.hostLang || "en",
+        hostKey: r.hostKey || "",
+        hostEmail: r.hostEmail || "",
+        banned: new Set(),
+        banAt: new Map(),
         members: new Map(),
         messages: [],
         translationsToday: r.translationsToday || 0,
@@ -3840,6 +3846,65 @@ function makeRoomCode(){
   return code;
 }
 
+// Verwijderde personen blijven 5 minuten geweerd; daarna mogen ze weer joinen.
+const ROOM_BAN_MS = 5 * 60 * 1000;
+
+// ===== EENMALIGE / VERLOPENDE UITNODIGINGEN =====
+// invites: token -> { code, maxUses, uses, expiresAt }
+const roomInvites = new Map();
+const INVITE_DEFAULT_TTL_MS = 10 * 60 * 1000; // 10 minuten geldig
+const INVITE_MAX_TTL_MS = 24 * 60 * 60 * 1000; // host mag hooguit 24 uur kiezen
+const INVITE_MAX_USES_CAP = 20;                // host mag hooguit 20 gebruiken kiezen
+
+function makeInviteToken(){
+  let t;
+  do{
+    t = "inv_" + Math.random().toString(36).slice(2,10) + Math.random().toString(36).slice(2,10);
+  }while(roomInvites.has(t));
+  return t;
+}
+
+function pruneInvites(){
+  const now = Date.now();
+  for(const [t, inv] of Array.from(roomInvites.entries())){
+    if(inv.expiresAt <= now || inv.uses >= inv.maxUses || !rooms.has(inv.code)){
+      roomInvites.delete(t);
+    }
+  }
+}
+setInterval(pruneInvites, 30000);
+
+// Reconnect-tokens: laten een AL toegelaten persoon stilletjes herverbinden
+// (bv. na korte stilte of serverherstart) ZONDER een nieuwe uitnodiging.
+// reconnectTokens: token -> { code, name, lang, isHost, expiresAt }
+const reconnectTokens = new Map();
+const RECONNECT_TTL_MS = 12 * 60 * 60 * 1000; // 12 uur
+
+function issueReconnectToken(code, name, lang, isHost){
+  const t = "rc_" + Math.random().toString(36).slice(2,10) + Math.random().toString(36).slice(2,10);
+  reconnectTokens.set(t, { code, name, lang, isHost: !!isHost, expiresAt: Date.now() + RECONNECT_TTL_MS });
+  return t;
+}
+function pruneReconnect(){
+  const now = Date.now();
+  for(const [t, r] of Array.from(reconnectTokens.entries())){
+    if(r.expiresAt <= now || !rooms.has(r.code)) reconnectTokens.delete(t);
+  }
+}
+setInterval(pruneReconnect, 60000);
+
+
+function pruneBans(room){
+  if(!room || !room.banAt) return;
+  const now = Date.now();
+  for(const [key, ts] of Array.from(room.banAt.entries())){
+    if(now - ts > ROOM_BAN_MS){
+      room.banAt.delete(key);
+      if(room.banned) room.banned.delete(key);
+    }
+  }
+}
+
 function pruneRoom(room){
   const now = Date.now();
   room.messages = room.messages.filter((m) => {
@@ -3924,11 +3989,12 @@ app.post("/api/room/create", (req, res) => {
   if(!name) return jsonError(res, 400, "Naam ontbreekt");
   const code = makeRoomCode();
   const memberId = "m_" + Date.now() + "_" + Math.random().toString(36).slice(2,8);
-  const room = { code, createdAt: Date.now(), lastActive: Date.now(), members: new Map(), messages: [], translationsToday: 0, translationDay: roomToday(), hostName: name, hostLang: lang, persistent: true };
-  room.members.set(memberId, { id: memberId, name, lang, lastSeen: Date.now() });
+  const room = { code, createdAt: Date.now(), lastActive: Date.now(), members: new Map(), messages: [], translationsToday: 0, translationDay: roomToday(), hostName: name, hostLang: lang, hostKey: gate.accountKey || "", hostEmail: gate.email || "", banned: new Set(), banAt: new Map(), persistent: true };
+  room.members.set(memberId, { id: memberId, name, lang, lastSeen: Date.now(), isHost: true });
   rooms.set(code, room);
   saveRooms();
-  res.json({ ok:true, code, memberId, name, lang });
+  const reconnect = issueReconnectToken(code, name, lang, true);
+  res.json({ ok:true, code, memberId, name, lang, isHost:true, reconnect });
 });
 
 // Kamer joinen
@@ -3936,13 +4002,76 @@ app.post("/api/room/join", (req, res) => {
   const code = String(req.body && req.body.code ? req.body.code : "").trim();
   const name = String(req.body && req.body.name ? req.body.name : "").trim().slice(0,40);
   const lang = String(req.body && req.body.lang ? req.body.lang : "").trim() || "en";
+  const token = String(req.body && req.body.token ? req.body.token : "").trim();
   if(!name) return jsonError(res, 400, "Naam ontbreekt");
   const room = rooms.get(code);
   if(!room) return jsonError(res, 404, "Kamer niet gevonden. Controleer de code.");
+  // Verwijderde personen even buiten houden
+  pruneBans(room);
+  const banKey = name.toLowerCase();
+  if(room.banned && room.banned.has(banKey)){
+    return jsonError(res, 403, "Je bent uit deze kamer verwijderd.");
+  }
+
+  // Gasten hebben een geldige, eenmalige uitnodiging nodig.
+  // (Dit voorkomt dat een doorgestuurde link of kale code werkt.)
+  const inv = token ? roomInvites.get(token) : null;
+  const now = Date.now();
+  if(!inv || inv.code !== code || inv.expiresAt <= now || inv.uses >= inv.maxUses){
+    return jsonError(res, 403, "Deze uitnodiging is ongeldig of verlopen. Vraag de host om een nieuwe link.");
+  }
+  // Token verbruiken
+  inv.uses += 1;
+  if(inv.uses >= inv.maxUses) roomInvites.delete(token);
+
   const memberId = "m_" + Date.now() + "_" + Math.random().toString(36).slice(2,8);
   room.members.set(memberId, { id: memberId, name, lang, lastSeen: Date.now() });
   room.lastActive = Date.now();
-  res.json({ ok:true, code, memberId, name, lang });
+  const reconnect = issueReconnectToken(code, name, lang, false);
+  res.json({ ok:true, code, memberId, name, lang, reconnect });
+});
+
+// Bestaand lid herverbindt (na korte stilte of herstart) zonder nieuwe uitnodiging
+app.post("/api/room/rejoin", (req, res) => {
+  const rcToken = String(req.body && req.body.reconnect ? req.body.reconnect : "").trim();
+  const r = rcToken ? reconnectTokens.get(rcToken) : null;
+  if(!r || r.expiresAt <= Date.now()) return jsonError(res, 403, "Sessie verlopen. Vraag de host om een nieuwe link.");
+  const room = rooms.get(r.code);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden.");
+  // geband? dan ook geen reconnect
+  pruneBans(room);
+  if(room.banned && room.banned.has(String(r.name||"").toLowerCase())){
+    reconnectTokens.delete(rcToken);
+    return jsonError(res, 403, "Je bent uit deze kamer verwijderd.");
+  }
+  const memberId = "m_" + Date.now() + "_" + Math.random().toString(36).slice(2,8);
+  const isHost = !!r.isHost;
+  room.members.set(memberId, { id: memberId, name: r.name, lang: r.lang, lastSeen: Date.now(), isHost });
+  room.lastActive = Date.now();
+  res.json({ ok:true, code: r.code, memberId, name: r.name, lang: r.lang, isHost });
+});
+
+// Host maakt een eenmalige / verlopende uitnodiging aan
+app.post("/api/room/invite", (req, res) => {
+  const code = String(req.body && req.body.code ? req.body.code : "").trim();
+  const memberId = String(req.body && req.body.memberId ? req.body.memberId : "").trim();
+  const room = rooms.get(code);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden");
+  const me = room.members.get(memberId);
+  if(!me || !me.isHost) return jsonError(res, 403, "Alleen de host kan een uitnodiging maken.");
+
+  let maxUses = parseInt(req.body && req.body.maxUses, 10);
+  if(!Number.isFinite(maxUses) || maxUses < 1) maxUses = 1;
+  if(maxUses > INVITE_MAX_USES_CAP) maxUses = INVITE_MAX_USES_CAP;
+
+  let ttlMs = parseInt(req.body && req.body.ttlMs, 10);
+  if(!Number.isFinite(ttlMs) || ttlMs < 30000) ttlMs = INVITE_DEFAULT_TTL_MS;
+  if(ttlMs > INVITE_MAX_TTL_MS) ttlMs = INVITE_MAX_TTL_MS;
+
+  const token = makeInviteToken();
+  const expiresAt = Date.now() + ttlMs;
+  roomInvites.set(token, { code, maxUses, uses: 0, expiresAt });
+  res.json({ ok:true, token, maxUses, expiresAt, ttlMs });
 });
 
 // Bericht sturen
@@ -4049,18 +4178,45 @@ app.post("/api/room/poll", async (req, res) => {
     });
   }
 
-  const members = Array.from(room.members.values()).map((x) => ({ name: x.name, lang: x.lang }));
+  const members = Array.from(room.members.values()).map((x) => ({ id: x.id, name: x.name, lang: x.lang, isHost: !!x.isHost }));
+  const iAmHost = !!(member && member.isHost);
   res.json({
     ok:true,
     ttl: ROOM_TTL_MS,
     serverTime: now,
     messages: out,
     members,
+    iAmHost,
+    myId: member.id,
     limitReached,
     translationsToday: room.translationsToday,
     dailyLimit: ROOM_DAILY_TRANSLATION_LIMIT,
     translationsLeft: roomTranslationsLeft(room)
   });
+});
+
+// Host verwijdert een ander lid uit de kamer
+app.post("/api/room/kick", (req, res) => {
+  const code = String(req.body && req.body.code ? req.body.code : "").trim();
+  const memberId = String(req.body && req.body.memberId ? req.body.memberId : "").trim();
+  const targetId = String(req.body && req.body.targetId ? req.body.targetId : "").trim();
+  const room = rooms.get(code);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden");
+  const me = room.members.get(memberId);
+  if(!me || !me.isHost) return jsonError(res, 403, "Alleen de host kan iemand verwijderen.");
+  if(targetId === memberId) return jsonError(res, 400, "Je kunt jezelf niet verwijderen; gebruik 'verlaten'.");
+  const target = room.members.get(targetId);
+  if(!target) return jsonError(res, 404, "Persoon zit niet (meer) in de kamer.");
+
+  // verwijderen + kort weren zodat de persoon niet meteen terug polt
+  room.members.delete(targetId);
+  removeRoomPush(code, targetId);
+  if(!room.banned) room.banned = new Set();
+  if(!room.banAt) room.banAt = new Map();
+  const banKey = String(target.name || "").toLowerCase();
+  if(banKey){ room.banned.add(banKey); room.banAt.set(banKey, Date.now()); }
+  room.lastActive = Date.now();
+  res.json({ ok:true, removed: target.name });
 });
 
 // App meldt zich aan voor pushmeldingen in deze kamer
@@ -4122,7 +4278,7 @@ app.post("/api/room/send-media", roomMediaUpload.single("file"), (req, res) => {
 
   notifyRoom(code, member.id, {
     title: member.name + " in kamer " + code,
-    body: kind === "image" ? "📷 Foto" : (kind === "video" ? "🎬 Video" : "📎 Bestand"),
+    body: kind === "image" ? "Foto" : (kind === "video" ? "Video" : "Bestand"),
     code: code,
     tag: "room-" + code
   }).catch(()=>{});
