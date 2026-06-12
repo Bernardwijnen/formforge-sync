@@ -3703,6 +3703,87 @@ const ROOM_IDLE_MS = 1000 * 60 * 30; // lege/stille kamers na 30 min opruimen
 const ROOM_DAILY_TRANSLATION_LIMIT = 100; // max ECHTE vertalingen per kamer per dag (cache-treffers tellen niet mee)
 const rooms = new Map(); // code -> { code, createdAt, lastActive, members:Map(id->member), messages:[] }
 
+// ===== KAMERS BEWAREN OP SCHIJF (overleeft serverherstart) =====
+const ROOMS_STORE_FILE = path.join(DATA_DIR, "echo_rooms.json");
+
+function saveRooms(){
+  try{
+    const data = {};
+    for(const [code, room] of rooms.entries()){
+      data[code] = {
+        code: room.code,
+        createdAt: room.createdAt,
+        hostName: room.hostName || "",
+        hostLang: room.hostLang || "en",
+        translationsToday: room.translationsToday || 0,
+        translationDay: room.translationDay || roomToday()
+      };
+    }
+    fs.writeFileSync(ROOMS_STORE_FILE, JSON.stringify(data, null, 2));
+  }catch(err){
+    console.warn("Kamers konden niet worden opgeslagen:", err.message || String(err));
+  }
+}
+
+function loadRooms(){
+  try{
+    if(!fs.existsSync(ROOMS_STORE_FILE)) return;
+    const raw = fs.readFileSync(ROOMS_STORE_FILE, "utf8");
+    const data = JSON.parse(raw || "{}");
+    Object.keys(data || {}).forEach((code) => {
+      const r = data[code];
+      if(!code || !r) return;
+      rooms.set(code, {
+        code: r.code || code,
+        createdAt: r.createdAt || Date.now(),
+        lastActive: Date.now(),
+        hostName: r.hostName || "",
+        hostLang: r.hostLang || "en",
+        members: new Map(),
+        messages: [],
+        translationsToday: r.translationsToday || 0,
+        translationDay: r.translationDay || roomToday(),
+        persistent: true
+      });
+    });
+    console.log("Kamers geladen: " + rooms.size);
+  }catch(err){
+    console.warn("Kamers konden niet worden geladen:", err.message || String(err));
+  }
+}
+loadRooms();
+
+// ===== PUSH-AANMELDINGEN PER KAMER =====
+const roomPushSubs = new Map(); // code -> Map(memberId -> subscription)
+
+function addRoomPush(code, memberId, subscription){
+  if(!code || !memberId || !subscription || !subscription.endpoint) return;
+  let m = roomPushSubs.get(code);
+  if(!m){ m = new Map(); roomPushSubs.set(code, m); }
+  m.set(memberId, subscription);
+}
+
+function removeRoomPush(code, memberId){
+  const m = roomPushSubs.get(code);
+  if(m) m.delete(memberId);
+}
+
+async function notifyRoom(code, exceptMemberId, payload){
+  if(!webpush || !VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
+  const m = roomPushSubs.get(code);
+  if(!m || m.size === 0) return;
+  for(const [memberId, sub] of Array.from(m.entries())){
+    if(memberId === exceptMemberId) continue;
+    try{
+      await webpush.sendNotification(sub, JSON.stringify(payload));
+    }catch(err){
+      if(err.statusCode === 404 || err.statusCode === 410){
+        m.delete(memberId);
+      }
+    }
+  }
+}
+
 // Controleer of een e-mail + pincode een ACTIEF Unlimited (pro) abonnement is.
 function requireUnlimited(req){
   const email = String((req.body && (req.body.email || req.body.premiumEmail)) || "").trim();
@@ -3761,12 +3842,9 @@ function pruneRoom(room){
 }
 
 function cleanupRooms(){
-  const now = Date.now();
   for(const [code,room] of rooms.entries()){
     pruneRoom(room);
-    if(room.members.size === 0 && (now - room.lastActive) > ROOM_IDLE_MS){
-      rooms.delete(code);
-    }
+    // Permanente kamers NIET verwijderen, ook niet als ze leeg/stil zijn.
   }
 }
 setInterval(cleanupRooms, 5000);
@@ -3811,9 +3889,10 @@ app.post("/api/room/create", (req, res) => {
   if(!name) return jsonError(res, 400, "Naam ontbreekt");
   const code = makeRoomCode();
   const memberId = "m_" + Date.now() + "_" + Math.random().toString(36).slice(2,8);
-  const room = { code, createdAt: Date.now(), lastActive: Date.now(), members: new Map(), messages: [], translationsToday: 0, translationDay: roomToday() };
+  const room = { code, createdAt: Date.now(), lastActive: Date.now(), members: new Map(), messages: [], translationsToday: 0, translationDay: roomToday(), hostName: name, hostLang: lang, persistent: true };
   room.members.set(memberId, { id: memberId, name, lang, lastSeen: Date.now() });
   rooms.set(code, room);
+  saveRooms();
   res.json({ ok:true, code, memberId, name, lang });
 });
 
@@ -3853,6 +3932,15 @@ app.post("/api/room/send", (req, res) => {
     translations: {} // wordt gevuld bij ophalen per lezer-taal
   };
   room.messages.push(msg);
+
+  // Stuur een pushmelding naar alle ANDERE leden van de kamer
+  notifyRoom(code, member.id, {
+    title: member.name + " in kamer " + code,
+    body: text.slice(0, 120),
+    code: code,
+    tag: "room-" + code
+  }).catch(()=>{});
+
   res.json({ ok:true, id: msg.id });
 });
 
@@ -3926,12 +4014,31 @@ app.post("/api/room/poll", async (req, res) => {
   });
 });
 
+// App meldt zich aan voor pushmeldingen in deze kamer
+app.post("/api/room/push-subscribe", (req, res) => {
+  const code = String(req.body && req.body.code ? req.body.code : "").trim();
+  const memberId = String(req.body && req.body.memberId ? req.body.memberId : "").trim();
+  const subscription = req.body && req.body.subscription;
+  const room = rooms.get(code);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden");
+  if(!room.members.get(memberId)) return jsonError(res, 403, "Je zit niet in deze kamer");
+  if(!subscription || !subscription.endpoint) return jsonError(res, 400, "Ongeldige aanmelding");
+  addRoomPush(code, memberId, subscription);
+  res.json({ ok:true });
+});
+
+// Publieke VAPID-sleutel ophalen (heeft de app nodig om zich aan te melden)
+app.get("/api/room/push-key", (req, res) => {
+  res.json({ ok:true, publicKey: VAPID_PUBLIC_KEY });
+});
+
 // Kamer verlaten
 app.post("/api/room/leave", (req, res) => {
   const code = String(req.body && req.body.code ? req.body.code : "").trim();
   const memberId = String(req.body && req.body.memberId ? req.body.memberId : "").trim();
   const room = rooms.get(code);
   if(room){ room.members.delete(memberId); }
+  removeRoomPush(code, memberId);
   res.json({ ok:true });
 });
 
