@@ -4317,6 +4317,302 @@ app.post("/api/room/leave", (req, res) => {
 });
 
 
+/* ============================================================
+   DIRECTE BERICHTEN TUSSEN UNLIMITED-GEBRUIKERS
+   - elke Unlimited-gebruiker krijgt een uniek Echo-ID
+   - je voegt iemand toe via diens Echo-ID (privacy: niemand
+     ziet je zonder dat ID)
+   - berichten blijven bewaard tot de ander ze gelezen heeft
+   ============================================================ */
+
+const DM_STORE_FILE = path.join(DATA_DIR, "echo_directmsg.json");
+const DM_MSG_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // vangnet: ongelezen berichten max 30 dagen
+const DM_PRESENCE_MS = 25 * 1000;                   // "online" als <25s geleden gezien
+
+// dmUsers: echoId -> { echoId, accountKey, email, name, lang, contacts:[echoId], lastSeen }
+const dmUsers = new Map();
+// snelle index: accountKey -> echoId
+const dmByAccount = new Map();
+// dmThreads: threadKey -> [ {id, from, to, srcLang, text, ts, readBy:{}, translations:{}} ]
+const dmThreads = new Map();
+// push-aanmeldingen per echoId
+const dmPush = new Map();
+
+function dmThreadKey(a, b){ return [a, b].sort().join("__"); }
+
+function makeEchoId(){
+  let id;
+  do{
+    const block = () => String(Math.floor(1000 + Math.random()*9000));
+    id = "ECHO-" + block() + "-" + block();
+  }while(dmUsers.has(id));
+  return id;
+}
+
+function loadDM(){
+  try{
+    if(!fs.existsSync(DM_STORE_FILE)) return;
+    const raw = fs.readFileSync(DM_STORE_FILE, "utf8");
+    const data = JSON.parse(raw || "{}");
+    (data.users || []).forEach((u) => {
+      if(!u || !u.echoId) return;
+      dmUsers.set(u.echoId, {
+        echoId: u.echoId,
+        accountKey: u.accountKey || "",
+        email: u.email || "",
+        name: u.name || "",
+        lang: u.lang || "en",
+        contacts: Array.isArray(u.contacts) ? u.contacts : [],
+        lastSeen: 0
+      });
+      if(u.accountKey) dmByAccount.set(u.accountKey, u.echoId);
+    });
+    Object.keys(data.threads || {}).forEach((k) => {
+      dmThreads.set(k, Array.isArray(data.threads[k]) ? data.threads[k] : []);
+    });
+    console.log("Direct-messages geladen: " + dmUsers.size + " gebruikers");
+  }catch(err){
+    console.warn("Direct-messages konden niet worden geladen:", err.message || String(err));
+  }
+}
+
+let dmSaveTimer = null;
+function saveDM(){
+  // licht uitgesteld opslaan zodat snelle bursts niet telkens schrijven
+  if(dmSaveTimer) return;
+  dmSaveTimer = setTimeout(() => {
+    dmSaveTimer = null;
+    try{
+      const users = Array.from(dmUsers.values()).map((u) => ({
+        echoId: u.echoId, accountKey: u.accountKey, email: u.email,
+        name: u.name, lang: u.lang, contacts: u.contacts
+      }));
+      const threads = {};
+      for(const [k, list] of dmThreads.entries()){
+        if(list && list.length) threads[k] = list;
+      }
+      fs.writeFileSync(DM_STORE_FILE, JSON.stringify({ users, threads }, null, 2));
+    }catch(err){
+      console.warn("Direct-messages konden niet worden opgeslagen:", err.message || String(err));
+    }
+  }, 800);
+}
+
+function pruneDM(){
+  const cutoff = Date.now() - DM_MSG_MAX_AGE_MS;
+  let changed = false;
+  for(const [k, list] of dmThreads.entries()){
+    const kept = list.filter((m) => m.ts > cutoff);
+    if(kept.length !== list.length){ changed = true; }
+    if(kept.length) dmThreads.set(k, kept); else dmThreads.delete(k);
+  }
+  if(changed) saveDM();
+}
+setInterval(pruneDM, 60 * 60 * 1000); // elk uur opschonen
+
+// Zorg dat de ingelogde Unlimited-gebruiker een Echo-ID heeft (maakt aan indien nodig)
+function ensureDmUser(accountKey, email, name, lang){
+  let echoId = dmByAccount.get(accountKey);
+  let user = echoId ? dmUsers.get(echoId) : null;
+  if(!user){
+    echoId = makeEchoId();
+    user = { echoId, accountKey, email: email || "", name: name || "", lang: lang || "en", contacts: [], lastSeen: Date.now() };
+    dmUsers.set(echoId, user);
+    dmByAccount.set(accountKey, echoId);
+    saveDM();
+  }else{
+    // naam/taal bijwerken als meegegeven
+    if(name && user.name !== name){ user.name = name; saveDM(); }
+    if(lang && user.lang !== lang){ user.lang = lang; saveDM(); }
+    if(email && !user.email){ user.email = email; }
+  }
+  user.lastSeen = Date.now();
+  return user;
+}
+
+function dmPublicContact(echoId){
+  const u = dmUsers.get(echoId);
+  if(!u) return { echoId, name: "(onbekend)", lang: "en", online: false };
+  return {
+    echoId: u.echoId,
+    name: u.name || u.echoId,
+    lang: u.lang || "en",
+    online: (Date.now() - (u.lastSeen || 0)) < DM_PRESENCE_MS
+  };
+}
+
+async function dmTranslate(text, from, to){
+  if(!text || from === to) return text;
+  try{ return await translateText(text, from, to); }catch(e){ return text; }
+}
+
+function dmAddPush(echoId, subscription){
+  if(!echoId || !subscription || !subscription.endpoint) return;
+  const list = dmPush.get(echoId) || [];
+  const filtered = list.filter((s) => s.endpoint !== subscription.endpoint);
+  filtered.push(subscription);
+  dmPush.set(echoId, filtered);
+}
+
+async function dmNotify(echoId, payload){
+  if(!webpush || !VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
+  const list = dmPush.get(echoId) || [];
+  if(!list.length) return;
+  const valid = [];
+  for(const sub of list){
+    try{ await webpush.sendNotification(sub, JSON.stringify(payload)); valid.push(sub); }
+    catch(err){ if(err.statusCode !== 404 && err.statusCode !== 410) valid.push(sub); }
+  }
+  dmPush.set(echoId, valid);
+}
+
+// --- Inloggen op het direct-message systeem: geeft je eigen Echo-ID terug ---
+app.post("/api/dm/me", (req, res) => {
+  const gate = requireUnlimited(req);
+  if(!gate.ok) return jsonError(res, gate.status, gate.error);
+  const name = String(req.body && req.body.name ? req.body.name : "").trim().slice(0,40);
+  const lang = String(req.body && req.body.lang ? req.body.lang : "").trim() || "en";
+  const user = ensureDmUser(gate.accountKey, gate.email, name, lang);
+  res.json({ ok:true, echoId: user.echoId, name: user.name, lang: user.lang });
+});
+
+// --- Contact toevoegen via diens Echo-ID ---
+app.post("/api/dm/add-contact", (req, res) => {
+  const gate = requireUnlimited(req);
+  if(!gate.ok) return jsonError(res, gate.status, gate.error);
+  const me = ensureDmUser(gate.accountKey, gate.email);
+  const targetId = String(req.body && req.body.contactId ? req.body.contactId : "").trim().toUpperCase();
+  if(!targetId) return jsonError(res, 400, "Voer een Echo-ID in.");
+  if(targetId === me.echoId) return jsonError(res, 400, "Dat is je eigen ID.");
+  const target = dmUsers.get(targetId);
+  if(!target) return jsonError(res, 404, "Geen Unlimited-gebruiker met dit Echo-ID gevonden.");
+  // wederzijds toevoegen
+  if(!me.contacts.includes(targetId)) me.contacts.push(targetId);
+  if(!target.contacts.includes(me.echoId)) target.contacts.push(me.echoId);
+  saveDM();
+  res.json({ ok:true, contact: dmPublicContact(targetId) });
+});
+
+// --- Contact verwijderen ---
+app.post("/api/dm/remove-contact", (req, res) => {
+  const gate = requireUnlimited(req);
+  if(!gate.ok) return jsonError(res, gate.status, gate.error);
+  const me = ensureDmUser(gate.accountKey, gate.email);
+  const targetId = String(req.body && req.body.contactId ? req.body.contactId : "").trim().toUpperCase();
+  me.contacts = me.contacts.filter((c) => c !== targetId);
+  saveDM();
+  res.json({ ok:true });
+});
+
+// --- Contactenlijst ophalen (met online-status en aantal ongelezen) ---
+app.post("/api/dm/contacts", (req, res) => {
+  const gate = requireUnlimited(req);
+  if(!gate.ok) return jsonError(res, gate.status, gate.error);
+  const name = String(req.body && req.body.name ? req.body.name : "").trim().slice(0,40);
+  const lang = String(req.body && req.body.lang ? req.body.lang : "").trim() || "";
+  const me = ensureDmUser(gate.accountKey, gate.email, name, lang);
+  const contacts = me.contacts.map((cid) => {
+    const pub = dmPublicContact(cid);
+    const key = dmThreadKey(me.echoId, cid);
+    const list = dmThreads.get(key) || [];
+    const unread = list.filter((m) => m.to === me.echoId && !(m.readBy && m.readBy[me.echoId])).length;
+    return Object.assign(pub, { unread });
+  });
+  res.json({ ok:true, echoId: me.echoId, name: me.name, lang: me.lang, contacts });
+});
+
+// --- Bericht sturen naar een contact ---
+app.post("/api/dm/send", (req, res) => {
+  const gate = requireUnlimited(req);
+  if(!gate.ok) return jsonError(res, gate.status, gate.error);
+  const me = ensureDmUser(gate.accountKey, gate.email);
+  const toId = String(req.body && req.body.to ? req.body.to : "").trim().toUpperCase();
+  const text = String(req.body && req.body.text ? req.body.text : "").trim().slice(0,2000);
+  if(!toId || !text) return jsonError(res, 400, "Ontvanger of tekst ontbreekt.");
+  const target = dmUsers.get(toId);
+  if(!target) return jsonError(res, 404, "Contact niet gevonden.");
+  if(!me.contacts.includes(toId)) return jsonError(res, 403, "Deze persoon staat niet in je contacten.");
+
+  const key = dmThreadKey(me.echoId, toId);
+  const list = dmThreads.get(key) || [];
+  const msg = {
+    id: "dm_" + Date.now() + "_" + Math.random().toString(36).slice(2,8),
+    from: me.echoId, to: toId,
+    srcLang: me.lang || "en",
+    text, ts: Date.now(),
+    readBy: {}, translations: {}
+  };
+  list.push(msg);
+  dmThreads.set(key, list);
+  saveDM();
+
+  dmNotify(toId, {
+    title: (me.name || me.echoId),
+    body: text.slice(0, 120),
+    dm: me.echoId,
+    tag: "dm-" + me.echoId
+  }).catch(()=>{});
+
+  res.json({ ok:true, id: msg.id });
+});
+
+// --- Gesprek ophalen met een contact (vertaalt naar jouw taal, markeert als gelezen) ---
+app.post("/api/dm/thread", async (req, res) => {
+  const gate = requireUnlimited(req);
+  if(!gate.ok) return jsonError(res, gate.status, gate.error);
+  const lang = String(req.body && req.body.lang ? req.body.lang : "").trim() || "";
+  const me = ensureDmUser(gate.accountKey, gate.email, "", lang);
+  const otherId = String(req.body && req.body.with ? req.body.with : "").trim().toUpperCase();
+  if(!otherId) return jsonError(res, 400, "Geen contact opgegeven.");
+  const key = dmThreadKey(me.echoId, otherId);
+  const list = dmThreads.get(key) || [];
+  const myLang = me.lang || "en";
+
+  const out = [];
+  for(const m of list){
+    let shown = m.text;
+    let translated = false;
+    if(m.srcLang !== myLang){
+      if(m.translations[myLang]){ shown = m.translations[myLang]; translated = true; }
+      else{
+        const t = await dmTranslate(m.text, m.srcLang, myLang);
+        if(t && t !== m.text){ m.translations[myLang] = t; shown = t; translated = true; }
+      }
+    }
+    // markeer berichten aan mij als gelezen
+    if(m.to === me.echoId && !(m.readBy && m.readBy[me.echoId])){
+      m.readBy = m.readBy || {};
+      m.readBy[me.echoId] = Date.now();
+    }
+    out.push({
+      id: m.id,
+      mine: m.from === me.echoId,
+      from: m.from,
+      text: shown,
+      original: m.text,
+      translated,
+      ts: m.ts,
+      read: !!(m.readBy && m.readBy[otherId]) // is door de ander gelezen?
+    });
+  }
+  saveDM();
+  res.json({ ok:true, echoId: me.echoId, withUser: dmPublicContact(otherId), messages: out });
+});
+
+// --- Push-aanmelding voor directe berichten ---
+app.post("/api/dm/push-subscribe", (req, res) => {
+  const gate = requireUnlimited(req);
+  if(!gate.ok) return jsonError(res, gate.status, gate.error);
+  const me = ensureDmUser(gate.accountKey, gate.email);
+  const subscription = req.body && req.body.subscription;
+  if(!subscription || !subscription.endpoint) return jsonError(res, 400, "Ongeldige aanmelding");
+  dmAddPush(me.echoId, subscription);
+  res.json({ ok:true });
+});
+
+loadDM();
+
+
 app.use((req, res) => {
   res.status(404).json({ error: "Route niet gevonden", path: req.path });
 });
