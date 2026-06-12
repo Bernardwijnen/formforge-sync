@@ -3867,14 +3867,29 @@ function setCachedTranslation(from,to,text,translated){
   }
 }
 
+// Volledige taalnamen zodat het AI-model precies weet naar welke taal vertaald moet worden
+// (kale codes als "de"/"nl" leidden tot verkeerde of Engelse vertalingen)
+const LANG_NAMES = {
+  en: "English", nl: "Dutch", de: "German", fr: "French", es: "Spanish",
+  it: "Italian", pt: "Portuguese", pl: "Polish", tr: "Turkish", ar: "Arabic",
+  uk: "Ukrainian", ru: "Russian", zh: "Chinese", ja: "Japanese", ko: "Korean",
+  hi: "Hindi", id: "Indonesian", th: "Thai", vi: "Vietnamese", ro: "Romanian",
+  cs: "Czech", sv: "Swedish"
+};
+function langName(code){
+  return LANG_NAMES[String(code || "").toLowerCase()] || String(code || "");
+}
+
 async function translateText(text, from, to){
   if(!text) return "";
   if(from === to) return text;
   const cached = getCachedTranslation(from,to,text);
   if(cached !== null) return cached;
+  const fromName = langName(from);
+  const toName = langName(to);
   const out = await callOpenAI([
-    { role:"system", content:"Je bent een vertaalmotor voor een live chat. Vertaal het bericht natuurlijk en volledig. Geef ALLEEN de vertaling terug, geen uitleg. Behoud namen, getallen, emoji en links." },
-    { role:"user", content:"Vertaal van "+from+" naar "+to+":\n"+text }
+    { role:"system", content:"You are a translation engine for a live chat. Translate the user's message into " + toName + " only. Output ONLY the translation in " + toName + ", with no explanation, no quotes, and no other languages. Keep names, numbers, emoji and links unchanged." },
+    { role:"user", content:"Translate this message from " + fromName + " to " + toName + ":\n" + text }
   ], 0.1);
   setCachedTranslation(from,to,text,out);
   return out;
