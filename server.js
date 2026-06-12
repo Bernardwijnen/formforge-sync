@@ -4567,6 +4567,22 @@ app.post("/api/room/leave", (req, res) => {
   res.json({ ok:true });
 });
 
+// Taal van een lid wijzigen (kan op elk moment, ook midden in de chat)
+app.post("/api/room/set-lang", (req, res) => {
+  const code = String(req.body && req.body.code ? req.body.code : "").trim();
+  const memberId = String(req.body && req.body.memberId ? req.body.memberId : "").trim();
+  const lang = String(req.body && req.body.lang ? req.body.lang : "").trim();
+  const room = rooms.get(code);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden");
+  const mem = room.members.get(memberId);
+  if(!mem) return jsonError(res, 403, "Je zit niet meer in deze kamer");
+  if(!lang) return jsonError(res, 400, "Taal ontbreekt");
+  mem.lang = lang;
+  mem.lastSeen = Date.now();
+  // bestaande vertaalcache mag blijven; nieuwe berichten worden in de nieuwe taal vertaald
+  res.json({ ok:true, lang });
+});
+
 
 /* ============================================================
    DIRECTE BERICHTEN TUSSEN UNLIMITED-GEBRUIKERS
