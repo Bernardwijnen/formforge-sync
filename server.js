@@ -1796,25 +1796,45 @@ app.post("/api/stripe/request-pin-reset", async (req, res) => {
 });
 
 // Een bestaand (al betaald) Stripe-abonnement koppelen aan dit account.
-// Nodig wanneer een betaling het account niet automatisch heeft geactiveerd.
+// Robuust: zet het account onder ALLE mogelijke sleutels op "pro" met EEN
+// vaste pincode, zodat het inloggen het altijd vindt (los van app-source).
 app.post("/api/stripe/link-subscription", async (req, res) => {
   try{
     const email = normalizePremiumKey(req.body && req.body.email ? req.body.email : "");
-    const subscriptionId = String(req.body && req.body.subscriptionId ? req.body.subscriptionId : "").trim();
+    let subscriptionId = String(req.body && req.body.subscriptionId ? req.body.subscriptionId : "").trim();
     const deviceId = getRequestDeviceId(req);
     if(!email) return jsonError(res, 400, "E-mailadres ontbreekt");
-    if(!subscriptionId || !subscriptionId.startsWith("sub_")) return jsonError(res, 400, "Geldig subscription-ID (sub_...) ontbreekt");
     if(!STRIPE_SECRET_KEY) return jsonError(res, 500, "Stripe niet geconfigureerd");
 
-    // Haal het abonnement op uit Stripe en controleer dat het echt is + actief
-    let subscription;
-    try{
-      subscription = await callStripeGet("/subscriptions/" + encodeURIComponent(subscriptionId));
-    }catch(e){
-      return jsonError(res, 404, "Abonnement niet gevonden in Stripe");
+    // 1) Als er geen subscriptionId is meegegeven, zoek het actieve abonnement op e-mail
+    let subscription = null;
+    if(subscriptionId && subscriptionId.startsWith("sub_")){
+      try{ subscription = await callStripeGet("/subscriptions/" + encodeURIComponent(subscriptionId)); }
+      catch(e){ return jsonError(res, 404, "Abonnement niet gevonden in Stripe"); }
+    }else{
+      // zoek klant op e-mail, dan diens actieve abonnement
+      try{
+        const customers = await callStripeGet("/customers?email=" + encodeURIComponent(email) + "&limit=10");
+        const list = (customers && customers.data) ? customers.data : [];
+        for(const cust of list){
+          const subs = await callStripeGet("/subscriptions?customer=" + encodeURIComponent(cust.id) + "&status=active&limit=10");
+          const sd = (subs && subs.data) ? subs.data : [];
+          // kies een abonnement met de Unlimited price-ID, anders het eerste actieve
+          let chosen = sd.find(s => {
+            const it = s.items && s.items.data && s.items.data[0];
+            const pid = it && it.price && it.price.id;
+            return pid === STRIPE_UNLIMITED_PRICE_ID || getAiPlanByPriceId(pid) === "pro";
+          }) || sd[0];
+          if(chosen){ subscription = chosen; break; }
+        }
+      }catch(e){
+        return jsonError(res, 500, "Kon Stripe-klant niet opzoeken: " + (e.message || String(e)));
+      }
     }
 
-    // Controleer dat het abonnement bij DIT e-mailadres hoort (veiligheid)
+    if(!subscription) return jsonError(res, 404, "Geen actief abonnement gevonden voor dit e-mailadres.");
+
+    // 2) Veiligheid: controleer dat het abonnement bij dit e-mailadres hoort
     let custEmail = "";
     try{
       const customerId = subscription.customer || "";
@@ -1822,15 +1842,13 @@ app.post("/api/stripe/link-subscription", async (req, res) => {
         const customer = await callStripeGet("/customers/" + encodeURIComponent(customerId));
         custEmail = normalizePremiumKey(customer.email || "");
       }
-    }catch(e){ /* als klant niet op te halen is, gaan we door op subscription-data */ }
-
+    }catch(e){ /* doorgaan */ }
     if(custEmail && custEmail !== email){
       return jsonError(res, 403, "Dit abonnement hoort bij een ander e-mailadres.");
     }
 
     const status = String(subscription.status || "");
-    const active = ["active","trialing","past_due"].includes(status);
-    if(!active){
+    if(!["active","trialing","past_due"].includes(status)){
       return jsonError(res, 400, "Dit abonnement is niet actief (status: " + (status || "onbekend") + ").");
     }
 
@@ -1839,37 +1857,42 @@ app.post("/api/stripe/link-subscription", async (req, res) => {
     const plan = getAiPlanByPriceId(priceId) || "pro";
     const periodData = extractStripeSubscriptionPeriod(subscription);
 
-    // BELANGRIJK: opslaan onder dezelfde accountKey die het inloggen gebruikt
-    // (appSource:email), anders vindt requireUnlimited het account niet terug.
-    const appSource = detectAppSourceFromReq(req);
-    const accountKey = buildPremiumAccountKey(email, appSource);
+    // 3) EEN vaste pincode bepalen (hergebruik bestaande als die er is)
+    const existing = getPremiumAccount(email)
+      || getPremiumAccount("formforge:" + email)
+      || getPremiumAccount("echo:" + email);
+    const pin = (existing && existing.premiumPin) ? existing.premiumPin : makePremiumPin();
 
-    setPremiumAccount(accountKey, {
+    // 4) Onder ALLE mogelijke sleutels wegschrijven, met dezelfde pincode
+    const keys = [email, "formforge:" + email, "echo:" + email];
+    const payload = {
       email,
       customerId: subscription.customer || "",
       subscriptionId: subscription.id || subscriptionId,
       active: true,
       plan,
       priceId,
+      premiumPin: pin,
       reason: "manual.link_subscription",
       deviceId,
       activeDeviceId: deviceId,
       deviceBoundAt: deviceId ? new Date().toISOString() : "",
       deviceLastSeenAt: deviceId ? new Date().toISOString() : "",
       ...periodData
-    });
+    };
+    keys.forEach(k => setPremiumAccount(k, payload));
 
-    const account = getPremiumAccount(accountKey);
     res.json({
       ok: true,
       linked: true,
       plan,
       premium: true,
       email,
-      premiumPin: account && account.premiumPin ? account.premiumPin : "",
-      pin: account && account.premiumPin ? account.premiumPin : "",
+      premiumPin: pin,
+      pin,
+      subscriptionId: subscription.id || subscriptionId,
       subscriptionStatus: status,
-      message: "Je abonnement is gekoppeld. Je bent nu Unlimited."
+      message: "Je abonnement is gekoppeld. Log in met dit e-mailadres en deze pincode."
     });
   }catch(err){
     jsonError(res, 500, "Koppelen mislukt", err.message || String(err));
