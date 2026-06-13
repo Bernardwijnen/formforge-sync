@@ -4263,6 +4263,16 @@ app.post("/api/room/join", (req, res) => {
   if(inv.uses >= inv.maxUses) roomInvites.delete(token);
   saveInvites();
 
+  // Verwijder oude versies van dezelfde gast (zelfde naam, niet-host) zodat er
+  // geen dubbele leden ontstaan bij opnieuw joinen.
+  const joinName = String(name || "").trim().toLowerCase();
+  for(const [mid, mem] of Array.from(room.members.entries())){
+    if(!mem.isHost && String(mem.name || "").trim().toLowerCase() === joinName){
+      room.members.delete(mid);
+      removeRoomPush(code, mid);
+    }
+  }
+
   const memberId = "m_" + Date.now() + "_" + Math.random().toString(36).slice(2,8);
   room.members.set(memberId, { id: memberId, name, lang, lastSeen: Date.now() });
   room.lastActive = Date.now();
@@ -4283,6 +4293,18 @@ app.post("/api/room/rejoin", (req, res) => {
     reconnectTokens.delete(rcToken);
     return jsonError(res, 403, "Je bent uit deze kamer verwijderd.");
   }
+  // Verwijder eerst eventuele oude versies van DEZELFDE persoon (zelfde naam +
+  // host-status). Anders stapelen oude "geesten" zich op nu leden niet meer
+  // automatisch op stilte worden opgeruimd.
+  const sameName = String(r.name || "").trim().toLowerCase();
+  const wantHost = !!r.isHost;
+  for(const [mid, mem] of Array.from(room.members.entries())){
+    if(String(mem.name || "").trim().toLowerCase() === sameName && !!mem.isHost === wantHost){
+      room.members.delete(mid);
+      removeRoomPush(r.code, mid);
+    }
+  }
+
   const memberId = "m_" + Date.now() + "_" + Math.random().toString(36).slice(2,8);
   const isHost = !!r.isHost;
   room.members.set(memberId, { id: memberId, name: r.name, lang: r.lang, lastSeen: Date.now(), isHost });
