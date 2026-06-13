@@ -3828,6 +3828,8 @@ function saveRooms(){
         createdAt: room.createdAt,
         hostName: room.hostName || "",
         hostLang: room.hostLang || "en",
+        freeMode: !!room.freeMode,
+        roomLang: room.roomLang || "",
         hostKey: room.hostKey || "",
         hostEmail: room.hostEmail || "",
         translationsToday: room.translationsToday || 0,
@@ -3854,6 +3856,8 @@ function loadRooms(){
         lastActive: Date.now(),
         hostName: r.hostName || "",
         hostLang: r.hostLang || "en",
+        freeMode: !!r.freeMode,
+        roomLang: r.roomLang || "",
         hostKey: r.hostKey || "",
         hostEmail: r.hostEmail || "",
         banned: new Set(),
@@ -4214,14 +4218,22 @@ async function translateText(text, from, to){
 
 // Kamer maken
 app.post("/api/room/create", (req, res) => {
-  const gate = requireUnlimited(req);
-  if(!gate.ok) return jsonError(res, gate.status, gate.error);
+  const wantFree = !!(req.body && (req.body.freeRoom === true || req.body.freeRoom === "true"));
+
+  let gate = { ok:true, accountKey:"", email:"" };
+  if(!wantFree){
+    // Vertaalkamer (meerdere talen) vereist een Unlimited-abonnement.
+    gate = requireUnlimited(req);
+    if(!gate.ok) return jsonError(res, gate.status, gate.error);
+  }
+  // Gratis kamer: iedereen mag er een aanmaken, geen abonnement nodig.
+
   const name = String(req.body && req.body.name ? req.body.name : "").trim().slice(0,40);
   const lang = String(req.body && req.body.lang ? req.body.lang : "").trim() || "en";
   if(!name) return jsonError(res, 400, "Naam ontbreekt");
   const code = makeRoomCode();
   const memberId = "m_" + Date.now() + "_" + Math.random().toString(36).slice(2,8);
-  const room = { code, createdAt: Date.now(), lastActive: Date.now(), members: new Map(), messages: [], translationsToday: 0, translationDay: roomToday(), hostName: name, hostLang: lang, hostKey: gate.accountKey || "", hostEmail: gate.email || "", banned: new Set(), banAt: new Map(), persistent: true };
+  const room = { code, createdAt: Date.now(), lastActive: Date.now(), members: new Map(), messages: [], translationsToday: 0, translationDay: roomToday(), hostName: name, hostLang: lang, hostKey: gate.accountKey || "", hostEmail: gate.email || "", banned: new Set(), banAt: new Map(), persistent: true, freeMode: wantFree, roomLang: wantFree ? lang : "" };
   room.members.set(memberId, { id: memberId, name, lang, lastSeen: Date.now(), isHost: true });
   rooms.set(code, room);
   saveRooms();
@@ -4267,11 +4279,15 @@ app.post("/api/room/join", (req, res) => {
     }
   }
 
+  // In een gratis kamer (één taal) krijgt de gast automatisch de kamertaal.
+  let useLang = lang;
+  if(room.freeMode && room.roomLang){ useLang = room.roomLang; }
+
   const memberId = "m_" + Date.now() + "_" + Math.random().toString(36).slice(2,8);
-  room.members.set(memberId, { id: memberId, name, lang, lastSeen: Date.now() });
+  room.members.set(memberId, { id: memberId, name, lang: useLang, lastSeen: Date.now() });
   room.lastActive = Date.now();
-  const reconnect = issueReconnectToken(code, name, lang, false);
-  res.json({ ok:true, code, memberId, name, lang, reconnect });
+  const reconnect = issueReconnectToken(code, name, useLang, false);
+  res.json({ ok:true, code, memberId, name, lang: useLang, reconnect, freeMode: !!room.freeMode });
 });
 
 // Bestaand lid herverbindt (na korte stilte of herstart) zonder nieuwe uitnodiging
@@ -4394,7 +4410,7 @@ app.post("/api/room/poll", async (req, res) => {
   for(const m of room.messages){
     let shown = m.text;
     let translated = false;
-    if(m.srcLang !== myLang){
+    if(!room.freeMode && m.srcLang !== myLang){
       if(m.translations[myLang]){
         // Al eerder vertaald: gratis uit cache, telt niet mee
         shown = m.translations[myLang];
@@ -4455,6 +4471,7 @@ app.post("/api/room/poll", async (req, res) => {
     members,
     iAmHost,
     myId: member.id,
+    freeMode: !!room.freeMode,
     limitReached,
     translationsToday: room.translationsToday,
     dailyLimit: ROOM_DAILY_TRANSLATION_LIMIT,
