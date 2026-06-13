@@ -4767,25 +4767,44 @@ async function dmNotify(echoId, payload){
 }
 
 // --- Inloggen op het direct-message systeem: geeft je eigen Echo-ID terug ---
-app.post("/api/dm/me", (req, res) => {
+// Bepaal de DM-identiteit. Werkt voor IEDEREEN (gratis), via naam + pincode.
+// Een Unlimited-account werkt ook (dan gebruiken we de accountKey daarvan).
+// Geeft { accountKey, email, name, lang } terug, of { error } bij ongeldige invoer.
+function resolveDmIdentity(req){
+  const b = req.body || {};
+  const name = String(b.name || "").trim().slice(0,40);
+  const lang = String(b.lang || "").trim() || "en";
+  // 1) Heeft de persoon een geldig Unlimited-account? Gebruik dat (zoals voorheen).
   const gate = requireUnlimited(req);
-  if(!gate.ok) return jsonError(res, gate.status, gate.error);
-  const name = String(req.body && req.body.name ? req.body.name : "").trim().slice(0,40);
-  const lang = String(req.body && req.body.lang ? req.body.lang : "").trim() || "en";
-  const user = ensureDmUser(gate.accountKey, gate.email, name, lang);
+  if(gate.ok){
+    return { accountKey: gate.accountKey, email: gate.email || "", name, lang, unlimited: true };
+  }
+  // 2) Anders: gratis identiteit via naam + pincode.
+  const pin = String(b.pin || "").trim();
+  if(!name) return { error: "Voer je naam in." };
+  if(!pin || pin.length < 4) return { error: "Kies een pincode van minstens 4 cijfers." };
+  // accountKey voor gratis DM-gebruikers: "dmfree:" + naam-lowercase + ":" + pin
+  const accountKey = "dmfree:" + name.toLowerCase() + ":" + pin;
+  return { accountKey, email: "", name, lang, unlimited: false };
+}
+
+app.post("/api/dm/me", (req, res) => {
+  const id = resolveDmIdentity(req);
+  if(id.error) return jsonError(res, 400, id.error);
+  const user = ensureDmUser(id.accountKey, id.email, id.name, id.lang);
   res.json({ ok:true, echoId: user.echoId, name: user.name, lang: user.lang });
 });
 
 // --- Contact toevoegen via diens Echo-ID ---
 app.post("/api/dm/add-contact", (req, res) => {
-  const gate = requireUnlimited(req);
-  if(!gate.ok) return jsonError(res, gate.status, gate.error);
-  const me = ensureDmUser(gate.accountKey, gate.email);
+  const id = resolveDmIdentity(req);
+  if(id.error) return jsonError(res, 400, id.error);
+  const me = ensureDmUser(id.accountKey, id.email, id.name, id.lang);
   const targetId = String(req.body && req.body.contactId ? req.body.contactId : "").trim().toUpperCase();
   if(!targetId) return jsonError(res, 400, "Voer een Echo-ID in.");
   if(targetId === me.echoId) return jsonError(res, 400, "Dat is je eigen ID.");
   const target = dmUsers.get(targetId);
-  if(!target) return jsonError(res, 404, "Geen Unlimited-gebruiker met dit Echo-ID gevonden.");
+  if(!target) return jsonError(res, 404, "Geen gebruiker met dit Echo-ID gevonden.");
   // wederzijds toevoegen
   if(!me.contacts.includes(targetId)) me.contacts.push(targetId);
   if(!target.contacts.includes(me.echoId)) target.contacts.push(me.echoId);
@@ -4795,9 +4814,9 @@ app.post("/api/dm/add-contact", (req, res) => {
 
 // --- Contact verwijderen ---
 app.post("/api/dm/remove-contact", (req, res) => {
-  const gate = requireUnlimited(req);
-  if(!gate.ok) return jsonError(res, gate.status, gate.error);
-  const me = ensureDmUser(gate.accountKey, gate.email);
+  const id = resolveDmIdentity(req);
+  if(id.error) return jsonError(res, 400, id.error);
+  const me = ensureDmUser(id.accountKey, id.email, id.name, id.lang);
   const targetId = String(req.body && req.body.contactId ? req.body.contactId : "").trim().toUpperCase();
   me.contacts = me.contacts.filter((c) => c !== targetId);
   saveDM();
@@ -4806,11 +4825,9 @@ app.post("/api/dm/remove-contact", (req, res) => {
 
 // --- Contactenlijst ophalen (met online-status en aantal ongelezen) ---
 app.post("/api/dm/contacts", (req, res) => {
-  const gate = requireUnlimited(req);
-  if(!gate.ok) return jsonError(res, gate.status, gate.error);
-  const name = String(req.body && req.body.name ? req.body.name : "").trim().slice(0,40);
-  const lang = String(req.body && req.body.lang ? req.body.lang : "").trim() || "";
-  const me = ensureDmUser(gate.accountKey, gate.email, name, lang);
+  const id = resolveDmIdentity(req);
+  if(id.error) return jsonError(res, 400, id.error);
+  const me = ensureDmUser(id.accountKey, id.email, id.name, id.lang);
   const contacts = me.contacts.map((cid) => {
     const pub = dmPublicContact(cid);
     const key = dmThreadKey(me.echoId, cid);
@@ -4823,9 +4840,9 @@ app.post("/api/dm/contacts", (req, res) => {
 
 // --- Bericht sturen naar een contact ---
 app.post("/api/dm/send", (req, res) => {
-  const gate = requireUnlimited(req);
-  if(!gate.ok) return jsonError(res, gate.status, gate.error);
-  const me = ensureDmUser(gate.accountKey, gate.email);
+  const id = resolveDmIdentity(req);
+  if(id.error) return jsonError(res, 400, id.error);
+  const me = ensureDmUser(id.accountKey, id.email, id.name, id.lang);
   const toId = String(req.body && req.body.to ? req.body.to : "").trim().toUpperCase();
   const text = String(req.body && req.body.text ? req.body.text : "").trim().slice(0,2000);
   if(!toId || !text) return jsonError(res, 400, "Ontvanger of tekst ontbreekt.");
@@ -4858,10 +4875,9 @@ app.post("/api/dm/send", (req, res) => {
 
 // --- Gesprek ophalen met een contact (vertaalt naar jouw taal, markeert als gelezen) ---
 app.post("/api/dm/thread", async (req, res) => {
-  const gate = requireUnlimited(req);
-  if(!gate.ok) return jsonError(res, gate.status, gate.error);
-  const lang = String(req.body && req.body.lang ? req.body.lang : "").trim() || "";
-  const me = ensureDmUser(gate.accountKey, gate.email, "", lang);
+  const id = resolveDmIdentity(req);
+  if(id.error) return jsonError(res, 400, id.error);
+  const me = ensureDmUser(id.accountKey, id.email, id.name, id.lang);
   const otherId = String(req.body && req.body.with ? req.body.with : "").trim().toUpperCase();
   if(!otherId) return jsonError(res, 400, "Geen contact opgegeven.");
   const key = dmThreadKey(me.echoId, otherId);
@@ -4869,14 +4885,25 @@ app.post("/api/dm/thread", async (req, res) => {
   const myLang = me.lang || "en";
 
   const out = [];
+  let needUpgrade = false; // zijn er berichten die vertaling nodig hebben maar gratis is?
   for(const m of list){
     let shown = m.text;
     let translated = false;
-    if(m.srcLang !== myLang){
-      if(m.translations[myLang]){ shown = m.translations[myLang]; translated = true; }
-      else{
-        const t = await dmTranslate(m.text, m.srcLang, myLang);
-        if(t && t !== m.text){ m.translations[myLang] = t; shown = t; translated = true; }
+    let needsTranslation = (m.srcLang !== myLang);
+    if(needsTranslation){
+      if(id.unlimited){
+        // Betaald: vertaal (gratis als al in cache)
+        if(m.translations[myLang]){ shown = m.translations[myLang]; translated = true; }
+        else{
+          const t = await dmTranslate(m.text, m.srcLang, myLang);
+          if(t && t !== m.text){ m.translations[myLang] = t; shown = t; translated = true; }
+        }
+      }else{
+        // Gratis gebruiker + andere taal: toon origineel, markeer dat vertaling Unlimited vereist.
+        // (Eerder gemaakte vertaling in cache tonen we niet gratis.)
+        shown = m.text;
+        translated = false;
+        needUpgrade = true;
       }
     }
     // markeer berichten aan mij als gelezen
@@ -4891,19 +4918,20 @@ app.post("/api/dm/thread", async (req, res) => {
       text: shown,
       original: m.text,
       translated,
+      needsTranslation: needsTranslation && !translated, // andere taal maar (nog) niet vertaald
       ts: m.ts,
       read: !!(m.readBy && m.readBy[otherId]) // is door de ander gelezen?
     });
   }
   saveDM();
-  res.json({ ok:true, echoId: me.echoId, withUser: dmPublicContact(otherId), messages: out });
+  res.json({ ok:true, echoId: me.echoId, withUser: dmPublicContact(otherId), messages: out, needUpgrade });
 });
 
 // --- Push-aanmelding voor directe berichten ---
 app.post("/api/dm/push-subscribe", (req, res) => {
-  const gate = requireUnlimited(req);
-  if(!gate.ok) return jsonError(res, gate.status, gate.error);
-  const me = ensureDmUser(gate.accountKey, gate.email);
+  const id = resolveDmIdentity(req);
+  if(id.error) return jsonError(res, 400, id.error);
+  const me = ensureDmUser(id.accountKey, id.email, id.name, id.lang);
   const subscription = req.body && req.body.subscription;
   if(!subscription || !subscription.endpoint) return jsonError(res, 400, "Ongeldige aanmelding");
   dmAddPush(me.echoId, subscription);
