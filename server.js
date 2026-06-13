@@ -4146,19 +4146,13 @@ function pruneBans(room){
 }
 
 function pruneRoom(room){
-  const now = Date.now();
-  room.messages = room.messages.filter((m) => {
-    if(m.media){
-      // Media: klok start pas zodra een ontvanger het bestand echt heeft opgehaald.
-      // Nog niet opgehaald? Hooguit 2 minuten bewaren als vangnet.
-      if(!m.media.firstSeenAt){
-        return (now - m.ts) < 120000;
-      }
-      return (now - m.media.firstSeenAt) < ROOM_MEDIA_TTL_MS;
-    }
-    // Tekst: zoals voorheen, 15s na verzenden.
-    return (now - m.ts) < ROOM_TTL_MS;
-  });
+  // Berichten en media BLIJVEN staan zolang de kamer bestaat (geen 15s/1min meer).
+  // Veiligheidsklep: bij extreem veel berichten bewaren we alleen de laatste 5000,
+  // zodat de server nooit volloopt. In normaal gebruik merkt niemand dit.
+  const MAX_MESSAGES = 5000;
+  if(room.messages.length > MAX_MESSAGES){
+    room.messages = room.messages.slice(room.messages.length - MAX_MESSAGES);
+  }
   // Deelnemers blijven in de kamer staan (ook als hun scherm uit staat of de app
   // op de achtergrond draait). Ze verdwijnen alleen als ze zelf weggaan of worden
   // verwijderd door de host. Geen automatische opruiming op stilte.
