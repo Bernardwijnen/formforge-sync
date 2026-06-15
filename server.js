@@ -4131,6 +4131,74 @@ app.get("/api/brand", (req, res) => {
   res.json({ ok:true, found:true, name: b.name || "", logo: b.logo || "", tag: (b.tag || "") });
 });
 
+// ===== STADSGIDS (toeristen) =====
+// Per stad: naam + categorieen, elk met ondernemers (naam, beschrijving, adres).
+// Jij beheert dit hier. NIEUWE STAD of ONDERNEMER? Voeg een regel toe.
+// De teksten schrijf je in EEN taal (sourceLang); de gids vertaalt automatisch
+// naar de taal van de bezoeker.
+const CITIES = {
+  "demo": {
+    name: "Demo City",
+    sourceLang: "en",
+    categories: [
+      {
+        id: "food", icon: "🍽️", title: "Where to eat",
+        items: [
+          { name: "Trattoria Bella", desc: "Cozy Italian spot with fresh homemade pasta and wood-fired pizza.", address: "Damrak 12, Amsterdam" },
+          { name: "Green Garden", desc: "Vegetarian and vegan dishes with a sunny terrace.", address: "Leidseplein 5, Amsterdam" }
+        ]
+      },
+      {
+        id: "coffee", icon: "☕", title: "Good coffee",
+        items: [
+          { name: "The Roastery", desc: "Specialty coffee roasted on site, great pastries too.", address: "Prinsengracht 200, Amsterdam" }
+        ]
+      },
+      {
+        id: "sights", icon: "📷", title: "Things to see",
+        items: [
+          { name: "Old Church", desc: "Beautiful historic church in the city centre.", address: "Oudekerksplein 23, Amsterdam" }
+        ]
+      },
+      {
+        id: "boat", icon: "🚤", title: "Canal tours",
+        items: [
+          { name: "City Canal Cruise", desc: "One-hour guided boat tour through the historic canals.", address: "Stadhouderskade 30, Amsterdam" }
+        ]
+      }
+    ]
+  }
+};
+
+// Stadsgids ophalen, vertaald naar de taal van de bezoeker
+app.get("/api/city", async (req, res) => {
+  const code = String(req.query && req.query.code ? req.query.code : "").trim().toLowerCase();
+  const lang = String(req.query && req.query.lang ? req.query.lang : "en").trim() || "en";
+  const city = CITIES[code];
+  if(!city) return res.json({ ok:true, found:false });
+  const src = city.sourceLang || "en";
+
+  // helper: vertaal alleen als nodig (andere taal), met stille fallback naar origineel
+  async function tr(text){
+    if(!text || lang === src) return text;
+    try{ return await translateText(text, src, lang); }catch(e){ return text; }
+  }
+
+  const cats = [];
+  for(const c of (city.categories || [])){
+    const items = [];
+    for(const it of (c.items || [])){
+      items.push({
+        name: it.name,                       // naam niet vertalen (eigennaam)
+        desc: await tr(it.desc || ""),       // beschrijving wel
+        address: it.address || "",           // adres blijft zoals het is (voor navigatie)
+      });
+    }
+    cats.push({ id: c.id, icon: c.icon || "", title: await tr(c.title || ""), items });
+  }
+  res.json({ ok:true, found:true, name: city.name || "", categories: cats });
+});
+
 
 // Gast registreert/voegt huidige kamer toe aan zijn gast-account
 app.post("/api/guest/save-room", (req, res) => {
