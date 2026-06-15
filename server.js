@@ -4370,12 +4370,23 @@ const CITIES = {
 };
 
 // Stadsgids ophalen, vertaald naar de taal van de bezoeker
+// Vertaalgeheugen voor de stadsgids: per stad+taal bewaren we de volledig
+// vertaalde gids, zodat alleen de EERSTE bezoeker in een taal hoeft te wachten.
+const cityCache = new Map(); // sleutel "code:lang" -> { name, categories }
+
 app.get("/api/city", async (req, res) => {
   const code = String(req.query && req.query.code ? req.query.code : "").trim().toLowerCase();
   const lang = String(req.query && req.query.lang ? req.query.lang : "en").trim() || "en";
   const city = CITIES[code];
   if(!city) return res.json({ ok:true, found:false });
   const src = city.sourceLang || "en";
+
+  // Al eerder vertaald? Geef meteen terug (supersnel).
+  const cacheKey = code + ":" + lang;
+  if(cityCache.has(cacheKey)){
+    const hit = cityCache.get(cacheKey);
+    return res.json({ ok:true, found:true, name: hit.name, categories: hit.categories });
+  }
 
   // helper: vertaal alleen als nodig (andere taal), met stille fallback naar origineel
   async function tr(text){
@@ -4385,16 +4396,20 @@ app.get("/api/city", async (req, res) => {
 
   const cats = [];
   for(const c of (city.categories || [])){
-    const items = [];
-    for(const it of (c.items || [])){
-      items.push({
-        name: it.name,                       // naam niet vertalen (eigennaam)
-        desc: await tr(it.desc || ""),       // beschrijving wel
-        address: it.address || "",           // adres blijft zoals het is (voor navigatie)
-      });
-    }
-    cats.push({ id: c.id, icon: c.icon || "", title: await tr(c.title || ""), items });
+    // vertaal titel en alle beschrijvingen van deze categorie tegelijk (parallel)
+    const [title, descs] = await Promise.all([
+      tr(c.title || ""),
+      Promise.all((c.items || []).map(it => tr(it.desc || "")))
+    ]);
+    const items = (c.items || []).map((it, i) => ({
+      name: it.name,
+      desc: descs[i],
+      address: it.address || "",
+    }));
+    cats.push({ id: c.id, icon: c.icon || "", title, items });
   }
+  // bewaar in het geheugen zodat volgende bezoekers in deze taal het direct krijgen
+  cityCache.set(cacheKey, { name: city.name || "", categories: cats });
   res.json({ ok:true, found:true, name: city.name || "", categories: cats });
 });
 
