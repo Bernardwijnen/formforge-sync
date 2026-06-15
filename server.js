@@ -4147,7 +4147,23 @@ const CITIES = {
           { name: "Kasteelruïne Valkenburg", desc: "Nederlands enige hoogteburcht, met een prachtig panoramisch uitzicht over het stadje. Een echt hoogtepunt.", address: "Daalhemerweg 27, Valkenburg" },
           { name: "Fluweelengrot", desc: "Eeuwenoud gangenstelsel onder de kasteelruïne, met indrukwekkende wandschilderingen. Het hele jaar 12 graden, neem een jas mee.", address: "Daalhemerweg 24, Valkenburg" },
           { name: "Gemeentegrot", desc: "Beroemde mergelgrot met grottekeningen en een verlichte route door de gangen.", address: "Cauberg 4, Valkenburg" },
-          { name: "Steenkolenmijn Valkenburg", desc: "Beleef hoe vroeger naar steenkool werd gezocht, diep onder de grond.", address: "Daalhemerweg 31, Valkenburg" }
+          { name: "Steenkolenmijn Valkenburg", desc: "Beleef hoe vroeger naar steenkool werd gezocht, diep onder de grond.", address: "Daalhemerweg 31, Valkenburg" },
+          { name: "Romeinse Katakomben", desc: "Nagebouwde Romeinse catacomben in een mergelgrot, een bijzondere reis door de geschiedenis.", address: "Plenkertstraat 53, Valkenburg" }
+        ]
+      },
+      {
+        id: "attractions", icon: "&#127906;", title: "Attracties",
+        items: [
+          { name: "Kabelbaan Valkenburg", desc: "De eerste kabelbaan van Nederland (1954). Een ontspannen stoeltjeslift vanuit het centrum omhoog de heuvel op, met prachtig uitzicht.", address: "Daalhemerweg 27, Valkenburg" },
+          { name: "Rodelbaan", desc: "De enige rodelbaan van Nederland. Zelf je snelheid bepalen terwijl je naar beneden suist. Bij slecht weer gesloten.", address: "Daalhemerweg 27, Valkenburg" },
+          { name: "Bounce Adventure & Adventure Minigolf", desc: "Klimnettenparcours op verschillende hoogtes in de grot, plus avontuurlijke minigolf.", address: "Daalhemerweg 27, Valkenburg" },
+          { name: "Holland Casino Valkenburg", desc: "Casino in het centrum van Valkenburg voor een avondje uit.", address: "Odapark 2, Valkenburg" }
+        ]
+      },
+      {
+        id: "kids", icon: "&#129528;", title: "Voor kinderen",
+        items: [
+          { name: "Sprookjesbos Valkenburg", desc: "Sprookjespark tegen de heuvel aan, met sprookjes en attracties voor jonge kinderen. Te bereiken via de kabelbaan.", address: "Sprookjesbosweg 1, Valkenburg" }
         ]
       },
       {
