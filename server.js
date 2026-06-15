@@ -4142,26 +4142,26 @@ const CITIES = {
     sourceLang: "en",
     categories: [
       {
-        id: "food", icon: "🍽️", title: "Where to eat",
+        id: "food", icon: "&#127869;", title: "Where to eat",
         items: [
           { name: "Trattoria Bella", desc: "Cozy Italian spot with fresh homemade pasta and wood-fired pizza.", address: "Damrak 12, Amsterdam" },
           { name: "Green Garden", desc: "Vegetarian and vegan dishes with a sunny terrace.", address: "Leidseplein 5, Amsterdam" }
         ]
       },
       {
-        id: "coffee", icon: "☕", title: "Good coffee",
+        id: "coffee", icon: "&#9749;", title: "Good coffee",
         items: [
           { name: "The Roastery", desc: "Specialty coffee roasted on site, great pastries too.", address: "Prinsengracht 200, Amsterdam" }
         ]
       },
       {
-        id: "sights", icon: "📷", title: "Things to see",
+        id: "sights", icon: "&#128247;", title: "Things to see",
         items: [
           { name: "Old Church", desc: "Beautiful historic church in the city centre.", address: "Oudekerksplein 23, Amsterdam" }
         ]
       },
       {
-        id: "boat", icon: "🚤", title: "Canal tours",
+        id: "boat", icon: "&#128676;", title: "Canal tours",
         items: [
           { name: "City Canal Cruise", desc: "One-hour guided boat tour through the historic canals.", address: "Stadhouderskade 30, Amsterdam" }
         ]
