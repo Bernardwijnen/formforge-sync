@@ -3830,6 +3830,7 @@ function saveRooms(){
         hostLang: room.hostLang || "en",
         freeMode: !!room.freeMode,
         roomLang: room.roomLang || "",
+        msgTtlMs: room.msgTtlMs || 0,
         hostKey: room.hostKey || "",
         hostEmail: room.hostEmail || "",
         translationsToday: room.translationsToday || 0,
@@ -3858,6 +3859,7 @@ function loadRooms(){
         hostLang: r.hostLang || "en",
         freeMode: !!r.freeMode,
         roomLang: r.roomLang || "",
+        msgTtlMs: r.msgTtlMs || 0,
         hostKey: r.hostKey || "",
         hostEmail: r.hostEmail || "",
         banned: new Set(),
@@ -4111,6 +4113,25 @@ function cleanGuestRooms(acc){
 }
 loadGuests();
 
+// ===== MERKEN (white-label per bedrijf) =====
+// Per merk-code: bedrijfsnaam + logo-adres. De frontend toont dit bovenaan
+// in plaats van "World Chat" wanneer de link ?brand=CODE bevat.
+// NIEUWE KLANT TOEVOEGEN? Voeg hieronder simpelweg een regel toe:
+//   "code": { name: "Bedrijfsnaam", logo: "https://.../logo.png", tag: "optionele ondertitel" },
+const BRANDS = {
+  // voorbeeld (verwijder of pas aan):
+  "demo":   { name: "Demo Company", logo: "", tag: "Everyone in their own language" },
+  // "jansen": { name: "Schoonmaakbedrijf Jansen", logo: "https://formforge.nl/logos/jansen.png", tag: "" },
+};
+
+app.get("/api/brand", (req, res) => {
+  const code = String(req.query && req.query.code ? req.query.code : "").trim().toLowerCase();
+  if(!code || !BRANDS[code]) return res.json({ ok:true, found:false });
+  const b = BRANDS[code];
+  res.json({ ok:true, found:true, name: b.name || "", logo: b.logo || "", tag: (b.tag || "") });
+});
+
+
 // Gast registreert/voegt huidige kamer toe aan zijn gast-account
 app.post("/api/guest/save-room", (req, res) => {
   const name = String(req.body && req.body.name ? req.body.name : "").trim();
@@ -4150,7 +4171,19 @@ function pruneBans(room){
 }
 
 function pruneRoom(room){
-  // Berichten en media BLIJVEN staan zolang de kamer bestaat (geen 15s/1min meer).
+  // Als de host een bewaartijd heeft ingesteld (msgTtlMs > 0): verwijder berichten
+  // die ouder zijn dan die tijd. Media telt vanaf het moment van ophalen (firstSeenAt),
+  // tekst vanaf verzendtijd. msgTtlMs = 0 betekent permanent (blijft staan).
+  if(room.msgTtlMs && room.msgTtlMs > 0){
+    const now = Date.now();
+    room.messages = room.messages.filter((m) => {
+      if(m.media){
+        if(!m.media.firstSeenAt) return (now - m.ts) < Math.max(room.msgTtlMs, 120000);
+        return (now - m.media.firstSeenAt) < room.msgTtlMs;
+      }
+      return (now - m.ts) < room.msgTtlMs;
+    });
+  }
   // Veiligheidsklep: bij extreem veel berichten bewaren we alleen de laatste 5000,
   // zodat de server nooit volloopt. In normaal gebruik merkt niemand dit.
   const MAX_MESSAGES = 5000;
@@ -4233,7 +4266,14 @@ app.post("/api/room/create", (req, res) => {
   if(!name) return jsonError(res, 400, "Naam ontbreekt");
   const code = makeRoomCode();
   const memberId = "m_" + Date.now() + "_" + Math.random().toString(36).slice(2,8);
-  const room = { code, createdAt: Date.now(), lastActive: Date.now(), members: new Map(), messages: [], translationsToday: 0, translationDay: roomToday(), hostName: name, hostLang: lang, hostKey: gate.accountKey || "", hostEmail: gate.email || "", banned: new Set(), banAt: new Map(), persistent: true, freeMode: wantFree, roomLang: wantFree ? lang : "" };
+  // Bewaartijd voor berichten: 0 = permanent, anders milliseconden tot verdwijnen.
+  let msgTtlMs = 0;
+  const rawTtl = req.body && req.body.msgTtlSec;
+  if(rawTtl !== undefined && rawTtl !== null && rawTtl !== ""){
+    const sec = parseInt(rawTtl, 10);
+    if(!isNaN(sec) && sec > 0){ msgTtlMs = Math.min(sec, 30*24*60*60) * 1000; } // max 30 dagen
+  }
+  const room = { code, createdAt: Date.now(), lastActive: Date.now(), members: new Map(), messages: [], translationsToday: 0, translationDay: roomToday(), hostName: name, hostLang: lang, hostKey: gate.accountKey || "", hostEmail: gate.email || "", banned: new Set(), banAt: new Map(), persistent: true, freeMode: wantFree, roomLang: wantFree ? lang : "", msgTtlMs: msgTtlMs };
   room.members.set(memberId, { id: memberId, name, lang, lastSeen: Date.now(), isHost: true });
   rooms.set(code, room);
   saveRooms();
@@ -4432,12 +4472,15 @@ app.post("/api/room/poll", async (req, res) => {
         limitReached = true;
       }
     }
-    // Verloop-tijd: media gebruikt firstSeenAt (klok start bij ophalen), tekst gebruikt ts
-    let expiresAt;
-    if(m.media){
-      expiresAt = m.media.firstSeenAt ? (m.media.firstSeenAt + ROOM_MEDIA_TTL_MS) : (now + ROOM_MEDIA_TTL_MS);
-    }else{
-      expiresAt = m.ts + ROOM_TTL_MS;
+    // Verloop-tijd op basis van de door de host ingestelde bewaartijd.
+    // msgTtlMs = 0 betekent permanent: dan sturen we geen expiresAt (0).
+    let expiresAt = 0;
+    if(room.msgTtlMs && room.msgTtlMs > 0){
+      if(m.media){
+        expiresAt = m.media.firstSeenAt ? (m.media.firstSeenAt + room.msgTtlMs) : (now + room.msgTtlMs);
+      }else{
+        expiresAt = m.ts + room.msgTtlMs;
+      }
     }
     out.push({
       id: m.id,
@@ -4472,6 +4515,7 @@ app.post("/api/room/poll", async (req, res) => {
     iAmHost,
     myId: member.id,
     freeMode: !!room.freeMode,
+    msgTtlMs: room.msgTtlMs || 0,
     limitReached,
     translationsToday: room.translationsToday,
     dailyLimit: ROOM_DAILY_TRANSLATION_LIMIT,
@@ -4670,6 +4714,10 @@ function loadDM(){
     Object.keys(data.threads || {}).forEach((k) => {
       dmThreads.set(k, Array.isArray(data.threads[k]) ? data.threads[k] : []);
     });
+    // push-aanmeldingen herstellen zodat meldingen een herstart overleven
+    Object.keys(data.push || {}).forEach((echoId) => {
+      if(Array.isArray(data.push[echoId])) dmPush.set(echoId, data.push[echoId]);
+    });
     console.log("Direct-messages geladen: " + dmUsers.size + " gebruikers");
   }catch(err){
     console.warn("Direct-messages konden niet worden geladen:", err.message || String(err));
@@ -4691,7 +4739,11 @@ function saveDM(){
       for(const [k, list] of dmThreads.entries()){
         if(list && list.length) threads[k] = list;
       }
-      fs.writeFileSync(DM_STORE_FILE, JSON.stringify({ users, threads }, null, 2));
+      const push = {};
+      for(const [echoId, list] of dmPush.entries()){
+        if(list && list.length) push[echoId] = list;
+      }
+      fs.writeFileSync(DM_STORE_FILE, JSON.stringify({ users, threads, push }, null, 2));
     }catch(err){
       console.warn("Direct-messages konden niet worden opgeslagen:", err.message || String(err));
     }
@@ -4752,6 +4804,7 @@ function dmAddPush(echoId, subscription){
   const filtered = list.filter((s) => s.endpoint !== subscription.endpoint);
   filtered.push(subscription);
   dmPush.set(echoId, filtered);
+  saveDM();
 }
 
 async function dmNotify(echoId, payload){
