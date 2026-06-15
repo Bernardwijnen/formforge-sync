@@ -4137,6 +4137,87 @@ app.get("/api/brand", (req, res) => {
 // De teksten schrijf je in EEN taal (sourceLang); de gids vertaalt automatisch
 // naar de taal van de bezoeker.
 const CITIES = {
+  "valkenburg": {
+    name: "Valkenburg",
+    sourceLang: "nl",
+    categories: [
+      {
+        id: "sights", icon: "&#127963;", title: "Bezienswaardigheden",
+        items: [
+          { name: "Kasteelruïne Valkenburg", desc: "Nederlands enige hoogteburcht, met een prachtig panoramisch uitzicht over het stadje. Een echt hoogtepunt.", address: "Daalhemerweg 27, Valkenburg" },
+          { name: "Fluweelengrot", desc: "Eeuwenoud gangenstelsel onder de kasteelruïne, met indrukwekkende wandschilderingen. Het hele jaar 12 graden, neem een jas mee.", address: "Daalhemerweg 24, Valkenburg" },
+          { name: "Gemeentegrot", desc: "Beroemde mergelgrot met grottekeningen en een verlichte route door de gangen.", address: "Cauberg 4, Valkenburg" },
+          { name: "Steenkolenmijn Valkenburg", desc: "Beleef hoe vroeger naar steenkool werd gezocht, diep onder de grond.", address: "Daalhemerweg 31, Valkenburg" }
+        ]
+      },
+      {
+        id: "food", icon: "&#127869;", title: "Restaurants",
+        items: [
+          // Hier komen de betalende ondernemers. Voorbeeld:
+          // { name: "Restaurant Naam", desc: "Korte beschrijving.", address: "Straat 1, Valkenburg" },
+        ]
+      },
+      {
+        id: "coffee", icon: "&#9749;", title: "Koffie & cafés",
+        items: []
+      },
+      {
+        id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen",
+        items: []
+      },
+      {
+        id: "shopping", icon: "&#128717;", title: "Winkelen",
+        items: []
+      },
+      {
+        id: "hotels", icon: "&#127976;", title: "Hotels & overnachten",
+        items: []
+      },
+      {
+        id: "wellness", icon: "&#9832;", title: "Wellness & thermen",
+        items: [
+          { name: "Thermae 2000", desc: "Thermaalbad en wellnessresort op de Cauberg, met buitenbaden en uitzicht over het Heuvelland.", address: "Cauberg 27, Valkenburg" }
+        ]
+      },
+      {
+        id: "boat", icon: "&#128676;", title: "Rondvaart",
+        items: [
+          { name: "Rondvaart over de Geul", desc: "Ontspannen boottocht over de Geul, met uitleg over de omgeving.", address: "Centrum, Valkenburg" }
+        ]
+      },
+      {
+        id: "bikes", icon: "&#128692;", title: "Fietsverhuur",
+        items: []
+      },
+      {
+        id: "train", icon: "&#128642;", title: "Treinstation",
+        items: [
+          { name: "Station Valkenburg", desc: "Het oudste nog bestaande station van Nederland (1853), een rijksmonument. Treinen richting Maastricht en Heerlen.", address: "Stationstraat 2, Valkenburg" }
+        ]
+      },
+      {
+        id: "parking", icon: "&#127359;", title: "Parkeren",
+        items: [
+          { name: "Parkeergarage Centrum", desc: "Centrale parkeergarage op loopafstand van de bezienswaardigheden.", address: "Walramplein, Valkenburg" }
+        ]
+      },
+      {
+        id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)",
+        items: [
+          { name: "Visit Zuid-Limburg Experience", desc: "Toeristisch informatiepunt in het hart van Valkenburg. Kaarten, tickets en tips.", address: "Theodoor Dorrenplein 5, Valkenburg" }
+        ]
+      },
+      {
+        id: "pharmacy", icon: "&#128138;", title: "Apotheek",
+        items: []
+      },
+      {
+        id: "atm", icon: "&#128179;", title: "Geldautomaat",
+        items: []
+      }
+    ]
+  },
+
   "demo": {
     name: "Demo City",
     sourceLang: "en",
