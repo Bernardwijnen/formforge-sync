@@ -4149,21 +4149,123 @@ const CITIES = {
         ]
       },
       {
-        id: "coffee", icon: "&#9749;", title: "Good coffee",
+        id: "coffee", icon: "&#9749;", title: "Coffee & cafes",
         items: [
           { name: "The Roastery", desc: "Specialty coffee roasted on site, great pastries too.", address: "Prinsengracht 200, Amsterdam" }
         ]
       },
       {
-        id: "sights", icon: "&#128247;", title: "Things to see",
+        id: "bars", icon: "&#127867;", title: "Bars & nightlife",
+        items: [
+          { name: "Brown Cafe De Hoek", desc: "Traditional Dutch pub with local beers on tap.", address: "Spui 8, Amsterdam" }
+        ]
+      },
+      {
+        id: "hotels", icon: "&#127976;", title: "Hotels & stay",
+        items: [
+          { name: "Canal View Hotel", desc: "Comfortable rooms with a view over the canals.", address: "Herengracht 100, Amsterdam" }
+        ]
+      },
+      {
+        id: "sights", icon: "&#127963;", title: "Sights & landmarks",
         items: [
           { name: "Old Church", desc: "Beautiful historic church in the city centre.", address: "Oudekerksplein 23, Amsterdam" }
+        ]
+      },
+      {
+        id: "museums", icon: "&#127960;", title: "Museums",
+        items: [
+          { name: "City Museum", desc: "Art and history from the region, open daily.", address: "Museumplein 6, Amsterdam" }
+        ]
+      },
+      {
+        id: "churches", icon: "&#9962;", title: "Churches",
+        items: [
+          { name: "St. Nicholas Basilica", desc: "Impressive 19th-century basilica near the station.", address: "Prins Hendrikkade 73, Amsterdam" }
+        ]
+      },
+      {
+        id: "shopping", icon: "&#128717;", title: "Shopping",
+        items: [
+          { name: "Market Street", desc: "Boutiques, souvenirs and local shops.", address: "Kalverstraat 1, Amsterdam" }
         ]
       },
       {
         id: "boat", icon: "&#128676;", title: "Canal tours",
         items: [
           { name: "City Canal Cruise", desc: "One-hour guided boat tour through the historic canals.", address: "Stadhouderskade 30, Amsterdam" }
+        ]
+      },
+      {
+        id: "bikes", icon: "&#128692;", title: "Bike rental",
+        items: [
+          { name: "Rent-a-Bike Centraal", desc: "Rent city bikes by the hour or day.", address: "Damstraat 20, Amsterdam" }
+        ]
+      },
+      {
+        id: "train", icon: "&#128642;", title: "Train station",
+        items: [
+          { name: "Central Station", desc: "Main railway station for national and international trains.", address: "Stationsplein, Amsterdam" }
+        ]
+      },
+      {
+        id: "transit", icon: "&#128652;", title: "Public transport",
+        items: [
+          { name: "Tram & Metro Info", desc: "Tram, bus and metro information point.", address: "Stationsplein 10, Amsterdam" }
+        ]
+      },
+      {
+        id: "taxi", icon: "&#128661;", title: "Taxi",
+        items: [
+          { name: "City Taxi Stand", desc: "Official taxi rank, available 24/7.", address: "Stationsplein 15, Amsterdam" }
+        ]
+      },
+      {
+        id: "airport", icon: "&#9992;", title: "Airport",
+        items: [
+          { name: "Schiphol Airport", desc: "International airport, about 20 minutes by train.", address: "Schiphol, Amsterdam" }
+        ]
+      },
+      {
+        id: "parking", icon: "&#127359;", title: "Parking",
+        items: [
+          { name: "Centre Parking Garage", desc: "Covered parking garage in the city centre.", address: "Marnixstraat 250, Amsterdam" }
+        ]
+      },
+      {
+        id: "police", icon: "&#128110;", title: "Police",
+        items: [
+          { name: "Central Police Station", desc: "Police station. Emergency number: 112.", address: "Elandsgracht 117, Amsterdam" }
+        ]
+      },
+      {
+        id: "hospital", icon: "&#127973;", title: "Hospital & A&E",
+        items: [
+          { name: "City Hospital", desc: "Emergency department open 24/7. Emergency number: 112.", address: "Oosterpark 9, Amsterdam" }
+        ]
+      },
+      {
+        id: "pharmacy", icon: "&#128138;", title: "Pharmacy",
+        items: [
+          { name: "Central Pharmacy", desc: "Prescriptions and over-the-counter medicine.", address: "Damrak 50, Amsterdam" }
+        ]
+      },
+      {
+        id: "atm", icon: "&#128179;", title: "ATM / cash",
+        items: [
+          { name: "Bank ATM", desc: "Cash machine, multiple cards accepted.", address: "Rokin 80, Amsterdam" }
+        ]
+      },
+      {
+        id: "toilets", icon: "&#128701;", title: "Public toilets",
+        items: [
+          { name: "Public Restroom", desc: "Public toilet, small fee may apply.", address: "Dam Square, Amsterdam" }
+        ]
+      },
+      {
+        id: "info", icon: "&#8505;", title: "Tourist info",
+        items: [
+          { name: "Tourist Information Centre", desc: "Maps, tickets and local advice for visitors.", address: "Stationsplein 18, Amsterdam" }
         ]
       }
     ]
