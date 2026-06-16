@@ -4215,6 +4215,10 @@ const CITIES = {
       {
         id: "atm", icon: "&#128179;", title: "Geldautomaat",
         items: []
+      },
+      {
+        id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing",
+        items: []
       }
     ]
   },
@@ -4394,22 +4398,28 @@ app.get("/api/city", async (req, res) => {
     cats.push({ id: c.id, icon: c.icon || "", title, items });
   }
   // bewaar in het geheugen zodat volgende bezoekers in deze taal het direct krijgen
-  // Voeg de ACTIEVE ondernemers (uit het beheerscherm) toe aan de juiste categorie.
-  // Onzichtbaar als ze niet actief zijn (geen abonnement / door jou uitgezet).
+  // Voeg de ACTIEVE ondernemers toe. Eerst groeperen per categorie, dan
+  // ALLE beschrijvingen in een keer parallel vertalen (veel sneller).
   const cityMerchants = (merchants.get(code) || []).filter(m => m.active);
-  for(const m of cityMerchants){
+  const translatedDescs = await Promise.all(
+    cityMerchants.map(m => tr(m.desc || ""))
+  );
+  const translatedPromos = await Promise.all(
+    cityMerchants.map(m => (m.promo && m.promoUntil && Date.now() < m.promoUntil) ? tr(m.promo) : Promise.resolve(""))
+  );
+  for(let mi = 0; mi < cityMerchants.length; mi++){
+    const m = cityMerchants[mi];
     let cat = cats.find(c => c.id === m.categoryId);
     if(!cat){
-      // categorie bestaat nog niet in de gids: maak hem aan op basis van de definitie
       const def = (city.categories || []).find(c => c.id === m.categoryId);
       cat = { id: m.categoryId, icon: def ? def.icon : "&#128205;", title: def ? await tr(def.title) : m.categoryId, items: [] };
       cats.push(cat);
     }
     cat.items.push({
       name: m.name,
-      desc: await tr(m.desc || ""),
+      desc: translatedDescs[mi],
       address: m.address || "",
-      promo: m.promo && m.promoUntil && Date.now() < m.promoUntil ? await tr(m.promo) : ""
+      promo: translatedPromos[mi]
     });
   }
 
