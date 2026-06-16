@@ -4187,7 +4187,10 @@ const CITIES = {
       },
       {
         id: "hotels", icon: "&#127976;", title: "Hotels & overnachten",
-        items: []
+        items: [
+          { name: "Parkhotel Valkenburg", desc: "Sfeervol monumentaal hotel op zo'n 300 meter van het centrum en de grotten, met wellness, zwembad en restaurant met uitzicht over het heuvelland.", address: "Neerhem 68, Valkenburg" },
+          { name: "Château St. Gerlach", desc: "Luxe kasteelhotel in het groene Geuldal nabij Valkenburg, met spa, wellness en fine-dining. Een voormalig klooster met rijke historie.", address: "Joseph Corneli Allée 1, Houthem-St. Gerlach" }
+        ]
       },
       {
         id: "wellness", icon: "&#9832;", title: "Wellness & thermen",
@@ -4409,10 +4412,150 @@ app.get("/api/city", async (req, res) => {
     cats.push({ id: c.id, icon: c.icon || "", title, items });
   }
   // bewaar in het geheugen zodat volgende bezoekers in deze taal het direct krijgen
+  // Voeg de ACTIEVE ondernemers (uit het beheerscherm) toe aan de juiste categorie.
+  // Onzichtbaar als ze niet actief zijn (geen abonnement / door jou uitgezet).
+  const cityMerchants = (merchants.get(code) || []).filter(m => m.active);
+  for(const m of cityMerchants){
+    let cat = cats.find(c => c.id === m.categoryId);
+    if(!cat){
+      // categorie bestaat nog niet in de gids: maak hem aan op basis van de definitie
+      const def = (city.categories || []).find(c => c.id === m.categoryId);
+      cat = { id: m.categoryId, icon: def ? def.icon : "&#128205;", title: def ? await tr(def.title) : m.categoryId, items: [] };
+      cats.push(cat);
+    }
+    cat.items.push({
+      name: m.name,
+      desc: await tr(m.desc || ""),
+      address: m.address || "",
+      promo: m.promo && m.promoUntil && Date.now() < m.promoUntil ? await tr(m.promo) : ""
+    });
+  }
+
   cityCache.set(cacheKey, { name: city.name || "", categories: cats });
   res.json({ ok:true, found:true, name: city.name || "", categories: cats });
 });
 
+
+// ===== ONDERNEMERS (stadsgids) =====
+// Per stad een lijst ondernemers. Bewaard op schijf, blijft staan na herstart.
+// Een ondernemer is alleen zichtbaar in de gids als active = true.
+const merchants = new Map(); // stadcode -> [ {merchant}, ... ]
+const MERCHANTS_FILE = path.join(DATA_DIR, "echo_merchants.json");
+const ADMIN_PASSWORD = process.env.ECHO_ADMIN_PASSWORD || "verander-dit-wachtwoord";
+
+function loadMerchants(){
+  try{
+    if(!fs.existsSync(MERCHANTS_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(MERCHANTS_FILE, "utf8") || "{}");
+    Object.keys(data || {}).forEach(city => {
+      if(Array.isArray(data[city])) merchants.set(city, data[city]);
+    });
+    let total = 0; for(const v of merchants.values()) total += v.length;
+    console.log("Ondernemers geladen: " + total);
+  }catch(e){}
+}
+function saveMerchants(){
+  try{
+    const data = {};
+    for(const [city, list] of merchants.entries()) data[city] = list;
+    fs.writeFileSync(MERCHANTS_FILE, JSON.stringify(data, null, 2));
+  }catch(e){}
+  cityCache.clear(); // gids opnieuw opbouwen zodat wijzigingen meteen zichtbaar zijn
+}
+function adminOk(req){
+  const pass = (req.body && req.body.adminPass) || (req.query && req.query.adminPass) || "";
+  return String(pass) === ADMIN_PASSWORD;
+}
+function newMerchantId(){
+  return "m_" + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+}
+loadMerchants();
+
+// --- BEHEER (alleen voor jou, met wachtwoord) ---
+
+app.post("/api/admin/merchants", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist wachtwoord");
+  const city = String(req.body.city || "").trim().toLowerCase();
+  const list = merchants.get(city) || [];
+  res.json({ ok:true, merchants: list });
+});
+
+app.post("/api/admin/merchant-save", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist wachtwoord");
+  const city = String(req.body.city || "").trim().toLowerCase();
+  if(!city || !CITIES[city]) return jsonError(res, 400, "Onbekende stad");
+  const m = req.body.merchant || {};
+  const name = String(m.name || "").trim();
+  if(!name) return jsonError(res, 400, "Naam ontbreekt");
+  const list = merchants.get(city) || [];
+  let existing = m.id ? list.find(x => x.id === m.id) : null;
+  if(existing){
+    existing.categoryId = String(m.categoryId || existing.categoryId || "");
+    existing.name = name;
+    existing.desc = String(m.desc || "");
+    existing.address = String(m.address || "");
+    existing.email = String(m.email || "");
+    if(typeof m.active === "boolean") existing.active = m.active;
+  }else{
+    list.push({
+      id: newMerchantId(),
+      city,
+      categoryId: String(m.categoryId || ""),
+      name,
+      desc: String(m.desc || ""),
+      address: String(m.address || ""),
+      email: String(m.email || ""),
+      active: !!m.active,
+      promo: "", promoUntil: 0,
+      stripeCustomerId: ""
+    });
+  }
+  merchants.set(city, list);
+  saveMerchants();
+  res.json({ ok:true, merchants: list });
+});
+
+app.post("/api/admin/merchant-toggle", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist wachtwoord");
+  const city = String(req.body.city || "").trim().toLowerCase();
+  const id = String(req.body.id || "");
+  const list = merchants.get(city) || [];
+  const m = list.find(x => x.id === id);
+  if(!m) return jsonError(res, 404, "Niet gevonden");
+  m.active = !m.active;
+  saveMerchants();
+  res.json({ ok:true, active: m.active, merchants: list });
+});
+
+app.post("/api/admin/merchant-delete", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist wachtwoord");
+  const city = String(req.body.city || "").trim().toLowerCase();
+  const id = String(req.body.id || "");
+  let list = merchants.get(city) || [];
+  list = list.filter(x => x.id !== id);
+  merchants.set(city, list);
+  saveMerchants();
+  res.json({ ok:true, merchants: list });
+});
+
+app.get("/api/admin/categories", (req, res) => {
+  const city = String(req.query.city || "").trim().toLowerCase();
+  const c = CITIES[city];
+  if(!c) return res.json({ ok:true, categories: [] });
+  res.json({ ok:true, categories: (c.categories || []).map(x => ({ id: x.id, title: x.title })) });
+});
+
+// --- ZOEKEN (voor de ondernemer zelf, openbaar) ---
+app.get("/api/merchant-search", (req, res) => {
+  const city = String(req.query.city || "").trim().toLowerCase();
+  const q = String(req.query.q || "").trim().toLowerCase();
+  if(!city || q.length < 2) return res.json({ ok:true, results: [] });
+  const list = merchants.get(city) || [];
+  const results = list
+    .filter(m => m.name.toLowerCase().includes(q))
+    .map(m => ({ id: m.id, name: m.name, address: m.address, active: m.active }));
+  res.json({ ok:true, results });
+});
 
 // Gast registreert/voegt huidige kamer toe aan zijn gast-account
 app.post("/api/guest/save-room", (req, res) => {
