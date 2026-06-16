@@ -4471,12 +4471,20 @@ app.post("/api/admin/merchant-save", (req, res) => {
   if(!name) return jsonError(res, 400, "Naam ontbreekt");
   const list = merchants.get(city) || [];
   let existing = m.id ? list.find(x => x.id === m.id) : null;
+  // Geen id meegegeven? Kijk of er al een ondernemer met dezelfde naam bestaat
+  // (hoofdletter-ongevoelig), zodat we geen dubbele toevoegen.
+  if(!existing && !m.id){
+    const norm = name.toLowerCase().replace(/\s+/g, " ").trim();
+    existing = list.find(x => (x.name || "").toLowerCase().replace(/\s+/g, " ").trim() === norm);
+  }
+  let wasDuplicate = false;
   if(existing){
+    if(!m.id) wasDuplicate = true; // bestond al op naam
     existing.categoryId = String(m.categoryId || existing.categoryId || "");
     existing.name = name;
-    existing.desc = String(m.desc || "");
-    existing.address = String(m.address || "");
-    existing.email = String(m.email || "");
+    existing.desc = String(m.desc || existing.desc || "");
+    existing.address = String(m.address || existing.address || "");
+    existing.email = String(m.email || existing.email || "");
     if(typeof m.active === "boolean") existing.active = m.active;
   }else{
     list.push({
@@ -4494,7 +4502,7 @@ app.post("/api/admin/merchant-save", (req, res) => {
   }
   merchants.set(city, list);
   saveMerchants();
-  res.json({ ok:true, merchants: list });
+  res.json({ ok:true, merchants: list, duplicate: wasDuplicate });
 });
 
 app.post("/api/admin/merchant-toggle", (req, res) => {
