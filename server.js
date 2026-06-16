@@ -798,7 +798,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req,
 
       // Ondernemer-abonnement (stadsgids): zet de onderneming automatisch online
       if(metadata.kind === "merchant"){
-        setMerchantActiveFromMeta(metadata, true, object.customer || "");
+        setMerchantActiveFromMeta(metadata, true, object.customer || "", object.subscription || "");
       }else if(mode === "payment" && packageType === "credits" && packageCredits > 0){
         addCreditsToAccount(email, packageCredits, "checkout.session.completed.credit_pack", object.id || "");
       }else{
@@ -4635,7 +4635,7 @@ app.post("/api/merchant-subscribe", async (req, res) => {
 });
 
 // Hulp voor de webhook: zet een onderneming aan/uit op basis van Stripe-metadata
-function setMerchantActiveFromMeta(meta, active, stripeCustomerId){
+function setMerchantActiveFromMeta(meta, active, stripeCustomerId, subscriptionId){
   if(!meta || meta.kind !== "merchant") return false;
   const city = String(meta.city || "").toLowerCase();
   const merchantId = String(meta.merchantId || "");
@@ -4645,6 +4645,7 @@ function setMerchantActiveFromMeta(meta, active, stripeCustomerId){
   const wasActive = m.active;
   m.active = active;
   if(stripeCustomerId) m.stripeCustomerId = stripeCustomerId;
+  if(subscriptionId) m.subscriptionId = subscriptionId;
   // E-mail uit metadata bewaren als die er nog niet is
   if(meta.email && !m.email) m.email = String(meta.email);
   // Bij ACTIVEREN (en alleen als nog geen pincode): pincode maken en mailen
@@ -4768,6 +4769,28 @@ app.post("/api/merchant/update", (req, res) => {
     desc: m.desc || "", address: m.address || "", email: m.email || "",
     fields: m.fields || {}, photos: m.photos || []
   }});
+});
+
+// Ondernemer zegt zelf op (vanuit het portaal, met e-mail + pincode)
+app.post("/api/merchant/cancel", async (req, res) => {
+  const email = String(req.body.email || "").trim();
+  const pin = String(req.body.pin || "").trim();
+  const found = findMerchantByLogin(email, pin);
+  if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
+  const m = found.m;
+  if(!m.subscriptionId){
+    // Geen Stripe-abonnement gekoppeld: zet gewoon offline (bv. handmatig geactiveerd)
+    m.active = false;
+    saveMerchants();
+    return res.json({ ok:true, message:"Uw vermelding is gestopt." });
+  }
+  try{
+    // Zeg het abonnement op bij Stripe. De webhook zet de vermelding daarna offline.
+    await callStripe("/subscriptions/" + encodeURIComponent(m.subscriptionId) + "/cancel", {});
+    res.json({ ok:true, message:"Uw abonnement is opgezegd. Uw vermelding wordt offline gehaald." });
+  }catch(err){
+    jsonError(res, 500, "Opzeggen mislukt: " + (err.message || String(err)));
+  }
 });
 
 // Gast registreert/voegt huidige kamer toe aan zijn gast-account
