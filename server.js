@@ -4507,6 +4507,7 @@ app.post("/api/admin/merchant-save", (req, res) => {
       email: String(m.email || ""),
       active: !!m.active,
       promo: "", promoUntil: 0,
+      pin: "",
       stripeCustomerId: ""
     });
   }
@@ -4522,7 +4523,13 @@ app.post("/api/admin/merchant-toggle", (req, res) => {
   const list = merchants.get(city) || [];
   const m = list.find(x => x.id === id);
   if(!m) return jsonError(res, 404, "Niet gevonden");
+  const wasActive = m.active;
   m.active = !m.active;
+  // Bij handmatig AANZETTEN met e-mail: pincode maken en mailen (zelfde als bij betaling)
+  if(m.active && !wasActive && m.email){
+    if(!m.pin) m.pin = makePremiumPin();
+    sendMerchantPinEmail(m).catch(e => console.log("Ondernemer-pinmail mislukt: " + (e.message||e)));
+  }
   saveMerchants();
   res.json({ ok:true, active: m.active, merchants: list });
 });
@@ -4600,11 +4607,42 @@ function setMerchantActiveFromMeta(meta, active, stripeCustomerId){
   const list = merchants.get(city) || [];
   const m = list.find(x => x.id === merchantId);
   if(!m) return false;
+  const wasActive = m.active;
   m.active = active;
   if(stripeCustomerId) m.stripeCustomerId = stripeCustomerId;
+  // E-mail uit metadata bewaren als die er nog niet is
+  if(meta.email && !m.email) m.email = String(meta.email);
+  // Bij ACTIVEREN (en alleen als nog geen pincode): pincode maken en mailen
+  if(active && !wasActive){
+    if(!m.pin) m.pin = makePremiumPin();
+    if(m.email){
+      sendMerchantPinEmail(m).catch(e => console.log("Ondernemer-pinmail mislukt: " + (e.message||e)));
+    }
+  }
   saveMerchants();
   console.log("Ondernemer " + (active ? "AAN" : "UIT") + " via Stripe: " + m.name + " (" + city + ")");
   return true;
+}
+
+// Pincode-mail voor de ondernemer (om in te loggen op het ondernemer-portaal)
+async function sendMerchantPinEmail(m){
+  const subject = "Uw Salve-vermelding is actief - uw pincode";
+  const text =
+    "Beste ondernemer,\n\n" +
+    "Bedankt! Uw vermelding \"" + m.name + "\" staat nu online in de Salve stadsgids.\n\n" +
+    "Uw persoonlijke pincode is: " + m.pin + "\n\n" +
+    "Met uw e-mailadres (" + m.email + ") en deze pincode kunt u inloggen om uw\n" +
+    "gegevens te wijzigen (zoals uw adres) en acties te plaatsen.\n\n" +
+    "Bewaar deze pincode goed en deel hem met niemand.\n\n" +
+    "Met vriendelijke groet,\nSalve - powered by FormForge";
+  const html =
+    "<p>Beste ondernemer,</p>" +
+    "<p>Bedankt! Uw vermelding <strong>" + m.name + "</strong> staat nu online in de Salve stadsgids.</p>" +
+    "<p>Uw persoonlijke pincode is: <strong style='font-size:20px'>" + m.pin + "</strong></p>" +
+    "<p>Met uw e-mailadres (" + m.email + ") en deze pincode kunt u inloggen om uw gegevens te wijzigen (zoals uw adres) en acties te plaatsen.</p>" +
+    "<p>Bewaar deze pincode goed en deel hem met niemand.</p>" +
+    "<p>Met vriendelijke groet,<br>Salve - powered by FormForge</p>";
+  await sendResendEmail({ to: m.email, subject, text, html });
 }
 
 // Gast registreert/voegt huidige kamer toe aan zijn gast-account
