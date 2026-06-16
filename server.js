@@ -142,6 +142,14 @@ try{
   console.warn("Data map kon niet worden aangemaakt:", err.message || String(err));
 }
 
+// Map voor ondernemer-foto's op de blijvende schijf (Render Disk)
+const PHOTOS_DIR = path.join(DATA_DIR, "fotos");
+try{
+  if(!fs.existsSync(PHOTOS_DIR)) fs.mkdirSync(PHOTOS_DIR, { recursive: true });
+}catch(err){
+  console.warn("Foto-map kon niet worden aangemaakt:", err.message || String(err));
+}
+
 const PREMIUM_STORE_FILE = path.join(DATA_DIR, "echo_premium_accounts.json");
 const premiumAccounts = new Map();
 
@@ -859,6 +867,15 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req,
 
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
+// Ondernemer-foto's tonen vanaf de blijvende schijf
+app.get("/fotos/:name", (req, res) => {
+  const name = String(req.params.name || "");
+  if(!/^[a-zA-Z0-9_.-]+\.(jpg|jpeg|png|webp)$/.test(name)) return res.status(404).end();
+  const file = path.join(PHOTOS_DIR, name);
+  if(!fs.existsSync(file)) return res.status(404).end();
+  res.sendFile(file);
+});
 
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
@@ -4369,6 +4386,8 @@ app.get("/api/city", async (req, res) => {
   const city = CITIES[code];
   if(!city) return res.json({ ok:true, found:false });
   const src = city.sourceLang || "en";
+  // basis-URL van deze server, voor absolute foto-links (werkt vanaf elke website)
+  const photoBase = (req.headers["x-forwarded-proto"] || req.protocol || "https") + "://" + (req.headers.host || "");
 
   // Al eerder vertaald? Geef meteen terug (supersnel).
   const cacheKey = code + ":" + lang;
@@ -4434,7 +4453,8 @@ app.get("/api/city", async (req, res) => {
       desc: translatedDescs[mi],
       address: m.address || "",
       promo: translatedPromos[mi],
-      fields: translatedFields[mi]
+      fields: translatedFields[mi],
+      photos: Array.isArray(m.photos) ? m.photos.map(f => photoBase + "/fotos/" + f) : []
     });
   }
 
@@ -4685,7 +4705,7 @@ app.post("/api/merchant/login", (req, res) => {
   res.json({ ok:true, merchant: {
     id: m.id, city: found.city, name: m.name, categoryId: m.categoryId,
     desc: m.desc || "", address: m.address || "", email: m.email || "",
-    fields: m.fields || {},
+    fields: m.fields || {}, photos: m.photos || [],
     promo: m.promo || "", promoUntil: m.promoUntil || 0
   }});
 });
@@ -4710,11 +4730,43 @@ app.post("/api/merchant/update", (req, res) => {
       }
     }
   }
+  // Foto's: maximaal 3. We slaan ze als losse bestanden op disk op (in DATA_DIR/fotos)
+  // en bewaren alleen de bestandsnaam bij de ondernemer. Niet verplicht.
+  if(Array.isArray(req.body.photos)){
+    const saved = [];
+    for(let i = 0; i < Math.min(req.body.photos.length, 3); i++){
+      const p = req.body.photos[i];
+      if(typeof p !== "string") continue;
+      // bestaande bestandsnaam (al opgeslagen foto die behouden blijft)
+      if(/^[a-zA-Z0-9_.-]+\.(jpg|jpeg|png|webp)$/.test(p)){
+        saved.push(p);
+        continue;
+      }
+      // nieuwe foto als data-URL -> naar bestand schrijven
+      const mm = p.match(/^data:image\/(png|jpe?g|webp);base64,([A-Za-z0-9+/=]+)$/);
+      if(mm && p.length < 4000000){
+        const ext = mm[1] === "jpeg" ? "jpg" : mm[1];
+        const fname = m.id + "_" + Date.now() + "_" + i + "." + ext;
+        try{
+          fs.writeFileSync(path.join(PHOTOS_DIR, fname), Buffer.from(mm[2], "base64"));
+          saved.push(fname);
+        }catch(e){ console.log("Foto opslaan mislukt: " + (e.message||e)); }
+      }
+    }
+    // oude foto's die niet meer in de lijst staan, opruimen van disk
+    const old = m.photos || [];
+    for(const f of old){
+      if(!saved.includes(f)){
+        try{ fs.unlinkSync(path.join(PHOTOS_DIR, f)); }catch(e){}
+      }
+    }
+    m.photos = saved;
+  }
   saveMerchants();
   res.json({ ok:true, merchant: {
     id: m.id, city: found.city, name: m.name, categoryId: m.categoryId,
     desc: m.desc || "", address: m.address || "", email: m.email || "",
-    fields: m.fields || {}
+    fields: m.fields || {}, photos: m.photos || []
   }});
 });
 
