@@ -4407,6 +4407,20 @@ app.get("/api/city", async (req, res) => {
   const translatedPromos = await Promise.all(
     cityMerchants.map(m => (m.promo && m.promoUntil && Date.now() < m.promoUntil) ? tr(m.promo) : Promise.resolve(""))
   );
+  // extra velden vertalen (alleen de ingevulde)
+  const fieldKeys = ["hours","phone","website","menu","drinks","mealtimes","schedule","prices","extra"];
+  const translatedFields = await Promise.all(cityMerchants.map(async (m) => {
+    const out = {};
+    if(m.fields){
+      for(const k of fieldKeys){
+        const v = (m.fields[k] || "").trim();
+        if(!v) continue;
+        // telefoon en website niet vertalen
+        out[k] = (k === "phone" || k === "website") ? v : await tr(v);
+      }
+    }
+    return out;
+  }));
   for(let mi = 0; mi < cityMerchants.length; mi++){
     const m = cityMerchants[mi];
     let cat = cats.find(c => c.id === m.categoryId);
@@ -4419,7 +4433,8 @@ app.get("/api/city", async (req, res) => {
       name: m.name,
       desc: translatedDescs[mi],
       address: m.address || "",
-      promo: translatedPromos[mi]
+      promo: translatedPromos[mi],
+      fields: translatedFields[mi]
     });
   }
 
@@ -4670,6 +4685,7 @@ app.post("/api/merchant/login", (req, res) => {
   res.json({ ok:true, merchant: {
     id: m.id, city: found.city, name: m.name, categoryId: m.categoryId,
     desc: m.desc || "", address: m.address || "", email: m.email || "",
+    fields: m.fields || {},
     promo: m.promo || "", promoUntil: m.promoUntil || 0
   }});
 });
@@ -4683,10 +4699,22 @@ app.post("/api/merchant/update", (req, res) => {
   const m = found.m;
   if(typeof req.body.desc === "string") m.desc = req.body.desc.slice(0, 400);
   if(typeof req.body.address === "string") m.address = req.body.address.slice(0, 120);
+  // Extra, optionele velden die de ondernemer zelf beheert.
+  // Leeg laten = niet tonen aan de toerist.
+  if(!m.fields) m.fields = {};
+  const allowed = ["hours","phone","website","menu","drinks","mealtimes","schedule","prices","extra"];
+  if(req.body.fields && typeof req.body.fields === "object"){
+    for(const k of allowed){
+      if(typeof req.body.fields[k] === "string"){
+        m.fields[k] = req.body.fields[k].slice(0, 500);
+      }
+    }
+  }
   saveMerchants();
   res.json({ ok:true, merchant: {
     id: m.id, city: found.city, name: m.name, categoryId: m.categoryId,
-    desc: m.desc || "", address: m.address || "", email: m.email || ""
+    desc: m.desc || "", address: m.address || "", email: m.email || "",
+    fields: m.fields || {}
   }});
 });
 
