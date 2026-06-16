@@ -61,6 +61,7 @@ const FORMFORGE_AI_PRO_DAILY_LIMIT = Number(process.env.FORMFORGE_AI_PRO_DAILY_L
 const STRIPE_FORMFORGE_AI_PLUS_PRICE_ID = process.env.STRIPE_FORMFORGE_AI_PLUS_PRICE_ID || "price_1TcRWw5s8MDSsy0eIJ0cB63N";
 const STRIPE_FORMFORGE_AI_PRO_PRICE_ID = process.env.STRIPE_FORMFORGE_AI_PRO_PRICE_ID || "price_1TcRZk5s8MDSsy0ehhdgwvs2";
 const STRIPE_UNLIMITED_PRICE_ID = process.env.STRIPE_UNLIMITED_PRICE_ID || "price_1TaI0q5s8MDSsy0eL2NZqIpD";
+const STRIPE_MERCHANT_PRICE_ID = process.env.STRIPE_MERCHANT_PRICE_ID || "price_1TixHV5s8MDSsy0eVXyFZsz1";
 
 const STRIPE_CREDITS_100_PRICE_ID = process.env.STRIPE_CREDITS_100_PRICE_ID || "price_1TaHrD5s8MDSsy0eV1krtPFL";
 const STRIPE_CREDITS_500_PRICE_ID = process.env.STRIPE_CREDITS_500_PRICE_ID || "price_1TaHxD5s8MDSsy0eVrOvmYPM";
@@ -787,7 +788,10 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req,
       const packageCredits = Number(metadata.credits || 0);
       const packageType = String(metadata.packageType || "");
 
-      if(mode === "payment" && packageType === "credits" && packageCredits > 0){
+      // Ondernemer-abonnement (stadsgids): zet de onderneming automatisch online
+      if(metadata.kind === "merchant"){
+        setMerchantActiveFromMeta(metadata, true, object.customer || "");
+      }else if(mode === "payment" && packageType === "credits" && packageCredits > 0){
         addCreditsToAccount(email, packageCredits, "checkout.session.completed.credit_pack", object.id || "");
       }else{
         setPremiumForStripeData({
@@ -817,6 +821,9 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req,
     }
 
     if(type === "invoice.payment_failed"){
+      if(object.metadata?.kind === "merchant" || object.subscription_details?.metadata?.kind === "merchant"){
+        setMerchantActiveFromMeta(object.metadata || object.subscription_details?.metadata, false, object.customer || "");
+      }
       setPremiumForStripeData({
         email: object.customer_email || object.metadata?.email || "",
         clientReferenceId: object.metadata?.clientReferenceId || "",
@@ -828,6 +835,10 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req,
     }
 
     if(type === "customer.subscription.deleted"){
+      // Ondernemer-abonnement opgezegd: zet de onderneming automatisch offline
+      if(object.metadata?.kind === "merchant"){
+        setMerchantActiveFromMeta(object.metadata, false, object.customer || "");
+      }
       setPremiumForStripeData({
         email: object.customer_email || object.metadata?.email || "",
         clientReferenceId: object.metadata?.clientReferenceId || "",
@@ -4556,6 +4567,56 @@ app.get("/api/merchant-search", (req, res) => {
     .map(m => ({ id: m.id, name: m.name, address: m.address, active: m.active }));
   res.json({ ok:true, results });
 });
+
+// --- ABONNEMENT AFSLUITEN (ondernemer betaalt -> komt automatisch online) ---
+app.post("/api/merchant-subscribe", async (req, res) => {
+  try{
+    const city = String(req.body.city || "").trim().toLowerCase();
+    const merchantId = String(req.body.merchantId || "").trim();
+    const email = String(req.body.email || "").trim();
+    const list = merchants.get(city) || [];
+    const m = list.find(x => x.id === merchantId);
+    if(!m) return jsonError(res, 404, "Onderneming niet gevonden");
+
+    const base = (req.body.baseUrl && String(req.body.baseUrl)) || "";
+    const successUrl = (base || STRIPE_SUCCESS_URL);
+    const cancelUrl = (base || STRIPE_CANCEL_URL);
+
+    const meta = { kind: "merchant", city, merchantId, merchantName: m.name, email };
+    const payload = {
+      mode: "subscription",
+      "line_items": [ { price: STRIPE_MERCHANT_PRICE_ID, quantity: 1 } ],
+      success_url: successUrlWithCheckoutSession(successUrl),
+      cancel_url: cancelUrl,
+      allow_promotion_codes: true,
+      billing_address_collection: "auto",
+      metadata: meta,
+      subscription_data: { metadata: meta }
+    };
+    if(email) payload.customer_email = email;
+
+    const session = await callStripe("/checkout/sessions", payload);
+    // koppel alvast de (toekomstige) klant zodat we later kunnen uitzetten
+    res.json({ ok:true, id: session.id, url: session.url });
+  }catch(err){
+    jsonError(res, 500, "Stripe checkout fout", err.message || String(err));
+  }
+});
+
+// Hulp voor de webhook: zet een onderneming aan/uit op basis van Stripe-metadata
+function setMerchantActiveFromMeta(meta, active, stripeCustomerId){
+  if(!meta || meta.kind !== "merchant") return false;
+  const city = String(meta.city || "").toLowerCase();
+  const merchantId = String(meta.merchantId || "");
+  const list = merchants.get(city) || [];
+  const m = list.find(x => x.id === merchantId);
+  if(!m) return false;
+  m.active = active;
+  if(stripeCustomerId) m.stripeCustomerId = stripeCustomerId;
+  saveMerchants();
+  console.log("Ondernemer " + (active ? "AAN" : "UIT") + " via Stripe: " + m.name + " (" + city + ")");
+  return true;
+}
 
 // Gast registreert/voegt huidige kamer toe aan zijn gast-account
 app.post("/api/guest/save-room", (req, res) => {
