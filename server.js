@@ -4154,35 +4154,19 @@ const CITIES = {
     categories: [
       {
         id: "sights", icon: "&#127963;", title: "Bezienswaardigheden",
-        items: [
-          { name: "Kasteelruïne Valkenburg", desc: "Nederlands enige hoogteburcht, met een prachtig panoramisch uitzicht over het stadje. Een echt hoogtepunt.", address: "Daalhemerweg 27, Valkenburg" },
-          { name: "Fluweelengrot", desc: "Eeuwenoud gangenstelsel onder de kasteelruïne, met indrukwekkende wandschilderingen. Het hele jaar 12 graden, neem een jas mee.", address: "Daalhemerweg 24, Valkenburg" },
-          { name: "Gemeentegrot", desc: "Beroemde mergelgrot met grottekeningen en een verlichte route door de gangen.", address: "Cauberg 4, Valkenburg" },
-          { name: "Steenkolenmijn Valkenburg", desc: "Beleef hoe vroeger naar steenkool werd gezocht, diep onder de grond.", address: "Daalhemerweg 31, Valkenburg" },
-          { name: "Romeinse Katakomben", desc: "Nagebouwde Romeinse catacomben in een mergelgrot, een bijzondere reis door de geschiedenis.", address: "Plenkertstraat 53, Valkenburg" }
-        ]
+        items: []
       },
       {
         id: "attractions", icon: "&#127906;", title: "Attracties",
-        items: [
-          { name: "Kabelbaan Valkenburg", desc: "De eerste kabelbaan van Nederland (1954). Een ontspannen stoeltjeslift vanuit het centrum omhoog de heuvel op, met prachtig uitzicht.", address: "Daalhemerweg 27, Valkenburg" },
-          { name: "Rodelbaan", desc: "De enige rodelbaan van Nederland. Zelf je snelheid bepalen terwijl je naar beneden suist. Bij slecht weer gesloten.", address: "Daalhemerweg 27, Valkenburg" },
-          { name: "Bounce Adventure & Adventure Minigolf", desc: "Klimnettenparcours op verschillende hoogtes in de grot, plus avontuurlijke minigolf.", address: "Daalhemerweg 27, Valkenburg" },
-          { name: "Holland Casino Valkenburg", desc: "Casino in het centrum van Valkenburg voor een avondje uit.", address: "Odapark 2, Valkenburg" }
-        ]
+        items: []
       },
       {
         id: "kids", icon: "&#129528;", title: "Voor kinderen",
-        items: [
-          { name: "Sprookjesbos Valkenburg", desc: "Sprookjespark tegen de heuvel aan, met sprookjes en attracties voor jonge kinderen. Te bereiken via de kabelbaan.", address: "Sprookjesbosweg 1, Valkenburg" }
-        ]
+        items: []
       },
       {
         id: "food", icon: "&#127869;", title: "Restaurants",
-        items: [
-          // Hier komen de betalende ondernemers. Voorbeeld:
-          // { name: "Restaurant Naam", desc: "Korte beschrijving.", address: "Straat 1, Valkenburg" },
-        ]
+        items: []
       },
       {
         id: "coffee", icon: "&#9749;", title: "Koffie & cafés",
@@ -4198,22 +4182,15 @@ const CITIES = {
       },
       {
         id: "hotels", icon: "&#127976;", title: "Hotels & overnachten",
-        items: [
-          { name: "Parkhotel Valkenburg", desc: "Sfeervol monumentaal hotel op zo'n 300 meter van het centrum en de grotten, met wellness, zwembad en restaurant met uitzicht over het heuvelland.", address: "Neerhem 68, Valkenburg" },
-          { name: "Château St. Gerlach", desc: "Luxe kasteelhotel in het groene Geuldal nabij Valkenburg, met spa, wellness en fine-dining. Een voormalig klooster met rijke historie.", address: "Joseph Corneli Allée 1, Houthem-St. Gerlach" }
-        ]
+        items: []
       },
       {
         id: "wellness", icon: "&#9832;", title: "Wellness & thermen",
-        items: [
-          { name: "Thermae 2000", desc: "Thermaalbad en wellnessresort op de Cauberg, met buitenbaden en uitzicht over het Heuvelland.", address: "Cauberg 27, Valkenburg" }
-        ]
+        items: []
       },
       {
         id: "boat", icon: "&#128676;", title: "Rondvaart",
-        items: [
-          { name: "Rondvaart over de Geul", desc: "Ontspannen boottocht over de Geul, met uitleg over de omgeving.", address: "Centrum, Valkenburg" }
-        ]
+        items: []
       },
       {
         id: "bikes", icon: "&#128692;", title: "Fietsverhuur",
@@ -4221,21 +4198,15 @@ const CITIES = {
       },
       {
         id: "train", icon: "&#128642;", title: "Treinstation",
-        items: [
-          { name: "Station Valkenburg", desc: "Het oudste nog bestaande station van Nederland (1853), een rijksmonument. Treinen richting Maastricht en Heerlen.", address: "Stationstraat 2, Valkenburg" }
-        ]
+        items: []
       },
       {
         id: "parking", icon: "&#127359;", title: "Parkeren",
-        items: [
-          { name: "Parkeergarage Centrum", desc: "Centrale parkeergarage op loopafstand van de bezienswaardigheden.", address: "Walramplein, Valkenburg" }
-        ]
+        items: []
       },
       {
         id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)",
-        items: [
-          { name: "Visit Zuid-Limburg Experience", desc: "Toeristisch informatiepunt in het hart van Valkenburg. Kaarten, tickets en tips.", address: "Theodoor Dorrenplein 5, Valkenburg" }
-        ]
+        items: []
       },
       {
         id: "pharmacy", icon: "&#128138;", title: "Apotheek",
