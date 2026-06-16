@@ -4645,6 +4645,51 @@ async function sendMerchantPinEmail(m){
   await sendResendEmail({ to: m.email, subject, text, html });
 }
 
+// --- ONDERNEMER-PORTAAL (inloggen met e-mail + pincode) ---
+function findMerchantByLogin(email, pin){
+  email = String(email || "").trim().toLowerCase();
+  pin = String(pin || "").trim();
+  if(!email || !pin) return null;
+  for(const [city, list] of merchants.entries()){
+    for(const m of list){
+      if((m.email || "").trim().toLowerCase() === email && String(m.pin || "") === pin){
+        return { city, m };
+      }
+    }
+  }
+  return null;
+}
+
+app.post("/api/merchant/login", (req, res) => {
+  const email = String(req.body.email || "").trim();
+  const pin = String(req.body.pin || "").trim();
+  const found = findMerchantByLogin(email, pin);
+  if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet, of uw vermelding is nog niet actief.");
+  if(!found.m.active) return jsonError(res, 403, "Uw vermelding is niet actief. Sluit eerst een abonnement af.");
+  const m = found.m;
+  res.json({ ok:true, merchant: {
+    id: m.id, city: found.city, name: m.name, categoryId: m.categoryId,
+    desc: m.desc || "", address: m.address || "", email: m.email || "",
+    promo: m.promo || "", promoUntil: m.promoUntil || 0
+  }});
+});
+
+app.post("/api/merchant/update", (req, res) => {
+  const email = String(req.body.email || "").trim();
+  const pin = String(req.body.pin || "").trim();
+  const found = findMerchantByLogin(email, pin);
+  if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
+  if(!found.m.active) return jsonError(res, 403, "Uw vermelding is niet actief.");
+  const m = found.m;
+  if(typeof req.body.desc === "string") m.desc = req.body.desc.slice(0, 400);
+  if(typeof req.body.address === "string") m.address = req.body.address.slice(0, 120);
+  saveMerchants();
+  res.json({ ok:true, merchant: {
+    id: m.id, city: found.city, name: m.name, categoryId: m.categoryId,
+    desc: m.desc || "", address: m.address || "", email: m.email || ""
+  }});
+});
+
 // Gast registreert/voegt huidige kamer toe aan zijn gast-account
 app.post("/api/guest/save-room", (req, res) => {
   const name = String(req.body && req.body.name ? req.body.name : "").trim();
