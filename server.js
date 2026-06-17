@@ -4259,6 +4259,486 @@ const CITIES = {
     ]
   },
 
+  "maastricht": {
+    name: "Maastricht",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "amsterdam": {
+    name: "Amsterdam",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "rotterdam": {
+    name: "Rotterdam",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "denhaag": {
+    name: "Den Haag",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "utrecht": {
+    name: "Utrecht",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "haarlem": {
+    name: "Haarlem",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "delft": {
+    name: "Delft",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "leiden": {
+    name: "Leiden",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "groningen": {
+    name: "Groningen",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "nijmegen": {
+    name: "Nijmegen",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "denbosch": {
+    name: "'s-Hertogenbosch",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "breda": {
+    name: "Breda",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "gouda": {
+    name: "Gouda",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "arnhem": {
+    name: "Arnhem",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "eindhoven": {
+    name: "Eindhoven",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "zandvoort": {
+    name: "Zandvoort",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "scheveningen": {
+    name: "Scheveningen",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "giethoorn": {
+    name: "Giethoorn",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "kinderdijk": {
+    name: "Kinderdijk",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "volendam": {
+    name: "Volendam",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
   "demo": {
     name: "Demo City",
     sourceLang: "en",
