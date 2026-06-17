@@ -216,15 +216,27 @@ function buildPremiumAccountKey(email, source){
 const OWNER_PREMIUM_EMAIL = "info@generaalprojecten.nl";
 const OWNER_PREMIUM_PIN = "654321";
 
+// Extra vaste Unlimited e-mailadressen, ingesteld in Render (niet in de code).
+// Zet in Render een variabele OWNER_PREMIUM_EMAILS met de adressen,
+// gescheiden door komma's. Bijvoorbeeld: bernardwijnen@gmail.com, test@bedrijf.nl
+const EXTRA_OWNER_EMAILS = String(process.env.OWNER_PREMIUM_EMAILS || "")
+  .split(",")
+  .map(e => normalizePremiumKey(e))
+  .filter(Boolean);
+
 function isOwnerPremiumEmail(value){
-  return normalizePremiumKey(value) === OWNER_PREMIUM_EMAIL;
+  const v = normalizePremiumKey(value);
+  if(!v) return false;
+  if(v === OWNER_PREMIUM_EMAIL) return true;
+  return EXTRA_OWNER_EMAILS.includes(v);
 }
 
-function buildOwnerPremiumAccount(){
+function buildOwnerPremiumAccount(email){
+  const ownerEmail = normalizePremiumKey(email) || OWNER_PREMIUM_EMAIL;
   return {
     active: true,
-    email: OWNER_PREMIUM_EMAIL,
-    key: OWNER_PREMIUM_EMAIL,
+    email: ownerEmail,
+    key: ownerEmail,
     plan: "pro",
     planLabel: "FormForge AI Pro",
     premiumPin: OWNER_PREMIUM_PIN,
@@ -247,12 +259,14 @@ function buildOwnerPremiumAccount(){
   };
 }
 
-function ensureOwnerPremiumAccount(){
-  return setPremiumAccount(OWNER_PREMIUM_EMAIL, buildOwnerPremiumAccount());
+function ensureOwnerPremiumAccount(email){
+  const ownerEmail = normalizePremiumKey(email) || OWNER_PREMIUM_EMAIL;
+  return setPremiumAccount(ownerEmail, buildOwnerPremiumAccount(ownerEmail));
 }
 
-function getOwnerPremiumStatus(){
-  const account = ensureOwnerPremiumAccount();
+function getOwnerPremiumStatus(email){
+  const ownerEmail = normalizePremiumKey(email) || OWNER_PREMIUM_EMAIL;
+  const account = ensureOwnerPremiumAccount(ownerEmail);
   const usage = getDailyUsage(account);
   return {
     premium: true,
@@ -274,7 +288,7 @@ function getOwnerPremiumStatus(){
     plan: "pro",
     planLabel: "FormForge AI Pro",
     starterCreditsGranted: true,
-    email: OWNER_PREMIUM_EMAIL,
+    email: ownerEmail,
     subscriptionId: "",
     subscriptionStatus: "active",
     periodStart: "",
@@ -576,7 +590,7 @@ function getPremiumAccount(value){
 
 function getPremiumStatus(value, pin, options){
   if(isOwnerPremiumEmail(value)){
-    return getOwnerPremiumStatus();
+    return getOwnerPremiumStatus(value);
   }
   let account = getPremiumAccount(value);
   const allowWithoutPin = !!(options && options.allowWithoutPin);
@@ -639,8 +653,8 @@ function consumePremiumCredit(value, pin, deviceId){
   const safeKey = normalizePremiumKey(value);
   const safeDeviceId = normalizeDeviceId(deviceId);
   if(isOwnerPremiumEmail(safeKey)){
-    const account = ensureOwnerPremiumAccount();
-    return { ok: true, account, status: getOwnerPremiumStatus() };
+    const account = ensureOwnerPremiumAccount(safeKey);
+    return { ok: true, account, status: getOwnerPremiumStatus(safeKey) };
   }
 
   if(!safeKey){
