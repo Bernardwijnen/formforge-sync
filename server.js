@@ -216,19 +216,24 @@ function buildPremiumAccountKey(email, source){
 const OWNER_PREMIUM_EMAIL = "info@generaalprojecten.nl";
 const OWNER_PREMIUM_PIN = "654321";
 
-// Extra vaste Unlimited e-mailadressen, ingesteld in Render (niet in de code).
-// Zet in Render een variabele OWNER_PREMIUM_EMAILS met de adressen,
-// gescheiden door komma's. Bijvoorbeeld: bernardwijnen@gmail.com, test@bedrijf.nl
+// Vaste Unlimited-eigenaaradressen (altijd actief, voor eigen gebruik/testen).
+// Hardcoded naast eventuele extra adressen uit een Render-instelling.
+const OWNER_PREMIUM_EMAILS_FIXED = [
+  "info@generaalprojecten.nl",
+  "bernardwijnen@gmail.com"
+].map(e => normalizePremiumKey(e)).filter(Boolean);
+
 const EXTRA_OWNER_EMAILS = String(process.env.OWNER_PREMIUM_EMAILS || "")
   .split(",")
   .map(e => normalizePremiumKey(e))
   .filter(Boolean);
 
+const ALL_OWNER_EMAILS = Array.from(new Set([...OWNER_PREMIUM_EMAILS_FIXED, ...EXTRA_OWNER_EMAILS]));
+
 function isOwnerPremiumEmail(value){
   const v = normalizePremiumKey(value);
   if(!v) return false;
-  if(v === OWNER_PREMIUM_EMAIL) return true;
-  return EXTRA_OWNER_EMAILS.includes(v);
+  return ALL_OWNER_EMAILS.includes(v);
 }
 
 function buildOwnerPremiumAccount(email){
@@ -781,7 +786,7 @@ function activateUnlimitedAccount(email, data){
 }
 
 loadPremiumAccounts();
-ensureOwnerPremiumAccount();
+ALL_OWNER_EMAILS.forEach(em => ensureOwnerPremiumAccount(em));
 
 app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req, res) => {
   let event = null;
