@@ -4692,22 +4692,32 @@ function setMerchantActiveFromMeta(meta, active, stripeCustomerId, subscriptionI
   const list = merchants.get(city) || [];
   const m = list.find(x => x.id === merchantId);
   if(!m) return false;
-  const wasActive = m.active;
-  m.active = active;
-  m.subscribed = active; // betaald abonnement => bovenaan + mag dagactie
-  if(stripeCustomerId) m.stripeCustomerId = stripeCustomerId;
-  if(subscriptionId) m.subscriptionId = subscriptionId;
-  // E-mail uit metadata bewaren als die er nog niet is
-  if(meta.email && !m.email) m.email = String(meta.email);
-  // Bij ACTIVEREN (en alleen als nog geen pincode): pincode maken en mailen
-  if(active && !wasActive){
-    if(!m.pin) m.pin = makePremiumPin();
-    if(m.email){
-      sendMerchantPinEmail(m).catch(e => console.log("Ondernemer-pinmail mislukt: " + (e.message||e)));
+  if(active){
+    // BETALING binnen: ondernemer online + betaald (uitgelicht, mag dagactie)
+    const wasSubscribed = m.subscribed;
+    m.active = true;
+    m.subscribed = true;
+    if(stripeCustomerId) m.stripeCustomerId = stripeCustomerId;
+    if(subscriptionId) m.subscriptionId = subscriptionId;
+    if(meta.email && !m.email) m.email = String(meta.email);
+    if(!wasSubscribed){
+      if(!m.pin) m.pin = makePremiumPin();
+      if(m.email){
+        sendMerchantPinEmail(m).catch(e => console.log("Ondernemer-pinmail mislukt: " + (e.message||e)));
+      }
     }
+    saveMerchants();
+    console.log("Ondernemer BETAALD/online: " + m.name + " (" + city + ")");
+  }else{
+    // OPZEGGEN / verlopen: alleen het BETAALDE deel vervalt.
+    // De ondernemer BLIJFT gratis zichtbaar (active blijft true).
+    m.subscribed = false;
+    m.promo = "";           // dagactie weg (was betaald)
+    m.cancelAtPeriodEnd = false;
+    m.visibleUntil = 0;
+    saveMerchants();
+    console.log("Ondernemer terug naar GRATIS (abonnement gestopt): " + m.name + " (" + city + ")");
   }
-  saveMerchants();
-  console.log("Ondernemer " + (active ? "AAN" : "UIT") + " via Stripe: " + m.name + " (" + city + ")");
   return true;
 }
 
@@ -4759,7 +4769,7 @@ app.post("/api/merchant/login", (req, res) => {
     id: m.id, city: found.city, name: m.name, categoryId: m.categoryId,
     desc: m.desc || "", address: m.address || "", email: m.email || "",
     fields: m.fields || {}, photos: m.photos || [],
-    subscribed: !!m.active,
+    subscribed: !!m.subscribed,
     promo: promoActive ? m.promo : "", promoUntil: m.promoUntil || 0,
     cancelAtPeriodEnd: !!m.cancelAtPeriodEnd, visibleUntil: m.visibleUntil || 0
   }});
@@ -4830,7 +4840,7 @@ app.post("/api/merchant/update", (req, res) => {
     id: m.id, city: found.city, name: m.name, categoryId: m.categoryId,
     desc: m.desc || "", address: m.address || "", email: m.email || "",
     fields: m.fields || {}, photos: m.photos || [],
-    subscribed: !!m.active,
+    subscribed: !!m.subscribed,
     promo: promoActive2 ? m.promo : "", promoUntil: m.promoUntil || 0
   }});
 });
@@ -4843,20 +4853,23 @@ app.post("/api/merchant/cancel", async (req, res) => {
   if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
   const m = found.m;
   if(!m.subscriptionId){
-    // Geen Stripe-abonnement gekoppeld: zet gewoon offline (bv. handmatig geactiveerd)
-    m.active = false;
+    // Geen Stripe-abonnement (bv. handmatig op betaald gezet): alleen het
+    // betaalde deel vervalt. De ondernemer BLIJFT gratis zichtbaar.
+    m.subscribed = false;
+    m.promo = "";
+    m.cancelAtPeriodEnd = false;
+    m.visibleUntil = 0;
     saveMerchants();
-    return res.json({ ok:true, immediate:true, message:"Uw vermelding is gestopt." });
+    return res.json({ ok:true, immediate:true, message:"Uw abonnement is gestopt. Uw gratis vermelding blijft zichtbaar." });
   }
   try{
-    // Zeg op AAN HET EIND van de betaalde periode (klant blijft zichtbaar tot dan).
+    // Zeg op AAN HET EIND van de betaalde periode (betaalde voordelen blijven tot dan).
     const sub = await callStripe("/subscriptions/" + encodeURIComponent(m.subscriptionId), { cancel_at_period_end: true });
-    // einddatum opslaan zodat de ondernemer ziet tot wanneer hij zichtbaar is
     const until = sub && sub.current_period_end ? sub.current_period_end * 1000 : 0;
     m.cancelAtPeriodEnd = true;
     m.visibleUntil = until;
     saveMerchants();
-    res.json({ ok:true, immediate:false, visibleUntil: until, message:"Uw abonnement is opgezegd. U blijft zichtbaar tot het einde van de betaalde periode." });
+    res.json({ ok:true, immediate:false, visibleUntil: until, message:"Uw abonnement is opgezegd. Uw uitgelichte vermelding blijft tot het einde van de betaalde periode, daarna blijft uw gratis vermelding gewoon staan." });
   }catch(err){
     jsonError(res, 500, "Opzeggen mislukt: " + (err.message || String(err)));
   }
