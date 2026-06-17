@@ -4527,6 +4527,44 @@ function newMerchantId(){
 }
 loadMerchants();
 
+// --- VASTE EIGENAAR-ONDERNEMERS ---
+// Bedrijven van de eigenaar die ALTIJD online + betaald (uitgelicht) zijn,
+// zonder abonnement. Ze krijgen een vaste pincode zodat je altijd in het
+// portaal kunt. De pincode kun je in Render zetten (OWNER_MERCHANT_PIN),
+// anders wordt onderstaande standaard gebruikt.
+const OWNER_MERCHANT_PIN = String(process.env.OWNER_MERCHANT_PIN || "246810");
+const OWNER_MERCHANTS = [
+  { city: "valkenburg", name: "De Generaal", categoryId: "tattoo",
+    email: "info@generaalprojecten.nl",
+    desc: "Tattoo & piercing in Valkenburg.", address: "Rozenlaan 16, Valkenburg" }
+];
+function ensureOwnerMerchants(){
+  for(const o of OWNER_MERCHANTS){
+    const city = o.city.toLowerCase();
+    const list = merchants.get(city) || [];
+    // zoek op naam (hoofdletter-ongevoelig)
+    let m = list.find(x => (x.name||"").toLowerCase().trim() === o.name.toLowerCase().trim());
+    if(!m){
+      m = {
+        id: newMerchantId(), city, categoryId: o.categoryId, name: o.name,
+        desc: o.desc || "", address: o.address || "", email: o.email || "",
+        fields: {}, photos: [], promo: "", promoUntil: 0, stripeCustomerId: "", subscriptionId: ""
+      };
+      list.push(m);
+    }
+    // altijd: online, betaald (uitgelicht), vaste pincode, juiste e-mail
+    m.active = true;
+    m.subscribed = true;
+    m.isOwner = true;
+    m.pin = OWNER_MERCHANT_PIN;
+    if(o.email) m.email = o.email;
+    merchants.set(city, list);
+  }
+  saveMerchants();
+  console.log("Eigenaar-ondernemers gezet (altijd online + betaald).");
+}
+ensureOwnerMerchants();
+
 // --- BEHEER (alleen voor jou, met wachtwoord) ---
 
 app.post("/api/admin/merchants", (req, res) => {
@@ -4711,6 +4749,7 @@ function setMerchantActiveFromMeta(meta, active, stripeCustomerId, subscriptionI
   }else{
     // OPZEGGEN / verlopen: alleen het BETAALDE deel vervalt.
     // De ondernemer BLIJFT gratis zichtbaar (active blijft true).
+    if(m.isOwner){ return true; } // eigenaar-bedrijf blijft altijd betaald
     m.subscribed = false;
     m.promo = "";           // dagactie weg (was betaald)
     m.cancelAtPeriodEnd = false;
@@ -4852,6 +4891,9 @@ app.post("/api/merchant/cancel", async (req, res) => {
   const found = findMerchantByLogin(email, pin);
   if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
   const m = found.m;
+  if(m.isOwner){
+    return res.json({ ok:true, immediate:false, message:"Dit is een vast eigenaar-bedrijf en blijft altijd actief." });
+  }
   if(!m.subscriptionId){
     // Geen Stripe-abonnement (bv. handmatig op betaald gezet): alleen het
     // betaalde deel vervalt. De ondernemer BLIJFT gratis zichtbaar.
