@@ -4707,6 +4707,7 @@ app.post("/api/merchant/login", (req, res) => {
     id: m.id, city: found.city, name: m.name, categoryId: m.categoryId,
     desc: m.desc || "", address: m.address || "", email: m.email || "",
     fields: m.fields || {}, photos: m.photos || [],
+    cancelAtPeriodEnd: !!m.cancelAtPeriodEnd, visibleUntil: m.visibleUntil || 0,
     promo: m.promo || "", promoUntil: m.promoUntil || 0
   }});
 });
@@ -4782,15 +4783,41 @@ app.post("/api/merchant/cancel", async (req, res) => {
     // Geen Stripe-abonnement gekoppeld: zet gewoon offline (bv. handmatig geactiveerd)
     m.active = false;
     saveMerchants();
-    return res.json({ ok:true, message:"Uw vermelding is gestopt." });
+    return res.json({ ok:true, immediate:true, message:"Uw vermelding is gestopt." });
   }
   try{
-    // Zeg het abonnement op bij Stripe. De webhook zet de vermelding daarna offline.
-    await callStripe("/subscriptions/" + encodeURIComponent(m.subscriptionId) + "/cancel", {});
-    res.json({ ok:true, message:"Uw abonnement is opgezegd. Uw vermelding wordt offline gehaald." });
+    // Zeg op AAN HET EIND van de betaalde periode (klant blijft zichtbaar tot dan).
+    const sub = await callStripe("/subscriptions/" + encodeURIComponent(m.subscriptionId), { cancel_at_period_end: true });
+    // einddatum opslaan zodat de ondernemer ziet tot wanneer hij zichtbaar is
+    const until = sub && sub.current_period_end ? sub.current_period_end * 1000 : 0;
+    m.cancelAtPeriodEnd = true;
+    m.visibleUntil = until;
+    saveMerchants();
+    res.json({ ok:true, immediate:false, visibleUntil: until, message:"Uw abonnement is opgezegd. U blijft zichtbaar tot het einde van de betaalde periode." });
   }catch(err){
     jsonError(res, 500, "Opzeggen mislukt: " + (err.message || String(err)));
   }
+});
+
+// Pincode opnieuw aanvragen: stuur de pincode naar het bekende e-mailadres
+app.post("/api/merchant/forgot-pin", async (req, res) => {
+  const email = String(req.body.email || "").trim().toLowerCase();
+  if(!email) return jsonError(res, 400, "Vul uw e-mailadres in.");
+  // zoek een actieve vermelding met dit e-mailadres
+  let target = null;
+  for(const [city, list] of merchants.entries()){
+    for(const m of list){
+      if((m.email || "").trim().toLowerCase() === email && m.active){ target = m; break; }
+    }
+    if(target) break;
+  }
+  // Altijd hetzelfde antwoord geven (geen info lekken of een e-mail wel/niet bestaat)
+  if(target){
+    if(!target.pin) target.pin = makePremiumPin();
+    saveMerchants();
+    sendMerchantPinEmail(target).catch(e => console.log("Pin-herstuur mislukt: " + (e.message||e)));
+  }
+  res.json({ ok:true, message:"Als dit e-mailadres bij een actieve vermelding hoort, is de pincode opnieuw verstuurd." });
 });
 
 // Gast registreert/voegt huidige kamer toe aan zijn gast-account
