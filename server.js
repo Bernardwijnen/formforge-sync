@@ -4436,14 +4436,23 @@ app.get("/api/city", async (req, res) => {
     cats.push({ id: c.id, icon: c.icon || "", title, items });
   }
   // bewaar in het geheugen zodat volgende bezoekers in deze taal het direct krijgen
-  // Voeg de ACTIEVE ondernemers toe. Eerst groeperen per categorie, dan
-  // ALLE beschrijvingen in een keer parallel vertalen (veel sneller).
+  // Toon de online (actieve) ondernemers. Betaalde abonnees komen BOVENAAN,
+  // en wie een lopende dagactie heeft staat daar weer bovenaan.
   const cityMerchants = (merchants.get(code) || []).filter(m => m.active);
+  const now = Date.now();
+  const hasPromo = (m) => !!(m.subscribed && m.promo && m.promo.trim());
+  // Sorteer: eerst betaalde abonnees met actie, dan betaalde abonnees, dan de rest
+  cityMerchants.sort((a, b) => {
+    const pa = hasPromo(a) ? 2 : (a.subscribed ? 1 : 0);
+    const pb = hasPromo(b) ? 2 : (b.subscribed ? 1 : 0);
+    if(pa !== pb) return pb - pa;
+    return (a.name || "").localeCompare(b.name || "");
+  });
   const translatedDescs = await Promise.all(
     cityMerchants.map(m => tr(m.desc || ""))
   );
   const translatedPromos = await Promise.all(
-    cityMerchants.map(m => (m.promo && m.promoUntil && Date.now() < m.promoUntil) ? tr(m.promo) : Promise.resolve(""))
+    cityMerchants.map(m => hasPromo(m) ? tr(m.promo) : Promise.resolve(""))
   );
   // extra velden vertalen (alleen de ingevulde)
   const fieldKeys = ["hours","phone","website","menu","drinks","mealtimes","schedule","prices","extra"];
@@ -4472,6 +4481,7 @@ app.get("/api/city", async (req, res) => {
       desc: translatedDescs[mi],
       address: m.address || "",
       promo: translatedPromos[mi],
+      featured: !!m.subscribed,
       fields: translatedFields[mi],
       photos: Array.isArray(m.photos) ? m.photos.map(f => photoBase + "/fotos/" + f) : []
     });
@@ -4588,6 +4598,27 @@ app.post("/api/admin/merchant-toggle", (req, res) => {
   res.json({ ok:true, active: m.active, merchants: list });
 });
 
+// Admin: zet 'betaald/bovenaan' (subscribed) aan of uit.
+// Voor hotels (gratis unlimited) of om te testen. Geeft ook recht op dagactie.
+app.post("/api/admin/merchant-subscribed", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist wachtwoord");
+  const city = String(req.body.city || "").trim().toLowerCase();
+  const id = String(req.body.id || "");
+  const list = merchants.get(city) || [];
+  const m = list.find(x => x.id === id);
+  if(!m) return jsonError(res, 404, "Niet gevonden");
+  m.subscribed = !m.subscribed;
+  // Een 'betaalde' (uitgelichte) ondernemer moet ook online staan
+  if(m.subscribed) m.active = true;
+  // pincode aanmaken/mailen zodat hij in zijn portaal een actie kan plaatsen
+  if(m.subscribed && m.email){
+    if(!m.pin) m.pin = makePremiumPin();
+    sendMerchantPinEmail(m).catch(e => console.log("Ondernemer-pinmail mislukt: " + (e.message||e)));
+  }
+  saveMerchants();
+  res.json({ ok:true, subscribed: m.subscribed, merchants: list });
+});
+
 app.post("/api/admin/merchant-delete", (req, res) => {
   if(!adminOk(req)) return jsonError(res, 401, "Onjuist wachtwoord");
   const city = String(req.body.city || "").trim().toLowerCase();
@@ -4663,6 +4694,7 @@ function setMerchantActiveFromMeta(meta, active, stripeCustomerId, subscriptionI
   if(!m) return false;
   const wasActive = m.active;
   m.active = active;
+  m.subscribed = active; // betaald abonnement => bovenaan + mag dagactie
   if(stripeCustomerId) m.stripeCustomerId = stripeCustomerId;
   if(subscriptionId) m.subscriptionId = subscriptionId;
   // E-mail uit metadata bewaren als die er nog niet is
@@ -4722,12 +4754,14 @@ app.post("/api/merchant/login", (req, res) => {
   if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet, of uw vermelding is nog niet actief.");
   if(!found.m.active) return jsonError(res, 403, "Uw vermelding is niet actief. Sluit eerst een abonnement af.");
   const m = found.m;
+  const promoActive = !!(m.promo && m.promo.trim());
   res.json({ ok:true, merchant: {
     id: m.id, city: found.city, name: m.name, categoryId: m.categoryId,
     desc: m.desc || "", address: m.address || "", email: m.email || "",
     fields: m.fields || {}, photos: m.photos || [],
-    cancelAtPeriodEnd: !!m.cancelAtPeriodEnd, visibleUntil: m.visibleUntil || 0,
-    promo: m.promo || "", promoUntil: m.promoUntil || 0
+    subscribed: !!m.active,
+    promo: promoActive ? m.promo : "", promoUntil: m.promoUntil || 0,
+    cancelAtPeriodEnd: !!m.cancelAtPeriodEnd, visibleUntil: m.visibleUntil || 0
   }});
 });
 
@@ -4740,6 +4774,13 @@ app.post("/api/merchant/update", (req, res) => {
   const m = found.m;
   if(typeof req.body.desc === "string") m.desc = req.body.desc.slice(0, 400);
   if(typeof req.body.address === "string") m.address = req.body.address.slice(0, 120);
+  // Dagactie (alleen voor abonnees). Leeg = geen actie.
+  // Blijft staan tot de ondernemer hem zelf wijzigt of leegmaakt (geen vervaltijd).
+  if(typeof req.body.promo === "string"){
+    if(m.active){
+      m.promo = req.body.promo.slice(0, 160).trim();
+    }
+  }
   // Extra, optionele velden die de ondernemer zelf beheert.
   // Leeg laten = niet tonen aan de toerist.
   if(!m.fields) m.fields = {};
@@ -4784,10 +4825,13 @@ app.post("/api/merchant/update", (req, res) => {
     m.photos = saved;
   }
   saveMerchants();
+  const promoActive2 = !!(m.promo && m.promo.trim());
   res.json({ ok:true, merchant: {
     id: m.id, city: found.city, name: m.name, categoryId: m.categoryId,
     desc: m.desc || "", address: m.address || "", email: m.email || "",
-    fields: m.fields || {}, photos: m.photos || []
+    fields: m.fields || {}, photos: m.photos || [],
+    subscribed: !!m.active,
+    promo: promoActive2 ? m.promo : "", promoUntil: m.promoUntil || 0
   }});
 });
 
