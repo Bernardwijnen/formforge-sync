@@ -4739,6 +4739,174 @@ const CITIES = {
     ]
   },
 
+  "friesland": {
+    name: "Friesland",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "zeeland": {
+    name: "Zeeland",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "texel": {
+    name: "Texel",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "vlieland": {
+    name: "Vlieland",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "terschelling": {
+    name: "Terschelling",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "ameland": {
+    name: "Ameland",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "schiermonnikoog": {
+    name: "Schiermonnikoog",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
   "demo": {
     name: "Demo City",
     sourceLang: "en",
@@ -4882,17 +5050,36 @@ const cityCache = new Map(); // sleutel "code:lang" -> { name, categories }
 app.get("/api/city", async (req, res) => {
   const code = String(req.query && req.query.code ? req.query.code : "").trim().toLowerCase();
   const lang = String(req.query && req.query.lang ? req.query.lang : "en").trim() || "en";
+  const hotelCode = String(req.query && req.query.hotel ? req.query.hotel : "").trim().toLowerCase();
   const city = CITIES[code];
   if(!city) return res.json({ ok:true, found:false });
   const src = city.sourceLang || "en";
   // basis-URL van deze server, voor absolute foto-links (werkt vanaf elke website)
   const photoBase = (req.headers["x-forwarded-proto"] || req.protocol || "https") + "://" + (req.headers.host || "");
 
+  // Hotelbanner ophalen voor de gast (op basis van de hotelcode in de QR).
+  // Apart van de cache, want dit verschilt per hotel.
+  async function buildHotelBanner(){
+    if(!hotelCode) return null;
+    const list = merchants.get(code) || [];
+    const hotel = list.find(m => (m.hotelCode || "").toLowerCase() === hotelCode && m.active);
+    if(!hotel) return null;
+    const promo = (hotel.promo && hotel.promo.trim())
+      ? await translateText(hotel.promo, src, lang)
+      : "";
+    return {
+      name: hotel.name,
+      promo,
+      photos: Array.isArray(hotel.photos) ? hotel.photos.map(f => photoBase + "/fotos/" + f) : []
+    };
+  }
+
   // Al eerder vertaald? Geef meteen terug (supersnel).
   const cacheKey = code + ":" + lang;
   if(cityCache.has(cacheKey)){
     const hit = cityCache.get(cacheKey);
-    return res.json({ ok:true, found:true, name: hit.name, categories: hit.categories });
+    const hotelBanner = await buildHotelBanner();
+    return res.json({ ok:true, found:true, name: hit.name, categories: hit.categories, hotelBanner });
   }
 
   // helper: vertaal alleen als nodig (andere taal), met stille fallback naar origineel
@@ -4968,7 +5155,8 @@ app.get("/api/city", async (req, res) => {
   }
 
   cityCache.set(cacheKey, { name: city.name || "", categories: cats });
-  res.json({ ok:true, found:true, name: city.name || "", categories: cats });
+  const hotelBanner = await buildHotelBanner();
+  res.json({ ok:true, found:true, name: city.name || "", categories: cats, hotelBanner });
 });
 
 
@@ -5047,10 +5235,27 @@ ensureOwnerMerchants();
 
 // --- BEHEER (alleen voor jou, met wachtwoord) ---
 
+// Geef elk hotel (categorie hotels) een korte, vaste code voor zijn QR.
+function makeHotelCode(){
+  return "h" + Math.random().toString(36).slice(2, 7); // bv. h3k9z
+}
+function ensureHotelCodes(city){
+  const list = merchants.get(city) || [];
+  let changed = false;
+  for(const m of list){
+    if(m.categoryId === "hotels" && !m.hotelCode){
+      m.hotelCode = makeHotelCode();
+      changed = true;
+    }
+  }
+  if(changed) saveMerchants();
+  return list;
+}
+
 app.post("/api/admin/merchants", (req, res) => {
   if(!adminOk(req)) return jsonError(res, 401, "Onjuist wachtwoord");
   const city = String(req.body.city || "").trim().toLowerCase();
-  const list = merchants.get(city) || [];
+  const list = ensureHotelCodes(city);
   res.json({ ok:true, merchants: list });
 });
 
