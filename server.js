@@ -5083,6 +5083,26 @@ app.get("/api/city", async (req, res) => {
   const city = CITIES[code];
   if(!city) return res.json({ ok:true, found:false });
   const src = city.sourceLang || "en";
+  // Nette categorienaam (in de brontaal) voor categorieën die NIET in de vaste
+  // lijst staan. Zo wordt nooit de kale code (zoals "churches") getoond, en kan
+  // de naam netjes vertaald worden naar de taal van de gast.
+  const CAT_NAMES = {
+    sights:"Bezienswaardigheden", attractions:"Attracties", kids:"Voor kinderen",
+    food:"Restaurants", coffee:"Koffie & cafés", nightlife:"Uitgaan & terrassen",
+    shopping:"Winkelen", hotels:"Hotels & overnachten", wellness:"Wellness & thermen",
+    bikes:"Fietsverhuur", parking:"Parkeren", tattoo:"Tattoo & piercing",
+    churches:"Kerken", museums:"Musea", nature:"Natuur", events:"Evenementen",
+    sports:"Sport & activiteiten", transport:"Vervoer", health:"Gezondheid",
+    services:"Diensten", bars:"Bars", restaurants:"Restaurants"
+  };
+  function categoryTitleSrc(id){
+    const key = String(id || "").toLowerCase().trim();
+    if(CAT_NAMES[key]) return CAT_NAMES[key];
+    // onbekende code netjes leesbaar maken: "city-tour" -> "City tour"
+    const cleaned = key.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
+    if(!cleaned) return String(id || "");
+    return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+  }
   // basis-URL van deze server, voor absolute foto-links (werkt vanaf elke website)
   const photoBase = (req.headers["x-forwarded-proto"] || req.protocol || "https") + "://" + (req.headers.host || "");
 
@@ -5246,7 +5266,8 @@ app.get("/api/city", async (req, res) => {
     let cat = cats.find(c => c.id === m.categoryId);
     if(!cat){
       const def = (city.categories || []).find(c => c.id === m.categoryId);
-      cat = { id: m.categoryId, icon: def ? def.icon : "&#128205;", title: def ? await tr(def.title) : m.categoryId, items: [] };
+      const titleSrc = def ? def.title : categoryTitleSrc(m.categoryId);
+      cat = { id: m.categoryId, icon: def ? def.icon : "&#128205;", title: await tr(titleSrc), items: [] };
       cats.push(cat);
     }
     cat.items.push({
