@@ -5371,7 +5371,13 @@ app.post("/api/admin/merchant-save", (req, res) => {
     existing.address = String(m.address || existing.address || "");
     existing.email = String(m.email || existing.email || "");
     if(typeof m.active === "boolean") existing.active = m.active;
+    // Hotel? Zorg meteen voor een QR-hotelcode (anders blijft die leeg tot
+    // de admin-lijst opnieuw geladen wordt).
+    if(existing.categoryId === "hotels" && !existing.hotelCode){
+      existing.hotelCode = makeHotelCode();
+    }
   }else{
+    const isHotel = String(m.categoryId || "") === "hotels";
     list.push({
       id: newMerchantId(),
       city,
@@ -5383,7 +5389,8 @@ app.post("/api/admin/merchant-save", (req, res) => {
       active: !!m.active,
       promo: "", promoUntil: 0,
       pin: "",
-      stripeCustomerId: ""
+      stripeCustomerId: "",
+      hotelCode: isHotel ? makeHotelCode() : ""
     });
   }
   merchants.set(city, list);
