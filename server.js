@@ -893,6 +893,7 @@ app.get("/fotos/:name", (req, res) => {
   if(!/^[a-zA-Z0-9_.-]+\.(jpg|jpeg|png|webp)$/.test(name)) return res.status(404).end();
   const file = path.join(PHOTOS_DIR, name);
   if(!fs.existsSync(file)) return res.status(404).end();
+  res.set("Access-Control-Allow-Origin", "*");
   res.sendFile(file);
 });
 
