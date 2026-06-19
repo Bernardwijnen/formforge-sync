@@ -893,6 +893,7 @@ app.get("/fotos/:name", (req, res) => {
   if(!/^[a-zA-Z0-9_.-]+\.(jpg|jpeg|png|webp)$/.test(name)) return res.status(404).end();
   const file = path.join(PHOTOS_DIR, name);
   if(!fs.existsSync(file)) return res.status(404).end();
+  res.set("Access-Control-Allow-Origin", "*");
   res.sendFile(file);
 });
 
@@ -5081,29 +5082,52 @@ app.get("/api/city", async (req, res) => {
   // basis-URL van deze server, voor absolute foto-links (werkt vanaf elke website)
   const photoBase = (req.headers["x-forwarded-proto"] || req.protocol || "https") + "://" + (req.headers.host || "");
 
-  // Hotelbanner ophalen voor de gast (op basis van de hotelcode in de QR).
-  // Apart van de cache, want dit verschilt per hotel.
-  async function buildHotelBanner(){
+  // kleine vertaalhelper, ook bruikbaar voor de banner
+  async function trh(text){
+    if(!text || lang === src) return text;
+    try{ return await translateText(text, src, lang); }catch(e){ return text; }
+  }
+  function findHotelByCode(){
     if(!hotelCode) return null;
     const list = merchants.get(code) || [];
-    const hotel = list.find(m => (m.hotelCode || "").toLowerCase() === hotelCode && m.active);
+    return list.find(m => (m.hotelCode || "").toLowerCase() === hotelCode && m.active) || null;
+  }
+  async function buildHotelBanner(hotel){
     if(!hotel) return null;
-    const promo = (hotel.promo && hotel.promo.trim())
-      ? await translateText(hotel.promo, src, lang)
-      : "";
+    const defaultWelcome = "Welkom! Fijn dat u bij ons verblijft. Ontdek hieronder de leukste plekken in de stad.";
+    const welcomeSrc = (hotel.welcome && hotel.welcome.trim()) ? hotel.welcome.trim() : defaultWelcome;
+    const welcome = await trh(welcomeSrc);
+    const promo = (hotel.promo && hotel.promo.trim()) ? await trh(hotel.promo) : "";
     return {
       name: hotel.name,
+      welcome,
       promo,
+      logo: hotel.logo ? (photoBase + "/fotos/" + hotel.logo) : "",
       photos: Array.isArray(hotel.photos) ? hotel.photos.map(f => photoBase + "/fotos/" + f) : []
     };
+  }
+  // Pas de categorielijst aan voor een hotelgast: andere hotels verbergen,
+  // categorie "hotels" wordt "Mijn Hotel" met alleen dit hotel.
+  function applyHotelView(categories, hotel){
+    if(!hotel) return categories;
+    return categories.map(c => {
+      if(c.id !== "hotels") return c;
+      const mine = (c.items || []).filter(it => it.name === hotel.name);
+      return { id: c.id, icon: "&#127976;", title: "Mijn Hotel", items: mine };
+    });
   }
 
   // Al eerder vertaald? Geef meteen terug (supersnel).
   const cacheKey = code + ":" + lang;
   if(cityCache.has(cacheKey)){
     const hit = cityCache.get(cacheKey);
-    const hotelBanner = await buildHotelBanner();
-    return res.json({ ok:true, found:true, name: hit.name, categories: hit.categories, hotelBanner });
+    const hotel = findHotelByCode();
+    if(!hotel){
+      return res.json({ ok:true, found:true, needHotel:true, name: hit.name });
+    }
+    const hotelBanner = await buildHotelBanner(hotel);
+    const cats2 = applyHotelView(hit.categories, hotel);
+    return res.json({ ok:true, found:true, name: hit.name, categories: cats2, hotelBanner });
   }
 
   // helper: vertaal alleen als nodig (andere taal), met stille fallback naar origineel
@@ -5179,8 +5203,13 @@ app.get("/api/city", async (req, res) => {
   }
 
   cityCache.set(cacheKey, { name: city.name || "", categories: cats });
-  const hotelBanner = await buildHotelBanner();
-  res.json({ ok:true, found:true, name: city.name || "", categories: cats, hotelBanner });
+  const hotel = findHotelByCode();
+  if(!hotel){
+    return res.json({ ok:true, found:true, needHotel:true, name: city.name || "" });
+  }
+  const hotelBanner = await buildHotelBanner(hotel);
+  const catsView = applyHotelView(cats, hotel);
+  res.json({ ok:true, found:true, name: city.name || "", categories: catsView, hotelBanner });
 });
 
 
@@ -5542,7 +5571,11 @@ app.post("/api/merchant/login", (req, res) => {
     fields: m.fields || {}, photos: m.photos || [],
     subscribed: !!m.subscribed,
     promo: promoActive ? m.promo : "", promoUntil: m.promoUntil || 0,
-    cancelAtPeriodEnd: !!m.cancelAtPeriodEnd, visibleUntil: m.visibleUntil || 0
+    cancelAtPeriodEnd: !!m.cancelAtPeriodEnd, visibleUntil: m.visibleUntil || 0,
+    isHotel: m.categoryId === "hotels",
+    welcome: m.welcome || "",
+    logo: m.logo || "",
+    hotelCode: m.hotelCode || ""
   }});
 });
 
@@ -5605,6 +5638,31 @@ app.post("/api/merchant/update", (req, res) => {
     }
     m.photos = saved;
   }
+  // Welkomsttekst van het hotel (leeg = standaardtekst).
+  if(typeof req.body.welcome === "string"){
+    m.welcome = req.body.welcome.slice(0, 300).trim();
+  }
+  // Logo van het hotel (1 afbeelding op disk). Leeg = verwijderen.
+  if(typeof req.body.logo === "string"){
+    const lg = req.body.logo;
+    if(/^[a-zA-Z0-9_.-]+\.(jpg|jpeg|png|webp)$/.test(lg)){
+      m.logo = lg;
+    }else if(lg === ""){
+      if(m.logo){ try{ fs.unlinkSync(path.join(PHOTOS_DIR, m.logo)); }catch(e){} }
+      m.logo = "";
+    }else{
+      const mm = lg.match(/^data:image\/(png|jpe?g|webp);base64,([A-Za-z0-9+/=]+)$/);
+      if(mm && lg.length < 3000000){
+        const ext = mm[1] === "jpeg" ? "jpg" : mm[1];
+        const fname = m.id + "_logo_" + Date.now() + "." + ext;
+        try{
+          if(m.logo){ try{ fs.unlinkSync(path.join(PHOTOS_DIR, m.logo)); }catch(e){} }
+          fs.writeFileSync(path.join(PHOTOS_DIR, fname), Buffer.from(mm[2], "base64"));
+          m.logo = fname;
+        }catch(e){ console.log("Logo opslaan mislukt: " + (e.message||e)); }
+      }
+    }
+  }
   saveMerchants();
   const promoActive2 = !!(m.promo && m.promo.trim());
   res.json({ ok:true, merchant: {
@@ -5612,7 +5670,10 @@ app.post("/api/merchant/update", (req, res) => {
     desc: m.desc || "", address: m.address || "", email: m.email || "",
     fields: m.fields || {}, photos: m.photos || [],
     subscribed: !!m.subscribed,
-    promo: promoActive2 ? m.promo : "", promoUntil: m.promoUntil || 0
+    promo: promoActive2 ? m.promo : "", promoUntil: m.promoUntil || 0,
+    isHotel: m.categoryId === "hotels",
+    welcome: m.welcome || "",
+    logo: m.logo || ""
   }});
 });
 
