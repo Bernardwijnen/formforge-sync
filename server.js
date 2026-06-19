@@ -5059,27 +5059,55 @@ app.get("/api/city", async (req, res) => {
 
   // Hotelbanner ophalen voor de gast (op basis van de hotelcode in de QR).
   // Apart van de cache, want dit verschilt per hotel.
-  async function buildHotelBanner(){
+  // Geeft ook het hotel-record terug zodat we de gids per hotel kunnen aanpassen.
+  function findHotelByCode(){
     if(!hotelCode) return null;
     const list = merchants.get(code) || [];
-    const hotel = list.find(m => (m.hotelCode || "").toLowerCase() === hotelCode && m.active);
+    return list.find(m => (m.hotelCode || "").toLowerCase() === hotelCode && m.active) || null;
+  }
+  async function buildHotelBanner(hotel){
     if(!hotel) return null;
-    const promo = (hotel.promo && hotel.promo.trim())
-      ? await translateText(hotel.promo, src, lang)
-      : "";
+    const defaultWelcome = "Welkom! Fijn dat u bij ons verblijft. Ontdek hieronder de leukste plekken in de stad.";
+    const welcomeSrc = (hotel.welcome && hotel.welcome.trim()) ? hotel.welcome.trim() : defaultWelcome;
+    const welcome = await tr0(welcomeSrc);
+    const promo = (hotel.promo && hotel.promo.trim()) ? await tr0(hotel.promo) : "";
     return {
       name: hotel.name,
+      welcome,
       promo,
+      logo: hotel.logo ? (photoBase + "/fotos/" + hotel.logo) : "",
       photos: Array.isArray(hotel.photos) ? hotel.photos.map(f => photoBase + "/fotos/" + f) : []
     };
+  }
+  // kleine vertaalhelper die hier al bruikbaar is (voor de banner)
+  async function tr0(text){
+    if(!text || lang === src) return text;
+    try{ return await translateText(text, src, lang); }catch(e){ return text; }
+  }
+  // Pas de (gecachte) categorielijst aan voor een hotelgast:
+  // - andere hotels worden verborgen
+  // - de categorie "hotels" heet "Mijn Hotel" en bevat alleen dit hotel
+  function applyHotelView(categories, hotel){
+    if(!hotel) return categories;
+    return categories.map(c => {
+      if(c.id !== "hotels") return c;
+      const mine = (c.items || []).filter(it => it.name === hotel.name);
+      return { id: c.id, icon: "&#127976;", title: "Mijn Hotel", items: mine };
+    });
   }
 
   // Al eerder vertaald? Geef meteen terug (supersnel).
   const cacheKey = code + ":" + lang;
   if(cityCache.has(cacheKey)){
     const hit = cityCache.get(cacheKey);
-    const hotelBanner = await buildHotelBanner();
-    return res.json({ ok:true, found:true, name: hit.name, categories: hit.categories, hotelBanner });
+    const hotel = findHotelByCode();
+    // Besloten model: zonder geldige hotelcode tonen we de gids niet.
+    if(!hotel){
+      return res.json({ ok:true, found:true, needHotel: true, name: hit.name });
+    }
+    const hotelBanner = await buildHotelBanner(hotel);
+    const cats2 = applyHotelView(hit.categories, hotel);
+    return res.json({ ok:true, found:true, name: hit.name, categories: cats2, hotelBanner });
   }
 
   // helper: vertaal alleen als nodig (andere taal), met stille fallback naar origineel
@@ -5155,8 +5183,13 @@ app.get("/api/city", async (req, res) => {
   }
 
   cityCache.set(cacheKey, { name: city.name || "", categories: cats });
-  const hotelBanner = await buildHotelBanner();
-  res.json({ ok:true, found:true, name: city.name || "", categories: cats, hotelBanner });
+  const hotel = findHotelByCode();
+  if(!hotel){
+    return res.json({ ok:true, found:true, needHotel: true, name: city.name || "" });
+  }
+  const hotelBanner = await buildHotelBanner(hotel);
+  const catsView = applyHotelView(cats, hotel);
+  res.json({ ok:true, found:true, name: city.name || "", categories: catsView, hotelBanner });
 });
 
 
@@ -5495,7 +5528,11 @@ app.post("/api/merchant/login", (req, res) => {
     fields: m.fields || {}, photos: m.photos || [],
     subscribed: !!m.subscribed,
     promo: promoActive ? m.promo : "", promoUntil: m.promoUntil || 0,
-    cancelAtPeriodEnd: !!m.cancelAtPeriodEnd, visibleUntil: m.visibleUntil || 0
+    cancelAtPeriodEnd: !!m.cancelAtPeriodEnd, visibleUntil: m.visibleUntil || 0,
+    isHotel: m.categoryId === "hotels",
+    welcome: m.welcome || "",
+    logo: m.logo || "",
+    hotelCode: m.hotelCode || ""
   }});
 });
 
@@ -5523,6 +5560,33 @@ app.post("/api/merchant/update", (req, res) => {
     for(const k of allowed){
       if(typeof req.body.fields[k] === "string"){
         m.fields[k] = req.body.fields[k].slice(0, 500);
+      }
+    }
+  }
+  // Welkomsttekst van het hotel (alleen relevant voor hotels). Leeg = standaardtekst.
+  if(typeof req.body.welcome === "string"){
+    m.welcome = req.body.welcome.slice(0, 300).trim();
+  }
+  // Logo van het hotel (1 afbeelding, op disk). Leeg/weg = verwijderen.
+  if(typeof req.body.logo === "string"){
+    const lg = req.body.logo;
+    if(/^[a-zA-Z0-9_.-]+\.(jpg|jpeg|png|webp)$/.test(lg)){
+      // bestaande bestandsnaam: laten staan
+      m.logo = lg;
+    }else{
+      const mm = lg.match(/^data:image\/(png|jpe?g|webp);base64,([A-Za-z0-9+/=]+)$/);
+      if(mm && lg.length < 3000000){
+        const ext = mm[1] === "jpeg" ? "jpg" : mm[1];
+        const fname = m.id + "_logo_" + Date.now() + "." + ext;
+        try{
+          // oud logo opruimen
+          if(m.logo){ try{ fs.unlinkSync(path.join(PHOTOS_DIR, m.logo)); }catch(e){} }
+          fs.writeFileSync(path.join(PHOTOS_DIR, fname), Buffer.from(mm[2], "base64"));
+          m.logo = fname;
+        }catch(e){ console.log("Logo opslaan mislukt: " + (e.message||e)); }
+      }else if(lg === ""){
+        if(m.logo){ try{ fs.unlinkSync(path.join(PHOTOS_DIR, m.logo)); }catch(e){} }
+        m.logo = "";
       }
     }
   }
@@ -5565,7 +5629,10 @@ app.post("/api/merchant/update", (req, res) => {
     desc: m.desc || "", address: m.address || "", email: m.email || "",
     fields: m.fields || {}, photos: m.photos || [],
     subscribed: !!m.subscribed,
-    promo: promoActive2 ? m.promo : "", promoUntil: m.promoUntil || 0
+    promo: promoActive2 ? m.promo : "", promoUntil: m.promoUntil || 0,
+    isHotel: m.categoryId === "hotels",
+    welcome: m.welcome || "",
+    logo: m.logo || ""
   }});
 });
 
