@@ -5092,6 +5092,13 @@ app.get("/api/city", async (req, res) => {
     const list = merchants.get(code) || [];
     return list.find(m => (m.hotelCode || "").toLowerCase() === hotelCode && m.active) || null;
   }
+  // Telt +1 voor dit hotel als de gids geopend wordt. Slaat geen
+  // persoonsgegevens op, alleen een totaal-aantal per hotel.
+  function countHotelScan(hotel){
+    if(!hotel) return;
+    hotel.scans = (hotel.scans || 0) + 1;
+    try{ saveMerchants(); }catch(e){}
+  }
   async function buildHotelBanner(hotel){
     if(!hotel) return null;
     const defaultWelcome = "Welkom! Fijn dat u bij ons verblijft. Ontdek hieronder de leukste plekken in de stad.";
@@ -5125,6 +5132,7 @@ app.get("/api/city", async (req, res) => {
     if(!hotel){
       return res.json({ ok:true, found:true, needHotel:true, name: hit.name });
     }
+    countHotelScan(hotel);
     const hotelBanner = await buildHotelBanner(hotel);
     const cats2 = applyHotelView(hit.categories, hotel);
     return res.json({ ok:true, found:true, name: hit.name, categories: cats2, hotelBanner });
@@ -5207,6 +5215,7 @@ app.get("/api/city", async (req, res) => {
   if(!hotel){
     return res.json({ ok:true, found:true, needHotel:true, name: city.name || "" });
   }
+  countHotelScan(hotel);
   const hotelBanner = await buildHotelBanner(hotel);
   const catsView = applyHotelView(cats, hotel);
   res.json({ ok:true, found:true, name: city.name || "", categories: catsView, hotelBanner });
@@ -5575,7 +5584,8 @@ app.post("/api/merchant/login", (req, res) => {
     isHotel: m.categoryId === "hotels",
     welcome: m.welcome || "",
     logo: m.logo || "",
-    hotelCode: m.hotelCode || ""
+    hotelCode: m.hotelCode || "",
+    scans: m.scans || 0
   }});
 });
 
