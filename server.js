@@ -5371,13 +5371,7 @@ app.post("/api/admin/merchant-save", (req, res) => {
     existing.address = String(m.address || existing.address || "");
     existing.email = String(m.email || existing.email || "");
     if(typeof m.active === "boolean") existing.active = m.active;
-    // Hotel? Zorg meteen voor een QR-hotelcode (anders blijft die leeg tot
-    // de admin-lijst opnieuw geladen wordt).
-    if(existing.categoryId === "hotels" && !existing.hotelCode){
-      existing.hotelCode = makeHotelCode();
-    }
   }else{
-    const isHotel = String(m.categoryId || "") === "hotels";
     list.push({
       id: newMerchantId(),
       city,
@@ -5389,8 +5383,7 @@ app.post("/api/admin/merchant-save", (req, res) => {
       active: !!m.active,
       promo: "", promoUntil: 0,
       pin: "",
-      stripeCustomerId: "",
-      hotelCode: isHotel ? makeHotelCode() : ""
+      stripeCustomerId: ""
     });
   }
   merchants.set(city, list);
@@ -5550,7 +5543,7 @@ async function sendMerchantPinEmail(m){
       "Goed nieuws: uw hotel \"" + m.name + "\" maakt vanaf nu volledig gratis gebruik van Salve, " +
       "de meertalige stadsgids voor uw gasten.\n\n" +
       "Uw persoonlijke pincode is: " + m.pin + "\n\n" +
-      "Log in op https://formforge.nl/portaal-2 met uw e-mailadres (" + m.email + ") en deze pincode. " +
+      "Log in op https://formforge.nl/portaal/ met uw e-mailadres (" + m.email + ") en deze pincode. " +
       "Pincode kwijt? Klik op 'Pincode vergeten?' voor een nieuwe.\n\n" +
       "In de bijlage vindt u een korte uitleg over hoe Salve werkt en wat het uw hotel oplevert.\n\n" +
       "Met vriendelijke groet,\nBen Wijnen\nSalve - powered by FormForge";
@@ -5558,7 +5551,7 @@ async function sendMerchantPinEmail(m){
       "<p>Beste hotelier,</p>" +
       "<p>Goed nieuws: uw hotel <strong>" + m.name + "</strong> maakt vanaf nu volledig gratis gebruik van Salve, de meertalige stadsgids voor uw gasten.</p>" +
       "<p>Uw persoonlijke pincode is: <strong style='font-size:20px'>" + m.pin + "</strong></p>" +
-      "<p>Log in op <a href='https://formforge.nl/portaal-2'>https://formforge.nl/portaal-2</a> met uw e-mailadres (" + m.email + ") en deze pincode. Pincode kwijt? Klik op &lsquo;Pincode vergeten?&rsquo; voor een nieuwe.</p>" +
+      "<p>Log in op <a href='https://formforge.nl/portaal/'>https://formforge.nl/portaal/</a> met uw e-mailadres (" + m.email + ") en deze pincode. Pincode kwijt? Klik op &lsquo;Pincode vergeten?&rsquo; voor een nieuwe.</p>" +
       "<p>In de bijlage vindt u een korte uitleg over hoe Salve werkt en wat het uw hotel oplevert.</p>" +
       "<p>Met vriendelijke groet,<br>Ben Wijnen<br>Salve - powered by FormForge</p>";
     const attachments = loadHotelPdfAttachment();
