@@ -31,6 +31,10 @@ app.use(cors({ origin: true }));
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+// Apart (sterker) model voor de stadsgids-vertalingen. gpt-4o vertaalt veel
+// natuurlijker dan gpt-4o-mini, vooral naar talen als Thai, Hindi, Arabisch en
+// Vietnamees. Instelbaar via Render Environment Variable OPENAI_GUIDE_MODEL.
+const OPENAI_GUIDE_MODEL = process.env.OPENAI_GUIDE_MODEL || "gpt-4o";
 
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || "";
 const STRIPE_DEFAULT_PRICE_ID = process.env.STRIPE_PRICE_ID || "";
@@ -937,7 +941,7 @@ function jsonError(res, status, message, details){
   return res.status(status).json({ error: message, details: details || "" });
 }
 
-async function callOpenAI(messages, temperature){
+async function callOpenAI(messages, temperature, modelOverride){
   if(!OPENAI_API_KEY){
     throw new Error("OPENAI_API_KEY ontbreekt in Render Environment Variables");
   }
@@ -949,7 +953,7 @@ async function callOpenAI(messages, temperature){
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      model: OPENAI_MODEL,
+      model: modelOverride || OPENAI_MODEL,
       messages,
       temperature: typeof temperature === "number" ? temperature : 0.2
     })
@@ -5085,7 +5089,7 @@ app.get("/api/city", async (req, res) => {
   // kleine vertaalhelper, ook bruikbaar voor de banner
   async function trh(text){
     if(!text || lang === src) return text;
-    try{ return await translateText(text, src, lang); }catch(e){ return text; }
+    try{ return await translateGuideText(text, src, lang); }catch(e){ return text; }
   }
   // Demo-hotel: een vast voorbeeld dat je kunt delen met ?hotel=demo.
   // Bestaat niet echt in het systeem; puur om te laten zien hoe het eruitziet.
@@ -5145,7 +5149,27 @@ app.get("/api/city", async (req, res) => {
         };
         return { id: c.id, icon: "&#127976;", title: "Mijn Hotel", items: [demoItem] };
       }
-      const mine = (c.items || []).filter(it => it.name === hotel.name);
+      // Filter op de stabiele hotelcode (of merchant-id) van het gescande hotel.
+      // Zo verschijnt nooit per ongeluk een ander hotel met dezelfde naam, en
+      // verdwijnt het eigen hotel niet als de naam licht afwijkt of is gewijzigd.
+      const wantCode = (hotel.hotelCode || "").toLowerCase();
+      const wantId = String(hotel.id || "");
+      let mine = (c.items || []).filter(it => {
+        const ic = (it.hotelCode || "").toLowerCase();
+        const iid = String(it.merchantId || "");
+        if(wantCode && ic) return ic === wantCode;
+        if(wantId && iid) return iid === wantId;
+        return false;
+      });
+      // Veiligheidsnet: alleen terugvallen op de naam als de items echt geen
+      // stabiele code/id hebben (oude data). Hebben ze die wel, dan is een lege
+      // uitkomst correct (de code hoort simpelweg niet bij dit hotel).
+      if(!mine.length){
+        const itemsHaveStableId = (c.items || []).some(it => (it.hotelCode || it.merchantId));
+        if(!itemsHaveStableId){
+          mine = (c.items || []).filter(it => it.name === hotel.name);
+        }
+      }
       return { id: c.id, icon: "&#127976;", title: "Mijn Hotel", items: mine };
     });
   }
@@ -5167,7 +5191,7 @@ app.get("/api/city", async (req, res) => {
   // helper: vertaal alleen als nodig (andere taal), met stille fallback naar origineel
   async function tr(text){
     if(!text || lang === src) return text;
-    try{ return await translateText(text, src, lang); }catch(e){ return text; }
+    try{ return await translateGuideText(text, src, lang); }catch(e){ return text; }
   }
 
   const cats = [];
@@ -5232,7 +5256,11 @@ app.get("/api/city", async (req, res) => {
       promo: translatedPromos[mi],
       featured: !!m.subscribed,
       fields: translatedFields[mi],
-      photos: Array.isArray(m.photos) ? m.photos.map(f => photoBase + "/fotos/" + f) : []
+      photos: Array.isArray(m.photos) ? m.photos.map(f => photoBase + "/fotos/" + f) : [],
+      // Stabiele verwijzingen zodat "Mijn Hotel" op code/id kan filteren i.p.v. op naam.
+      // (taal-onafhankelijk, dus veilig om mee te cachen)
+      hotelCode: m.hotelCode || "",
+      merchantId: m.id || ""
     });
   }
 
@@ -5882,6 +5910,63 @@ async function translateText(text, from, to){
   ], 0.1);
   setCachedTranslation(from,to,text,out);
   return out;
+}
+
+// ===== STADSGIDS-VERTALING (aparte, hogere kwaliteit) =====
+// Eigen cache met lange bewaartijd. De versie-tag (v2) zorgt dat oude, slechte
+// vertalingen niet meer worden hergebruikt: verhoog het nummer om alles te
+// verversen na een promptwijziging.
+const GUIDE_TRANS_VERSION = "v2";
+const guideTransCache = new Map();
+function guideCacheKey(from,to,text){ return GUIDE_TRANS_VERSION+"|"+from+"|"+to+"|"+text; }
+function getGuideTranslation(from,to,text){
+  const hit = guideTransCache.get(guideCacheKey(from,to,text));
+  // 7 dagen geldig: gidsteksten veranderen zelden, dus niet elke minuut opnieuw vertalen
+  if(hit && (Date.now()-hit.ts) < 7*24*60*60*1000) return hit.text;
+  return null;
+}
+function setGuideTranslation(from,to,text,translated){
+  guideTransCache.set(guideCacheKey(from,to,text), { text: translated, ts: Date.now() });
+  if(guideTransCache.size > 5000){
+    const firstKey = guideTransCache.keys().next().value;
+    guideTransCache.delete(firstKey);
+  }
+}
+
+// Vertaalt één stuk gidstekst (beschrijving, openingstijden, menu, enz.) naar de
+// taal van de toerist. Gebruikt een prompt die past bij een reis-/stadsgids en
+// een sterker model voor natuurlijker resultaat. Valt bij fouten stil terug op
+// de gewone chatvertaling, en daarna op de originele tekst.
+async function translateGuideText(text, from, to){
+  if(!text) return "";
+  if(from === to) return text;
+  const src = String(text);
+  const cached = getGuideTranslation(from,to,src);
+  if(cached !== null) return cached;
+  const fromName = langName(from);
+  const toName = langName(to);
+  try{
+    const out = await callOpenAI([
+      { role:"system", content:
+        "You are a professional translator for a tourist city guide. " +
+        "Translate the text from " + fromName + " into natural, fluent, native-sounding " + toName + ", " +
+        "as a local tourism brochure would read. Keep the original meaning and tone (friendly and inviting). " +
+        "Preserve proper names (restaurants, streets, towns, dishes), numbers, prices, times, phone numbers, " +
+        "URLs and emoji exactly as they are. Do not translate brand or place names. " +
+        "Adapt opening hours, days and units to how they are normally written in " + toName + ". " +
+        "Output ONLY the translation in " + toName + " - no quotes, no notes, no other language." },
+      { role:"user", content: src }
+    ], 0.2, OPENAI_GUIDE_MODEL);
+    const clean = String(out || "").trim();
+    if(clean){
+      setGuideTranslation(from,to,src,clean);
+      return clean;
+    }
+  }catch(e){
+    // sterker model niet bereikbaar? probeer de gewone vertaler
+    try{ return await translateText(src, from, to); }catch(e2){}
+  }
+  return src;
 }
 
 // Kamer maken
