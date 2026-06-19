@@ -5087,15 +5087,28 @@ app.get("/api/city", async (req, res) => {
     if(!text || lang === src) return text;
     try{ return await translateText(text, src, lang); }catch(e){ return text; }
   }
+  // Demo-hotel: een vast voorbeeld dat je kunt delen met ?hotel=demo.
+  // Bestaat niet echt in het systeem; puur om te laten zien hoe het eruitziet.
+  function makeDemoHotel(){
+    return {
+      __demo: true,
+      name: "Demo Hotel",
+      welcome: "Welkom in ons hotel! Wat fijn dat u er bent. Hieronder vindt u onze persoonlijke stadsgids met de leukste plekken in de buurt, in uw eigen taal. Geniet van uw verblijf!",
+      promo: "Vandaag: welkomstdrankje gratis bij aankomst",
+      logo: "",
+      photos: []
+    };
+  }
   function findHotelByCode(){
     if(!hotelCode) return null;
+    if(hotelCode === "demo") return makeDemoHotel();
     const list = merchants.get(code) || [];
     return list.find(m => (m.hotelCode || "").toLowerCase() === hotelCode && m.active) || null;
   }
   // Telt +1 voor dit hotel als de gids geopend wordt. Slaat geen
   // persoonsgegevens op, alleen een totaal-aantal per hotel.
   function countHotelScan(hotel){
-    if(!hotel) return;
+    if(!hotel || hotel.__demo) return;
     hotel.scans = (hotel.scans || 0) + 1;
     try{ saveMerchants(); }catch(e){}
   }
@@ -5115,10 +5128,23 @@ app.get("/api/city", async (req, res) => {
   }
   // Pas de categorielijst aan voor een hotelgast: andere hotels verbergen,
   // categorie "hotels" wordt "Mijn Hotel" met alleen dit hotel.
+  // In demo-modus tonen we het fictieve Demo Hotel als enige in "Mijn Hotel".
   function applyHotelView(categories, hotel){
     if(!hotel) return categories;
     return categories.map(c => {
       if(c.id !== "hotels") return c;
+      if(hotel.__demo){
+        const demoItem = {
+          name: hotel.name,
+          desc: "Een sfeervol en gastvrij voorbeeldhotel in het hart van de stad. Zo ziet uw eigen hotel er straks uit voor uw gasten.",
+          address: "",
+          promo: hotel.promo || "",
+          featured: true,
+          fields: {},
+          photos: []
+        };
+        return { id: c.id, icon: "&#127976;", title: "Mijn Hotel", items: [demoItem] };
+      }
       const mine = (c.items || []).filter(it => it.name === hotel.name);
       return { id: c.id, icon: "&#127976;", title: "Mijn Hotel", items: mine };
     });
