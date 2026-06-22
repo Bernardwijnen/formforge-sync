@@ -5106,6 +5106,7 @@ app.get("/api/city", async (req, res) => {
   const code = String(req.query && req.query.code ? req.query.code : "").trim().toLowerCase();
   const lang = String(req.query && req.query.lang ? req.query.lang : "en").trim() || "en";
   const hotelCode = String(req.query && req.query.hotel ? req.query.hotel : "").trim().toLowerCase();
+  const preview = String(req.query && req.query.preview ? req.query.preview : "") === "1";
   const city = CITIES[code];
   if(!city) return res.json({ ok:true, found:false });
   const src = city.sourceLang || "en";
@@ -5226,6 +5227,13 @@ app.get("/api/city", async (req, res) => {
     const hit = cityCache.get(cacheKey);
     const hotel = findHotelByCode();
     if(!hotel){
+      if(preview){
+        // Voorbeeldweergave: de echte gids (alle bedrijven), zonder hotelbanner
+        // en zonder de "Mijn Hotel"-categorie. Markeer als preview zodat de
+        // frontend de route-knop kan uitschakelen.
+        const catsPrev = (hit.categories || []).filter(c => c.id !== "hotels");
+        return res.json({ ok:true, found:true, preview:true, name: hit.name, categories: catsPrev });
+      }
       return res.json({ ok:true, found:true, needHotel:true, name: hit.name });
     }
     countHotelScan(hotel);
@@ -5314,6 +5322,10 @@ app.get("/api/city", async (req, res) => {
   cityCache.set(cacheKey, { name: city.name || "", categories: cats });
   const hotel = findHotelByCode();
   if(!hotel){
+    if(preview){
+      const catsPrev = (cats || []).filter(c => c.id !== "hotels");
+      return res.json({ ok:true, found:true, preview:true, name: city.name || "", categories: catsPrev });
+    }
     return res.json({ ok:true, found:true, needHotel:true, name: city.name || "" });
   }
   countHotelScan(hotel);
