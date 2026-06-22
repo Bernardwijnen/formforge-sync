@@ -5092,6 +5092,16 @@ const CITIES = {
 // vertaalde gids, zodat alleen de EERSTE bezoeker in een taal hoeft te wachten.
 const cityCache = new Map(); // sleutel "code:lang" -> { name, categories }
 
+// Lijst van alle steden (voor de voorpagina). Geeft code + nette naam terug.
+app.get("/api/cities", (req, res) => {
+  const list = Object.keys(CITIES).map(code => ({
+    code,
+    name: (CITIES[code] && CITIES[code].name) ? CITIES[code].name : code
+  }));
+  list.sort((a, b) => a.name.localeCompare(b.name, "nl"));
+  res.json({ ok: true, cities: list });
+});
+
 app.get("/api/city", async (req, res) => {
   const code = String(req.query && req.query.code ? req.query.code : "").trim().toLowerCase();
   const lang = String(req.query && req.query.lang ? req.query.lang : "en").trim() || "en";
