@@ -1094,6 +1094,22 @@ function loadHotelPdfAttachment(){
   return null;
 }
 
+function loadMerchantPdfAttachment(){
+  try{
+    const candidates = [
+      path.join(DATA_DIR, "salve-uitleg-voor-ondernemers.pdf"),
+      path.join(__dirname, "salve-uitleg-voor-ondernemers.pdf")
+    ];
+    for(const p of candidates){
+      if(fs.existsSync(p)){
+        const content = fs.readFileSync(p).toString("base64");
+        return [{ filename: "Salve-uitleg-voor-ondernemers.pdf", content }];
+      }
+    }
+  }catch(e){ console.log("Ondernemer-PDF laden mislukt: " + (e.message||e)); }
+  return null;
+}
+
 function premiumPinEmailText(pin){
   return "Beste ECHO AI Premium gebruiker,\n\nJe nieuwe 6 cijferige pincode is: " + pin + "\n\nGebruik deze pincode samen met je e-mailadres om AI Premium te activeren.\n\nAls jij deze reset niet hebt aangevraagd, neem dan contact op met FormForge.\n\nFormForge ECHO";
 }
@@ -5611,19 +5627,30 @@ async function sendMerchantPinEmail(m){
   const text =
     "Beste ondernemer,\n\n" +
     "Bedankt! Uw vermelding \"" + m.name + "\" staat nu online in de Salve stadsgids.\n\n" +
+    "Salve is de gratis, meertalige stadsgids die hotelgasten op hun kamer openen via een QR-code. " +
+    "De hotels in uw stad doen hier al actief aan mee. Hun gasten ontdekken zo - in hun eigen taal, " +
+    "met de route ernaartoe - de leukste plekken in de buurt. Met uw vermelding komt u precies daar " +
+    "in beeld: bij de toerist die op zoek is naar een plek zoals die van u.\n\n" +
     "Uw persoonlijke pincode is: " + m.pin + "\n\n" +
-    "Met uw e-mailadres (" + m.email + ") en deze pincode kunt u inloggen om uw\n" +
-    "gegevens te wijzigen (zoals uw adres) en acties te plaatsen.\n\n" +
+    "Met uw e-mailadres (" + m.email + ") en deze pincode kunt u inloggen op\n" +
+    "https://formforge.nl/portaal/ om uw gegevens te wijzigen (zoals uw adres) en acties te plaatsen.\n\n" +
+    "In de bijlage vindt u een korte uitleg over hoe Salve werkt en wat het u oplevert.\n\n" +
     "Bewaar deze pincode goed en deel hem met niemand.\n\n" +
     "Met vriendelijke groet,\nSalve - powered by FormForge";
   const html =
     "<p>Beste ondernemer,</p>" +
     "<p>Bedankt! Uw vermelding <strong>" + m.name + "</strong> staat nu online in de Salve stadsgids.</p>" +
+    "<p>Salve is de gratis, meertalige stadsgids die hotelgasten op hun kamer openen via een QR-code. " +
+    "De hotels in uw stad doen hier al actief aan mee. Hun gasten ontdekken zo &ndash; in hun eigen taal, " +
+    "met de route ernaartoe &ndash; de leukste plekken in de buurt. Met uw vermelding komt u precies daar " +
+    "in beeld: bij de toerist die op zoek is naar een plek zoals die van u.</p>" +
     "<p>Uw persoonlijke pincode is: <strong style='font-size:20px'>" + m.pin + "</strong></p>" +
-    "<p>Met uw e-mailadres (" + m.email + ") en deze pincode kunt u inloggen om uw gegevens te wijzigen (zoals uw adres) en acties te plaatsen.</p>" +
+    "<p>Met uw e-mailadres (" + m.email + ") en deze pincode kunt u inloggen op <a href='https://formforge.nl/portaal/'>https://formforge.nl/portaal/</a> om uw gegevens te wijzigen (zoals uw adres) en acties te plaatsen.</p>" +
+    "<p>In de bijlage vindt u een korte uitleg over hoe Salve werkt en wat het u oplevert.</p>" +
     "<p>Bewaar deze pincode goed en deel hem met niemand.</p>" +
     "<p>Met vriendelijke groet,<br>Salve - powered by FormForge</p>";
-  await sendResendEmail({ to: m.email, subject, text, html });
+  const attachments = loadMerchantPdfAttachment();
+  await sendResendEmail({ to: m.email, subject, text, html, attachments });
 }
 
 // --- ONDERNEMER-PORTAAL (inloggen met e-mail + pincode) ---
