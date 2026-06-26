@@ -5180,21 +5180,24 @@ app.get("/api/city", async (req, res) => {
   // Pas de categorielijst aan voor een hotelgast: andere hotels verbergen,
   // categorie "hotels" wordt "Mijn Hotel" met alleen dit hotel.
   // In demo-modus tonen we het fictieve Demo Hotel als enige in "Mijn Hotel".
-  function applyHotelView(categories, hotel){
+  async function applyHotelView(categories, hotel){
     if(!hotel) return categories;
-    return categories.map(c => {
-      if(c.id !== "hotels") return c;
+    const mijnHotelTitle = await tr("Mijn Hotel");
+    const out = [];
+    for(const c of categories){
+      if(c.id !== "hotels"){ out.push(c); continue; }
       if(hotel.__demo){
         const demoItem = {
           name: hotel.name,
-          desc: "Een sfeervol en gastvrij voorbeeldhotel in het hart van de stad. Zo ziet uw eigen hotel er straks uit voor uw gasten.",
+          desc: await tr("Een sfeervol en gastvrij voorbeeldhotel in het hart van de stad. Zo ziet uw eigen hotel er straks uit voor uw gasten."),
           address: "",
           promo: hotel.promo || "",
           featured: true,
           fields: {},
           photos: []
         };
-        return { id: c.id, icon: "&#127976;", title: "Mijn Hotel", items: [demoItem] };
+        out.push({ id: c.id, icon: "&#127976;", title: mijnHotelTitle, items: [demoItem] });
+        continue;
       }
       // Filter op de stabiele hotelcode (of merchant-id) van het gescande hotel.
       // Zo verschijnt nooit per ongeluk een ander hotel met dezelfde naam, en
@@ -5217,8 +5220,9 @@ app.get("/api/city", async (req, res) => {
           mine = (c.items || []).filter(it => it.name === hotel.name);
         }
       }
-      return { id: c.id, icon: "&#127976;", title: "Mijn Hotel", items: mine };
-    });
+      out.push({ id: c.id, icon: "&#127976;", title: mijnHotelTitle, items: mine });
+    }
+    return out;
   }
 
   // Al eerder vertaald? Geef meteen terug (supersnel).
@@ -5238,7 +5242,7 @@ app.get("/api/city", async (req, res) => {
     }
     countHotelScan(hotel);
     const hotelBanner = await buildHotelBanner(hotel);
-    const cats2 = applyHotelView(hit.categories, hotel);
+    const cats2 = await applyHotelView(hit.categories, hotel);
     return res.json({ ok:true, found:true, name: hit.name, categories: cats2, hotelBanner });
   }
 
@@ -5330,7 +5334,7 @@ app.get("/api/city", async (req, res) => {
   }
   countHotelScan(hotel);
   const hotelBanner = await buildHotelBanner(hotel);
-  const catsView = applyHotelView(cats, hotel);
+  const catsView = await applyHotelView(cats, hotel);
   res.json({ ok:true, found:true, name: city.name || "", categories: catsView, hotelBanner });
 });
 
