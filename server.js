@@ -5471,6 +5471,7 @@ app.post("/api/hotelchat/guest/send", async (req, res) => {
   const code = String(req.body && req.body.hotel ? req.body.hotel : "").trim().toLowerCase();
   let convoId = String(req.body && req.body.convoId ? req.body.convoId : "").trim();
   const roomId = String(req.body && req.body.room ? req.body.room : "").trim();
+  const manualRoom = String(req.body && req.body.manualRoom ? req.body.manualRoom : "").trim().slice(0,40);
   const guestName = String(req.body && req.body.name ? req.body.name : "").trim().slice(0,60) || "Gast";
   const guestLang = String(req.body && req.body.lang ? req.body.lang : "en").trim().slice(0,5) || "en";
   const text = String(req.body && req.body.text ? req.body.text : "").trim().slice(0,2000);
@@ -5485,6 +5486,8 @@ app.post("/api/hotelchat/guest/send", async (req, res) => {
     const r = findRoomInHotel(hit.m, roomId);
     if(r) roomName = r.name || "";
   }
+  // geen QR-kamer maar wel handmatig ingevuld kamernummer? gebruik dat als naam
+  if(!roomName && manualRoom){ roomName = manualRoom; }
 
   if(!hotelChats.has(code)) hotelChats.set(code, { convos: new Map() });
   const store = hotelChats.get(code);
@@ -5500,6 +5503,7 @@ app.post("/api/hotelchat/guest/send", async (req, res) => {
   convo.guestName = guestName || convo.guestName;
   convo.guestLang = guestLang || convo.guestLang;
   if(roomId && !convo.roomId){ convo.roomId = roomId; convo.roomName = roomName; }
+  if(!convo.roomName && roomName){ convo.roomName = roomName; }
 
   // Vertaal naar het Nederlands voor de hotelier (bewaar zowel origineel als NL)
   let textNl = text;
