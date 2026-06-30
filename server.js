@@ -5636,6 +5636,12 @@ function hotelChatAuth(req){
   const found = findMerchantByLogin(email, pin);
   if(!found) return { err:[401, "E-mail of pincode klopt niet."] };
   if(found.m.categoryId !== "hotels") return { err:[403, "Alleen voor hotels."] };
+  // Zorg dat dit hotel een hotelcode heeft (nodig voor de QR-links en de chat).
+  if(!found.m.hotelCode){
+    found.m.hotelCode = (typeof makeHotelCode === "function") ? makeHotelCode()
+      : ("h" + Date.now().toString(36) + Math.random().toString(36).slice(2,6));
+    saveMerchants();
+  }
   return { found };
 }
 
