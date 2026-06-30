@@ -5194,7 +5194,8 @@ app.get("/api/city", async (req, res) => {
           promo: hotel.promo || "",
           featured: true,
           fields: {},
-          photos: []
+          photos: [],
+          hotelCode: "demo"
         };
         out.push({ id: c.id, icon: "&#127976;", title: mijnHotelTitle, items: [demoItem] });
         continue;
@@ -5374,7 +5375,341 @@ function newMerchantId(){
 }
 loadMerchants();
 
-// --- VASTE EIGENAAR-ONDERNEMERS ---
+// ============================================================
+//  GAST <-> HOTEL CHAT
+//  Eenvoudige berichtenlaag tussen een toerist en een hotel.
+//  Opslag: hotelChats = Map(hotelCode -> { convos: Map(convoId -> convo) })
+//  convo = { id, guestName, guestLang, city, hotelCode, createdAt, lastActive,
+//            lastGuestAt, messages:[ {id, from:"guest"|"hotel", text, srcLang, ts, read} ] }
+//  Berichten worden vertaald guest-taal <-> Nederlands (hotel leest NL).
+//  Gesprekken verdwijnen na CHAT_TTL_MS inactiviteit (privacy).
+// ============================================================
+const hotelChats = new Map();
+const CHAT_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 dagen
+const HOTEL_LANG = "nl"; // taal waarin de hotelier leest/schrijft
+const CHATS_FILE = path.join(DATA_DIR, "salve_hotel_chats.json");
+
+function loadHotelChats(){
+  try{
+    if(!fs.existsSync(CHATS_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(CHATS_FILE, "utf8") || "{}");
+    Object.keys(data || {}).forEach(code => {
+      const convos = new Map();
+      (data[code].convos || []).forEach(c => convos.set(c.id, c));
+      hotelChats.set(code, { convos });
+    });
+    let total = 0; for(const h of hotelChats.values()) total += h.convos.size;
+    console.log("Hotel-chats geladen: " + total);
+  }catch(e){ console.log("Hotel-chats laden mislukt: " + (e.message||e)); }
+}
+function saveHotelChats(){
+  try{
+    const data = {};
+    for(const [code, h] of hotelChats.entries()){
+      data[code] = { convos: Array.from(h.convos.values()) };
+    }
+    fs.writeFileSync(CHATS_FILE, JSON.stringify(data, null, 2));
+  }catch(e){ console.log("Hotel-chats opslaan mislukt: " + (e.message||e)); }
+}
+function pruneHotelChats(){
+  const now = Date.now();
+  let changed = false;
+  for(const [code, h] of hotelChats.entries()){
+    for(const [id, c] of h.convos.entries()){
+      if(now - (c.lastActive || c.createdAt || 0) > CHAT_TTL_MS){
+        h.convos.delete(id); changed = true;
+      }
+    }
+    if(h.convos.size === 0){ hotelChats.delete(code); changed = true; }
+  }
+  if(changed) saveHotelChats();
+}
+setInterval(pruneHotelChats, 60 * 60 * 1000); // elk uur opruimen
+function newConvoId(){
+  return "c_" + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+}
+function newRoomId(){
+  // korte, leesbare unieke id voor een hotelkamer-chat
+  return "r" + Date.now().toString(36).slice(-5) + Math.random().toString(36).slice(2,5);
+}
+function getHotelRooms(m){
+  if(!Array.isArray(m.chatRooms)) m.chatRooms = [];
+  return m.chatRooms;
+}
+function findRoomInHotel(m, roomId){
+  if(!roomId) return null;
+  return (m.chatRooms || []).find(r => r.id === roomId) || null;
+}
+function getHotelByCode(hotelCode){
+  const code = String(hotelCode || "").trim().toLowerCase();
+  if(!code) return null;
+  for(const [city, list] of merchants.entries()){
+    const m = (list || []).find(x => (x.hotelCode || "").toLowerCase() === code && x.categoryId === "hotels");
+    if(m) return { m, city };
+  }
+  return null;
+}
+loadHotelChats();
+
+// --- GAST: hotel-info ophalen (naam + of de kamer geldig is) voor de chat-kop ---
+app.get("/api/hotelchat/info", (req, res) => {
+  const code = String(req.query && req.query.hotel ? req.query.hotel : "").trim().toLowerCase();
+  const roomId = String(req.query && req.query.room ? req.query.room : "").trim();
+  if(code === "demo"){ return res.json({ ok:true, hotelName: "Demo Hotel", demo:true, roomName: roomId ? "Voorbeeldkamer" : "" }); }
+  const hit = getHotelByCode(code);
+  if(!hit) return jsonError(res, 404, "Hotel niet gevonden");
+  let roomName = "";
+  if(roomId){
+    const r = findRoomInHotel(hit.m, roomId);
+    if(r) roomName = r.name || "";
+  }
+  res.json({ ok:true, hotelName: hit.m.name || "Hotel", roomName });
+});
+
+// --- GAST: nieuw bericht sturen (start desnoods een nieuw gesprek) ---
+app.post("/api/hotelchat/guest/send", async (req, res) => {
+  const code = String(req.body && req.body.hotel ? req.body.hotel : "").trim().toLowerCase();
+  let convoId = String(req.body && req.body.convoId ? req.body.convoId : "").trim();
+  const roomId = String(req.body && req.body.room ? req.body.room : "").trim();
+  const guestName = String(req.body && req.body.name ? req.body.name : "").trim().slice(0,60) || "Gast";
+  const guestLang = String(req.body && req.body.lang ? req.body.lang : "en").trim().slice(0,5) || "en";
+  const text = String(req.body && req.body.text ? req.body.text : "").trim().slice(0,2000);
+  if(!text) return jsonError(res, 400, "Leeg bericht");
+  if(code === "demo") return jsonError(res, 400, "Dit is een voorbeeldhotel; berichten worden niet verstuurd.");
+  const hit = getHotelByCode(code);
+  if(!hit) return jsonError(res, 404, "Hotel niet gevonden");
+
+  // kamernaam bepalen (als er een geldige kamer is meegegeven)
+  let roomName = "";
+  if(roomId){
+    const r = findRoomInHotel(hit.m, roomId);
+    if(r) roomName = r.name || "";
+  }
+
+  if(!hotelChats.has(code)) hotelChats.set(code, { convos: new Map() });
+  const store = hotelChats.get(code);
+  let convo = convoId ? store.convos.get(convoId) : null;
+  if(!convo){
+    convoId = newConvoId();
+    convo = { id: convoId, guestName, guestLang, city: hit.city, hotelCode: code,
+              roomId: roomId || "", roomName: roomName || "",
+              createdAt: Date.now(), lastActive: Date.now(), lastGuestAt: Date.now(),
+              notifiedAt: 0, messages: [] };
+    store.convos.set(convoId, convo);
+  }
+  convo.guestName = guestName || convo.guestName;
+  convo.guestLang = guestLang || convo.guestLang;
+  if(roomId && !convo.roomId){ convo.roomId = roomId; convo.roomName = roomName; }
+
+  // Vertaal naar het Nederlands voor de hotelier (bewaar zowel origineel als NL)
+  let textNl = text;
+  try{ if(guestLang !== HOTEL_LANG) textNl = await translateText(text, guestLang, HOTEL_LANG); }catch(e){}
+  const msg = { id: "g_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
+                from:"guest", text, textNl, srcLang: guestLang, ts: Date.now(), read:false };
+  convo.messages.push(msg);
+  convo.lastActive = Date.now();
+  convo.lastGuestAt = Date.now();
+  saveHotelChats();
+
+  // E-mailnotificatie naar het hotel (hoogstens eens per 15 min per gesprek)
+  // Naar het ingestelde notificatie-adres, anders het gewone inlog-adres.
+  const hotelEmail = (hit.m.notifyEmail && hit.m.notifyEmail.trim()) ? hit.m.notifyEmail.trim() : (hit.m.email || "");
+  if(hotelEmail && (Date.now() - (convo.notifiedAt||0) > 15*60*1000)){
+    convo.notifiedAt = Date.now();
+    const waar = convo.roomName ? ("Kamer " + convo.roomName) : "Gast";
+    const subject = "Nieuw bericht" + (convo.roomName ? (" - kamer " + convo.roomName) : "") + " - Salve";
+    const body =
+      "U heeft een nieuw bericht ontvangen via uw Salve-vermelding.\n\n" +
+      (convo.roomName ? ("Kamer: " + convo.roomName + "\n") : "") +
+      "Van: " + convo.guestName + "\n" +
+      "Bericht: " + textNl + "\n\n" +
+      "Log in op uw portaal om te antwoorden: https://formforge.nl/portaal/\n\n" +
+      "Met vriendelijke groet,\nSalve - powered by FormForge";
+    const html =
+      "<p>U heeft een nieuw bericht ontvangen via uw Salve-vermelding.</p>" +
+      "<p>" + (convo.roomName ? ("<strong>Kamer:</strong> " + convo.roomName + "<br>") : "") +
+      "<strong>Van:</strong> " + convo.guestName + "<br>" +
+      "<strong>Bericht:</strong> " + textNl + "</p>" +
+      "<p><a href='https://formforge.nl/portaal/'>Log in op uw portaal om te antwoorden</a></p>" +
+      "<p>Met vriendelijke groet,<br>Salve - powered by FormForge</p>";
+    sendResendEmail({ to: hotelEmail, subject, text: body, html }).catch(()=>{});
+  }
+  res.json({ ok:true, convoId });
+});
+
+// --- GAST: eigen gesprek ophalen (berichten in gast-taal) ---
+app.post("/api/hotelchat/guest/poll", async (req, res) => {
+  const code = String(req.body && req.body.hotel ? req.body.hotel : "").trim().toLowerCase();
+  const convoId = String(req.body && req.body.convoId ? req.body.convoId : "").trim();
+  const guestLang = String(req.body && req.body.lang ? req.body.lang : "en").trim().slice(0,5) || "en";
+  const store = hotelChats.get(code);
+  if(!store || !store.convos.get(convoId)) return res.json({ ok:true, messages: [] });
+  const convo = store.convos.get(convoId);
+  const out = [];
+  for(const m of convo.messages){
+    let shown = m.text;
+    if(m.from === "guest"){
+      shown = m.text; // gast ziet zijn eigen tekst in eigen taal
+    }else{
+      if(guestLang === HOTEL_LANG){ shown = m.text; }
+      else if(m.tr && m.tr[guestLang]){ shown = m.tr[guestLang]; }
+      else {
+        try{ shown = await translateText(m.text, HOTEL_LANG, guestLang); if(!m.tr) m.tr={}; m.tr[guestLang]=shown; saveHotelChats(); }
+        catch(e){ shown = m.text; }
+      }
+    }
+    out.push({ id:m.id, from:m.from, text: shown, ts:m.ts });
+  }
+  res.json({ ok:true, messages: out });
+});
+
+// --- HOTEL (portaal): alle gesprekken ophalen ---
+app.post("/api/hotelchat/hotel/list", (req, res) => {
+  const email = String(req.body.email || "").trim();
+  const pin = String(req.body.pin || "").trim();
+  const found = findMerchantByLogin(email, pin);
+  if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
+  if(found.m.categoryId !== "hotels") return jsonError(res, 403, "Alleen voor hotels.");
+  const code = (found.m.hotelCode || "").toLowerCase();
+  const store = hotelChats.get(code);
+  const convos = [];
+  if(store){
+    for(const c of store.convos.values()){
+      const unread = c.messages.filter(m => m.from === "guest" && !m.read).length;
+      const last = c.messages[c.messages.length-1];
+      convos.push({ id:c.id, guestName:c.guestName, roomName: c.roomName || "", lastActive:c.lastActive, unread,
+                    lastText: last ? (last.from==="guest" ? (last.textNl||last.text) : last.text) : "",
+                    lastFrom: last ? last.from : "" });
+    }
+    convos.sort((a,b)=> b.lastActive - a.lastActive);
+  }
+  res.json({ ok:true, convos });
+});
+
+// --- HOTEL (portaal): berichten van één gesprek (in NL) + markeer gelezen ---
+app.post("/api/hotelchat/hotel/messages", (req, res) => {
+  const email = String(req.body.email || "").trim();
+  const pin = String(req.body.pin || "").trim();
+  const convoId = String(req.body.convoId || "").trim();
+  const found = findMerchantByLogin(email, pin);
+  if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
+  if(found.m.categoryId !== "hotels") return jsonError(res, 403, "Alleen voor hotels.");
+  const code = (found.m.hotelCode || "").toLowerCase();
+  const store = hotelChats.get(code);
+  if(!store || !store.convos.get(convoId)) return res.json({ ok:true, messages: [], guestName:"" });
+  const convo = store.convos.get(convoId);
+  let changed = false;
+  const out = convo.messages.map(m => {
+    if(m.from === "guest" && !m.read){ m.read = true; changed = true; }
+    return { id:m.id, from:m.from, text: (m.from==="guest" ? (m.textNl||m.text) : m.text), ts:m.ts };
+  });
+  if(changed) saveHotelChats();
+  res.json({ ok:true, messages: out, guestName: convo.guestName });
+});
+
+// --- HOTEL (portaal): antwoord sturen ---
+app.post("/api/hotelchat/hotel/send", (req, res) => {
+  const email = String(req.body.email || "").trim();
+  const pin = String(req.body.pin || "").trim();
+  const convoId = String(req.body.convoId || "").trim();
+  const text = String(req.body.text || "").trim().slice(0,2000);
+  if(!text) return jsonError(res, 400, "Leeg bericht");
+  const found = findMerchantByLogin(email, pin);
+  if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
+  if(found.m.categoryId !== "hotels") return jsonError(res, 403, "Alleen voor hotels.");
+  const code = (found.m.hotelCode || "").toLowerCase();
+  const store = hotelChats.get(code);
+  if(!store || !store.convos.get(convoId)) return jsonError(res, 404, "Gesprek niet gevonden");
+  const convo = store.convos.get(convoId);
+  const msg = { id:"h_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
+                from:"hotel", text, srcLang: HOTEL_LANG, ts: Date.now(), tr:{} };
+  convo.messages.push(msg);
+  convo.lastActive = Date.now();
+  saveHotelChats();
+  res.json({ ok:true });
+});
+
+// --- HOTEL (portaal): kamers + notificatie-e-mail beheren ---
+function hotelChatAuth(req){
+  const email = String(req.body.email || "").trim();
+  const pin = String(req.body.pin || "").trim();
+  const found = findMerchantByLogin(email, pin);
+  if(!found) return { err:[401, "E-mail of pincode klopt niet."] };
+  if(found.m.categoryId !== "hotels") return { err:[403, "Alleen voor hotels."] };
+  return { found };
+}
+
+// Lijst van kamers + huidig notificatie-adres
+app.post("/api/hotelchat/rooms/list", (req, res) => {
+  const a = hotelChatAuth(req);
+  if(a.err) return jsonError(res, a.err[0], a.err[1]);
+  const m = a.found.m;
+  const rooms = getHotelRooms(m);
+  res.json({ ok:true,
+    hotelCode: m.hotelCode || "",
+    city: a.found.city,
+    notifyEmail: m.notifyEmail || "",
+    loginEmail: m.email || "",
+    rooms: rooms.map(r => ({ id:r.id, name:r.name }))
+  });
+});
+
+// Kamer aanmaken
+app.post("/api/hotelchat/rooms/create", (req, res) => {
+  const a = hotelChatAuth(req);
+  if(a.err) return jsonError(res, a.err[0], a.err[1]);
+  const m = a.found.m;
+  const name = String(req.body.name || "").trim().slice(0,40);
+  if(!name) return jsonError(res, 400, "Geef de kamer een naam of nummer.");
+  const rooms = getHotelRooms(m);
+  const room = { id: newRoomId(), name, createdAt: Date.now() };
+  rooms.push(room);
+  saveMerchants();
+  res.json({ ok:true, room: { id:room.id, name:room.name } });
+});
+
+// Kamer hernoemen
+app.post("/api/hotelchat/rooms/rename", (req, res) => {
+  const a = hotelChatAuth(req);
+  if(a.err) return jsonError(res, a.err[0], a.err[1]);
+  const m = a.found.m;
+  const roomId = String(req.body.roomId || "").trim();
+  const name = String(req.body.name || "").trim().slice(0,40);
+  if(!name) return jsonError(res, 400, "Naam ontbreekt.");
+  const r = findRoomInHotel(m, roomId);
+  if(!r) return jsonError(res, 404, "Kamer niet gevonden.");
+  r.name = name;
+  saveMerchants();
+  res.json({ ok:true });
+});
+
+// Kamer verwijderen
+app.post("/api/hotelchat/rooms/delete", (req, res) => {
+  const a = hotelChatAuth(req);
+  if(a.err) return jsonError(res, a.err[0], a.err[1]);
+  const m = a.found.m;
+  const roomId = String(req.body.roomId || "").trim();
+  m.chatRooms = (m.chatRooms || []).filter(r => r.id !== roomId);
+  saveMerchants();
+  res.json({ ok:true });
+});
+
+// Notificatie-e-mailadres instellen (waar gastberichten heen gaan)
+app.post("/api/hotelchat/notify-email", (req, res) => {
+  const a = hotelChatAuth(req);
+  if(a.err) return jsonError(res, a.err[0], a.err[1]);
+  const m = a.found.m;
+  const newEmail = String(req.body.notifyEmail || "").trim().slice(0,120);
+  // leeg = terugvallen op inlog-adres
+  if(newEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(newEmail)){
+    return jsonError(res, 400, "Vul een geldig e-mailadres in.");
+  }
+  m.notifyEmail = newEmail;
+  saveMerchants();
+  res.json({ ok:true, notifyEmail: m.notifyEmail });
+});
+
+
 // Bedrijven van de eigenaar die ALTIJD online + betaald (uitgelicht) zijn,
 // zonder abonnement. Ze krijgen een vaste pincode zodat je altijd in het
 // portaal kunt. De pincode kun je in Render zetten (OWNER_MERCHANT_PIN),
