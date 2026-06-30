@@ -5480,30 +5480,43 @@ app.post("/api/hotelchat/guest/send", async (req, res) => {
   const hit = getHotelByCode(code);
   if(!hit) return jsonError(res, 404, "Hotel niet gevonden");
 
-  // kamernaam bepalen (als er een geldige kamer is meegegeven)
+  // kamernaam + kamersleutel bepalen
   let roomName = "";
+  let roomKey = "";
   if(roomId){
     const r = findRoomInHotel(hit.m, roomId);
-    if(r) roomName = r.name || "";
+    if(r){ roomName = r.name || ""; roomKey = "id:" + roomId; }
   }
-  // geen QR-kamer maar wel handmatig ingevuld kamernummer? gebruik dat als naam
-  if(!roomName && manualRoom){ roomName = manualRoom; }
+  // geen QR-kamer maar wel handmatig ingevuld kamernummer? gebruik dat
+  if(!roomKey && manualRoom){
+    roomName = manualRoom;
+    roomKey = "num:" + manualRoom.toLowerCase().replace(/\s+/g, "");
+  }
+  // helemaal geen kamer bekend -> los gesprek (mag, maar zonder kamerbundeling)
+  if(!roomKey){ roomKey = "anon:" + (convoId || newConvoId()); }
 
   if(!hotelChats.has(code)) hotelChats.set(code, { convos: new Map() });
   const store = hotelChats.get(code);
-  let convo = convoId ? store.convos.get(convoId) : null;
+
+  // Zoek een BESTAANDE conversatie voor deze kamer (1 vaste chat per kamer)
+  let convo = null;
+  for(const c of store.convos.values()){
+    if(c.roomKey === roomKey){ convo = c; break; }
+  }
   if(!convo){
     convoId = newConvoId();
     convo = { id: convoId, guestName, guestLang, city: hit.city, hotelCode: code,
-              roomId: roomId || "", roomName: roomName || "",
+              roomId: roomId || "", roomName: roomName || "", roomKey: roomKey,
               createdAt: Date.now(), lastActive: Date.now(), lastGuestAt: Date.now(),
               notifiedAt: 0, messages: [] };
     store.convos.set(convoId, convo);
+  }else{
+    convoId = convo.id;
   }
   convo.guestName = guestName || convo.guestName;
   convo.guestLang = guestLang || convo.guestLang;
-  if(roomId && !convo.roomId){ convo.roomId = roomId; convo.roomName = roomName; }
-  if(!convo.roomName && roomName){ convo.roomName = roomName; }
+  if(roomName && !convo.roomName){ convo.roomName = roomName; }
+  if(roomId && !convo.roomId){ convo.roomId = roomId; }
 
   // Vertaal naar het Nederlands voor de hotelier (bewaar zowel origineel als NL)
   let textNl = text;
@@ -5520,21 +5533,21 @@ app.post("/api/hotelchat/guest/send", async (req, res) => {
   const hotelEmail = (hit.m.notifyEmail && hit.m.notifyEmail.trim()) ? hit.m.notifyEmail.trim() : (hit.m.email || "");
   if(hotelEmail && (Date.now() - (convo.notifiedAt||0) > 15*60*1000)){
     convo.notifiedAt = Date.now();
-    const waar = convo.roomName ? ("Kamer " + convo.roomName) : "Gast";
-    const subject = "Nieuw bericht" + (convo.roomName ? (" - kamer " + convo.roomName) : "") + " - Salve";
+    const portalLink = "https://formforge.nl/portaal/?chat=" + encodeURIComponent(convo.id);
+    const subject = "Nieuw bericht" + (convo.roomName ? (" - " + (/^kamer\b/i.test(convo.roomName) ? convo.roomName : ("kamer " + convo.roomName))) : "") + " - Salve";
     const body =
       "U heeft een nieuw bericht ontvangen via uw Salve-vermelding.\n\n" +
       (convo.roomName ? ("Kamer: " + convo.roomName + "\n") : "") +
       "Van: " + convo.guestName + "\n" +
       "Bericht: " + textNl + "\n\n" +
-      "Log in op uw portaal om te antwoorden: https://formforge.nl/portaal/\n\n" +
+      "Klik hier om direct in deze chat te antwoorden: " + portalLink + "\n\n" +
       "Met vriendelijke groet,\nSalve - powered by FormForge";
     const html =
       "<p>U heeft een nieuw bericht ontvangen via uw Salve-vermelding.</p>" +
       "<p>" + (convo.roomName ? ("<strong>Kamer:</strong> " + convo.roomName + "<br>") : "") +
       "<strong>Van:</strong> " + convo.guestName + "<br>" +
       "<strong>Bericht:</strong> " + textNl + "</p>" +
-      "<p><a href='https://formforge.nl/portaal/'>Log in op uw portaal om te antwoorden</a></p>" +
+      "<p><a href='" + portalLink + "'>Klik hier om direct in deze chat te antwoorden</a></p>" +
       "<p>Met vriendelijke groet,<br>Salve - powered by FormForge</p>";
     sendResendEmail({ to: hotelEmail, subject, text: body, html }).catch(()=>{});
   }
