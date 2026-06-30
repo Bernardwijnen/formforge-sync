@@ -6042,6 +6042,12 @@ app.post("/api/merchant/login", (req, res) => {
   if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet, of uw vermelding is nog niet actief.");
   if(!found.m.active) return jsonError(res, 403, "Uw vermelding is niet actief. Sluit eerst een abonnement af.");
   const m = found.m;
+  // Zorg dat een hotel altijd een hotelcode heeft (voor affiche-QR en chat-kamers).
+  if(m.categoryId === "hotels" && !m.hotelCode){
+    m.hotelCode = (typeof makeHotelCode === "function") ? makeHotelCode()
+      : ("h" + Date.now().toString(36) + Math.random().toString(36).slice(2,6));
+    saveMerchants();
+  }
   const promoActive = !!(m.promo && m.promo.trim());
   res.json({ ok:true, merchant: {
     id: m.id, city: found.city, name: m.name, categoryId: m.categoryId,
