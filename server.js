@@ -5387,6 +5387,7 @@ loadMerchants();
 const hotelChats = new Map();
 const CHAT_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 dagen
 const HOTEL_LANG = "nl"; // taal waarin de hotelier leest/schrijft
+const CHAT_TR_VERSION = 2; // ophogen dwingt herVertaling van oude (zwakke) chat-vertalingen
 const CHATS_FILE = path.join(DATA_DIR, "salve_hotel_chats.json");
 
 function loadHotelChats(){
@@ -5520,7 +5521,7 @@ app.post("/api/hotelchat/guest/send", async (req, res) => {
 
   // Vertaal naar het Nederlands voor de hotelier (bewaar zowel origineel als NL)
   let textNl = text;
-  try{ if(guestLang !== HOTEL_LANG) textNl = await translateGuideText(text, guestLang, HOTEL_LANG); }catch(e){}
+  try{ if(guestLang !== HOTEL_LANG) textNl = await translateChat(text, guestLang, HOTEL_LANG); }catch(e){}
   const msg = { id: "g_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
                 from:"guest", text, textNl, srcLang: guestLang, ts: Date.now(), read:false };
   convo.messages.push(msg);
@@ -5574,9 +5575,14 @@ app.post("/api/hotelchat/guest/poll", async (req, res) => {
       shown = m.text; // gast ziet zijn eigen tekst in eigen taal
     }else{
       if(guestLang === HOTEL_LANG){ shown = m.text; }
-      else if(m.tr && m.tr[guestLang]){ shown = m.tr[guestLang]; }
+      else if(m.tr && m.tr[guestLang] && m.trv === CHAT_TR_VERSION){ shown = m.tr[guestLang]; }
       else {
-        try{ shown = await translateGuideText(m.text, HOTEL_LANG, guestLang); if(!m.tr) m.tr={}; m.tr[guestLang]=shown; saveHotelChats(); }
+        try{
+          shown = await translateChat(m.text, HOTEL_LANG, guestLang);
+          if(!m.tr || m.trv !== CHAT_TR_VERSION){ m.tr = {}; m.trv = CHAT_TR_VERSION; }
+          m.tr[guestLang] = shown;
+          saveHotelChats();
+        }
         catch(e){ shown = m.text; }
       }
     }
@@ -6458,6 +6464,32 @@ function setGuideTranslation(from,to,text,translated){
 // taal van de toerist. Gebruikt een prompt die past bij een reis-/stadsgids en
 // een sterker model voor natuurlijker resultaat. Valt bij fouten stil terug op
 // de gewone chatvertaling, en daarna op de originele tekst.
+// Speciale vertaler voor de gast<->hotel chat: sterk model (gpt-4o),
+// met een prompt die past bij korte chatberichten (geen brochure-toon).
+async function translateChat(text, from, to){
+  if(!text) return "";
+  if(from === to) return text;
+  const src = String(text);
+  const fromName = langName(from);
+  const toName = langName(to);
+  try{
+    const out = await callOpenAI([
+      { role:"system", content:
+        "You translate short chat messages between a hotel guest and the hotel reception. " +
+        "Translate the message from " + fromName + " into natural, everyday, polite " + toName + ". " +
+        "Translate the WHOLE message; never leave any word in the source language or a third language. " +
+        "Auto-detect the real source language if it differs from what is stated. " +
+        "Keep the tone natural and conversational, as a person would actually write in a chat. " +
+        "Preserve names, numbers, prices, times, phone numbers, URLs and emoji exactly. " +
+        "Output ONLY the translation in " + toName + " - no quotes, no notes, no explanation, no other language." },
+      { role:"user", content: src }
+    ], 0.2, OPENAI_GUIDE_MODEL);
+    const clean = String(out || "").trim();
+    if(clean) return clean;
+  }catch(e){}
+  return src;
+}
+
 async function translateGuideText(text, from, to){
   if(!text) return "";
   if(from === to) return text;
