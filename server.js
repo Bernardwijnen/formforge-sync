@@ -6426,8 +6426,8 @@ async function translateText(text, from, to){
   const fromName = langName(from);
   const toName = langName(to);
   const out = await callOpenAI([
-    { role:"system", content:"You are a translation engine for a live chat. Translate the user's message into " + toName + " only. Output ONLY the translation in " + toName + ", with no explanation, no quotes, and no other languages. Keep names, numbers, emoji and links unchanged." },
-    { role:"user", content:"Translate this message from " + fromName + " to " + toName + ":\n" + text }
+    { role:"system", content:"You are a professional translation engine for a hotel guest chat. Translate the ENTIRE message into " + toName + ". Every single word must end up in " + toName + " — never leave any word in the original language or any other language. Auto-detect the source language yourself; the sender may have mislabeled it. Do not add explanations, notes, quotes or the original text. Keep only proper names, numbers, emoji and links unchanged. Output nothing but the finished " + toName + " translation." },
+    { role:"user", content:"Translate this into " + toName + " (detect the source language automatically). Return only the full " + toName + " translation:\n\n" + text }
   ], 0.1);
   setCachedTranslation(from,to,text,out);
   return out;
