@@ -5520,7 +5520,7 @@ app.post("/api/hotelchat/guest/send", async (req, res) => {
 
   // Vertaal naar het Nederlands voor de hotelier (bewaar zowel origineel als NL)
   let textNl = text;
-  try{ if(guestLang !== HOTEL_LANG) textNl = await translateText(text, guestLang, HOTEL_LANG); }catch(e){}
+  try{ if(guestLang !== HOTEL_LANG) textNl = await translateGuideText(text, guestLang, HOTEL_LANG); }catch(e){}
   const msg = { id: "g_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
                 from:"guest", text, textNl, srcLang: guestLang, ts: Date.now(), read:false };
   convo.messages.push(msg);
@@ -5576,7 +5576,7 @@ app.post("/api/hotelchat/guest/poll", async (req, res) => {
       if(guestLang === HOTEL_LANG){ shown = m.text; }
       else if(m.tr && m.tr[guestLang]){ shown = m.tr[guestLang]; }
       else {
-        try{ shown = await translateText(m.text, HOTEL_LANG, guestLang); if(!m.tr) m.tr={}; m.tr[guestLang]=shown; saveHotelChats(); }
+        try{ shown = await translateGuideText(m.text, HOTEL_LANG, guestLang); if(!m.tr) m.tr={}; m.tr[guestLang]=shown; saveHotelChats(); }
         catch(e){ shown = m.text; }
       }
     }
