@@ -5145,6 +5145,7 @@ app.get("/api/city", async (req, res) => {
       __demo: true,
       name: "Demo Hotel",
       welcome: "Welkom in ons hotel! Wat fijn dat u er bent. Hieronder vindt u onze persoonlijke stadsgids met de leukste plekken in de buurt, in uw eigen taal. Geniet van uw verblijf!",
+      desc: "Een sfeervol en gastvrij hotel in het hart van de stad. Onze comfortabele kamers, het gezellige restaurant en de persoonlijke ontvangst maken uw verblijf compleet. Zo ziet uw eigen hotel er straks uit voor uw gasten.",
       promo: "Vandaag: welkomstdrankje gratis bij aankomst",
       logo: "",
       photos: []
@@ -5169,10 +5170,13 @@ app.get("/api/city", async (req, res) => {
     const welcomeSrc = (hotel.welcome && hotel.welcome.trim()) ? hotel.welcome.trim() : defaultWelcome;
     const welcome = await trh(welcomeSrc);
     const promo = (hotel.promo && hotel.promo.trim()) ? await trh(hotel.promo) : "";
+    const desc = (hotel.desc && hotel.desc.trim()) ? await trh(hotel.desc.trim()) : "";
     return {
       name: hotel.name,
       welcome,
+      desc,
       promo,
+      address: hotel.address || "",
       logo: hotel.logo ? (photoBase + "/fotos/" + hotel.logo) : "",
       photos: Array.isArray(hotel.photos) ? hotel.photos.map(f => photoBase + "/fotos/" + f) : []
     };
@@ -6177,7 +6181,7 @@ app.post("/api/merchant/update", (req, res) => {
   if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
   if(!found.m.active) return jsonError(res, 403, "Uw vermelding is niet actief.");
   const m = found.m;
-  if(typeof req.body.desc === "string") m.desc = req.body.desc.slice(0, 400);
+  if(typeof req.body.desc === "string") m.desc = req.body.desc.slice(0, 1000);
   if(typeof req.body.address === "string") m.address = req.body.address.slice(0, 120);
   // Dagactie (alleen voor abonnees). Leeg = geen actie.
   // Blijft staan tot de ondernemer hem zelf wijzigt of leegmaakt (geen vervaltijd).
