@@ -5107,6 +5107,7 @@ app.get("/api/city", async (req, res) => {
   const lang = String(req.query && req.query.lang ? req.query.lang : "en").trim() || "en";
   const hotelCode = String(req.query && req.query.hotel ? req.query.hotel : "").trim().toLowerCase();
   const preview = String(req.query && req.query.preview ? req.query.preview : "") === "1";
+  const hotelPreview = String(req.query && req.query.hpreview ? req.query.hpreview : "") === "1";
   const city = CITIES[code];
   if(!city) return res.json({ ok:true, found:false });
   const src = city.sourceLang || "en";
@@ -5155,7 +5156,9 @@ app.get("/api/city", async (req, res) => {
     if(!hotelCode) return null;
     if(hotelCode === "demo") return makeDemoHotel();
     const list = merchants.get(code) || [];
-    return list.find(m => (m.hotelCode || "").toLowerCase() === hotelCode && m.active) || null;
+    // Normaal alleen actieve hotels (echte gasten). In eigenaar-preview (hpreview=1)
+    // ook een nog uitgeschakeld hotel, zodat de hotelier zijn vermelding kan bekijken.
+    return list.find(m => (m.hotelCode || "").toLowerCase() === hotelCode && (m.active || hotelPreview)) || null;
   }
   // Telt +1 voor dit hotel als de gids geopend wordt. Slaat geen
   // persoonsgegevens op, alleen een totaal-aantal per hotel.
