@@ -6515,23 +6515,43 @@ function setMerchantActiveFromMeta(meta, active, stripeCustomerId, subscriptionI
 async function sendMerchantPinEmail(m){
   const isHotel = m.categoryId === "hotels";
   if(isHotel){
-    const subject = "Welkom bij Salve - uw hotel doet gratis mee (met uw pincode)";
+    const subject = "Uw hotel spreekt vanaf nu elke taal ter wereld";
     const text =
       "Beste hotelier,\n\n" +
-      "Goed nieuws: uw hotel \"" + m.name + "\" maakt vanaf nu volledig gratis gebruik van Salve, " +
-      "de meertalige stadsgids voor uw gasten.\n\n" +
+      "Stelt u zich eens voor: een gast checkt in bij uw hotel en voelt zich meteen thuis, in zijn eigen taal. " +
+      "Of hij nu uit Tokio, Parijs of Sao Paulo komt. Vanaf vandaag is dat werkelijkheid, want uw hotel is een " +
+      "van de eersten die dit aan zijn gasten biedt.\n\n" +
+      "Met Salve spreekt uw hotel elke taal ter wereld. Uw gasten scannen een QR-code op de kamer en ontdekken " +
+      "meteen in hun eigen taal de leukste plekken in de stad, met de route ernaartoe. En hebben ze een vraag " +
+      "aan de receptie? Ze schrijven in hun taal, u antwoordt gewoon in het Nederlands. De taalbarriere " +
+      "verdwijnt volledig.\n\n" +
+      "Het mooiste: de eerste 3 maanden gebruikt u Salve volledig gratis en onbeperkt. Uw abonnement staat al " +
+      "voor u klaar. U hoeft alleen maar in te loggen.\n\n" +
       "Uw persoonlijke pincode is: " + m.pin + "\n\n" +
       "Log in op https://formforge.nl/portaal/ met uw e-mailadres (" + m.email + ") en deze pincode. " +
       "Pincode kwijt? Klik op 'Pincode vergeten?' voor een nieuwe.\n\n" +
-      "In de bijlage vindt u een korte uitleg over hoe Salve werkt en wat het uw hotel oplevert.\n\n" +
-      "Met vriendelijke groet,\nBen Wijnen\nSalve - powered by FormForge";
+      "Open zeker even de bijlage bij deze e-mail. Daarin laten we u in een paar minuten precies zien hoe Salve " +
+      "werkt, wat het uw gasten biedt en hoe eenvoudig u begint.\n\n" +
+      "Wees welkom, en laat uw hotel de hele wereld verstaan.\n\n" +
+      "Met hartelijke groet,\nBen Wijnen\nSalve, powered by FormForge";
     const html =
       "<p>Beste hotelier,</p>" +
-      "<p>Goed nieuws: uw hotel <strong>" + m.name + "</strong> maakt vanaf nu volledig gratis gebruik van Salve, de meertalige stadsgids voor uw gasten.</p>" +
+      "<p>Stelt u zich eens voor: een gast checkt in bij uw hotel en voelt zich meteen thuis, in zijn eigen taal. " +
+      "Of hij nu uit Tokio, Parijs of S&atilde;o Paulo komt. Vanaf vandaag is dat werkelijkheid, want uw hotel is " +
+      "een van de eersten die dit aan zijn gasten biedt.</p>" +
+      "<p>Met Salve spreekt uw hotel <strong>elke taal ter wereld</strong>. Uw gasten scannen een QR-code op de " +
+      "kamer en ontdekken meteen in hun eigen taal de leukste plekken in de stad, met de route ernaartoe. En " +
+      "hebben ze een vraag aan de receptie? Ze schrijven in hun taal, u antwoordt gewoon in het Nederlands. " +
+      "De taalbarri&egrave;re verdwijnt volledig.</p>" +
+      "<p>Het mooiste: de eerste 3 maanden gebruikt u Salve <strong>volledig gratis en onbeperkt</strong>. " +
+      "Uw abonnement staat al voor u klaar. U hoeft alleen maar in te loggen.</p>" +
       "<p>Uw persoonlijke pincode is: <strong style='font-size:20px'>" + m.pin + "</strong></p>" +
-      "<p>Log in op <a href='https://formforge.nl/portaal/'>https://formforge.nl/portaal/</a> met uw e-mailadres (" + m.email + ") en deze pincode. Pincode kwijt? Klik op &lsquo;Pincode vergeten?&rsquo; voor een nieuwe.</p>" +
-      "<p>In de bijlage vindt u een korte uitleg over hoe Salve werkt en wat het uw hotel oplevert.</p>" +
-      "<p>Met vriendelijke groet,<br>Ben Wijnen<br>Salve - powered by FormForge</p>";
+      "<p>Log in op <a href='https://formforge.nl/portaal/'>https://formforge.nl/portaal/</a> met uw e-mailadres " +
+      "(" + m.email + ") en deze pincode. Pincode kwijt? Klik op &lsquo;Pincode vergeten?&rsquo; voor een nieuwe.</p>" +
+      "<p>Open zeker even de bijlage bij deze e-mail. Daarin laten we u in een paar minuten precies zien hoe Salve " +
+      "werkt, wat het uw gasten biedt en hoe eenvoudig u begint.</p>" +
+      "<p>Wees welkom, en laat uw hotel de hele wereld verstaan.</p>" +
+      "<p>Met hartelijke groet,<br>Ben Wijnen<br>Salve, powered by FormForge</p>";
     const attachments = loadHotelPdfAttachment();
     await sendResendEmail({ to: m.email, subject, text, html, attachments });
     return;
