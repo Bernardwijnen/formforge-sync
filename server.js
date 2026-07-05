@@ -5573,7 +5573,7 @@ app.post("/api/hotelchat/guest/poll", async (req, res) => {
   const convoId = String(req.body && req.body.convoId ? req.body.convoId : "").trim();
   const guestLang = String(req.body && req.body.lang ? req.body.lang : "en").trim().slice(0,5) || "en";
   const store = hotelChats.get(code);
-  if(!store || !store.convos.get(convoId)) return res.json({ ok:true, messages: [] });
+  if(!store || !store.convos.get(convoId)) return res.json({ ok:true, messages: [], closed: !!convoId });
   const convo = store.convos.get(convoId);
   const out = [];
   for(const m of convo.messages){
@@ -5664,7 +5664,22 @@ app.post("/api/hotelchat/hotel/send", (req, res) => {
   res.json({ ok:true });
 });
 
-// --- HOTEL (portaal): kamers + notificatie-e-mail beheren ---
+// --- HOTEL (portaal): gesprek sluiten en wissen (kamer weer leeg) ---
+app.post("/api/hotelchat/hotel/close", (req, res) => {
+  const email = String(req.body.email || "").trim();
+  const pin = String(req.body.pin || "").trim();
+  const convoId = String(req.body.convoId || "").trim();
+  const found = findMerchantByLogin(email, pin);
+  if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
+  if(found.m.categoryId !== "hotels") return jsonError(res, 403, "Alleen voor hotels.");
+  const code = (found.m.hotelCode || "").toLowerCase();
+  const store = hotelChats.get(code);
+  if(!store || !store.convos.get(convoId)) return jsonError(res, 404, "Gesprek niet gevonden");
+  store.convos.delete(convoId);
+  if(store.convos.size === 0) hotelChats.delete(code);
+  saveHotelChats();
+  res.json({ ok:true });
+});
 function hotelChatAuth(req){
   const email = String(req.body.email || "").trim();
   const pin = String(req.body.pin || "").trim();
@@ -5828,8 +5843,18 @@ app.post("/api/reception/send", (req, res) => {
   res.json({ ok:true });
 });
 
-
-// Bedrijven van de eigenaar die ALTIJD online + betaald (uitgelicht) zijn,
+// Receptie: gesprek sluiten en wissen (kamer weer leeg)
+app.post("/api/reception/close", (req, res) => {
+  const hit = chatKeyAuth(req, res); if(!hit) return;
+  const convoId = String(req.body.convoId || "").trim();
+  const code = (hit.m.hotelCode || "").toLowerCase();
+  const store = hotelChats.get(code);
+  if(!store || !store.convos.get(convoId)) return jsonError(res, 404, "Gesprek niet gevonden");
+  store.convos.delete(convoId);
+  if(store.convos.size === 0) hotelChats.delete(code);
+  saveHotelChats();
+  res.json({ ok:true });
+});
 // zonder abonnement. Ze krijgen een vaste pincode zodat je altijd in het
 // portaal kunt. De pincode kun je in Render zetten (OWNER_MERCHANT_PIN),
 // anders wordt onderstaande standaard gebruikt.
