@@ -5598,7 +5598,9 @@ app.get("/api/city", async (req, res) => {
   function countHotelScan(hotel){
     if(!hotel || hotel.__demo) return;
     hotel.scans = (hotel.scans || 0) + 1;
-    try{ saveMerchants(); }catch(e){}
+    // Alleen de teller opslaan; de vertaalcache NIET legen (anders zou elke
+    // taalkeuze de gids opnieuw laten vertalen en moet de gast lang wachten).
+    try{ saveMerchants(false); }catch(e){}
   }
   async function buildHotelBanner(hotel){
     if(!hotel) return null;
@@ -5798,13 +5800,18 @@ function loadMerchants(){
     console.log("Ondernemers geladen: " + total);
   }catch(e){}
 }
-function saveMerchants(){
+function saveMerchants(clearCache){
   try{
     const data = {};
     for(const [city, list] of merchants.entries()) data[city] = list;
     fs.writeFileSync(MERCHANTS_FILE, JSON.stringify(data, null, 2));
   }catch(e){}
-  cityCache.clear(); // gids opnieuw opbouwen zodat wijzigingen meteen zichtbaar zijn
+  // Standaard legen we de gids-cache zodat inhoudswijzigingen meteen zichtbaar zijn.
+  // Bij puur tellen (scan-teller) geven we clearCache=false mee: dan blijft de
+  // dure vertaalcache staan, zodat gasten niet steeds opnieuw hoeven te wachten.
+  if(clearCache !== false){
+    cityCache.clear();
+  }
 }
 function adminOk(req){
   const pass = (req.body && req.body.adminPass) || (req.query && req.query.adminPass) || "";
