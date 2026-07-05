@@ -6535,23 +6535,49 @@ async function sendMerchantPinEmail(m){
       "Wees welkom, en laat uw hotel de hele wereld verstaan.\n\n" +
       "Met hartelijke groet,\nBen Wijnen\nSalve, powered by FormForge";
     const html =
-      "<p>Beste hotelier,</p>" +
-      "<p>Stelt u zich eens voor: een gast checkt in bij uw hotel en voelt zich meteen thuis, in zijn eigen taal. " +
-      "Of hij nu uit Tokio, Parijs of S&atilde;o Paulo komt. Vanaf vandaag is dat werkelijkheid, want uw hotel is " +
-      "een van de eersten die dit aan zijn gasten biedt.</p>" +
-      "<p>Met Salve spreekt uw hotel <strong>elke taal ter wereld</strong>. Uw gasten scannen een QR-code op de " +
-      "kamer en ontdekken meteen in hun eigen taal de leukste plekken in de stad, met de route ernaartoe. En " +
-      "hebben ze een vraag aan de receptie? Ze schrijven in hun taal, u antwoordt gewoon in het Nederlands. " +
-      "De taalbarri&egrave;re verdwijnt volledig.</p>" +
-      "<p>Het mooiste: de eerste 3 maanden gebruikt u Salve <strong>volledig gratis en onbeperkt</strong>. " +
-      "Uw abonnement staat al voor u klaar. U hoeft alleen maar in te loggen.</p>" +
-      "<p>Uw persoonlijke pincode is: <strong style='font-size:20px'>" + m.pin + "</strong></p>" +
-      "<p>Log in op <a href='https://formforge.nl/portaal/'>https://formforge.nl/portaal/</a> met uw e-mailadres " +
-      "(" + m.email + ") en deze pincode. Pincode kwijt? Klik op &lsquo;Pincode vergeten?&rsquo; voor een nieuwe.</p>" +
-      "<p>Open zeker even de bijlage bij deze e-mail. Daarin laten we u in een paar minuten precies zien hoe Salve " +
-      "werkt, wat het uw gasten biedt en hoe eenvoudig u begint.</p>" +
-      "<p>Wees welkom, en laat uw hotel de hele wereld verstaan.</p>" +
-      "<p>Met hartelijke groet,<br>Ben Wijnen<br>Salve, powered by FormForge</p>";
+      '<div style="margin:0;padding:0;background:#eef1f6;">' +
+      '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef1f6;padding:24px 0;"><tr><td align="center">' +
+      '<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;box-shadow:0 8px 30px -12px rgba(30,45,79,.35);">' +
+      '<tr><td style="background:#1e2d4f;padding:34px 24px 26px;text-align:center;">' +
+        '<div style="font-size:11px;letter-spacing:6px;color:#c9a24b;font-weight:bold;margin-bottom:6px;">&#9650;&#9650;</div>' +
+        '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:38px;letter-spacing:8px;color:#ffffff;font-weight:bold;line-height:1;">SALVE</div>' +
+        '<div style="font-size:10px;letter-spacing:4px;color:#c9a24b;margin-top:8px;">POWERED BY FORMFORGE</div>' +
+        '<div style="height:2px;width:70px;background:#c9a24b;margin:16px auto 0;"></div>' +
+      '</td></tr>' +
+      '<tr><td style="background:#26365c;padding:16px 24px;text-align:center;">' +
+        '<div style="font-family:Georgia,serif;font-style:italic;font-size:17px;color:#ffffff;">Uw hotel spreekt vanaf nu elke taal ter wereld</div>' +
+      '</td></tr>' +
+      '<tr><td style="padding:30px 34px 10px;">' +
+        '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 16px;">Beste hotelier,</p>' +
+        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">Stelt u zich eens voor: een gast checkt in bij uw hotel en voelt zich meteen thuis, in zijn eigen taal. Of hij nu uit Tokio, Parijs of S&atilde;o Paulo komt. Vanaf vandaag is dat werkelijkheid, want uw hotel is een van de eersten die dit aan zijn gasten biedt.</p>' +
+        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">Met Salve spreekt uw hotel <strong style="color:#1e2d4f;">elke taal ter wereld</strong>. Uw gasten scannen een QR-code op de kamer en ontdekken meteen in hun eigen taal de leukste plekken in de stad, met de route ernaartoe. En hebben ze een vraag aan de receptie? Ze schrijven in hun taal, u antwoordt gewoon in het Nederlands. De taalbarri&egrave;re verdwijnt volledig.</p>' +
+        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 8px;">Het mooiste: de eerste 3 maanden gebruikt u Salve <strong style="color:#1e2d4f;">volledig gratis en onbeperkt</strong>. Uw abonnement staat al voor u klaar. U hoeft alleen maar in te loggen.</p>' +
+      '</td></tr>' +
+      '<tr><td style="padding:14px 34px 6px;">' +
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#1e2d4f;border-radius:12px;"><tr><td style="padding:20px 24px;text-align:center;">' +
+          '<div style="font-size:12px;letter-spacing:2px;color:#d8b866;font-weight:bold;text-transform:uppercase;margin-bottom:6px;">Uw persoonlijke pincode</div>' +
+          '<div style="font-size:34px;letter-spacing:8px;color:#ffffff;font-weight:bold;">' + m.pin + '</div>' +
+          '<div style="font-size:13px;color:#dfe4ee;margin-top:8px;">Log in met uw e-mailadres (' + m.email + ') en deze pincode.</div>' +
+        '</td></tr></table>' +
+      '</td></tr>' +
+      '<tr><td style="padding:18px 34px 6px;text-align:center;">' +
+        '<table role="presentation" cellpadding="0" cellspacing="0" align="center"><tr><td style="background:#c9a24b;border-radius:9px;">' +
+          '<a href="https://formforge.nl/portaal/" style="display:inline-block;padding:14px 34px;font-size:15px;font-weight:bold;color:#1e2d4f;text-decoration:none;">Inloggen op uw portaal &rarr;</a>' +
+        '</td></tr></table>' +
+        '<div style="font-size:12px;color:#5c5c5c;margin-top:10px;">Pincode kwijt? Klik op &lsquo;Pincode vergeten?&rsquo; voor een nieuwe.</div>' +
+      '</td></tr>' +
+      '<tr><td style="padding:18px 34px 4px;">' +
+        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">&#128206; Open zeker even de <strong>bijlage</strong> bij deze e-mail. Daarin laten we u in een paar minuten precies zien hoe Salve werkt, wat het uw gasten biedt en hoe eenvoudig u begint.</p>' +
+        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 20px;">Wees welkom, en laat uw hotel de hele wereld verstaan.</p>' +
+        '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 4px;">Met hartelijke groet,</p>' +
+        '<p style="font-size:15px;line-height:1.4;color:#1e2d4f;font-weight:bold;margin:0;">Ben Wijnen</p>' +
+        '<p style="font-size:13px;color:#5c5c5c;margin:2px 0 0;">Directeur FormForge</p>' +
+      '</td></tr>' +
+      '<tr><td style="background:#1e2d4f;padding:16px 24px;text-align:center;border-top:3px solid #c9a24b;">' +
+        '<div style="font-size:12px;color:#dfe4ee;">Salve &middot; powered by FormForge</div>' +
+        '<div style="font-size:12px;color:#c9a24b;margin-top:4px;"><a href="https://www.formforge.nl/salve" style="color:#c9a24b;text-decoration:none;">www.formforge.nl/salve</a> &nbsp;|&nbsp; <a href="mailto:info@formforge.nl" style="color:#c9a24b;text-decoration:none;">info@formforge.nl</a></div>' +
+      '</td></tr>' +
+      '</table></td></tr></table></div>';
     const attachments = loadHotelPdfAttachment();
     await sendResendEmail({ to: m.email, subject, text, html, attachments });
     return;
