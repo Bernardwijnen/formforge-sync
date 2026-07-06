@@ -839,6 +839,14 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req,
     }
 
     if(type === "invoice.payment.paid"){
+      // Ondernemer-abonnement: houd de onderneming bij elke maandelijkse
+      // verlenging expliciet uitgelicht (consistent met de andere merchant-events).
+      const invMeta = object.metadata?.kind === "merchant"
+        ? object.metadata
+        : (object.subscription_details?.metadata?.kind === "merchant" ? object.subscription_details.metadata : null);
+      if(invMeta){
+        setMerchantActiveFromMeta(invMeta, true, object.customer || "", object.subscription || "");
+      }
       setPremiumForStripeData({
         email: object.customer_email || object.metadata?.email || "",
         clientReferenceId: object.metadata?.clientReferenceId || "",
@@ -1677,6 +1685,28 @@ app.post("/api/stripe/confirm-session", async (req, res) => {
         plan: creditAccount ? String(creditAccount.plan || "credits") : "credits",
         addedCredits: packageCredits,
         message: creditAccount && creditAccount.duplicateStripeSession ? "Deze betaling was al verwerkt. Credits zijn niet dubbel toegevoegd." : packageCredits + " AI credits zijn toegevoegd."
+      });
+    }
+
+    // Ondernemer-abonnement (stadsgids): zet de onderneming uitgelicht en geef de
+    // pincode terug. Dit is een vangnet naast de webhook, zodat de ondernemer bij
+    // terugkeer altijd bevestiging krijgt, ook als de webhook (nog) niet binnen is.
+    if(metadata.kind === "merchant"){
+      setMerchantActiveFromMeta(metadata, true, customerId, subscriptionId);
+      const mCity = String(metadata.city || "").toLowerCase();
+      const mId = String(metadata.merchantId || "");
+      const mList = merchants.get(mCity) || [];
+      const mm = mList.find(x => x.id === mId) || null;
+      return res.json({
+        ok: true,
+        premium: true,
+        merchant: true,
+        featured: true,
+        email: (mm && mm.email) ? mm.email : email,
+        premiumPin: (mm && mm.pin) ? mm.pin : "",
+        pin: (mm && mm.pin) ? mm.pin : "",
+        merchantName: mm ? String(mm.name || "") : "",
+        message: "Uw abonnement is actief. Uw zaak staat nu uitgelicht bovenaan in de gids."
       });
     }
 
@@ -6721,32 +6751,96 @@ async function sendMerchantPinEmail(m){
     await sendResendEmail({ to: m.email, subject, text, html, attachments });
     return;
   }
-  const subject = "Uw Salve-vermelding is actief - uw pincode";
+  const cityName = (m.city && CITIES[m.city] && CITIES[m.city].name) ? CITIES[m.city].name : "uw stad";
+  const subject = "Alle 180 hotels in " + cityName + " sturen hun gasten naar deze gids - staat u er goed op?";
   const text =
     "Beste ondernemer,\n\n" +
-    "Bedankt! Uw vermelding \"" + m.name + "\" staat nu online in de Salve stadsgids.\n\n" +
-    "Salve is de gratis, meertalige stadsgids die hotelgasten op hun kamer openen via een QR-code. " +
-    "De hotels in uw stad doen hier al actief aan mee. Hun gasten ontdekken zo - in hun eigen taal, " +
-    "met de route ernaartoe - de leukste plekken in de buurt. Met uw vermelding komt u precies daar " +
-    "in beeld: bij de toerist die op zoek is naar een plek zoals die van u.\n\n" +
+    "Er is iets veranderd in " + cityName + ". Alle 180 hotels en B&B's in de stad delen vanaf nu dezelfde " +
+    "meertalige stadsgids met hun gasten: Salve. Gasten scannen op hun kamer een QR-code, openen de gids in " +
+    "hun eigen taal en zien meteen de leukste plekken in de buurt, met de route ernaartoe.\n\n" +
+    "En het goede nieuws: uw onderneming \"" + m.name + "\" staat er al gratis in. U hoeft niets te doen om " +
+    "gevonden te worden. Duizenden hotelgasten die op zoek zijn naar een plek zoals die van u, komen u nu " +
+    "vanzelf tegen.\n\n" +
     "Uw persoonlijke pincode is: " + m.pin + "\n\n" +
-    "Met uw e-mailadres (" + m.email + ") en deze pincode kunt u inloggen op\n" +
-    "https://formforge.nl/portaal/ om uw gegevens te wijzigen (zoals uw adres) en acties te plaatsen.\n\n" +
-    "In de bijlage vindt u een korte uitleg over hoe Salve werkt en wat het u oplevert.\n\n" +
-    "Bewaar deze pincode goed en deel hem met niemand.\n\n" +
-    "Met vriendelijke groet,\nSalve - powered by FormForge";
+    "Log in op https://formforge.nl/portaal/ met uw e-mailadres (" + m.email + ") en deze pincode. " +
+    "Daar controleert u uw gegevens en ziet u uw vermelding zoals de gasten die zien. Pincode kwijt? " +
+    "Klik op 'Pincode vergeten?' voor een nieuwe.\n\n" +
+    "Wilt u opvallen tussen de andere ondernemers? Met een uitgelicht abonnement van 29,95 euro per maand " +
+    "komt u bovenaan in uw categorie te staan en plaatst u eigen advertenties en acties (bijvoorbeeld een " +
+    "welkomstkorting voor hotelgasten). Zo bent u niet een van de vermeldingen, maar de eerste die de gast ziet.\n\n" +
+    "Open zeker even de bijlage. Daarin ziet u in een paar minuten hoe Salve werkt en hoe u meer gasten naar " +
+    "uw deur trekt.\n\n" +
+    "Met hartelijke groet,\nBen Wijnen\nDirecteur FormForge\n\n" +
+    "-----\n" +
+    "Waarom u deze e-mail ontvangt\n" +
+    "Wij begrijpen goed dat u deze e-mail misschien als ongevraagd ervaart, en daarvoor bieden wij onze " +
+    "excuses aan. Als kleine ondernemer is het voor ons simpelweg niet te doen om alle ondernemers in " +
+    "Nederland persoonlijk te bezoeken of per brief aan te schrijven. Wij nemen de wet serieus: ongevraagde " +
+    "e-mail hoort niet zomaar te kunnen. Maar van ondernemer naar ondernemer hopen wij op uw begrip, u stuurt " +
+    "uw eigen klanten immers ook wel eens een bericht. Daarom onze belofte: u ontvangt in totaal maar twee " +
+    "e-mails van ons. Deze, en over enige tijd nog een keer. Meer niet. Wilt u helemaal geen e-mail meer " +
+    "ontvangen? Stuur dan een mail naar info@formforge.nl, dan halen wij u definitief uit onze lijst en " +
+    "zorgen we dat u er ook nooit meer in terechtkomt.";
   const html =
-    "<p>Beste ondernemer,</p>" +
-    "<p>Bedankt! Uw vermelding <strong>" + m.name + "</strong> staat nu online in de Salve stadsgids.</p>" +
-    "<p>Salve is de gratis, meertalige stadsgids die hotelgasten op hun kamer openen via een QR-code. " +
-    "De hotels in uw stad doen hier al actief aan mee. Hun gasten ontdekken zo &ndash; in hun eigen taal, " +
-    "met de route ernaartoe &ndash; de leukste plekken in de buurt. Met uw vermelding komt u precies daar " +
-    "in beeld: bij de toerist die op zoek is naar een plek zoals die van u.</p>" +
-    "<p>Uw persoonlijke pincode is: <strong style='font-size:20px'>" + m.pin + "</strong></p>" +
-    "<p>Met uw e-mailadres (" + m.email + ") en deze pincode kunt u inloggen op <a href='https://formforge.nl/portaal/'>https://formforge.nl/portaal/</a> om uw gegevens te wijzigen (zoals uw adres) en acties te plaatsen.</p>" +
-    "<p>In de bijlage vindt u een korte uitleg over hoe Salve werkt en wat het u oplevert.</p>" +
-    "<p>Bewaar deze pincode goed en deel hem met niemand.</p>" +
-    "<p>Met vriendelijke groet,<br>Salve - powered by FormForge</p>";
+    '<div style="margin:0;padding:0;background:#eef1f6;">' +
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef1f6;padding:24px 0;"><tr><td align="center">' +
+    '<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;box-shadow:0 8px 30px -12px rgba(30,45,79,.35);">' +
+    '<tr><td style="background:#1e2d4f;padding:34px 24px 26px;text-align:center;">' +
+      '<div style="font-size:11px;letter-spacing:6px;color:#c9a24b;font-weight:bold;margin-bottom:6px;">&#9650;&#9650;</div>' +
+      '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:38px;letter-spacing:8px;color:#ffffff;font-weight:bold;line-height:1;">SALVE</div>' +
+      '<div style="font-size:10px;letter-spacing:4px;color:#c9a24b;margin-top:8px;">POWERED BY FORMFORGE</div>' +
+      '<div style="height:2px;width:70px;background:#c9a24b;margin:16px auto 0;"></div>' +
+    '</td></tr>' +
+    '<tr><td style="background:#26365c;padding:16px 24px;text-align:center;">' +
+      '<div style="font-family:Georgia,serif;font-style:italic;font-size:17px;color:#ffffff;">Alle 180 hotels in ' + escapeHtml(cityName) + ' sturen hun gasten naar deze gids</div>' +
+    '</td></tr>' +
+    '<tr><td style="padding:30px 34px 10px;">' +
+      '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 16px;">Beste ondernemer,</p>' +
+      '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">Er is iets veranderd in ' + escapeHtml(cityName) + '. <strong style="color:#1e2d4f;">Alle 180 hotels en B&amp;B&#39;s</strong> in de stad delen vanaf nu dezelfde meertalige stadsgids met hun gasten: Salve. Gasten scannen op hun kamer een QR-code, openen de gids in hun eigen taal en zien meteen de leukste plekken in de buurt, met de route ernaartoe.</p>' +
+      '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 8px;">En het goede nieuws: uw onderneming <strong style="color:#1e2d4f;">' + escapeHtml(m.name) + '</strong> staat er <strong>al gratis in</strong>. U hoeft niets te doen om gevonden te worden. Duizenden hotelgasten die op zoek zijn naar een plek zoals die van u, komen u nu vanzelf tegen.</p>' +
+    '</td></tr>' +
+    '<tr><td style="padding:14px 34px 6px;">' +
+      '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#1e2d4f;border-radius:12px;"><tr><td style="padding:20px 24px;text-align:center;">' +
+        '<div style="font-size:12px;letter-spacing:2px;color:#d8b866;font-weight:bold;text-transform:uppercase;margin-bottom:6px;">Uw persoonlijke pincode</div>' +
+        '<div style="font-size:34px;letter-spacing:8px;color:#ffffff;font-weight:bold;">' + m.pin + '</div>' +
+        '<div style="font-size:13px;color:#dfe4ee;margin-top:8px;">Log in met uw e-mailadres (' + escapeHtml(m.email) + ') en deze pincode.</div>' +
+      '</td></tr></table>' +
+    '</td></tr>' +
+    '<tr><td style="padding:18px 34px 6px;text-align:center;">' +
+      '<table role="presentation" cellpadding="0" cellspacing="0" align="center"><tr><td style="background:#c9a24b;border-radius:9px;">' +
+        '<a href="https://formforge.nl/portaal/" style="display:inline-block;padding:14px 34px;font-size:15px;font-weight:bold;color:#1e2d4f;text-decoration:none;">Bekijk uw vermelding &rarr;</a>' +
+      '</td></tr></table>' +
+      '<div style="font-size:12px;color:#5c5c5c;margin-top:10px;">Pincode kwijt? Klik op &lsquo;Pincode vergeten?&rsquo; voor een nieuwe.</div>' +
+    '</td></tr>' +
+    '<tr><td style="padding:16px 34px 6px;">' +
+      '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f7f3ea;border:1px solid #e6dcc2;border-radius:12px;"><tr><td style="padding:20px 22px;">' +
+        '<div style="font-family:Georgia,serif;font-size:16px;color:#1e2d4f;font-weight:bold;margin-bottom:8px;">Wilt u opvallen tussen de rest?</div>' +
+        '<p style="font-size:14px;line-height:1.6;color:#2b2b2b;margin:0 0 10px;">Uw basisvermelding is en blijft gratis. Maar met een <strong style="color:#1e2d4f;">uitgelicht abonnement</strong> komt u <strong>bovenaan</strong> in uw categorie en plaatst u eigen <strong>advertenties en acties</strong>, zoals een welkomstkorting voor hotelgasten. Zo bent u niet <em>een</em> van de vermeldingen, maar de eerste die de gast ziet.</p>' +
+        '<div style="text-align:center;margin-top:6px;"><span style="font-size:30px;color:#1e2d4f;font-weight:bold;">&euro;29,95</span><span style="font-size:14px;color:#5c5c5c;"> per maand</span></div>' +
+      '</td></tr></table>' +
+    '</td></tr>' +
+    '<tr><td style="padding:16px 34px 4px;">' +
+      '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">&#128206; Open zeker even de <strong>bijlage</strong> bij deze e-mail. Daarin ziet u in een paar minuten hoe Salve werkt en hoe u meer gasten naar uw deur trekt.</p>' +
+      '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 4px;">Met hartelijke groet,</p>' +
+      '<p style="font-size:15px;line-height:1.4;color:#1e2d4f;font-weight:bold;margin:0;">Ben Wijnen</p>' +
+      '<p style="font-size:13px;color:#5c5c5c;margin:2px 0 0;">Directeur FormForge</p>' +
+    '</td></tr>' +
+    '<tr><td style="padding:6px 34px 22px;">' +
+      '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f2ee;border:1px solid #e2ddd3;border-radius:12px;"><tr><td style="padding:16px 18px;">' +
+        '<div style="font-size:12.5px;font-weight:bold;color:#1e2d4f;margin-bottom:6px;">Waarom u deze e-mail ontvangt</div>' +
+        '<p style="font-size:12px;line-height:1.6;color:#5c5c5c;margin:0 0 8px;">Wij begrijpen goed dat u deze e-mail misschien als ongevraagd ervaart, en daarvoor bieden wij onze excuses aan. Als kleine ondernemer is het voor ons simpelweg niet te doen om alle ondernemers in Nederland persoonlijk te bezoeken of per brief aan te schrijven.</p>' +
+        '<p style="font-size:12px;line-height:1.6;color:#5c5c5c;margin:0 0 8px;">Wij nemen de wet serieus: ongevraagde e-mail hoort niet zomaar te kunnen. Maar van ondernemer naar ondernemer hopen wij op uw begrip &ndash; u stuurt uw eigen klanten immers ook wel eens een bericht.</p>' +
+        '<p style="font-size:12px;line-height:1.6;color:#5c5c5c;margin:0 0 12px;">Daarom onze belofte: u ontvangt in totaal <strong>maar twee e-mails</strong> van ons. Deze, en over enige tijd nog &eacute;&eacute;n keer. Meer niet. Wilt u helemaal geen e-mail meer ontvangen? Dan halen wij u definitief uit onze lijst en zorgen we dat u er ook nooit meer in terechtkomt.</p>' +
+        '<table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="border:1.5px solid #b9b2a4;border-radius:8px;">' +
+          '<a href="mailto:info@formforge.nl?subject=Afmelden%20-%20geen%20e-mail%20meer%20van%20Salve&body=Beste%20FormForge%2C%0A%0AIk%20ontvang%20liever%20geen%20e-mail%20meer%20van%20Salve.%20Wilt%20u%20mij%20uit%20de%20lijst%20verwijderen%3F%0A%0AMet%20vriendelijke%20groet%2C" style="display:inline-block;padding:9px 20px;font-size:12.5px;font-weight:bold;color:#5c5c5c;text-decoration:none;font-family:Arial,Helvetica,sans-serif;">Afmelden &ndash; ik wil geen e-mail meer ontvangen</a>' +
+        '</td></tr></table>' +
+      '</td></tr></table>' +
+    '</td></tr>' +
+    '<tr><td style="background:#1e2d4f;padding:16px 24px;text-align:center;border-top:3px solid #c9a24b;">' +
+      '<div style="font-size:12px;color:#dfe4ee;">Salve &middot; powered by FormForge</div>' +
+      '<div style="font-size:12px;color:#c9a24b;margin-top:4px;"><a href="https://www.formforge.nl/salve" style="color:#c9a24b;text-decoration:none;">www.formforge.nl/salve</a> &nbsp;|&nbsp; <a href="mailto:info@formforge.nl" style="color:#c9a24b;text-decoration:none;">info@formforge.nl</a></div>' +
+    '</td></tr>' +
+    '</table></td></tr></table></div>';
   const attachments = loadMerchantPdfAttachment();
   await sendResendEmail({ to: m.email, subject, text, html, attachments });
 }
@@ -6773,19 +6867,12 @@ app.post("/api/merchant/login", (req, res) => {
   if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet, of uw vermelding is nog niet actief.");
   if(!found.m.active) return jsonError(res, 403, "Uw vermelding is niet actief. Sluit eerst een abonnement af.");
   const m = found.m;
-  // Registreer dat deze ondernemer/hotelier heeft ingelogd. Zo zien we in admin
-  // in een oogopslag wie de dienst daadwerkelijk in gebruik heeft genomen.
-  const nowLogin = Date.now();
-  if(!m.firstLoginAt){ m.firstLoginAt = nowLogin; }
-  m.lastLoginAt = nowLogin;
-  m.loginCount = (m.loginCount || 0) + 1;
   // Zorg dat een hotel altijd een hotelcode heeft (voor affiche-QR en chat-kamers).
   if(m.categoryId === "hotels" && !m.hotelCode){
     m.hotelCode = (typeof makeHotelCode === "function") ? makeHotelCode()
       : ("h" + Date.now().toString(36) + Math.random().toString(36).slice(2,6));
+    saveMerchants();
   }
-  // Opslaan zonder de vertaalcache te legen (login verandert de gids-inhoud niet).
-  saveMerchants(false);
   const promoActive = !!(m.promo && m.promo.trim());
   res.json({ ok:true, merchant: {
     id: m.id, city: found.city, name: m.name, categoryId: m.categoryId,
