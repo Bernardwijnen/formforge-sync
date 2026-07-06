@@ -6689,7 +6689,8 @@ async function sendMerchantPinEmail(m){
       "Log in op https://formforge.nl/portaal/ met uw e-mailadres (" + m.email + ") en deze pincode. " +
       "Pincode kwijt? Klik op 'Pincode vergeten?' voor een nieuwe.\n\n" +
       "Open zeker even de bijlage bij deze e-mail. Daarin laten we u in een paar minuten precies zien hoe Salve " +
-      "werkt, wat het uw gasten biedt en hoe eenvoudig u begint.\n\n" +
+      "werkt, wat het uw gasten biedt en hoe eenvoudig u begint. Liever online kijken? Bekijk dan hier hoe " +
+      "Salve werkt: https://formforge.nl/testhotel/\n\n" +
       "Wees welkom, en laat uw hotel de hele wereld verstaan.\n\n" +
       "Met hartelijke groet,\nBen Wijnen\nSalve, powered by FormForge\n\n" +
       "-----\n" +
@@ -6735,7 +6736,7 @@ async function sendMerchantPinEmail(m){
         '<div style="font-size:12px;color:#5c5c5c;margin-top:10px;">Pincode kwijt? Klik op &lsquo;Pincode vergeten?&rsquo; voor een nieuwe.</div>' +
       '</td></tr>' +
       '<tr><td style="padding:18px 34px 4px;">' +
-        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">&#128206; Open zeker even de <strong>bijlage</strong> bij deze e-mail. Daarin laten we u in een paar minuten precies zien hoe Salve werkt, wat het uw gasten biedt en hoe eenvoudig u begint.</p>' +
+        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">&#128206; Open zeker even de <strong>bijlage</strong> bij deze e-mail. Daarin laten we u in een paar minuten precies zien hoe Salve werkt, wat het uw gasten biedt en hoe eenvoudig u begint. Liever online kijken? Bekijk dan <a href="https://formforge.nl/testhotel/" style="color:#c9a24b;font-weight:bold;text-decoration:none;">hier hoe Salve werkt</a>.</p>' +
         '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 20px;">Wees welkom, en laat uw hotel de hele wereld verstaan.</p>' +
         '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 4px;">Met hartelijke groet,</p>' +
         '<p style="font-size:15px;line-height:1.4;color:#1e2d4f;font-weight:bold;margin:0;">Ben Wijnen</p>' +
@@ -6782,7 +6783,7 @@ async function sendMerchantPinEmail(m){
     "komt u bovenaan in uw categorie te staan en plaatst u eigen advertenties en acties (bijvoorbeeld een " +
     "welkomstkorting voor hotelgasten). Zo bent u niet een van de vermeldingen, maar de eerste die de gast ziet.\n\n" +
     "Open zeker even de bijlage. Daarin ziet u in een paar minuten hoe Salve werkt en hoe u meer gasten naar " +
-    "uw deur trekt.\n\n" +
+    "uw deur trekt. Liever online kijken? Bekijk dan hier hoe Salve werkt: https://formforge.nl/testhotel/\n\n" +
     "Met hartelijke groet,\nBen Wijnen\nDirecteur FormForge\n\n" +
     "-----\n" +
     "Waarom u deze e-mail ontvangt\n" +
@@ -6834,7 +6835,7 @@ async function sendMerchantPinEmail(m){
       '</td></tr></table>' +
     '</td></tr>' +
     '<tr><td style="padding:16px 34px 4px;">' +
-      '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">&#128206; Open zeker even de <strong>bijlage</strong> bij deze e-mail. Daarin ziet u in een paar minuten hoe Salve werkt en hoe u meer gasten naar uw deur trekt.</p>' +
+      '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">&#128206; Open zeker even de <strong>bijlage</strong> bij deze e-mail. Daarin ziet u in een paar minuten hoe Salve werkt en hoe u meer gasten naar uw deur trekt. Liever online kijken? Bekijk dan <a href="https://formforge.nl/testhotel/" style="color:#c9a24b;font-weight:bold;text-decoration:none;">hier hoe Salve werkt</a>.</p>' +
       '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 4px;">Met hartelijke groet,</p>' +
       '<p style="font-size:15px;line-height:1.4;color:#1e2d4f;font-weight:bold;margin:0;">Ben Wijnen</p>' +
       '<p style="font-size:13px;color:#5c5c5c;margin:2px 0 0;">Directeur FormForge</p>' +
