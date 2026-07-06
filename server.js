@@ -6763,19 +6763,21 @@ async function sendMerchantPinEmail(m){
     return;
   }
   const cityName = (m.city && CITIES[m.city] && CITIES[m.city].name) ? CITIES[m.city].name : "uw stad";
-  const subject = "Alle 180 hotels in " + cityName + " sturen hun gasten naar deze gids - staat u er goed op?";
+  const subject = "U staat gratis in de gids die alle 180 hotels in " + cityName + " met hun gasten delen";
   const text =
     "Beste ondernemer,\n\n" +
     "Er is iets veranderd in " + cityName + ". Alle 180 hotels en B&B's in de stad delen vanaf nu dezelfde " +
     "meertalige stadsgids met hun gasten: Salve. Gasten scannen op hun kamer een QR-code, openen de gids in " +
     "hun eigen taal en zien meteen de leukste plekken in de buurt, met de route ernaartoe.\n\n" +
-    "En het goede nieuws: uw onderneming \"" + m.name + "\" staat er al gratis in. U hoeft niets te doen om " +
+    "En het goede nieuws: uw onderneming \"" + m.name + "\" staat er volledig gratis in. U hoeft niets te doen om " +
     "gevonden te worden. Duizenden hotelgasten die op zoek zijn naar een plek zoals die van u, komen u nu " +
     "vanzelf tegen.\n\n" +
+    "Bij uw vermelding hoort een eigen portaal. Daar controleert u uw gegevens, vult u uw adres, openingstijden " +
+    "en foto's aan en ziet u uw vermelding precies zoals de gasten die zien. Dit portaal is en blijft gratis - " +
+    "er zijn geen kosten en geen verplichtingen. U logt in met de pincode hieronder.\n\n" +
     "Uw persoonlijke pincode is: " + m.pin + "\n\n" +
     "Log in op https://formforge.nl/portaal/ met uw e-mailadres (" + m.email + ") en deze pincode. " +
-    "Daar controleert u uw gegevens en ziet u uw vermelding zoals de gasten die zien. Pincode kwijt? " +
-    "Klik op 'Pincode vergeten?' voor een nieuwe.\n\n" +
+    "Pincode kwijt? Klik op 'Pincode vergeten?' voor een nieuwe.\n\n" +
     "Wilt u opvallen tussen de andere ondernemers? Met een uitgelicht abonnement van 29,95 euro per maand " +
     "komt u bovenaan in uw categorie te staan en plaatst u eigen advertenties en acties (bijvoorbeeld een " +
     "welkomstkorting voor hotelgasten). Zo bent u niet een van de vermeldingen, maar de eerste die de gast ziet.\n\n" +
@@ -6808,7 +6810,8 @@ async function sendMerchantPinEmail(m){
     '<tr><td style="padding:30px 34px 10px;">' +
       '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 16px;">Beste ondernemer,</p>' +
       '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">Er is iets veranderd in ' + escapeHtml(cityName) + '. <strong style="color:#1e2d4f;">Alle 180 hotels en B&amp;B&#39;s</strong> in de stad delen vanaf nu dezelfde meertalige stadsgids met hun gasten: Salve. Gasten scannen op hun kamer een QR-code, openen de gids in hun eigen taal en zien meteen de leukste plekken in de buurt, met de route ernaartoe.</p>' +
-      '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 8px;">En het goede nieuws: uw onderneming <strong style="color:#1e2d4f;">' + escapeHtml(m.name) + '</strong> staat er <strong>al gratis in</strong>. U hoeft niets te doen om gevonden te worden. Duizenden hotelgasten die op zoek zijn naar een plek zoals die van u, komen u nu vanzelf tegen.</p>' +
+      '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">En het goede nieuws: uw onderneming <strong style="color:#1e2d4f;">' + escapeHtml(m.name) + '</strong> staat er <strong>volledig gratis</strong> in. U hoeft niets te doen om gevonden te worden. Duizenden hotelgasten die op zoek zijn naar een plek zoals die van u, komen u nu vanzelf tegen.</p>' +
+      '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 8px;">Bij uw vermelding hoort een <strong style="color:#1e2d4f;">eigen portaal</strong>. Daar controleert u uw gegevens, vult u uw adres, openingstijden en foto&#39;s aan en ziet u uw vermelding precies zoals de gasten die zien. Dit portaal is en blijft <strong>gratis</strong> &ndash; er zijn geen kosten en geen verplichtingen. U logt in met de pincode hieronder.</p>' +
     '</td></tr>' +
     '<tr><td style="padding:14px 34px 6px;">' +
       '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#1e2d4f;border-radius:12px;"><tr><td style="padding:20px 24px;text-align:center;">' +
@@ -6819,7 +6822,7 @@ async function sendMerchantPinEmail(m){
     '</td></tr>' +
     '<tr><td style="padding:18px 34px 6px;text-align:center;">' +
       '<table role="presentation" cellpadding="0" cellspacing="0" align="center"><tr><td style="background:#c9a24b;border-radius:9px;">' +
-        '<a href="https://formforge.nl/portaal/" style="display:inline-block;padding:14px 34px;font-size:15px;font-weight:bold;color:#1e2d4f;text-decoration:none;">Bekijk uw vermelding &rarr;</a>' +
+        '<a href="https://formforge.nl/portaal/" style="display:inline-block;padding:14px 34px;font-size:15px;font-weight:bold;color:#1e2d4f;text-decoration:none;">Log in op uw portaal &rarr;</a>' +
       '</td></tr></table>' +
       '<div style="font-size:12px;color:#5c5c5c;margin-top:10px;">Pincode kwijt? Klik op &lsquo;Pincode vergeten?&rsquo; voor een nieuwe.</div>' +
     '</td></tr>' +
