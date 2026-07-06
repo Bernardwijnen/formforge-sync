@@ -5524,6 +5524,11 @@ const CITIES = {
 // Vertaalgeheugen voor de stadsgids: per stad+taal bewaren we de volledig
 // vertaalde gids, zodat alleen de EERSTE bezoeker in een taal hoeft te wachten.
 const cityCache = new Map(); // sleutel "code:lang" -> { name, categories }
+// Voorkomt "thundering herd": als meerdere gasten tegelijk dezelfde (nog niet
+// vertaalde) stad+taal openen, laten we maar EEN vertaling lopen. De andere
+// verzoeken wachten op datzelfde resultaat i.p.v. allemaal OpenAI aan te roepen.
+// Dat scheelt kosten en voorkomt dat we de OpenAI rate-limit raken bij veel hotels.
+const cityCacheBuilding = new Map(); // sleutel "code:lang" -> Promise<{name, categories}>
 
 // ==== Vertaalcache op de persistente disk ====
 // De gids-vertalingen zijn duur om te maken (AI). We bewaren ze daarom op de disk,
@@ -5717,12 +5722,43 @@ app.get("/api/city", async (req, res) => {
     return res.json({ ok:true, found:true, name: hit.name, categories: cats2, hotelBanner });
   }
 
+  // Loopt er al een vertaling voor deze stad+taal? Wacht dan op DAT resultaat,
+  // in plaats van zelf opnieuw (duur) te vertalen. Zo doet maar 1 verzoek het werk.
+  if(cityCacheBuilding.has(cacheKey)){
+    try{
+      const built = await cityCacheBuilding.get(cacheKey);
+      const hotel = findHotelByCode();
+      if(!hotel){
+        if(preview){
+          const catsPrev = (built.categories || []).filter(c => c.id !== "hotels");
+          return res.json({ ok:true, found:true, preview:true, name: built.name, categories: catsPrev });
+        }
+        return res.json({ ok:true, found:true, needHotel:true, name: built.name });
+      }
+      countHotelScan(hotel);
+      const hotelBanner = await buildHotelBanner(hotel);
+      const cats2 = await applyHotelView(built.categories, hotel);
+      return res.json({ ok:true, found:true, name: built.name, categories: cats2, hotelBanner });
+    }catch(e){ /* val door naar normale opbouw als de gedeelde build faalde */ }
+  }
+
+  // We starten nu zelf de vertaling. Andere gelijktijdige verzoeken voor dezelfde
+  // stad+taal wachten op deze Promise (zie hierboven). We lossen hem op zodra de
+  // gids klaar is, en verwijderen de lock altijd (ook bij een fout).
+  let _resolveBuild, _rejectBuild;
+  const _buildPromise = new Promise((resolve, reject) => { _resolveBuild = resolve; _rejectBuild = reject; });
+  // Voorkom "unhandled rejection" als er toevallig geen ander verzoek meewacht.
+  _buildPromise.catch(() => {});
+  cityCacheBuilding.set(cacheKey, _buildPromise);
+
   // helper: vertaal alleen als nodig (andere taal), met stille fallback naar origineel
   async function tr(text){
     if(!text || lang === src) return text;
     try{ return await translateGuideText(text, src, lang); }catch(e){ return text; }
   }
 
+  // Vang onverwachte fouten af zodat de lock nooit blijft hangen.
+  try{
   const cats = [];
   for(const c of (city.categories || [])){
     // vertaal titel en alle beschrijvingen van deze categorie tegelijk (parallel)
@@ -5796,6 +5832,8 @@ app.get("/api/city", async (req, res) => {
 
   cityCache.set(cacheKey, { name: city.name || "", categories: cats });
   saveCityCache(); // nieuwe vertaling bewaren op disk (overleeft herstart/deploy)
+  // De gids is klaar: laat wachtende gelijktijdige verzoeken dit resultaat gebruiken.
+  _resolveBuild({ name: city.name || "", categories: cats });
   const hotel = findHotelByCode();
   if(!hotel){
     if(preview){
@@ -5808,6 +5846,17 @@ app.get("/api/city", async (req, res) => {
   const hotelBanner = await buildHotelBanner(hotel);
   const catsView = await applyHotelView(cats, hotel);
   res.json({ ok:true, found:true, name: city.name || "", categories: catsView, hotelBanner });
+  }catch(buildErr){
+    // Vertaling mislukte: laat wachtende verzoeken de fout zien (zij vallen dan
+    // terug op hun eigen opbouw) en geef zelf een nette foutmelding.
+    try{ _rejectBuild(buildErr); }catch(e){}
+    if(!res.headersSent){
+      return jsonError(res, 500, "De gids kon niet worden opgebouwd. Probeer het opnieuw.");
+    }
+  }finally{
+    // Lock altijd opruimen, of het nu lukte of niet.
+    cityCacheBuilding.delete(cacheKey);
+  }
 });
 
 
