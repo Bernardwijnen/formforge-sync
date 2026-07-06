@@ -6316,6 +6316,19 @@ app.post("/api/reception/send", (req, res) => {
   res.json({ ok:true });
 });
 
+// Receptie: gesprek sluiten en wissen (kamer weer leeg voor de volgende gast)
+app.post("/api/reception/close", (req, res) => {
+  const hit = chatKeyAuth(req, res); if(!hit) return;
+  const convoId = String(req.body.convoId || "").trim();
+  const code = (hit.m.hotelCode || "").toLowerCase();
+  const store = hotelChats.get(code);
+  // Als het gesprek al weg is, is het doel bereikt: meld gewoon succes.
+  if(!store || !store.convos.get(convoId)) return res.json({ ok:true });
+  store.convos.delete(convoId);
+  saveHotelChats();
+  res.json({ ok:true });
+});
+
 
 // Bedrijven van de eigenaar die ALTIJD online + betaald (uitgelicht) zijn,
 // zonder abonnement. Ze krijgen een vaste pincode zodat je altijd in het
