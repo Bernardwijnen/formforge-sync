@@ -77,6 +77,17 @@ const CREDIT_PACKAGES = {
   "1500": { credits: 1500, priceId: STRIPE_CREDITS_1500_PRICE_ID, label: "FormForge ECHO 1500 AI credits" }
 };
 
+// HTML-escape voor gebruik in e-mailtemplates (ondernemer/hotel).
+// Voorkomt dat een naam met &, <, > of quotes de HTML breekt.
+function escapeHtml(value){
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function getCreditPackageByPriceId(priceId){
   const safePriceId = String(priceId || "").trim();
   return Object.values(CREDIT_PACKAGES).find((pkg) => pkg.priceId === safePriceId) || null;
