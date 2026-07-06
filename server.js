@@ -6000,7 +6000,9 @@ app.post("/api/hotelchat/guest/send", async (req, res) => {
       "<p>" + (convo.roomName ? ("<strong>Kamer:</strong> " + convo.roomName + "<br>") : "") +
       "<strong>Van:</strong> " + convo.guestName + "<br>" +
       "<strong>Bericht:</strong> " + textNl + "</p>" +
-      "<p><a href='" + portalLink + "'>Klik hier om direct in deze chat te antwoorden</a></p>" +
+      "<table role='presentation' cellpadding='0' cellspacing='0' style='margin:18px 0;'><tr><td style='background:#c9a24b;border-radius:9px;'>" +
+      "<a href='" + portalLink + "' style='display:inline-block;padding:15px 30px;font-size:16px;font-weight:bold;color:#1e2d4f;text-decoration:none;font-family:Arial,Helvetica,sans-serif;'>Open de chat en antwoord &rarr;</a>" +
+      "</td></tr></table>" +
       "<p>Met vriendelijke groet,<br>Salve - powered by FormForge</p>";
     sendResendEmail({ to: hotelEmail, subject, text: body, html }).catch(()=>{});
   }
@@ -6540,7 +6542,17 @@ async function sendMerchantPinEmail(m){
       "Open zeker even de bijlage bij deze e-mail. Daarin laten we u in een paar minuten precies zien hoe Salve " +
       "werkt, wat het uw gasten biedt en hoe eenvoudig u begint.\n\n" +
       "Wees welkom, en laat uw hotel de hele wereld verstaan.\n\n" +
-      "Met hartelijke groet,\nBen Wijnen\nSalve, powered by FormForge";
+      "Met hartelijke groet,\nBen Wijnen\nSalve, powered by FormForge\n\n" +
+      "-----\n" +
+      "Waarom u deze e-mail ontvangt\n" +
+      "Wij begrijpen goed dat u deze e-mail misschien als ongevraagd ervaart, en daarvoor bieden wij onze " +
+      "excuses aan. Als kleine ondernemer is het voor ons simpelweg niet te doen om duizenden hotels in " +
+      "Nederland persoonlijk te bezoeken of per brief aan te schrijven. Wij nemen de wet serieus: ongevraagde " +
+      "e-mail hoort niet zomaar te kunnen. Maar van ondernemer naar ondernemer hopen wij op uw begrip, u stuurt " +
+      "uw eigen gasten immers ook wel eens een bericht. Daarom onze belofte: u ontvangt in totaal maar twee " +
+      "e-mails van ons. Deze, en over drie maanden nog een keer om te horen hoe het is bevallen. Meer niet. " +
+      "Wilt u helemaal geen e-mail meer ontvangen? Stuur dan een mail naar info@formforge.nl, dan halen wij u " +
+      "definitief uit onze lijst en zorgen we dat u er ook nooit meer in terechtkomt.";
     const html =
       '<div style="margin:0;padding:0;background:#eef1f6;">' +
       '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef1f6;padding:24px 0;"><tr><td align="center">' +
@@ -6579,6 +6591,18 @@ async function sendMerchantPinEmail(m){
         '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 4px;">Met hartelijke groet,</p>' +
         '<p style="font-size:15px;line-height:1.4;color:#1e2d4f;font-weight:bold;margin:0;">Ben Wijnen</p>' +
         '<p style="font-size:13px;color:#5c5c5c;margin:2px 0 0;">Directeur FormForge</p>' +
+      '</td></tr>' +
+      // AFMELD-SECTIE
+      '<tr><td style="padding:6px 34px 22px;">' +
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f2ee;border:1px solid #e2ddd3;border-radius:12px;"><tr><td style="padding:16px 18px;">' +
+          '<div style="font-size:12.5px;font-weight:bold;color:#1e2d4f;margin-bottom:6px;">Waarom u deze e-mail ontvangt</div>' +
+          '<p style="font-size:12px;line-height:1.6;color:#5c5c5c;margin:0 0 8px;">Wij begrijpen goed dat u deze e-mail misschien als ongevraagd ervaart, en daarvoor bieden wij onze excuses aan. Als kleine ondernemer is het voor ons simpelweg niet te doen om duizenden hotels in Nederland persoonlijk te bezoeken of per brief aan te schrijven.</p>' +
+          '<p style="font-size:12px;line-height:1.6;color:#5c5c5c;margin:0 0 8px;">Wij nemen de wet serieus: ongevraagde e-mail hoort niet zomaar te kunnen. Maar van ondernemer naar ondernemer hopen wij op uw begrip &ndash; u stuurt uw eigen gasten immers ook wel eens een bericht.</p>' +
+          '<p style="font-size:12px;line-height:1.6;color:#5c5c5c;margin:0 0 12px;">Daarom onze belofte: u ontvangt in totaal <strong>maar twee e-mails</strong> van ons. Deze, en over drie maanden nog &eacute;&eacute;n keer om te horen hoe het is bevallen. Meer niet. Wilt u helemaal geen e-mail meer ontvangen? Dan halen wij u definitief uit onze lijst en zorgen we dat u er ook nooit meer in terechtkomt.</p>' +
+          '<table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="border:1.5px solid #b9b2a4;border-radius:8px;">' +
+            '<a href="mailto:info@formforge.nl?subject=Afmelden%20-%20geen%20e-mail%20meer%20van%20Salve&body=Beste%20FormForge%2C%0A%0AIk%20ontvang%20liever%20geen%20e-mail%20meer%20van%20Salve.%20Wilt%20u%20mij%20uit%20de%20lijst%20verwijderen%3F%0A%0AMet%20vriendelijke%20groet%2C" style="display:inline-block;padding:9px 20px;font-size:12.5px;font-weight:bold;color:#5c5c5c;text-decoration:none;font-family:Arial,Helvetica,sans-serif;">Afmelden &ndash; ik wil geen e-mail meer ontvangen</a>' +
+          '</td></tr></table>' +
+        '</td></tr></table>' +
       '</td></tr>' +
       '<tr><td style="background:#1e2d4f;padding:16px 24px;text-align:center;border-top:3px solid #c9a24b;">' +
         '<div style="font-size:12px;color:#dfe4ee;">Salve &middot; powered by FormForge</div>' +
