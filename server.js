@@ -5525,6 +5525,34 @@ const CITIES = {
 // vertaalde gids, zodat alleen de EERSTE bezoeker in een taal hoeft te wachten.
 const cityCache = new Map(); // sleutel "code:lang" -> { name, categories }
 
+// ==== Vertaalcache op de persistente disk ====
+// De gids-vertalingen zijn duur om te maken (AI). We bewaren ze daarom op de disk,
+// zodat ze een herstart of nieuwe deploy overleven en niet opnieuw vertaald hoeven te
+// worden. Bij inhoudswijzigingen (nieuwe/aangepaste ondernemer) wordt de cache geleegd
+// via clearCityCache(), zodat gasten nooit een verouderde vertaling zien.
+const CITYCACHE_FILE = path.join(DATA_DIR, "salve_city_cache.json");
+function loadCityCache(){
+  try{
+    if(!fs.existsSync(CITYCACHE_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(CITYCACHE_FILE, "utf8") || "{}");
+    Object.keys(data || {}).forEach(key => cityCache.set(key, data[key]));
+    console.log("Vertaalcache geladen: " + cityCache.size + " items");
+  }catch(e){ console.log("Vertaalcache laden mislukt: " + (e.message||e)); }
+}
+function saveCityCache(){
+  try{
+    const data = {};
+    for(const [k, v] of cityCache.entries()) data[k] = v;
+    fs.writeFileSync(CITYCACHE_FILE, JSON.stringify(data));
+  }catch(e){ console.log("Vertaalcache opslaan mislukt: " + (e.message||e)); }
+}
+// Leegt zowel het geheugen als het diskbestand (gebruikt bij inhoudswijzigingen).
+function clearCityCache(){
+  cityCache.clear();
+  try{ if(fs.existsSync(CITYCACHE_FILE)) fs.unlinkSync(CITYCACHE_FILE); }catch(e){}
+}
+loadCityCache();
+
 // Lijst van alle steden (voor de voorpagina). Geeft code + nette naam terug.
 app.get("/api/cities", (req, res) => {
   const list = Object.keys(CITIES).map(code => ({
@@ -5767,6 +5795,7 @@ app.get("/api/city", async (req, res) => {
   }
 
   cityCache.set(cacheKey, { name: city.name || "", categories: cats });
+  saveCityCache(); // nieuwe vertaling bewaren op disk (overleeft herstart/deploy)
   const hotel = findHotelByCode();
   if(!hotel){
     if(preview){
@@ -5810,7 +5839,7 @@ function saveMerchants(clearCache){
   // Bij puur tellen (scan-teller) geven we clearCache=false mee: dan blijft de
   // dure vertaalcache staan, zodat gasten niet steeds opnieuw hoeven te wachten.
   if(clearCache !== false){
-    cityCache.clear();
+    clearCityCache();
   }
 }
 function adminOk(req){
@@ -6102,6 +6131,23 @@ app.post("/api/hotelchat/hotel/send", (req, res) => {
                 from:"hotel", text, srcLang: HOTEL_LANG, ts: Date.now(), tr:{} };
   convo.messages.push(msg);
   convo.lastActive = Date.now();
+  saveHotelChats();
+  res.json({ ok:true });
+});
+
+// --- HOTEL (portaal): gesprek sluiten en wissen (kamer weer leeg voor volgende gast) ---
+app.post("/api/hotelchat/hotel/close", (req, res) => {
+  const email = String(req.body.email || "").trim();
+  const pin = String(req.body.pin || "").trim();
+  const convoId = String(req.body.convoId || "").trim();
+  const found = findMerchantByLogin(email, pin);
+  if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
+  if(found.m.categoryId !== "hotels") return jsonError(res, 403, "Alleen voor hotels.");
+  const code = (found.m.hotelCode || "").toLowerCase();
+  const store = hotelChats.get(code);
+  // Als het gesprek al weg is, is het einddoel bereikt: meld gewoon succes.
+  if(!store || !store.convos.get(convoId)) return res.json({ ok:true });
+  store.convos.delete(convoId);
   saveHotelChats();
   res.json({ ok:true });
 });
