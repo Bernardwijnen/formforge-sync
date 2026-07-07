@@ -5901,6 +5901,70 @@ app.get("/api/city", async (req, res) => {
 });
 
 
+// ===== VERTAAL-CACHE VOORVERWARMEN (alle talen in een keer) =====
+// Bouwt voor een stad alle ondersteunde talen op en bewaart ze op de disk,
+// zodat de eerste gast (of hotelier/ondernemer die op de PDF-link klikt) nooit
+// hoeft te wachten. Handig na het invoeren van alle ondernemers voor een stad,
+// vlak voor een rollout. Beveiligd met het admin-wachtwoord.
+//
+// Gebruik (browser of fetch):
+//   /api/city/warmup?code=amsterdam&adminPass=UW_WACHTWOORD
+//
+// De talen worden EEN VOOR EEN opgebouwd (niet tegelijk), zodat we de OpenAI
+// rate-limit niet raken. Talen die al in de cache staan, worden overgeslagen.
+app.get("/api/city/warmup", async (req, res) => {
+  if(!adminOk(req)){
+    return jsonError(res, 401, "Geen toegang. Admin-wachtwoord ontbreekt of is onjuist.");
+  }
+  const code = String(req.query && req.query.code ? req.query.code : "").trim().toLowerCase();
+  if(!code || !CITIES[code]){
+    return jsonError(res, 400, "Onbekende stad. Gebruik ?code=amsterdam (of een andere stadscode).");
+  }
+  const allLangs = Object.keys(LANG_NAMES);
+  const port = process.env.PORT || 10000;
+  const base = "http://127.0.0.1:" + port + "/api/city";
+
+  const done = [];
+  const skipped = [];
+  const failed = [];
+
+  for(const lang of allLangs){
+    // Al in de cache? Dan overslaan (geen kosten, geen wachttijd).
+    if(cityCache.has(code + ":" + lang)){
+      skipped.push(lang);
+      continue;
+    }
+    try{
+      // Roep de echte /api/city aan met preview=1: dat bouwt en bewaart exact
+      // dezelfde gids-cache (stad + taal) die gasten ook gebruiken.
+      const url = base + "?code=" + encodeURIComponent(code) +
+                  "&lang=" + encodeURIComponent(lang) + "&preview=1";
+      const r = await fetch(url);
+      const data = await r.json().catch(() => ({}));
+      if(data && data.ok && (data.found || data.preview)){
+        done.push(lang);
+      }else{
+        failed.push(lang);
+      }
+    }catch(e){
+      failed.push(lang);
+    }
+  }
+
+  return res.json({
+    ok: true,
+    city: code,
+    totalLangs: allLangs.length,
+    built: done,          // nu nieuw opgebouwd en op disk bewaard
+    alreadyCached: skipped, // stonden al in de cache
+    failed: failed,       // niet gelukt (bv. tijdelijke fout)
+    cacheSize: cityCache.size
+  });
+});
+
+
+
+
 // ===== ONDERNEMERS (stadsgids) =====
 // Per stad een lijst ondernemers. Bewaard op schijf, blijft staan na herstart.
 // Een ondernemer is alleen zichtbaar in de gids als active = true.
@@ -6689,8 +6753,7 @@ async function sendMerchantPinEmail(m){
       "Log in op https://formforge.nl/portaal/ met uw e-mailadres (" + m.email + ") en deze pincode. " +
       "Pincode kwijt? Klik op 'Pincode vergeten?' voor een nieuwe.\n\n" +
       "Open zeker even de bijlage bij deze e-mail. Daarin laten we u in een paar minuten precies zien hoe Salve " +
-      "werkt, wat het uw gasten biedt en hoe eenvoudig u begint. Liever online kijken? Bekijk dan hier hoe " +
-      "Salve werkt: https://formforge.nl/testhotel/\n\n" +
+      "werkt, wat het uw gasten biedt en hoe eenvoudig u begint.\n\n" +
       "Wees welkom, en laat uw hotel de hele wereld verstaan.\n\n" +
       "Met hartelijke groet,\nBen Wijnen\nSalve, powered by FormForge\n\n" +
       "-----\n" +
@@ -6736,7 +6799,7 @@ async function sendMerchantPinEmail(m){
         '<div style="font-size:12px;color:#5c5c5c;margin-top:10px;">Pincode kwijt? Klik op &lsquo;Pincode vergeten?&rsquo; voor een nieuwe.</div>' +
       '</td></tr>' +
       '<tr><td style="padding:18px 34px 4px;">' +
-        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">&#128206; Open zeker even de <strong>bijlage</strong> bij deze e-mail. Daarin laten we u in een paar minuten precies zien hoe Salve werkt, wat het uw gasten biedt en hoe eenvoudig u begint. Liever online kijken? Bekijk dan <a href="https://formforge.nl/testhotel/" style="color:#c9a24b;font-weight:bold;text-decoration:none;">hier hoe Salve werkt</a>.</p>' +
+        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">&#128206; Open zeker even de <strong>bijlage</strong> bij deze e-mail. Daarin laten we u in een paar minuten precies zien hoe Salve werkt, wat het uw gasten biedt en hoe eenvoudig u begint.</p>' +
         '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 20px;">Wees welkom, en laat uw hotel de hele wereld verstaan.</p>' +
         '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 4px;">Met hartelijke groet,</p>' +
         '<p style="font-size:15px;line-height:1.4;color:#1e2d4f;font-weight:bold;margin:0;">Ben Wijnen</p>' +
@@ -6783,7 +6846,7 @@ async function sendMerchantPinEmail(m){
     "komt u bovenaan in uw categorie te staan en plaatst u eigen advertenties en acties (bijvoorbeeld een " +
     "welkomstkorting voor hotelgasten). Zo bent u niet een van de vermeldingen, maar de eerste die de gast ziet.\n\n" +
     "Open zeker even de bijlage. Daarin ziet u in een paar minuten hoe Salve werkt en hoe u meer gasten naar " +
-    "uw deur trekt. Liever online kijken? Bekijk dan hier hoe Salve werkt: https://formforge.nl/testhotel/\n\n" +
+    "uw deur trekt.\n\n" +
     "Met hartelijke groet,\nBen Wijnen\nDirecteur FormForge\n\n" +
     "-----\n" +
     "Waarom u deze e-mail ontvangt\n" +
@@ -6835,7 +6898,7 @@ async function sendMerchantPinEmail(m){
       '</td></tr></table>' +
     '</td></tr>' +
     '<tr><td style="padding:16px 34px 4px;">' +
-      '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">&#128206; Open zeker even de <strong>bijlage</strong> bij deze e-mail. Daarin ziet u in een paar minuten hoe Salve werkt en hoe u meer gasten naar uw deur trekt. Liever online kijken? Bekijk dan <a href="https://formforge.nl/testhotel/" style="color:#c9a24b;font-weight:bold;text-decoration:none;">hier hoe Salve werkt</a>.</p>' +
+      '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">&#128206; Open zeker even de <strong>bijlage</strong> bij deze e-mail. Daarin ziet u in een paar minuten hoe Salve werkt en hoe u meer gasten naar uw deur trekt.</p>' +
       '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 4px;">Met hartelijke groet,</p>' +
       '<p style="font-size:15px;line-height:1.4;color:#1e2d4f;font-weight:bold;margin:0;">Ben Wijnen</p>' +
       '<p style="font-size:13px;color:#5c5c5c;margin:2px 0 0;">Directeur FormForge</p>' +
