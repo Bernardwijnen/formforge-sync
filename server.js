@@ -7038,22 +7038,36 @@ async function sendMerchantPinEmail(m){
     const subject = "Uw hotel spreekt vanaf nu elke taal ter wereld";
     const text =
       "Beste hotelier,\n\n" +
-      "Stelt u zich eens voor: een gast checkt in bij uw hotel en voelt zich meteen thuis, in zijn eigen taal. " +
-      "Of hij nu uit Tokio, Parijs of Sao Paulo komt. Vanaf vandaag is dat werkelijkheid, want uw hotel is een " +
-      "van de eersten die dit aan zijn gasten biedt.\n\n" +
-      "Met Salve spreekt uw hotel elke taal ter wereld. Uw gasten scannen een QR-code op de kamer en ontdekken " +
-      "meteen in hun eigen taal de leukste plekken in de stad, met de route ernaartoe. En hebben ze een vraag " +
-      "aan de receptie? Ze schrijven in hun taal, u antwoordt gewoon in het Nederlands. De taalbarriere " +
-      "verdwijnt volledig.\n\n" +
-      "Het mooiste: de eerste 3 maanden gebruikt u Salve volledig gratis en onbeperkt. Uw abonnement staat al " +
-      "voor u klaar. U hoeft alleen maar in te loggen.\n\n" +
+      "Een gast uit Tokio wil weten hoe laat het ontbijt begint. Een Braziliaans stel wil 's avonds laat nog " +
+      "roomservice. Een Francaise vraagt naar een restaurant om de hoek. Normaal betekent dat handgebaren, " +
+      "een vertaalapp erbij, of een receptie die het antwoord schuldig blijft.\n\n" +
+      "Vanaf vandaag niet meer. Met Salve spreekt uw hotel 22 talen - zonder dat u ook maar een meertalige " +
+      "medewerker in dienst neemt.\n\n" +
+      "Zo eenvoudig werkt het. Uw gast scant een QR-code op de kamer en typt zijn vraag in zijn eigen taal. " +
+      "Uw receptie krijgt een e-mail met het bericht al vertaald naar het Nederlands, antwoordt gewoon in het " +
+      "Nederlands, en de gast leest het terug in zijn taal. Geen app om te downloaden, geen scherm dat de hele " +
+      "dag open moet, geen ingewikkeld systeem. De taalbarriere is simpelweg weg. Niet onbelangrijk: 64% van " +
+      "de hotelgasten stuurt liever een bericht dan dat ze bellen of aan de balie staan. Salve sluit daar " +
+      "naadloos op aan. (Stap voor stap uitgelegd in de bijlage, pagina 3.)\n\n" +
+      "En er is meer dan de chat. Diezelfde QR-code opent voor uw gast een persoonlijke stadsgids, in zijn " +
+      "eigen taal: de leukste restaurants, bezienswaardigheden en winkels in de buurt, met de route ernaartoe. " +
+      "Daarin staat uitsluitend uw hotel bovenaan, met uw welkom en uw logo. Geen andere hotels, geen " +
+      "concurrentie - alleen u. (Zie de bijlage, pagina 2.)\n\n" +
+      "Wat dat u oplevert: internationale gasten die zich vanaf de eerste minuut welkom voelen, een receptie " +
+      "die eindelijk elke gast kan helpen, en een hotel dat zich onderscheidt zonder dat het u tijd of moeite " +
+      "kost.\n\n" +
+      "Rustig uitproberen, zonder risico. De eerste 3 maanden gebruikt u Salve volledig kosteloos en onbeperkt. " +
+      "U zit nergens aan vast: geen verplichtingen, geen verborgen regels, geen kleine lettertjes. Na 3 maanden " +
+      "nemen wij persoonlijk contact met u op om te horen hoe het bevallen is.\n\n" +
+      "Liever eerst kennismaken? Dat kan. Salve is zo eenvoudig dat u binnen een paar minuten live staat, maar " +
+      "ik kom graag persoonlijk langs om het samen op locatie op te zetten en al uw vragen te beantwoorden. " +
+      "Ik combineer mijn bezoeken in de regio, zodat we snel een moment vinden dat u uitkomt. Stuur gerust een " +
+      "bericht en we plannen een kennismaking. (Meer over wie wij zijn: bijlage, pagina 5.)\n\n" +
+      "Uw abonnement staat al voor u klaar. U hoeft alleen maar in te loggen.\n\n" +
       "Uw persoonlijke pincode is: " + m.pin + "\n\n" +
       "Log in op https://formforge.nl/portaal/ met uw e-mailadres (" + m.email + ") en deze pincode. " +
       "Pincode kwijt? Klik op 'Pincode vergeten?' voor een nieuwe.\n\n" +
-      "Open zeker even de bijlage bij deze e-mail. Daarin laten we u in een paar minuten precies zien hoe Salve " +
-      "werkt, wat het uw gasten biedt en hoe eenvoudig u begint.\n\n" +
-      "Wees welkom, en laat uw hotel de hele wereld verstaan.\n\n" +
-      "Met hartelijke groet,\nBen Wijnen\nSalve, powered by FormForge\n\n" +
+      "Met vriendelijke groet,\nBernard Wijnen\nSalve, powered by FormForge\n\n" +
       "-----\n" +
       "Waarom u deze e-mail ontvangt\n" +
       "Wij begrijpen goed dat u deze e-mail misschien als ongevraagd ervaart, en daarvoor bieden wij onze " +
@@ -7079,9 +7093,12 @@ async function sendMerchantPinEmail(m){
       '</td></tr>' +
       '<tr><td style="padding:30px 34px 10px;">' +
         '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 16px;">Beste hotelier,</p>' +
-        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">Stelt u zich eens voor: een gast checkt in bij uw hotel en voelt zich meteen thuis, in zijn eigen taal. Of hij nu uit Tokio, Parijs of S&atilde;o Paulo komt. Vanaf vandaag is dat werkelijkheid, want uw hotel is een van de eersten die dit aan zijn gasten biedt.</p>' +
-        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">Met Salve spreekt uw hotel <strong style="color:#1e2d4f;">elke taal ter wereld</strong>. Uw gasten scannen een QR-code op de kamer en ontdekken meteen in hun eigen taal de leukste plekken in de stad, met de route ernaartoe. En hebben ze een vraag aan de receptie? Ze schrijven in hun taal, u antwoordt gewoon in het Nederlands. De taalbarri&egrave;re verdwijnt volledig.</p>' +
-        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 8px;">Het mooiste: de eerste 3 maanden gebruikt u Salve <strong style="color:#1e2d4f;">volledig gratis en onbeperkt</strong>. Uw abonnement staat al voor u klaar. U hoeft alleen maar in te loggen.</p>' +
+        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">Een gast uit Tokio wil weten hoe laat het ontbijt begint. Een Braziliaans stel wil &lsquo;s avonds laat nog roomservice. Een Fran&ccedil;aise vraagt naar een restaurant om de hoek. Normaal betekent dat handgebaren, een vertaalapp erbij, of een receptie die het antwoord schuldig blijft.</p>' +
+        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">Vanaf vandaag niet meer. Met Salve spreekt uw hotel <strong style="color:#1e2d4f;">22 talen</strong> &ndash; zonder dat u ook maar &eacute;&eacute;n meertalige medewerker in dienst neemt.</p>' +
+        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;"><strong style="color:#1e2d4f;">Zo eenvoudig werkt het.</strong> Uw gast scant een QR-code op de kamer en typt zijn vraag in zijn eigen taal. Uw receptie krijgt een e-mail met het bericht al vertaald naar het Nederlands, antwoordt gewoon in het Nederlands, en de gast leest het terug in zijn taal. Geen app om te downloaden, geen scherm dat de hele dag open moet, geen ingewikkeld systeem. De taalbarri&egrave;re is simpelweg weg. Niet onbelangrijk: 64% van de hotelgasten stuurt liever een bericht dan dat ze bellen of aan de balie staan. Salve sluit daar naadloos op aan. <span style="color:#5c5c5c;">(Stap voor stap uitgelegd in de bijlage, pagina 3.)</span></p>' +
+        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;"><strong style="color:#1e2d4f;">En er is meer dan de chat.</strong> Diezelfde QR-code opent voor uw gast een persoonlijke stadsgids, in zijn eigen taal: de leukste restaurants, bezienswaardigheden en winkels in de buurt, met de route ernaartoe. Daarin staat uitsluitend &uacute;w hotel bovenaan, met uw welkom en uw logo. Geen andere hotels, geen concurrentie &ndash; alleen u. <span style="color:#5c5c5c;">(Zie de bijlage, pagina 2.)</span></p>' +
+        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">Wat dat u oplevert: internationale gasten die zich vanaf de eerste minuut welkom voelen, een receptie die eindelijk &eacute;lke gast kan helpen, en een hotel dat zich onderscheidt zonder dat het u tijd of moeite kost.</p>' +
+        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 8px;"><strong style="color:#1e2d4f;">Rustig uitproberen, zonder risico.</strong> De eerste 3 maanden gebruikt u Salve volledig kosteloos en onbeperkt. U zit nergens aan vast: geen verplichtingen, geen verborgen regels, geen kleine lettertjes. Na 3 maanden nemen wij persoonlijk contact met u op om te horen hoe het bevallen is.</p>' +
       '</td></tr>' +
       '<tr><td style="padding:14px 34px 6px;">' +
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#1e2d4f;border-radius:12px;"><tr><td style="padding:20px 24px;text-align:center;">' +
@@ -7097,10 +7114,10 @@ async function sendMerchantPinEmail(m){
         '<div style="font-size:12px;color:#5c5c5c;margin-top:10px;">Pincode kwijt? Klik op &lsquo;Pincode vergeten?&rsquo; voor een nieuwe.</div>' +
       '</td></tr>' +
       '<tr><td style="padding:18px 34px 4px;">' +
-        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">&#128206; Open zeker even de <strong>bijlage</strong> bij deze e-mail. Daarin laten we u in een paar minuten precies zien hoe Salve werkt, wat het uw gasten biedt en hoe eenvoudig u begint.</p>' +
-        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 20px;">Wees welkom, en laat uw hotel de hele wereld verstaan.</p>' +
-        '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 4px;">Met hartelijke groet,</p>' +
-        '<p style="font-size:15px;line-height:1.4;color:#1e2d4f;font-weight:bold;margin:0;">Ben Wijnen</p>' +
+        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;"><strong style="color:#1e2d4f;">Liever eerst kennismaken?</strong> Dat kan. Salve is zo eenvoudig dat u binnen een paar minuten live staat, maar ik kom graag persoonlijk langs om het samen op locatie op te zetten en al uw vragen te beantwoorden. Ik combineer mijn bezoeken in de regio, zodat we snel een moment vinden dat u uitkomt. Stuur gerust een bericht en we plannen een kennismaking.</p>' +
+        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 20px;">&#128206; In de <strong>bijlage</strong> bij deze e-mail leest u in een paar minuten precies hoe Salve werkt, wat het uw gasten biedt en hoe eenvoudig u begint.</p>' +
+        '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 4px;">Met vriendelijke groet,</p>' +
+        '<p style="font-size:15px;line-height:1.4;color:#1e2d4f;font-weight:bold;margin:0;">Bernard Wijnen</p>' +
         '<p style="font-size:13px;color:#5c5c5c;margin:2px 0 0;">Directeur FormForge</p>' +
       '</td></tr>' +
       // AFMELD-SECTIE
