@@ -5910,8 +5910,15 @@ app.get("/api/city", async (req, res) => {
 // Gebruik (browser of fetch):
 //   /api/city/warmup?code=amsterdam&adminPass=UW_WACHTWOORD
 //
+// Optioneel een hotelcode meegeven om ook de hotelbanner (welkomsttekst, promo,
+// beschrijving) in alle talen voor te vertalen. Zo hoeft ook de eigenaar-preview
+// (?hotel=...&hpreview=1) nooit te wachten:
+//   /api/city/warmup?code=amsterdam&hotel=hm0lyb&adminPass=UW_WACHTWOORD
+//
 // De talen worden EEN VOOR EEN opgebouwd (niet tegelijk), zodat we de OpenAI
-// rate-limit niet raken. Talen die al in de cache staan, worden overgeslagen.
+// rate-limit niet raken. Talen die al in de gids-cache staan, worden voor de
+// gids overgeslagen; de hotelbanner heeft zijn eigen cache en wordt alleen
+// vertaald als hij nog niet bewaard is.
 app.get("/api/city/warmup", async (req, res) => {
   if(!adminOk(req)){
     return jsonError(res, 401, "Geen toegang. Admin-wachtwoord ontbreekt of is onjuist.");
@@ -5920,6 +5927,7 @@ app.get("/api/city/warmup", async (req, res) => {
   if(!code || !CITIES[code]){
     return jsonError(res, 400, "Onbekende stad. Gebruik ?code=amsterdam (of een andere stadscode).");
   }
+  const hotel = String(req.query && req.query.hotel ? req.query.hotel : "").trim().toLowerCase();
   const allLangs = Object.keys(LANG_NAMES);
   const port = process.env.PORT || 10000;
   const base = "http://127.0.0.1:" + port + "/api/city";
@@ -5927,39 +5935,65 @@ app.get("/api/city/warmup", async (req, res) => {
   const done = [];
   const skipped = [];
   const failed = [];
+  const bannerBuilt = [];
+  const bannerFailed = [];
 
   for(const lang of allLangs){
-    // Al in de cache? Dan overslaan (geen kosten, geen wachttijd).
+    // 1) De stadsgids zelf (alle bedrijven). Al in de cache? Dan overslaan.
     if(cityCache.has(code + ":" + lang)){
       skipped.push(lang);
-      continue;
-    }
-    try{
-      // Roep de echte /api/city aan met preview=1: dat bouwt en bewaart exact
-      // dezelfde gids-cache (stad + taal) die gasten ook gebruiken.
-      const url = base + "?code=" + encodeURIComponent(code) +
-                  "&lang=" + encodeURIComponent(lang) + "&preview=1";
-      const r = await fetch(url);
-      const data = await r.json().catch(() => ({}));
-      if(data && data.ok && (data.found || data.preview)){
-        done.push(lang);
-      }else{
+    }else{
+      try{
+        const url = base + "?code=" + encodeURIComponent(code) +
+                    "&lang=" + encodeURIComponent(lang) + "&preview=1";
+        const r = await fetch(url);
+        const data = await r.json().catch(() => ({}));
+        if(data && data.ok && (data.found || data.preview)){
+          done.push(lang);
+        }else{
+          failed.push(lang);
+        }
+      }catch(e){
         failed.push(lang);
       }
-    }catch(e){
-      failed.push(lang);
+    }
+
+    // 2) Optioneel: de hotelbanner voor dit hotel (welkomsttekst, promo, desc).
+    // Deze roept dezelfde weg aan als de eigenaar-preview, zodat de losse
+    // gidstekst-vertalingen (die op de disk bewaard worden) alvast klaarstaan.
+    if(hotel){
+      try{
+        const url = base + "?code=" + encodeURIComponent(code) +
+                    "&lang=" + encodeURIComponent(lang) +
+                    "&hotel=" + encodeURIComponent(hotel) + "&hpreview=1";
+        const r = await fetch(url);
+        const data = await r.json().catch(() => ({}));
+        if(data && data.ok && data.found){
+          bannerBuilt.push(lang);
+        }else{
+          bannerFailed.push(lang);
+        }
+      }catch(e){
+        bannerFailed.push(lang);
+      }
     }
   }
 
-  return res.json({
+  const out = {
     ok: true,
     city: code,
     totalLangs: allLangs.length,
-    built: done,          // nu nieuw opgebouwd en op disk bewaard
-    alreadyCached: skipped, // stonden al in de cache
-    failed: failed,       // niet gelukt (bv. tijdelijke fout)
+    built: done,            // gids nu nieuw opgebouwd en op disk bewaard
+    alreadyCached: skipped, // gids stond al in de cache
+    failed: failed,         // gids niet gelukt (bv. tijdelijke fout)
     cacheSize: cityCache.size
-  });
+  };
+  if(hotel){
+    out.hotel = hotel;
+    out.bannerBuilt = bannerBuilt;   // hotelbanner in deze talen voorvertaald
+    out.bannerFailed = bannerFailed; // hotelbanner niet gelukt
+  }
+  return res.json(out);
 });
 
 
@@ -7242,6 +7276,37 @@ async function translateText(text, from, to){
 // verversen na een promptwijziging.
 const GUIDE_TRANS_VERSION = "v2";
 const guideTransCache = new Map();
+
+// ==== Gidstekst-vertalingen op de persistente disk ====
+// De losse gidsteksten (hotelbanner, beschrijvingen, openingstijden, menu, enz.)
+// zijn duur om te vertalen (AI). We bewaren ze op de disk zodat ze een herstart
+// of nieuwe deploy overleven; anders zou de eerste bezoeker per taal na elke
+// herstart opnieuw 10-15 seconden moeten wachten.
+const GUIDETRANS_FILE = path.join(DATA_DIR, "salve_guide_trans.json");
+function loadGuideTransCache(){
+  try{
+    if(!fs.existsSync(GUIDETRANS_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(GUIDETRANS_FILE, "utf8") || "{}");
+    Object.keys(data || {}).forEach(key => guideTransCache.set(key, data[key]));
+    console.log("Gidstekst-vertaalcache geladen: " + guideTransCache.size + " items");
+  }catch(e){ console.log("Gidstekst-vertaalcache laden mislukt: " + (e.message||e)); }
+}
+// Debounced opslaan: niet bij elke vertaling naar de disk schrijven, maar kort
+// verzamelen en dan in een keer wegschrijven. Dat spaart de disk bij een warm-up
+// die snel achter elkaar veel teksten vertaalt.
+let _guideTransSaveTimer = null;
+function saveGuideTransCacheSoon(){
+  if(_guideTransSaveTimer) return;
+  _guideTransSaveTimer = setTimeout(() => {
+    _guideTransSaveTimer = null;
+    try{
+      const data = {};
+      for(const [k, v] of guideTransCache.entries()) data[k] = v;
+      fs.writeFileSync(GUIDETRANS_FILE, JSON.stringify(data));
+    }catch(e){ console.log("Gidstekst-vertaalcache opslaan mislukt: " + (e.message||e)); }
+  }, 3000);
+}
+
 function guideCacheKey(from,to,text){ return GUIDE_TRANS_VERSION+"|"+from+"|"+to+"|"+text; }
 function getGuideTranslation(from,to,text){
   const hit = guideTransCache.get(guideCacheKey(from,to,text));
@@ -7255,7 +7320,9 @@ function setGuideTranslation(from,to,text,translated){
     const firstKey = guideTransCache.keys().next().value;
     guideTransCache.delete(firstKey);
   }
+  saveGuideTransCacheSoon();
 }
+loadGuideTransCache();
 
 // Vertaalt één stuk gidstekst (beschrijving, openingstijden, menu, enz.) naar de
 // taal van de toerist. Gebruikt een prompt die past bij een reis-/stadsgids en
