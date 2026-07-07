@@ -7243,11 +7243,17 @@ app.post("/api/merchant/login", (req, res) => {
   if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet, of uw vermelding is nog niet actief.");
   if(!found.m.active) return jsonError(res, 403, "Uw vermelding is niet actief. Sluit eerst een abonnement af.");
   const m = found.m;
+  // Registreer deze login: tijdstip en teller. Zo ziet de eigenaar in het
+  // adminscherm of (en hoe vaak) een ondernemer/hotelier al heeft ingelogd.
+  m.lastLogin = new Date().toISOString();
+  m.loginCount = (typeof m.loginCount === "number" ? m.loginCount : 0) + 1;
+  // Bewaren zonder de gids-cache te raken (login verandert de vermelding niet).
+  saveMerchants(false);
   // Zorg dat een hotel altijd een hotelcode heeft (voor affiche-QR en chat-kamers).
   if(m.categoryId === "hotels" && !m.hotelCode){
     m.hotelCode = (typeof makeHotelCode === "function") ? makeHotelCode()
       : ("h" + Date.now().toString(36) + Math.random().toString(36).slice(2,6));
-    saveMerchants();
+    saveMerchants(false);
   }
   const shownPromoL = merchantFieldForPortal(m, "promo") || "";
   const promoActive = !!(shownPromoL && shownPromoL.trim());
