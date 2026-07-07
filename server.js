@@ -5599,6 +5599,100 @@ function clearCityCache(){
 }
 loadCityCache();
 
+// ====================================================================
+//  SLIMME, PER-STAD CACHE-VERVERSING (voor betalende ondernemers)
+// --------------------------------------------------------------------
+//  Wanneer een ondernemer zijn vermelding of advertentie wijzigt, mag NIET
+//  de hele gids-cache van alle steden geleegd worden. We verversen alleen de
+//  stad die echt veranderd is, en bouwen die op de achtergrond opnieuw op.
+//  Omdat de losse tekstvertalingen al in guideTransCache (op disk) staan,
+//  kost dat herbouwen geen AI voor ongewijzigde teksten: alleen de daadwerkelijk
+//  gewijzigde tekst (bv. de nieuwe dagactie) wordt een keer vertaald.
+//  Zo blijft de rest van de stad - en alle andere steden - onaangeroerd.
+// ====================================================================
+
+// Vingerafdruk van alleen de VERTAAL-relevante velden van een stad. Verandert
+// die, dan moet de gids-structuur van die stad opnieuw worden opgebouwd.
+function cityContentHash(cityCode){
+  const list = merchants.get(cityCode) || [];
+  const slim = list.map(m => ({
+    id: m.id || "",
+    cat: m.categoryId || "",
+    name: m.name || "",
+    address: m.address || "",
+    desc: m.desc || "",
+    promo: m.promo || "",
+    fields: m.fields || {},
+    active: !!m.active,
+    subscribed: !!m.subscribed,
+    hotelCode: m.hotelCode || ""
+  }));
+  return crypto.createHash("sha1").update(JSON.stringify(slim)).digest("hex");
+}
+
+// Laatst bekende vingerafdruk per stad, om te zien welke stad wijzigde.
+const cityHashes = new Map();
+function snapshotAllCityHashes(){
+  for(const cityCode of merchants.keys()){
+    cityHashes.set(cityCode, cityContentHash(cityCode));
+  }
+}
+
+// Drop alle taalvarianten van EEN stad uit de cache (geheugen + disk),
+// zonder de andere steden aan te raken.
+function dropCityFromCache(cityCode){
+  const prefix = cityCode + ":";
+  let removed = 0;
+  for(const key of Array.from(cityCache.keys())){
+    if(key.indexOf(prefix) === 0){ cityCache.delete(key); removed++; }
+  }
+  if(removed) saveCityCache();
+  return removed;
+}
+
+// Bouw EEN stad in alle talen opnieuw op de achtergrond. Hergebruikt de echte
+// /api/city (met preview=1), die ongewijzigde teksten uit guideTransCache haalt.
+// Gedebounced per stad, zodat een reeks snelle wijzigingen maar 1 herbouw geeft.
+const _cityRebuildTimers = new Map();
+function rebuildCityCacheSoon(cityCode){
+  if(!cityCode || !CITIES[cityCode]) return;
+  if(_cityRebuildTimers.has(cityCode)) return; // al gepland
+  const t = setTimeout(async () => {
+    _cityRebuildTimers.delete(cityCode);
+    const allLangs = Object.keys(LANG_NAMES);
+    const port = process.env.PORT || 10000;
+    const base = "http://127.0.0.1:" + port + "/api/city";
+    for(const lang of allLangs){
+      try{
+        const url = base + "?code=" + encodeURIComponent(cityCode) +
+                    "&lang=" + encodeURIComponent(lang) + "&preview=1";
+        await fetch(url);
+      }catch(e){ /* stille achtergrondtaak: fouten negeren, gast valt terug op live opbouw */ }
+    }
+    console.log("Gids-cache opnieuw opgebouwd voor stad: " + cityCode);
+  }, 1500);
+  _cityRebuildTimers.set(cityCode, t);
+}
+
+// Ververs alleen de steden waarvan de inhoud daadwerkelijk wijzigde.
+// Wordt aangeroepen na een merchant-wijziging in plaats van clearCityCache().
+function invalidateChangedCities(){
+  const changed = [];
+  // Alle steden die nu bestaan checken op wijziging t.o.v. de vorige snapshot.
+  for(const cityCode of merchants.keys()){
+    const h = cityContentHash(cityCode);
+    if(cityHashes.get(cityCode) !== h){
+      changed.push(cityCode);
+      cityHashes.set(cityCode, h);
+    }
+  }
+  for(const cityCode of changed){
+    dropCityFromCache(cityCode);   // oude (verouderde) structuur weg
+    rebuildCityCacheSoon(cityCode); // vers opbouwen op de achtergrond
+  }
+  return changed;
+}
+
 // Lijst van alle steden (voor de voorpagina). Geeft code + nette naam terug.
 app.get("/api/cities", (req, res) => {
   const list = Object.keys(CITIES).map(code => ({
@@ -6023,11 +6117,14 @@ function saveMerchants(clearCache){
     for(const [city, list] of merchants.entries()) data[city] = list;
     fs.writeFileSync(MERCHANTS_FILE, JSON.stringify(data, null, 2));
   }catch(e){}
-  // Standaard legen we de gids-cache zodat inhoudswijzigingen meteen zichtbaar zijn.
   // Bij puur tellen (scan-teller) geven we clearCache=false mee: dan blijft de
-  // dure vertaalcache staan, zodat gasten niet steeds opnieuw hoeven te wachten.
+  // cache staan, zodat gasten niet steeds opnieuw hoeven te wachten.
+  // Anders verversen we ALLEEN de stad die daadwerkelijk wijzigde (en bouwen
+  // die op de achtergrond opnieuw op). De rest van de gids - en alle andere
+  // steden - blijft onaangeroerd, zodat een advertentiewijziging van een
+  // betalende ondernemer nooit de hele cache raakt.
   if(clearCache !== false){
-    clearCityCache();
+    invalidateChangedCities();
   }
 }
 function adminOk(req){
@@ -6038,6 +6135,151 @@ function newMerchantId(){
   return "m_" + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
 }
 loadMerchants();
+// Beginsituatie vastleggen zodat we bij de eerste wijziging kunnen zien welke
+// stad veranderde (en alleen die verversen).
+snapshotAllCityHashes();
+
+// ====================================================================
+//  UITGESTELD PUBLICEREN (dagelijkse publicatie om 06:00 NL-tijd)
+// --------------------------------------------------------------------
+//  Wijzigingen van ondernemers/hoteliers via het portaal gaan NIET meteen live.
+//  Ze worden bewaard in m.pending en gaan pas de eerstvolgende ochtend om 06:00
+//  (Europe/Amsterdam) live. Zo kunnen 80 klanten tussen 09:00 en 10:00 rustig
+//  hun advertentie aanpassen: de gids wordt maar EEN keer per nacht opgebouwd,
+//  in plaats van bij elke losse wijziging. Tot 06:00 zien gasten de oude versie.
+//  De ondernemer ziet in zijn eigen portaal wel meteen zijn concept (pending).
+//
+//  Admin-acties van de eigenaar gaan WEL direct live: die schrijven rechtstreeks
+//  naar de live velden (deze module raakt ze niet).
+// ====================================================================
+
+// De velden die via het uitgesteld-publiceren lopen (de inhoud die de gast ziet).
+const PENDING_FIELDS = ["desc", "address", "promo", "fields", "photos", "welcome", "logo"];
+
+// Legt een wijziging klaar in m.pending in plaats van direct op het live veld.
+// Zo blijft de huidige (live) versie zichtbaar voor gasten tot 06:00.
+function stageMerchantChange(m, key, value){
+  if(!m.pending) m.pending = {};
+  m.pending[key] = value;
+  m.pendingAt = Date.now();
+}
+
+// Geeft de waarde die de ONDERNEMER in zijn portaal moet zien: het concept
+// (pending) als dat er is, anders de live waarde. Zo ziet hij zijn eigen
+// laatste wijziging meteen, ook al is die voor gasten nog niet live.
+function merchantFieldForPortal(m, key){
+  if(m.pending && Object.prototype.hasOwnProperty.call(m.pending, key)){
+    return m.pending[key];
+  }
+  return m[key];
+}
+
+// Heeft deze ondernemer een wijziging die nog gepubliceerd moet worden?
+function hasPendingChange(m){
+  return !!(m && m.pending && Object.keys(m.pending).length > 0);
+}
+
+// Nette uitlegtekst voor het portaal (de frontend kan deze tonen bij de advertentie).
+const PUBLISH_INFO_TEXT =
+  "Wijzigingen worden een keer per dag doorgevoerd. Alles wat u voor 06:00 uur " +
+  "opslaat, gaat diezelfde ochtend om 06:00 uur live. Bent u later, dan gaat uw " +
+  "wijziging de volgende ochtend om 06:00 uur mee. Tot die tijd blijft uw huidige " +
+  "advertentie zichtbaar voor gasten.";
+
+// Publiceert alle klaargezette wijzigingen: kopieer m.pending naar de live velden,
+// wis pending, en bouw daarna elke gewijzigde stad EEN keer opnieuw op.
+function publishPendingChanges(reason){
+  const changedCities = new Set();
+  let publishedCount = 0;
+  const filesToDelete = [];
+  for(const [cityCode, list] of merchants.entries()){
+    for(const m of (list || [])){
+      if(!hasPendingChange(m)) continue;
+      // Vervangen foto's/logo pas NU opruimen (waren tot nu toe nog live).
+      if(Object.prototype.hasOwnProperty.call(m.pending, "photos")){
+        const oldPhotos = Array.isArray(m.photos) ? m.photos : [];
+        const newPhotos = Array.isArray(m.pending.photos) ? m.pending.photos : [];
+        for(const f of oldPhotos){ if(f && !newPhotos.includes(f)) filesToDelete.push(f); }
+      }
+      if(Object.prototype.hasOwnProperty.call(m.pending, "logo")){
+        const oldLogo = m.logo || "";
+        const newLogo = m.pending.logo || "";
+        if(oldLogo && oldLogo !== newLogo) filesToDelete.push(oldLogo);
+      }
+      for(const key of PENDING_FIELDS){
+        if(Object.prototype.hasOwnProperty.call(m.pending, key)){
+          m[key] = m.pending[key];
+        }
+      }
+      delete m.pending;
+      delete m.pendingAt;
+      publishedCount++;
+      changedCities.add(cityCode);
+    }
+  }
+  // Verweesde bestanden opruimen (buiten de merchant-loop, veilig).
+  for(const f of filesToDelete){
+    try{ fs.unlinkSync(path.join(PHOTOS_DIR, f)); }catch(e){}
+  }
+  if(publishedCount > 0){
+    // Bewaar de nieuwe live-staat op disk. clearCache=false zodat saveMerchants
+    // niet zelf al invalidatie start; we doen dat hieronder gericht per stad.
+    try{ saveMerchants(false); }catch(e){}
+    // Vingerafdrukken bijwerken en alleen de gewijzigde steden opnieuw opbouwen.
+    for(const cityCode of changedCities){
+      cityHashes.set(cityCode, cityContentHash(cityCode));
+      dropCityFromCache(cityCode);
+      rebuildCityCacheSoon(cityCode);
+    }
+    console.log("Uitgesteld publiceren (" + (reason || "") + "): " + publishedCount +
+                " wijziging(en) live, steden: " + Array.from(changedCities).join(", "));
+  }
+  return { publishedCount, cities: Array.from(changedCities) };
+}
+
+// ---- Planner: draai publishPendingChanges elke dag om 06:00 Europe/Amsterdam ----
+// Render draait in UTC; we rekenen de NL-tijd zelf uit zodat het klopt in zomer-
+// en wintertijd. We checken elke minuut of het (in NL) net 06:00 is geworden.
+const PUBLISH_HOUR = 6;    // 06:00
+const PUBLISH_MINUTE = 0;
+let _lastPublishDayNL = "";
+function nlNow(){
+  // Huidige tijd in Europe/Amsterdam als losse onderdelen.
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Amsterdam",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false
+  }).formatToParts(new Date());
+  const get = (t) => (parts.find(p => p.type === t) || {}).value || "";
+  return {
+    day: get("year") + "-" + get("month") + "-" + get("day"),
+    hour: parseInt(get("hour"), 10),
+    minute: parseInt(get("minute"), 10)
+  };
+}
+function checkPublishSchedule(){
+  const t = nlNow();
+  // Precies om 06:00 NL, en hooguit een keer per dag (voorkomt dubbel draaien).
+  if(t.hour === PUBLISH_HOUR && t.minute === PUBLISH_MINUTE && _lastPublishDayNL !== t.day){
+    _lastPublishDayNL = t.day;
+    try{ publishPendingChanges("dagelijks 06:00"); }catch(e){ console.log("Publiceren mislukt: " + (e.message||e)); }
+  }
+}
+// Elke 30 seconden kijken of het publicatiemoment is aangebroken.
+setInterval(checkPublishSchedule, 30 * 1000);
+
+// Handmatig publiceren (voor de eigenaar): zet alle klaargezette wijzigingen
+// meteen live, zonder te wachten op 06:00. Handig om te testen of bij spoed.
+// Beveiligd met het admin-wachtwoord.
+//   /api/publish-now?adminPass=UW_WACHTWOORD
+app.get("/api/publish-now", (req, res) => {
+  if(!adminOk(req)){
+    return jsonError(res, 401, "Geen toegang. Admin-wachtwoord ontbreekt of is onjuist.");
+  }
+  const result = publishPendingChanges("handmatig");
+  return res.json({ ok:true, published: result.publishedCount, cities: result.cities });
+});
+
 
 // ============================================================
 //  GAST <-> HOTEL CHAT
@@ -6985,17 +7227,18 @@ app.post("/api/merchant/login", (req, res) => {
       : ("h" + Date.now().toString(36) + Math.random().toString(36).slice(2,6));
     saveMerchants();
   }
-  const promoActive = !!(m.promo && m.promo.trim());
-  res.json({ ok:true, merchant: {
+  const shownPromoL = merchantFieldForPortal(m, "promo") || "";
+  const promoActive = !!(shownPromoL && shownPromoL.trim());
+  res.json({ ok:true, hasPending: hasPendingChange(m), publishInfo: PUBLISH_INFO_TEXT, merchant: {
     id: m.id, city: found.city, name: m.name, categoryId: m.categoryId,
-    desc: m.desc || "", address: m.address || "", email: m.email || "",
-    fields: m.fields || {}, photos: m.photos || [],
+    desc: merchantFieldForPortal(m, "desc") || "", address: merchantFieldForPortal(m, "address") || "", email: m.email || "",
+    fields: merchantFieldForPortal(m, "fields") || {}, photos: merchantFieldForPortal(m, "photos") || [],
     subscribed: !!m.subscribed,
-    promo: promoActive ? m.promo : "", promoUntil: m.promoUntil || 0,
+    promo: promoActive ? shownPromoL : "", promoUntil: m.promoUntil || 0,
     cancelAtPeriodEnd: !!m.cancelAtPeriodEnd, visibleUntil: m.visibleUntil || 0,
     isHotel: m.categoryId === "hotels",
-    welcome: m.welcome || "",
-    logo: m.logo || "",
+    welcome: merchantFieldForPortal(m, "welcome") || "",
+    logo: merchantFieldForPortal(m, "logo") || "",
     hotelCode: m.hotelCode || "",
     scans: m.scans || 0
   }});
@@ -7008,28 +7251,34 @@ app.post("/api/merchant/update", (req, res) => {
   if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
   if(!found.m.active) return jsonError(res, 403, "Uw vermelding is niet actief.");
   const m = found.m;
-  if(typeof req.body.desc === "string") m.desc = req.body.desc.slice(0, 1000);
-  if(typeof req.body.address === "string") m.address = req.body.address.slice(0, 120);
+  // Wijzigingen gaan NIET direct live: ze worden klaargezet in m.pending en gaan
+  // de eerstvolgende ochtend om 06:00 (NL-tijd) mee. Tot dan blijft de huidige
+  // (live) versie zichtbaar voor gasten. De ondernemer ziet zijn concept wel.
+  if(typeof req.body.desc === "string") stageMerchantChange(m, "desc", req.body.desc.slice(0, 1000));
+  if(typeof req.body.address === "string") stageMerchantChange(m, "address", req.body.address.slice(0, 120));
   // Dagactie (alleen voor abonnees). Leeg = geen actie.
-  // Blijft staan tot de ondernemer hem zelf wijzigt of leegmaakt (geen vervaltijd).
   if(typeof req.body.promo === "string"){
     if(m.active){
-      m.promo = req.body.promo.slice(0, 160).trim();
+      stageMerchantChange(m, "promo", req.body.promo.slice(0, 160).trim());
     }
   }
   // Extra, optionele velden die de ondernemer zelf beheert.
-  // Leeg laten = niet tonen aan de toerist.
-  if(!m.fields) m.fields = {};
+  // We stagen de HELE fields-set (samengevoegd met wat er al leeft/klaarstaat).
   const allowed = ["hours","phone","website","menu","drinks","mealtimes","schedule","prices","extra"];
   if(req.body.fields && typeof req.body.fields === "object"){
+    // Begin bij de huidige zichtbare set (pending als die er is, anders live).
+    const baseFields = Object.assign({}, merchantFieldForPortal(m, "fields") || {});
     for(const k of allowed){
       if(typeof req.body.fields[k] === "string"){
-        m.fields[k] = req.body.fields[k].slice(0, 500);
+        baseFields[k] = req.body.fields[k].slice(0, 500);
       }
     }
+    stageMerchantChange(m, "fields", baseFields);
   }
-  // Foto's: maximaal 3. We slaan ze als losse bestanden op disk op (in DATA_DIR/fotos)
-  // en bewaren alleen de bestandsnaam bij de ondernemer. Niet verplicht.
+  // Foto's: maximaal 3. Nieuwe foto's schrijven we WEL meteen naar disk (het
+  // bestand mag bestaan), maar de VERWIJZING zetten we klaar in pending. Zo
+  // blijven de oude foto's zichtbaar tot 06:00. Oude, vervangen bestanden ruimen
+  // we hier NIET op (dat gebeurt bij publiceren), anders zou de live gids ze missen.
   if(Array.isArray(req.body.photos)){
     const saved = [];
     for(let i = 0; i < Math.min(req.body.photos.length, 3); i++){
@@ -7051,51 +7300,47 @@ app.post("/api/merchant/update", (req, res) => {
         }catch(e){ console.log("Foto opslaan mislukt: " + (e.message||e)); }
       }
     }
-    // oude foto's die niet meer in de lijst staan, opruimen van disk
-    const old = m.photos || [];
-    for(const f of old){
-      if(!saved.includes(f)){
-        try{ fs.unlinkSync(path.join(PHOTOS_DIR, f)); }catch(e){}
-      }
-    }
-    m.photos = saved;
+    stageMerchantChange(m, "photos", saved);
   }
   // Welkomsttekst van het hotel (leeg = standaardtekst).
   if(typeof req.body.welcome === "string"){
-    m.welcome = req.body.welcome.slice(0, 300).trim();
+    stageMerchantChange(m, "welcome", req.body.welcome.slice(0, 300).trim());
   }
-  // Logo van het hotel (1 afbeelding op disk). Leeg = verwijderen.
+  // Logo van het hotel (1 afbeelding op disk). Nieuw bestand meteen wegschrijven,
+  // verwijzing in pending. Oud logo NIET meteen wissen (blijft live tot 06:00).
   if(typeof req.body.logo === "string"){
     const lg = req.body.logo;
     if(/^[a-zA-Z0-9_.-]+\.(jpg|jpeg|png|webp)$/.test(lg)){
-      m.logo = lg;
+      stageMerchantChange(m, "logo", lg);
     }else if(lg === ""){
-      if(m.logo){ try{ fs.unlinkSync(path.join(PHOTOS_DIR, m.logo)); }catch(e){} }
-      m.logo = "";
+      stageMerchantChange(m, "logo", "");
     }else{
       const mm = lg.match(/^data:image\/(png|jpe?g|webp);base64,([A-Za-z0-9+/=]+)$/);
       if(mm && lg.length < 3000000){
         const ext = mm[1] === "jpeg" ? "jpg" : mm[1];
         const fname = m.id + "_logo_" + Date.now() + "." + ext;
         try{
-          if(m.logo){ try{ fs.unlinkSync(path.join(PHOTOS_DIR, m.logo)); }catch(e){} }
           fs.writeFileSync(path.join(PHOTOS_DIR, fname), Buffer.from(mm[2], "base64"));
-          m.logo = fname;
+          stageMerchantChange(m, "logo", fname);
         }catch(e){ console.log("Logo opslaan mislukt: " + (e.message||e)); }
       }
     }
   }
-  saveMerchants();
-  const promoActive2 = !!(m.promo && m.promo.trim());
-  res.json({ ok:true, merchant: {
+  // Bewaar op disk (pending inbegrepen), maar raak de gids-cache NIET: de
+  // wijziging is immers nog niet live. Publiceren gebeurt om 06:00.
+  saveMerchants(false);
+  // Het portaal toont het concept (pending over live) plus de publicatie-uitleg.
+  const shownPromo = merchantFieldForPortal(m, "promo") || "";
+  const promoActive2 = !!(shownPromo && shownPromo.trim());
+  res.json({ ok:true, hasPending: hasPendingChange(m), publishInfo: PUBLISH_INFO_TEXT, merchant: {
     id: m.id, city: found.city, name: m.name, categoryId: m.categoryId,
-    desc: m.desc || "", address: m.address || "", email: m.email || "",
-    fields: m.fields || {}, photos: m.photos || [],
+    desc: merchantFieldForPortal(m, "desc") || "", address: merchantFieldForPortal(m, "address") || "", email: m.email || "",
+    fields: merchantFieldForPortal(m, "fields") || {}, photos: merchantFieldForPortal(m, "photos") || [],
     subscribed: !!m.subscribed,
-    promo: promoActive2 ? m.promo : "", promoUntil: m.promoUntil || 0,
+    promo: promoActive2 ? shownPromo : "", promoUntil: m.promoUntil || 0,
     isHotel: m.categoryId === "hotels",
-    welcome: m.welcome || "",
-    logo: m.logo || ""
+    welcome: merchantFieldForPortal(m, "welcome") || "",
+    logo: merchantFieldForPortal(m, "logo") || ""
   }});
 });
 
