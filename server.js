@@ -920,6 +920,27 @@ app.get("/fotos/:name", (req, res) => {
   res.sendFile(file);
 });
 
+// Publiek bereikbare basis-URL voor foto's/logo's. BELANGRIJK: de gids-cache
+// bewaart absolute foto-URL's. Wordt de gids opgebouwd via een INTERNE aanroep
+// (bv. de nachtelijke herbouw of de warm-up, die via 127.0.0.1 loopt), dan zou
+// de request-host "127.0.0.1" zijn en kregen gasten onbereikbare foto's. Daarom
+// gebruiken we een vaste publieke basis:
+//   1) PUBLIC_MEDIA_BASE (zelf te zetten in Render, bv. https://formforge-sync-1.onrender.com)
+//   2) anders RENDER_EXTERNAL_URL (zet Render automatisch)
+//   3) anders de request-host, maar NOOIT localhost/127.0.0.1 (dan lege basis).
+function publicMediaBase(req){
+  const envBase = String(process.env.PUBLIC_MEDIA_BASE || process.env.RENDER_EXTERNAL_URL || "").trim();
+  if(envBase) return envBase.replace(/\/+$/, "");
+  const host = String((req && req.headers && req.headers.host) || "").trim();
+  if(host && !/^(127\.0\.0\.1|localhost)(:\d+)?$/i.test(host)){
+    const proto = (req.headers["x-forwarded-proto"] || req.protocol || "https");
+    return proto + "://" + host;
+  }
+  // Geen betrouwbare host (interne aanroep): laat de basis leeg, dan vult de
+  // frontend zelf de backend-URL aan. Veiliger dan een 127.0.0.1-link cachen.
+  return "";
+}
+
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:bernardwijnen@gmail.com";
@@ -5732,8 +5753,9 @@ app.get("/api/city", async (req, res) => {
     if(!cleaned) return String(id || "");
     return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
   }
-  // basis-URL van deze server, voor absolute foto-links (werkt vanaf elke website)
-  const photoBase = (req.headers["x-forwarded-proto"] || req.protocol || "https") + "://" + (req.headers.host || "");
+  // basis-URL voor absolute foto-links. Altijd een PUBLIEK bereikbare basis,
+  // ook als de gids via een interne aanroep (127.0.0.1) wordt opgebouwd.
+  const photoBase = publicMediaBase(req);
 
   // kleine vertaalhelper, ook bruikbaar voor de banner
   async function trh(text){
