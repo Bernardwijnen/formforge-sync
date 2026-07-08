@@ -6940,6 +6940,7 @@ app.post("/api/reception/close", (req, res) => {
 const directRooms = new Map(); // roomId -> kamer
 const DIRECT_STORE_FILE = path.join(DATA_DIR, "formforge_direct_chats.json");
 const DIRECT_NOTIFY_EMAIL = process.env.DIRECT_NOTIFY_EMAIL || "benwijnen1977@gmail.com";
+const DIRECT_ADMIN_URL = process.env.DIRECT_ADMIN_URL || "https://formforge.nl/directelijn-beheer/";
 
 function loadDirectChats(){
   try{
@@ -7101,17 +7102,20 @@ app.post("/api/direct/hotel-send", (req, res) => {
   if(DIRECT_NOTIFY_EMAIL && (Date.now() - (room.notifiedAt || 0) > 15 * 60 * 1000)){
     room.notifiedAt = Date.now();
     const subject = "Directe lijn - nieuw bericht van " + room.name;
+    const chatLink = DIRECT_ADMIN_URL + "?room=" + encodeURIComponent(room.id);
     const body =
       "Er is een nieuw bericht binnengekomen via de directe lijn.\n\n" +
       "Hotel: " + room.name + "\n" +
       "Bericht: " + text + "\n\n" +
-      "Open uw beheerportaal om te antwoorden.\n\n" +
+      "Klik hier om direct in dit gesprek te antwoorden: " + chatLink + "\n\n" +
       "Salve - powered by FormForge";
     const html =
       "<p>Er is een nieuw bericht binnengekomen via de directe lijn.</p>" +
       "<p><strong>Hotel:</strong> " + escHtmlServer(room.name) + "<br>" +
       "<strong>Bericht:</strong> " + escHtmlServer(text) + "</p>" +
-      "<p>Open uw beheerportaal om te antwoorden.</p>" +
+      "<table role='presentation' cellpadding='0' cellspacing='0' style='margin:18px 0;'><tr><td style='background:#c9a24b;border-radius:9px;'>" +
+      "<a href='" + chatLink + "' style='display:inline-block;padding:15px 30px;font-size:16px;font-weight:bold;color:#1e2d4f;text-decoration:none;font-family:Arial,Helvetica,sans-serif;'>Open de chat en antwoord &rarr;</a>" +
+      "</td></tr></table>" +
       "<p>Salve - powered by FormForge</p>";
     sendResendEmail({ to: DIRECT_NOTIFY_EMAIL, subject, text: body, html }).catch(()=>{});
   }
