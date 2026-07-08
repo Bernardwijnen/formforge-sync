@@ -6927,6 +6927,226 @@ app.post("/api/reception/close", (req, res) => {
 });
 
 
+// ============================================================
+//  DIRECTE LIJN: chat tussen hoteleigenaren en FormForge
+// ------------------------------------------------------------
+//  De eigenaar maakt in het beheerportaal per hotel een kamer aan.
+//  Elke kamer krijgt een geheime sleutel; de link/QR met die sleutel
+//  gaat naar de hotelier, die daarmee direct kan chatten. Berichten
+//  van hoteliers geven de eigenaar een e-mail (max 1 per 15 min per
+//  kamer). Zelfde bouwstenen als de hotelchat: atomair opslaan,
+//  uitgestelde writes, berichtenlimiet en rate limiting.
+// ============================================================
+const directRooms = new Map(); // roomId -> kamer
+const DIRECT_STORE_FILE = path.join(DATA_DIR, "formforge_direct_chats.json");
+const DIRECT_NOTIFY_EMAIL = process.env.DIRECT_NOTIFY_EMAIL || "benwijnen1977@gmail.com";
+
+function loadDirectChats(){
+  try{
+    if(!fs.existsSync(DIRECT_STORE_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(DIRECT_STORE_FILE, "utf8") || "{}");
+    Object.keys(data || {}).forEach(id => {
+      const r = data[id];
+      if(!id || !r || !r.key) return;
+      directRooms.set(id, {
+        id: r.id || id,
+        key: r.key,
+        name: r.name || "Hotel",
+        merchantId: r.merchantId || "",
+        createdAt: r.createdAt || Date.now(),
+        lastActive: r.lastActive || Date.now(),
+        notifiedAt: r.notifiedAt || 0,
+        messages: Array.isArray(r.messages) ? r.messages : []
+      });
+    });
+    console.log("Directe-lijn kamers geladen: " + directRooms.size);
+  }catch(e){
+    console.log("Directe-lijn laden mislukt: " + (e.message||e));
+    rescueCorruptStore(DIRECT_STORE_FILE, e);
+  }
+}
+function saveDirectChats(){
+  try{
+    const data = {};
+    for(const [id, r] of directRooms.entries()) data[id] = r;
+    safeWriteFileSync(DIRECT_STORE_FILE, JSON.stringify(data, null, 2));
+  }catch(e){ console.log("Directe-lijn opslaan mislukt: " + (e.message||e)); }
+}
+let _directSaveTimer = null;
+function saveDirectChatsSoon(){
+  if(_directSaveTimer) return;
+  _directSaveTimer = setTimeout(() => {
+    _directSaveTimer = null;
+    try{ saveDirectChats(); }catch(e){}
+  }, 1500);
+}
+loadDirectChats();
+
+function newDirectRoomId(){
+  return "d_" + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+}
+function newDirectKey(){
+  return "dk" + Date.now().toString(36) + Math.random().toString(36).slice(2,12);
+}
+function directRoomByKey(key){
+  const k = String(key || "").trim();
+  if(!k) return null;
+  for(const r of directRooms.values()){
+    if(r.key === k) return r;
+  }
+  return null;
+}
+function directUnread(r){
+  let n = 0;
+  for(const m of r.messages){ if(m.from === "hotel" && !m.read) n++; }
+  return n;
+}
+
+// --- EIGENAAR (beheer, met adminwachtwoord) ---
+app.post("/api/direct/rooms/list", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist beheerwachtwoord.");
+  const rooms = [];
+  for(const r of directRooms.values()){
+    const last = r.messages[r.messages.length - 1];
+    rooms.push({ id: r.id, key: r.key, name: r.name, createdAt: r.createdAt,
+                 lastActive: r.lastActive, unread: directUnread(r),
+                 lastText: last ? last.text : "" });
+  }
+  rooms.sort((a,b) => b.lastActive - a.lastActive);
+  res.json({ ok:true, rooms });
+});
+
+app.post("/api/direct/rooms/create", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist beheerwachtwoord.");
+  const name = String(req.body && req.body.name ? req.body.name : "").trim().slice(0,80);
+  if(!name) return jsonError(res, 400, "Vul een hotelnaam in.");
+  const room = { id: newDirectRoomId(), key: newDirectKey(), name, merchantId: "",
+                 createdAt: Date.now(), lastActive: Date.now(), notifiedAt: 0, messages: [] };
+  directRooms.set(room.id, room);
+  saveDirectChats();
+  res.json({ ok:true, room: { id: room.id, key: room.key, name: room.name } });
+});
+
+app.post("/api/direct/rooms/delete", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist beheerwachtwoord.");
+  const id = String(req.body && req.body.id ? req.body.id : "").trim();
+  if(!directRooms.has(id)) return res.json({ ok:true });
+  directRooms.delete(id);
+  saveDirectChats();
+  res.json({ ok:true });
+});
+
+app.post("/api/direct/messages", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist beheerwachtwoord.");
+  const id = String(req.body && req.body.id ? req.body.id : "").trim();
+  const room = directRooms.get(id);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden.");
+  let changed = false;
+  const out = room.messages.map(m => {
+    if(m.from === "hotel" && !m.read){ m.read = true; changed = true; }
+    return { id: m.id, from: m.from, text: m.text, ts: m.ts };
+  });
+  if(changed) saveDirectChatsSoon();
+  res.json({ ok:true, name: room.name, messages: out });
+});
+
+app.post("/api/direct/send", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist beheerwachtwoord.");
+  const id = String(req.body && req.body.id ? req.body.id : "").trim();
+  const text = String(req.body && req.body.text ? req.body.text : "").trim().slice(0,2000);
+  if(!text) return jsonError(res, 400, "Leeg bericht");
+  const room = directRooms.get(id);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden.");
+  const msg = { id: "f_" + Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+                from: "ff", text, ts: Date.now(), read: true };
+  room.messages.push(msg);
+  if(room.messages.length > 500) room.messages = room.messages.slice(room.messages.length - 500);
+  room.lastActive = Date.now();
+  saveDirectChatsSoon();
+  res.json({ ok:true });
+});
+
+// --- HOTELIER (via geheime sleutel uit de link/QR) ---
+app.get("/api/direct/info", (req, res) => {
+  const room = directRoomByKey(req.query && req.query.key);
+  if(!room) return jsonError(res, 401, "Ongeldige of verlopen link.");
+  res.json({ ok:true, name: room.name });
+});
+
+app.post("/api/direct/hotel-poll", (req, res) => {
+  if(rateLimited("dirpoll", clientIp(req), 150, 60 * 1000)){
+    return jsonError(res, 429, "Te veel verzoeken. Wacht heel even.");
+  }
+  const room = directRoomByKey(req.body && req.body.key);
+  if(!room) return jsonError(res, 401, "Ongeldige of verlopen link.");
+  const out = room.messages.map(m => ({ id: m.id, from: m.from, text: m.text, ts: m.ts }));
+  res.json({ ok:true, name: room.name, messages: out });
+});
+
+app.post("/api/direct/hotel-send", (req, res) => {
+  if(rateLimited("dirsend", clientIp(req), 30, 60 * 1000)){
+    return jsonError(res, 429, "Te veel berichten achter elkaar. Wacht heel even.");
+  }
+  const room = directRoomByKey(req.body && req.body.key);
+  if(!room) return jsonError(res, 401, "Ongeldige of verlopen link.");
+  const text = String(req.body && req.body.text ? req.body.text : "").trim().slice(0,2000);
+  if(!text) return jsonError(res, 400, "Leeg bericht");
+  const msg = { id: "h_" + Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+                from: "hotel", text, ts: Date.now(), read: false };
+  room.messages.push(msg);
+  if(room.messages.length > 500) room.messages = room.messages.slice(room.messages.length - 500);
+  room.lastActive = Date.now();
+  saveDirectChatsSoon();
+  // E-mail naar de eigenaar, hoogstens eens per 15 minuten per kamer.
+  if(DIRECT_NOTIFY_EMAIL && (Date.now() - (room.notifiedAt || 0) > 15 * 60 * 1000)){
+    room.notifiedAt = Date.now();
+    const subject = "Directe lijn - nieuw bericht van " + room.name;
+    const body =
+      "Er is een nieuw bericht binnengekomen via de directe lijn.\n\n" +
+      "Hotel: " + room.name + "\n" +
+      "Bericht: " + text + "\n\n" +
+      "Open uw beheerportaal om te antwoorden.\n\n" +
+      "Salve - powered by FormForge";
+    const html =
+      "<p>Er is een nieuw bericht binnengekomen via de directe lijn.</p>" +
+      "<p><strong>Hotel:</strong> " + escHtmlServer(room.name) + "<br>" +
+      "<strong>Bericht:</strong> " + escHtmlServer(text) + "</p>" +
+      "<p>Open uw beheerportaal om te antwoorden.</p>" +
+      "<p>Salve - powered by FormForge</p>";
+    sendResendEmail({ to: DIRECT_NOTIFY_EMAIL, subject, text: body, html }).catch(()=>{});
+  }
+  res.json({ ok:true });
+});
+
+// --- HOTELIER (vanuit het portaal, met e-mail + pincode) ---
+// Geeft de chatsleutel van de directe-lijn kamer van dit hotel terug.
+// Bestaat die kamer nog niet, dan wordt hij automatisch aangemaakt en
+// verschijnt hij vanzelf in het beheerportaal van de eigenaar.
+app.post("/api/direct/portal-key", (req, res) => {
+  const email = String(req.body && req.body.email ? req.body.email : "").trim();
+  const pin = String(req.body && req.body.pin ? req.body.pin : "").trim();
+  const found = findMerchantByLoginLimited(req, email, pin);
+  if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
+  if(found.m.categoryId !== "hotels") return jsonError(res, 403, "Alleen voor hotels.");
+  const m = found.m;
+  let room = null;
+  for(const r of directRooms.values()){
+    if(r.merchantId && r.merchantId === m.id){ room = r; break; }
+  }
+  if(!room){
+    room = { id: newDirectRoomId(), key: newDirectKey(), name: m.name || "Hotel",
+             merchantId: m.id, createdAt: Date.now(), lastActive: Date.now(),
+             notifiedAt: 0, messages: [] };
+    directRooms.set(room.id, room);
+    saveDirectChats();
+  }else if(m.name && room.name !== m.name){
+    // hotelnaam actueel houden als die in het portaal is gewijzigd
+    room.name = m.name;
+    saveDirectChatsSoon();
+  }
+  res.json({ ok:true, key: room.key, name: room.name });
+});
+
 // Bedrijven van de eigenaar die ALTIJD online + betaald (uitgelicht) zijn,
 // zonder abonnement. Ze krijgen een vaste pincode zodat je altijd in het
 // portaal kunt. De pincode kun je in Render zetten (OWNER_MERCHANT_PIN),
@@ -8633,6 +8853,7 @@ function flushAllStoresAndExit(signal){
   try{ saveCityCache(); }catch(e){}
   try{ saveGuideTransCacheNow(); }catch(e){}
   try{ saveDMNow(); }catch(e){}
+  try{ saveDirectChats(); }catch(e){}
   console.log("Alle data is weggeschreven. Server sluit af.");
   process.exit(0);
 }
