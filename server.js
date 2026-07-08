@@ -193,7 +193,7 @@ function savePremiumAccounts(){
     for(const [key, value] of premiumAccounts.entries()){
       data[key] = value;
     }
-    fs.writeFileSync(PREMIUM_STORE_FILE, JSON.stringify(data, null, 2));
+    safeWriteFileSync(PREMIUM_STORE_FILE, JSON.stringify(data, null, 2));
   }catch(err){
     console.warn("Premium accounts konden niet worden opgeslagen:", err.message || String(err));
   }
@@ -981,12 +981,108 @@ function jsonError(res, status, message, details){
   return res.status(status).json({ error: message, details: details || "" });
 }
 
+// ==== Hulpmiddelen voor stabiliteit onder drukte ====
+
+// Atomair wegschrijven: eerst naar een tijdelijk bestand, dan hernoemen.
+// Zo kan een herstart of crash tijdens het schrijven nooit een half (corrupt)
+// JSON-bestand achterlaten.
+function safeWriteFileSync(file, data){
+  const tmp = file + ".tmp";
+  fs.writeFileSync(tmp, data);
+  fs.renameSync(tmp, file);
+}
+
+// Als een opslagbestand corrupt blijkt bij het laden: bewaar het originele
+// bestand onder een .corrupt-naam (zodat er niets verloren gaat) en log luid.
+// Zonder deze stap zou een lege Map het corrupte bestand bij de eerstvolgende
+// save stilletjes overschrijven en zou alle data definitief weg zijn.
+function rescueCorruptStore(file, err){
+  console.error("LET OP: opslagbestand kon niet worden gelezen: " + file);
+  console.error("Foutmelding: " + (err && err.message ? err.message : String(err)));
+  try{
+    if(fs.existsSync(file)){
+      const rescue = file + ".corrupt-" + Date.now();
+      fs.copyFileSync(file, rescue);
+      console.error("Het originele bestand is veiliggesteld als: " + rescue);
+    }
+  }catch(e){}
+}
+
+// HTML-escapen voor teksten die in e-mails terechtkomen (gastnaam, bericht).
+function escHtmlServer(s){
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+// IP-adres van de bezoeker (achter de Render-proxy staat het echte adres
+// vooraan in x-forwarded-for).
+function clientIp(req){
+  const fwd = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  return fwd || (req.socket && req.socket.remoteAddress) || "onbekend";
+}
+
+// Eenvoudige rate limiter per IP per doel (bucket). Houdt tellers in het
+// geheugen bij en ruimt verlopen vensters periodiek op.
+const _rateBuckets = new Map(); // "bucket|ip" -> { count, resetAt }
+function rateLimited(bucket, ip, max, windowMs){
+  const key = bucket + "|" + ip;
+  const now = Date.now();
+  let e = _rateBuckets.get(key);
+  if(!e || now >= e.resetAt){
+    e = { count: 0, resetAt: now + windowMs };
+    _rateBuckets.set(key, e);
+  }
+  e.count++;
+  return e.count > max;
+}
+setInterval(() => {
+  const now = Date.now();
+  for(const [key, e] of _rateBuckets.entries()){
+    if(now >= e.resetAt) _rateBuckets.delete(key);
+  }
+}, 5 * 60 * 1000);
+
+// Mislukte inlogpogingen per IP bijhouden, zodat pincodes niet te raden zijn
+// door eindeloos proberen. Na 30 mislukte pogingen binnen 15 minuten wordt
+// het IP tijdelijk geweigerd. Geslaagde logins (zoals het normale pollen van
+// het portaal) tellen niet mee.
+const _loginFails = new Map(); // ip -> { count, resetAt }
+function loginBlocked(ip){
+  const e = _loginFails.get(ip);
+  if(!e) return false;
+  if(Date.now() >= e.resetAt){ _loginFails.delete(ip); return false; }
+  return e.count >= 30;
+}
+function noteLoginFail(ip){
+  const now = Date.now();
+  let e = _loginFails.get(ip);
+  if(!e || now >= e.resetAt){
+    e = { count: 0, resetAt: now + 15 * 60 * 1000 };
+    _loginFails.set(ip, e);
+  }
+  e.count++;
+}
+
+// fetch met een harde tijdslimiet, zodat een trage of hangende externe dienst
+// (zoals OpenAI) nooit verzoeken eindeloos open laat staan onder drukte.
+async function fetchWithTimeout(url, options, timeoutMs){
+  const ms = timeoutMs || 90000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try{
+    return await fetch(url, Object.assign({}, options || {}, { signal: controller.signal }));
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
 async function callOpenAI(messages, temperature, modelOverride){
   if(!OPENAI_API_KEY){
     throw new Error("OPENAI_API_KEY ontbreekt in Render Environment Variables");
   }
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+  const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       "Authorization": "Bearer " + OPENAI_API_KEY,
@@ -1362,7 +1458,7 @@ app.post("/api/openai/tts", async (req, res) => {
     const model = normalizeTtsModel(req.body && req.body.model ? req.body.model : process.env.OPENAI_TTS_MODEL || "gpt-4o-mini-tts");
     const instructions = String(req.body && req.body.instructions ? req.body.instructions : buildTtsInstructions(language)).trim();
 
-    const response = await fetch("https://api.openai.com/v1/audio/speech", {
+    const response = await fetchWithTimeout("https://api.openai.com/v1/audio/speech", {
       method: "POST",
       headers: {
         "Authorization": "Bearer " + OPENAI_API_KEY,
@@ -2736,7 +2832,7 @@ app.post("/api/speech/transcribe", upload.single("audio"), async (req, res) => {
       formData.append("prompt", prompt);
     }
 
-    const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    const response = await fetchWithTimeout("https://api.openai.com/v1/audio/transcriptions", {
       method: "POST",
       headers: {
         "Authorization": "Bearer " + OPENAI_API_KEY
@@ -2905,7 +3001,7 @@ app.post("/api/speech/translate-direct", upload.single("audio"), async (req, res
       formData.append("prompt", prompt);
     }
 
-    const transcriptionResponse = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    const transcriptionResponse = await fetchWithTimeout("https://api.openai.com/v1/audio/transcriptions", {
       method: "POST",
       headers: {
         "Authorization": "Bearer " + OPENAI_API_KEY
@@ -2971,7 +3067,7 @@ app.post("/api/speech/translate-direct", upload.single("audio"), async (req, res
     ], 0);
 
     const cleanTranslation = String(translatedText || "")
-      .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
+      .replace(/^["'\u201C\u201D\u2018\u2019]+|["'\u201C\u201D\u2018\u2019]+$/g, "")
       .trim();
 
     const creditResult = consumePremiumCredit(premiumKey, premiumPin, getRequestDeviceId(req));
@@ -3040,7 +3136,7 @@ function savePdfStudioDocuments(){
     for(const [key, value] of pdfStudioDocuments.entries()){
       data[key] = value;
     }
-    fs.writeFileSync(PDF_STUDIO_STORE_FILE, JSON.stringify(data, null, 2));
+    safeWriteFileSync(PDF_STUDIO_STORE_FILE, JSON.stringify(data, null, 2));
   }catch(err){
     console.warn("PDF Studio documenten konden niet worden opgeslagen:", err.message || String(err));
   }
@@ -3698,7 +3794,7 @@ function savePdfStudioRenderStore(){
       tokens[token] = tok;
     }
 
-    fs.writeFileSync(PDFSTUDIO_RENDER_STORE_FILE, JSON.stringify({ documents, tokens }, null, 2));
+    safeWriteFileSync(PDFSTUDIO_RENDER_STORE_FILE, JSON.stringify({ documents, tokens }, null, 2));
   }catch(err){
     console.warn("PDF Studio Render opslag kon niet worden opgeslagen:", err.message || String(err));
   }
@@ -3991,7 +4087,7 @@ function saveRooms(){
         translationDay: room.translationDay || roomToday()
       };
     }
-    fs.writeFileSync(ROOMS_STORE_FILE, JSON.stringify(data, null, 2));
+    safeWriteFileSync(ROOMS_STORE_FILE, JSON.stringify(data, null, 2));
   }catch(err){
     console.warn("Kamers konden niet worden opgeslagen:", err.message || String(err));
   }
@@ -4028,6 +4124,7 @@ function loadRooms(){
     console.log("Kamers geladen: " + rooms.size);
   }catch(err){
     console.warn("Kamers konden niet worden geladen:", err.message || String(err));
+    rescueCorruptStore(ROOMS_STORE_FILE, err);
   }
 }
 loadRooms();
@@ -4141,7 +4238,7 @@ function saveInvites(){
   try{
     const data = {};
     for(const [t, inv] of roomInvites.entries()){ data[t] = inv; }
-    fs.writeFileSync(INVITE_STORE_FILE, JSON.stringify(data));
+    safeWriteFileSync(INVITE_STORE_FILE, JSON.stringify(data));
   }catch(e){}
 }
 function loadInvites(){
@@ -4186,7 +4283,7 @@ function saveReconnect(){
   try{
     const data = {};
     for(const [t, r] of reconnectTokens.entries()){ data[t] = r; }
-    fs.writeFileSync(RECONNECT_STORE_FILE, JSON.stringify(data));
+    safeWriteFileSync(RECONNECT_STORE_FILE, JSON.stringify(data));
   }catch(e){ /* niet kritiek */ }
 }
 function loadReconnect(){
@@ -4231,7 +4328,7 @@ function saveGuests(){
   try{
     const data = {};
     for(const [k, v] of guestAccounts.entries()){ data[k] = v; }
-    fs.writeFileSync(GUEST_STORE_FILE, JSON.stringify(data));
+    safeWriteFileSync(GUEST_STORE_FILE, JSON.stringify(data));
   }catch(e){}
 }
 function loadGuests(){
@@ -5610,7 +5707,7 @@ function saveCityCache(){
   try{
     const data = {};
     for(const [k, v] of cityCache.entries()) data[k] = v;
-    fs.writeFileSync(CITYCACHE_FILE, JSON.stringify(data));
+    safeWriteFileSync(CITYCACHE_FILE, JSON.stringify(data));
   }catch(e){ console.log("Vertaalcache opslaan mislukt: " + (e.message||e)); }
 }
 // Leegt zowel het geheugen als het diskbestand (gebruikt bij inhoudswijzigingen).
@@ -5790,7 +5887,8 @@ app.get("/api/city", async (req, res) => {
     hotel.scans = (hotel.scans || 0) + 1;
     // Alleen de teller opslaan; de vertaalcache NIET legen (anders zou elke
     // taalkeuze de gids opnieuw laten vertalen en moet de gast lang wachten).
-    try{ saveMerchants(false); }catch(e){}
+    // Uitgesteld wegschrijven: bij drukte niet per scan het hele bestand schrijven.
+    saveMerchantsSoon();
   }
   async function buildHotelBanner(hotel){
     if(!hotel) return null;
@@ -6121,6 +6219,9 @@ app.get("/api/city/warmup", async (req, res) => {
 const merchants = new Map(); // stadcode -> [ {merchant}, ... ]
 const MERCHANTS_FILE = path.join(DATA_DIR, "echo_merchants.json");
 const ADMIN_PASSWORD = process.env.ECHO_ADMIN_PASSWORD || "verander-dit-wachtwoord";
+if(!process.env.ECHO_ADMIN_PASSWORD){
+  console.warn("WAARSCHUWING: ECHO_ADMIN_PASSWORD is niet ingesteld in de Render Environment Variables. Het adminscherm gebruikt nu het onveilige standaardwachtwoord. Stel dit direct in.");
+}
 
 function loadMerchants(){
   try{
@@ -6131,13 +6232,13 @@ function loadMerchants(){
     });
     let total = 0; for(const v of merchants.values()) total += v.length;
     console.log("Ondernemers geladen: " + total);
-  }catch(e){}
+  }catch(e){ rescueCorruptStore(MERCHANTS_FILE, e); }
 }
 function saveMerchants(clearCache){
   try{
     const data = {};
     for(const [city, list] of merchants.entries()) data[city] = list;
-    fs.writeFileSync(MERCHANTS_FILE, JSON.stringify(data, null, 2));
+    safeWriteFileSync(MERCHANTS_FILE, JSON.stringify(data, null, 2));
   }catch(e){}
   // Bij puur tellen (scan-teller) geven we clearCache=false mee: dan blijft de
   // cache staan, zodat gasten niet steeds opnieuw hoeven te wachten.
@@ -6148,6 +6249,18 @@ function saveMerchants(clearCache){
   if(clearCache !== false){
     invalidateChangedCities();
   }
+}
+
+// Uitgestelde variant voor hoogfrequente tellers (zoals de scanteller): niet
+// bij elke gids-opening het hele bestand schrijven, maar kort verzamelen en
+// dan in een keer wegschrijven. De gids-cache wordt hierbij nooit geraakt.
+let _merchantsSaveTimer = null;
+function saveMerchantsSoon(){
+  if(_merchantsSaveTimer) return;
+  _merchantsSaveTimer = setTimeout(() => {
+    _merchantsSaveTimer = null;
+    try{ saveMerchants(false); }catch(e){}
+  }, 2000);
 }
 function adminOk(req){
   const pass = (req.body && req.body.adminPass) || (req.query && req.query.adminPass) || "";
@@ -6329,7 +6442,10 @@ function loadHotelChats(){
     });
     let total = 0; for(const h of hotelChats.values()) total += h.convos.size;
     console.log("Hotel-chats geladen: " + total);
-  }catch(e){ console.log("Hotel-chats laden mislukt: " + (e.message||e)); }
+  }catch(e){
+    console.log("Hotel-chats laden mislukt: " + (e.message||e));
+    rescueCorruptStore(CHATS_FILE, e);
+  }
 }
 function saveHotelChats(){
   try{
@@ -6337,8 +6453,19 @@ function saveHotelChats(){
     for(const [code, h] of hotelChats.entries()){
       data[code] = { convos: Array.from(h.convos.values()) };
     }
-    fs.writeFileSync(CHATS_FILE, JSON.stringify(data, null, 2));
+    safeWriteFileSync(CHATS_FILE, JSON.stringify(data, null, 2));
   }catch(e){ console.log("Hotel-chats opslaan mislukt: " + (e.message||e)); }
+}
+
+// Uitgestelde opslag voor de drukke chatpaden (bericht sturen, pollen, gelezen
+// markeren): een write per 1,5 seconde in plaats van een write per bericht.
+let _hotelChatsSaveTimer = null;
+function saveHotelChatsSoon(){
+  if(_hotelChatsSaveTimer) return;
+  _hotelChatsSaveTimer = setTimeout(() => {
+    _hotelChatsSaveTimer = null;
+    try{ saveHotelChats(); }catch(e){}
+  }, 1500);
 }
 function pruneHotelChats(){
   const now = Date.now();
@@ -6397,6 +6524,11 @@ app.get("/api/hotelchat/info", (req, res) => {
 
 // --- GAST: nieuw bericht sturen (start desnoods een nieuw gesprek) ---
 app.post("/api/hotelchat/guest/send", async (req, res) => {
+  // Bescherming tegen misbruik: dit endpoint is publiek en elk bericht kost
+  // een AI-vertaling. Maximaal 30 berichten per minuut per IP-adres.
+  if(rateLimited("hcsend", clientIp(req), 30, 60 * 1000)){
+    return jsonError(res, 429, "Te veel berichten achter elkaar. Wacht heel even en probeer het opnieuw.");
+  }
   const code = String(req.body && req.body.hotel ? req.body.hotel : "").trim().toLowerCase();
   let convoId = String(req.body && req.body.convoId ? req.body.convoId : "").trim();
   const roomId = String(req.body && req.body.room ? req.body.room : "").trim();
@@ -6453,9 +6585,11 @@ app.post("/api/hotelchat/guest/send", async (req, res) => {
   const msg = { id: "g_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
                 from:"guest", text, textNl, srcLang: guestLang, ts: Date.now(), read:false };
   convo.messages.push(msg);
+  // Nooit onbeperkt laten groeien: alleen de laatste 500 berichten bewaren.
+  if(convo.messages.length > 500) convo.messages = convo.messages.slice(convo.messages.length - 500);
   convo.lastActive = Date.now();
   convo.lastGuestAt = Date.now();
-  saveHotelChats();
+  saveHotelChatsSoon();
 
   // E-mailnotificatie naar het hotel (hoogstens eens per 15 min per gesprek)
   // Naar het ingestelde notificatie-adres, anders het gewone inlog-adres.
@@ -6478,9 +6612,9 @@ app.post("/api/hotelchat/guest/send", async (req, res) => {
       "Met vriendelijke groet,\nSalve - powered by FormForge";
     const html =
       "<p>U heeft een nieuw bericht ontvangen via uw Salve-vermelding.</p>" +
-      "<p>" + (convo.roomName ? ("<strong>Kamer:</strong> " + convo.roomName + "<br>") : "") +
-      "<strong>Van:</strong> " + convo.guestName + "<br>" +
-      "<strong>Bericht:</strong> " + textNl + "</p>" +
+      "<p>" + (convo.roomName ? ("<strong>Kamer:</strong> " + escHtmlServer(convo.roomName) + "<br>") : "") +
+      "<strong>Van:</strong> " + escHtmlServer(convo.guestName) + "<br>" +
+      "<strong>Bericht:</strong> " + escHtmlServer(textNl) + "</p>" +
       "<table role='presentation' cellpadding='0' cellspacing='0' style='margin:18px 0;'><tr><td style='background:#c9a24b;border-radius:9px;'>" +
       "<a href='" + portalLink + "' style='display:inline-block;padding:15px 30px;font-size:16px;font-weight:bold;color:#1e2d4f;text-decoration:none;font-family:Arial,Helvetica,sans-serif;'>Open de chat en antwoord &rarr;</a>" +
       "</td></tr></table>" +
@@ -6492,6 +6626,10 @@ app.post("/api/hotelchat/guest/send", async (req, res) => {
 
 // --- GAST: eigen gesprek ophalen (berichten in gast-taal) ---
 app.post("/api/hotelchat/guest/poll", async (req, res) => {
+  // Ruim genoeg voor normaal pollen (elke 4 seconden), maar een rem op misbruik.
+  if(rateLimited("hcpoll", clientIp(req), 150, 60 * 1000)){
+    return jsonError(res, 429, "Te veel verzoeken. Wacht heel even.");
+  }
   const code = String(req.body && req.body.hotel ? req.body.hotel : "").trim().toLowerCase();
   const convoId = String(req.body && req.body.convoId ? req.body.convoId : "").trim();
   const guestLang = String(req.body && req.body.lang ? req.body.lang : "en").trim().slice(0,5) || "en";
@@ -6499,6 +6637,7 @@ app.post("/api/hotelchat/guest/poll", async (req, res) => {
   if(!store || !store.convos.get(convoId)) return res.json({ ok:true, messages: [] });
   const convo = store.convos.get(convoId);
   const out = [];
+  let addedTranslation = false;
   for(const m of convo.messages){
     let shown = m.text;
     if(m.from === "guest"){
@@ -6511,13 +6650,15 @@ app.post("/api/hotelchat/guest/poll", async (req, res) => {
           shown = await translateChat(m.text, HOTEL_LANG, guestLang);
           if(!m.tr || m.trv !== CHAT_TR_VERSION){ m.tr = {}; m.trv = CHAT_TR_VERSION; }
           m.tr[guestLang] = shown;
-          saveHotelChats();
+          addedTranslation = true;
         }
         catch(e){ shown = m.text; }
       }
     }
     out.push({ id:m.id, from:m.from, text: shown, ts:m.ts });
   }
+  // Een keer opslaan na de hele lus, in plaats van per vertaald bericht.
+  if(addedTranslation) saveHotelChatsSoon();
   res.json({ ok:true, messages: out });
 });
 
@@ -6525,7 +6666,7 @@ app.post("/api/hotelchat/guest/poll", async (req, res) => {
 app.post("/api/hotelchat/hotel/list", (req, res) => {
   const email = String(req.body.email || "").trim();
   const pin = String(req.body.pin || "").trim();
-  const found = findMerchantByLogin(email, pin);
+  const found = findMerchantByLoginLimited(req, email, pin);
   if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
   if(found.m.categoryId !== "hotels") return jsonError(res, 403, "Alleen voor hotels.");
   const code = (found.m.hotelCode || "").toLowerCase();
@@ -6549,7 +6690,7 @@ app.post("/api/hotelchat/hotel/messages", (req, res) => {
   const email = String(req.body.email || "").trim();
   const pin = String(req.body.pin || "").trim();
   const convoId = String(req.body.convoId || "").trim();
-  const found = findMerchantByLogin(email, pin);
+  const found = findMerchantByLoginLimited(req, email, pin);
   if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
   if(found.m.categoryId !== "hotels") return jsonError(res, 403, "Alleen voor hotels.");
   const code = (found.m.hotelCode || "").toLowerCase();
@@ -6561,7 +6702,7 @@ app.post("/api/hotelchat/hotel/messages", (req, res) => {
     if(m.from === "guest" && !m.read){ m.read = true; changed = true; }
     return { id:m.id, from:m.from, text: (m.from==="guest" ? (m.textNl||m.text) : m.text), ts:m.ts };
   });
-  if(changed) saveHotelChats();
+  if(changed) saveHotelChatsSoon();
   res.json({ ok:true, messages: out, guestName: convo.guestName });
 });
 
@@ -6572,7 +6713,7 @@ app.post("/api/hotelchat/hotel/send", (req, res) => {
   const convoId = String(req.body.convoId || "").trim();
   const text = String(req.body.text || "").trim().slice(0,2000);
   if(!text) return jsonError(res, 400, "Leeg bericht");
-  const found = findMerchantByLogin(email, pin);
+  const found = findMerchantByLoginLimited(req, email, pin);
   if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
   if(found.m.categoryId !== "hotels") return jsonError(res, 403, "Alleen voor hotels.");
   const code = (found.m.hotelCode || "").toLowerCase();
@@ -6582,8 +6723,10 @@ app.post("/api/hotelchat/hotel/send", (req, res) => {
   const msg = { id:"h_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
                 from:"hotel", text, srcLang: HOTEL_LANG, ts: Date.now(), tr:{} };
   convo.messages.push(msg);
+  // Nooit onbeperkt laten groeien: alleen de laatste 500 berichten bewaren.
+  if(convo.messages.length > 500) convo.messages = convo.messages.slice(convo.messages.length - 500);
   convo.lastActive = Date.now();
-  saveHotelChats();
+  saveHotelChatsSoon();
   res.json({ ok:true });
 });
 
@@ -6592,7 +6735,7 @@ app.post("/api/hotelchat/hotel/close", (req, res) => {
   const email = String(req.body.email || "").trim();
   const pin = String(req.body.pin || "").trim();
   const convoId = String(req.body.convoId || "").trim();
-  const found = findMerchantByLogin(email, pin);
+  const found = findMerchantByLoginLimited(req, email, pin);
   if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
   if(found.m.categoryId !== "hotels") return jsonError(res, 403, "Alleen voor hotels.");
   const code = (found.m.hotelCode || "").toLowerCase();
@@ -6608,7 +6751,7 @@ app.post("/api/hotelchat/hotel/close", (req, res) => {
 function hotelChatAuth(req){
   const email = String(req.body.email || "").trim();
   const pin = String(req.body.pin || "").trim();
-  const found = findMerchantByLogin(email, pin);
+  const found = findMerchantByLoginLimited(req, email, pin);
   if(!found) return { err:[401, "E-mail of pincode klopt niet."] };
   if(found.m.categoryId !== "hotels") return { err:[403, "Alleen voor hotels."] };
   // Zorg dat dit hotel een hotelcode heeft (nodig voor de QR-links en de chat).
@@ -6746,7 +6889,7 @@ app.post("/api/reception/messages", (req, res) => {
     if(m.from === "guest" && !m.read){ m.read = true; changed = true; }
     return { id:m.id, from:m.from, text: (m.from==="guest" ? (m.textNl||m.text) : m.text), ts:m.ts };
   });
-  if(changed) saveHotelChats();
+  if(changed) saveHotelChatsSoon();
   res.json({ ok:true, messages: out, roomName: convo.roomName || "", guestName: convo.guestName || "" });
 });
 
@@ -6763,8 +6906,10 @@ app.post("/api/reception/send", (req, res) => {
   const msg = { id:"h_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
                 from:"hotel", text, srcLang: HOTEL_LANG, ts: Date.now(), tr:{} };
   convo.messages.push(msg);
+  // Nooit onbeperkt laten groeien: alleen de laatste 500 berichten bewaren.
+  if(convo.messages.length > 500) convo.messages = convo.messages.slice(convo.messages.length - 500);
   convo.lastActive = Date.now();
-  saveHotelChats();
+  saveHotelChatsSoon();
   res.json({ ok:true });
 });
 
@@ -7239,6 +7384,18 @@ async function sendMerchantPinEmail(m){
 }
 
 // --- ONDERNEMER-PORTAAL (inloggen met e-mail + pincode) ---
+// Zelfde als findMerchantByLogin, maar met bescherming tegen het eindeloos
+// raden van pincodes: mislukte pogingen per IP worden geteld en na te veel
+// mislukkingen wordt het IP tijdelijk geweigerd. Geslaagde logins (zoals het
+// normale pollen van het portaal) tellen niet mee, dus hoteliers merken hier
+// niets van.
+function findMerchantByLoginLimited(req, email, pin){
+  const ip = clientIp(req);
+  if(loginBlocked(ip)) return null;
+  const found = findMerchantByLogin(email, pin);
+  if(!found) noteLoginFail(ip);
+  return found;
+}
 function findMerchantByLogin(email, pin){
   email = String(email || "").trim().toLowerCase();
   pin = String(pin || "").trim();
@@ -7254,9 +7411,13 @@ function findMerchantByLogin(email, pin){
 }
 
 app.post("/api/merchant/login", (req, res) => {
+  // Rem op inlogpogingen per IP, tegen het raden van pincodes.
+  if(rateLimited("mlogin", clientIp(req), 20, 10 * 60 * 1000)){
+    return jsonError(res, 429, "Te veel inlogpogingen. Probeer het over een paar minuten opnieuw.");
+  }
   const email = String(req.body.email || "").trim();
   const pin = String(req.body.pin || "").trim();
-  const found = findMerchantByLogin(email, pin);
+  const found = findMerchantByLoginLimited(req, email, pin);
   if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet, of uw vermelding is nog niet actief.");
   if(!found.m.active) return jsonError(res, 403, "Uw vermelding is niet actief. Sluit eerst een abonnement af.");
   const m = found.m;
@@ -7295,7 +7456,7 @@ app.post("/api/merchant/login", (req, res) => {
 app.post("/api/merchant/update", (req, res) => {
   const email = String(req.body.email || "").trim();
   const pin = String(req.body.pin || "").trim();
-  const found = findMerchantByLogin(email, pin);
+  const found = findMerchantByLoginLimited(req, email, pin);
   if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
   if(!found.m.active) return jsonError(res, 403, "Uw vermelding is niet actief.");
   const m = found.m;
@@ -7396,7 +7557,7 @@ app.post("/api/merchant/update", (req, res) => {
 app.post("/api/merchant/cancel", async (req, res) => {
   const email = String(req.body.email || "").trim();
   const pin = String(req.body.pin || "").trim();
-  const found = findMerchantByLogin(email, pin);
+  const found = findMerchantByLoginLimited(req, email, pin);
   if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
   const m = found.m;
   if(m.isOwner){
@@ -7556,7 +7717,7 @@ async function translateText(text, from, to){
   const fromName = langName(from);
   const toName = langName(to);
   const out = await callOpenAI([
-    { role:"system", content:"You are a professional translation engine for a hotel guest chat. Translate the ENTIRE message into " + toName + ". Every single word must end up in " + toName + " — never leave any word in the original language or any other language. Auto-detect the source language yourself; the sender may have mislabeled it. Do not add explanations, notes, quotes or the original text. Keep only proper names, numbers, emoji and links unchanged. Output nothing but the finished " + toName + " translation." },
+    { role:"system", content:"You are a professional translation engine for a hotel guest chat. Translate the ENTIRE message into " + toName + ". Every single word must end up in " + toName + " - never leave any word in the original language or any other language. Auto-detect the source language yourself; the sender may have mislabeled it. Do not add explanations, notes, quotes or the original text. Keep only proper names, numbers, emoji and links unchanged. Output nothing but the finished " + toName + " translation." },
     { role:"user", content:"Translate this into " + toName + " (detect the source language automatically). Return only the full " + toName + " translation:\n\n" + text }
   ], 0.1);
   setCachedTranslation(from,to,text,out);
@@ -7588,15 +7749,18 @@ function loadGuideTransCache(){
 // verzamelen en dan in een keer wegschrijven. Dat spaart de disk bij een warm-up
 // die snel achter elkaar veel teksten vertaalt.
 let _guideTransSaveTimer = null;
+function saveGuideTransCacheNow(){
+  try{
+    const data = {};
+    for(const [k, v] of guideTransCache.entries()) data[k] = v;
+    safeWriteFileSync(GUIDETRANS_FILE, JSON.stringify(data));
+  }catch(e){ console.log("Gidstekst-vertaalcache opslaan mislukt: " + (e.message||e)); }
+}
 function saveGuideTransCacheSoon(){
   if(_guideTransSaveTimer) return;
   _guideTransSaveTimer = setTimeout(() => {
     _guideTransSaveTimer = null;
-    try{
-      const data = {};
-      for(const [k, v] of guideTransCache.entries()) data[k] = v;
-      fs.writeFileSync(GUIDETRANS_FILE, JSON.stringify(data));
-    }catch(e){ console.log("Gidstekst-vertaalcache opslaan mislukt: " + (e.message||e)); }
+    saveGuideTransCacheNow();
   }, 3000);
 }
 
@@ -7623,7 +7787,25 @@ loadGuideTransCache();
 // de gewone chatvertaling, en daarna op de originele tekst.
 // Speciale vertaler voor de gast<->hotel chat: sterk model (gpt-4o),
 // met een prompt die past bij korte chatberichten (geen brochure-toon).
-async function translateChat(text, from, to){
+// Deduplicatie van gelijktijdige identieke chatvertalingen: als twee polls
+// precies dezelfde tekst naar dezelfde taal vragen terwijl de eerste vertaling
+// nog loopt, wachten ze op dezelfde OpenAI-aanroep in plaats van dubbel te
+// betalen voor hetzelfde resultaat.
+const _chatTransInflight = new Map();
+function translateChat(text, from, to){
+  if(!text) return Promise.resolve("");
+  if(from === to) return Promise.resolve(String(text));
+  const key = from + "|" + to + "|" + String(text);
+  const running = _chatTransInflight.get(key);
+  if(running) return running;
+  const p = translateChatNow(text, from, to);
+  _chatTransInflight.set(key, p);
+  const cleanup = () => { _chatTransInflight.delete(key); };
+  p.then(cleanup, cleanup);
+  return p;
+}
+
+async function translateChatNow(text, from, to){
   if(!text) return "";
   if(from === to) return text;
   const src = String(text);
@@ -8151,15 +8333,12 @@ function loadDM(){
     console.log("Direct-messages geladen: " + dmUsers.size + " gebruikers");
   }catch(err){
     console.warn("Direct-messages konden niet worden geladen:", err.message || String(err));
+    rescueCorruptStore(DM_STORE_FILE, err);
   }
 }
 
 let dmSaveTimer = null;
-function saveDM(){
-  // licht uitgesteld opslaan zodat snelle bursts niet telkens schrijven
-  if(dmSaveTimer) return;
-  dmSaveTimer = setTimeout(() => {
-    dmSaveTimer = null;
+function saveDMNow(){
     try{
       const users = Array.from(dmUsers.values()).map((u) => ({
         echoId: u.echoId, accountKey: u.accountKey, email: u.email,
@@ -8173,10 +8352,17 @@ function saveDM(){
       for(const [echoId, list] of dmPush.entries()){
         if(list && list.length) push[echoId] = list;
       }
-      fs.writeFileSync(DM_STORE_FILE, JSON.stringify({ users, threads, push }, null, 2));
+      safeWriteFileSync(DM_STORE_FILE, JSON.stringify({ users, threads, push }, null, 2));
     }catch(err){
       console.warn("Direct-messages konden niet worden opgeslagen:", err.message || String(err));
     }
+}
+function saveDM(){
+  // licht uitgesteld opslaan zodat snelle bursts niet telkens schrijven
+  if(dmSaveTimer) return;
+  dmSaveTimer = setTimeout(() => {
+    dmSaveTimer = null;
+    saveDMNow();
   }, 800);
 }
 
@@ -8432,6 +8618,26 @@ app.use((req, res) => {
 
 
 
+
+// ==== Nette afsluiting: bij een herstart of deploy (SIGTERM van Render) ====
+// eerst alle data naar de disk schrijven, zodat uitgestelde saves en verse
+// wijzigingen nooit verloren gaan.
+let _shuttingDown = false;
+function flushAllStoresAndExit(signal){
+  if(_shuttingDown) return;
+  _shuttingDown = true;
+  console.log("Signaal " + signal + " ontvangen: alle data wordt weggeschreven voor het afsluiten...");
+  try{ saveMerchants(false); }catch(e){}
+  try{ saveHotelChats(); }catch(e){}
+  try{ saveRooms(); }catch(e){}
+  try{ saveCityCache(); }catch(e){}
+  try{ saveGuideTransCacheNow(); }catch(e){}
+  try{ saveDMNow(); }catch(e){}
+  console.log("Alle data is weggeschreven. Server sluit af.");
+  process.exit(0);
+}
+process.on("SIGTERM", () => flushAllStoresAndExit("SIGTERM"));
+process.on("SIGINT", () => flushAllStoresAndExit("SIGINT"));
 
 app.listen(PORT, () => {
   console.log("ECHO Central Server draait op poort " + PORT);
