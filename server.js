@@ -6997,6 +6997,46 @@ function directRoomByKey(key){
   }
   return null;
 }
+// Pushmeldingen naar de eigen toestellen van de eigenaar. De abonnementen
+// worden apart bewaard zodat ze een herstart overleven. Dode abonnementen
+// (toestel verwijderd) worden automatisch opgeruimd.
+const DIRECT_PUSH_FILE = path.join(DATA_DIR, "formforge_direct_push.json");
+let directPushSubs = [];
+function loadDirectPush(){
+  try{
+    if(!fs.existsSync(DIRECT_PUSH_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(DIRECT_PUSH_FILE, "utf8") || "[]");
+    if(Array.isArray(data)) directPushSubs = data;
+    console.log("Directe-lijn pushabonnementen geladen: " + directPushSubs.length);
+  }catch(e){}
+}
+function saveDirectPush(){
+  try{ safeWriteFileSync(DIRECT_PUSH_FILE, JSON.stringify(directPushSubs)); }catch(e){}
+}
+loadDirectPush();
+
+async function notifyDirectPush(room, text){
+  if(!webpush || !VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
+  if(directPushSubs.length === 0) return;
+  const payload = JSON.stringify({
+    title: "Directe lijn - " + room.name,
+    body: String(text || "").slice(0, 140),
+    url: DIRECT_ADMIN_URL + "?room=" + encodeURIComponent(room.id)
+  });
+  let changed = false;
+  for(const sub of directPushSubs.slice()){
+    try{
+      await webpush.sendNotification(sub, payload);
+    }catch(err){
+      if(err && (err.statusCode === 404 || err.statusCode === 410)){
+        directPushSubs = directPushSubs.filter(s => s !== sub);
+        changed = true;
+      }
+    }
+  }
+  if(changed) saveDirectPush();
+}
+
 function directUnread(r){
   let n = 0;
   for(const m of r.messages){ if(m.from === "hotel" && !m.read) n++; }
@@ -7067,6 +7107,29 @@ app.post("/api/direct/send", (req, res) => {
   res.json({ ok:true });
 });
 
+app.post("/api/direct/push-key", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist beheerwachtwoord.");
+  if(!webpush || !VAPID_PUBLIC_KEY) return jsonError(res, 503, "Pushmeldingen zijn niet ingesteld op de server.");
+  res.json({ ok:true, publicKey: VAPID_PUBLIC_KEY });
+});
+
+app.post("/api/direct/push-subscribe", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist beheerwachtwoord.");
+  const sub = req.body && req.body.subscription;
+  if(!sub || !sub.endpoint) return jsonError(res, 400, "Geen geldig abonnement ontvangen.");
+  directPushSubs = directPushSubs.filter(s => s.endpoint !== sub.endpoint);
+  directPushSubs.push(sub);
+  if(directPushSubs.length > 10) directPushSubs = directPushSubs.slice(directPushSubs.length - 10);
+  saveDirectPush();
+  res.json({ ok:true, devices: directPushSubs.length });
+});
+
+app.post("/api/direct/push-test", async (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist beheerwachtwoord.");
+  await notifyDirectPush({ id: "", name: "Testmelding" }, "Pushmeldingen staan aan op dit toestel!");
+  res.json({ ok:true, devices: directPushSubs.length });
+});
+
 // --- HOTELIER (via geheime sleutel uit de link/QR) ---
 app.get("/api/direct/info", (req, res) => {
   const room = directRoomByKey(req.query && req.query.key);
@@ -7098,6 +7161,8 @@ app.post("/api/direct/hotel-send", (req, res) => {
   if(room.messages.length > 500) room.messages = room.messages.slice(room.messages.length - 500);
   room.lastActive = Date.now();
   saveDirectChatsSoon();
+  // Pushmelding naar de toestellen van de eigenaar, bij ELK bericht.
+  notifyDirectPush(room, text).catch(()=>{});
   // E-mail naar de eigenaar, hoogstens eens per 15 minuten per kamer.
   if(DIRECT_NOTIFY_EMAIL && (Date.now() - (room.notifiedAt || 0) > 15 * 60 * 1000)){
     room.notifiedAt = Date.now();
