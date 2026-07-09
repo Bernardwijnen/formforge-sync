@@ -7068,6 +7068,17 @@ app.post("/api/direct/rooms/create", (req, res) => {
   res.json({ ok:true, room: { id: room.id, key: room.key, name: room.name } });
 });
 
+app.post("/api/direct/rooms/clear", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist beheerwachtwoord.");
+  const id = String(req.body && req.body.id ? req.body.id : "").trim();
+  const room = directRooms.get(id);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden.");
+  room.messages = [];
+  room.lastActive = Date.now();
+  saveDirectChats();
+  res.json({ ok:true });
+});
+
 app.post("/api/direct/rooms/delete", (req, res) => {
   if(!adminOk(req)) return jsonError(res, 401, "Onjuist beheerwachtwoord.");
   const id = String(req.body && req.body.id ? req.body.id : "").trim();
