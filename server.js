@@ -6031,6 +6031,27 @@ app.get("/api/city", async (req, res) => {
   cityCacheBuilding.set(cacheKey, _buildPromise);
 
   // helper: vertaal alleen als nodig (andere taal), met stille fallback naar origineel
+  // Verwerk items in kleine groepjes tegelijk (i.p.v. allemaal ineens),
+  // zodat we onder de OpenAI rate limit blijven. Anders worden bij veel
+  // ondernemers een deel van de vertalingen geweigerd en blijft de tekst
+  // in de brontaal staan. Resultaatvolgorde blijft gelijk aan de invoer.
+  async function mapLimit(items, limit, fn){
+    const results = new Array(items.length);
+    let i = 0;
+    async function worker(){
+      while(i < items.length){
+        const idx = i++;
+        results[idx] = await fn(items[idx], idx);
+      }
+    }
+    const workers = [];
+    const n = Math.min(limit, items.length);
+    for(let w = 0; w < n; w++) workers.push(worker());
+    await Promise.all(workers);
+    return results;
+  }
+  const TR_CONCURRENCY = 6;
+
   async function tr(text){
     if(!text || lang === src) return text;
     try{ return await translateGuideText(text, src, lang); }catch(e){ return text; }
@@ -6043,7 +6064,7 @@ app.get("/api/city", async (req, res) => {
     // vertaal titel en alle beschrijvingen van deze categorie tegelijk (parallel)
     const [title, descs] = await Promise.all([
       tr(c.title || ""),
-      Promise.all((c.items || []).map(it => tr(it.desc || "")))
+      mapLimit((c.items || []), TR_CONCURRENCY, it => tr(it.desc || ""))
     ]);
     const items = (c.items || []).map((it, i) => ({
       name: it.name,
@@ -6065,15 +6086,15 @@ app.get("/api/city", async (req, res) => {
     if(pa !== pb) return pb - pa;
     return (a.name || "").localeCompare(b.name || "");
   });
-  const translatedDescs = await Promise.all(
-    cityMerchants.map(m => tr(m.desc || ""))
+  const translatedDescs = await mapLimit(
+    cityMerchants, TR_CONCURRENCY, m => tr(m.desc || "")
   );
-  const translatedPromos = await Promise.all(
-    cityMerchants.map(m => hasPromo(m) ? tr(m.promo) : Promise.resolve(""))
+  const translatedPromos = await mapLimit(
+    cityMerchants, TR_CONCURRENCY, m => hasPromo(m) ? tr(m.promo) : Promise.resolve("")
   );
   // extra velden vertalen (alleen de ingevulde)
   const fieldKeys = ["hours","phone","website","menu","drinks","mealtimes","schedule","prices","extra"];
-  const translatedFields = await Promise.all(cityMerchants.map(async (m) => {
+  const translatedFields = await mapLimit(cityMerchants, TR_CONCURRENCY, async (m) => {
     const out = {};
     if(m.fields){
       for(const k of fieldKeys){
@@ -6084,7 +6105,7 @@ app.get("/api/city", async (req, res) => {
       }
     }
     return out;
-  }));
+  });
   for(let mi = 0; mi < cityMerchants.length; mi++){
     const m = cityMerchants[mi];
     let cat = cats.find(c => c.id === m.categoryId);
@@ -8097,7 +8118,7 @@ function getGuideTranslation(from,to,text){
 }
 function setGuideTranslation(from,to,text,translated){
   guideTransCache.set(guideCacheKey(from,to,text), { text: translated, ts: Date.now() });
-  if(guideTransCache.size > 5000){
+  if(guideTransCache.size > 50000){
     const firstKey = guideTransCache.keys().next().value;
     guideTransCache.delete(firstKey);
   }
