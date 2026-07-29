@@ -4388,6 +4388,30 @@ app.get("/api/brand", (req, res) => {
 // De teksten schrijf je in EEN taal (sourceLang); de gids vertaalt automatisch
 // naar de taal van de bezoeker.
 const CITIES = {
+  "zuidlimburg": {
+    name: "Zuid-Limburg",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & caf\u00e9s", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
   "valkenburg": {
     name: "Valkenburg",
     sourceLang: "nl",
