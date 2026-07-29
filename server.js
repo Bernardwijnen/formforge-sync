@@ -6187,6 +6187,12 @@ app.get("/api/city/warmup", async (req, res) => {
     return jsonError(res, 400, "Onbekende stad. Gebruik ?code=amsterdam (of een andere stadscode).");
   }
   const hotel = String(req.query && req.query.hotel ? req.query.hotel : "").trim().toLowerCase();
+  // Met &force=1 eerst de (mogelijk verouderde) cache van deze stad wissen,
+  // zodat alles opnieuw wordt opgebouwd en vertaald in plaats van overgeslagen.
+  const force = String(req.query && req.query.force ? req.query.force : "") === "1";
+  if(force){
+    dropCityFromCache(code);
+  }
   const allLangs = Object.keys(LANG_NAMES);
   const port = process.env.PORT || 10000;
   const base = "http://127.0.0.1:" + port + "/api/city";
