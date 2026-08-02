@@ -1295,6 +1295,59 @@ app.get("/api/openai/status", (req, res) => {
   });
 });
 
+/* ==========================================================
+   REALTIME VERTALER (Guesttalk) - ephemeral token
+   Geeft een kort geldig toegangsticket uit zodat de browser
+   rechtstreeks met de OpenAI Realtime API kan praten, zonder
+   dat de echte API sleutel ooit in de frontend komt.
+   ========================================================== */
+const OPENAI_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || "gpt-realtime";
+const OPENAI_REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE || "marin";
+
+async function mintRealtimeToken(res){
+  try{
+    if(!OPENAI_API_KEY){
+      return res.status(500).json({ error: "OPENAI_API_KEY ontbreekt op de server" });
+    }
+    const r = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + OPENAI_API_KEY,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        session: {
+          type: "realtime",
+          model: OPENAI_REALTIME_MODEL,
+          audio: { output: { voice: OPENAI_REALTIME_VOICE } }
+        }
+      })
+    });
+    const data = await r.json().catch(() => ({}));
+    if(!r.ok){
+      console.error("Realtime token fout:", JSON.stringify(data));
+      return res.status(r.status).json({ error: "Token maken mislukt", details: data });
+    }
+    const value = data && (data.value || (data.client_secret && data.client_secret.value));
+    if(!value){
+      console.error("Realtime token: geen value in antwoord:", JSON.stringify(data));
+      return res.status(500).json({ error: "Token maken mislukt", details: data });
+    }
+    return res.json({
+      value: value,
+      expires_at: data.expires_at || (data.client_secret && data.client_secret.expires_at) || null,
+      model: OPENAI_REALTIME_MODEL,
+      voice: OPENAI_REALTIME_VOICE
+    });
+  }catch(error){
+    console.error("Realtime token uitzondering:", (error && error.message) || error);
+    return res.status(500).json({ error: "Token maken mislukt" });
+  }
+}
+
+app.post("/api/realtime/token", (req, res) => mintRealtimeToken(res));
+app.get("/api/realtime/token", (req, res) => mintRealtimeToken(res));
+
 app.post("/api/openai/translate", async (req, res) => {
   try{
     const text = String(req.body && req.body.text ? req.body.text : "").trim();
