@@ -1296,57 +1296,143 @@ app.get("/api/openai/status", (req, res) => {
 });
 
 /* ==========================================================
-   REALTIME VERTALER (Guesttalk) - ephemeral token
-   Geeft een kort geldig toegangsticket uit zodat de browser
-   rechtstreeks met de OpenAI Realtime API kan praten, zonder
-   dat de echte API sleutel ooit in de frontend komt.
+   GUESTTALK realtime vertaler: tokens + verbruikslimiet
+   - /api/realtime/token?code=..   geeft ephemeral token, weigert als bundel op is
+   - /api/realtime/usage           telt gesproken seconden mee (hartslag vanuit de app)
+   - /api/realtime/admin           locatiecodes aanmaken/bijwerken (adminPass vereist)
+   Verbruik staat op de persistente schijf, reset automatisch per kalendermaand.
    ========================================================== */
 const OPENAI_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || "gpt-realtime";
 const OPENAI_REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE || "marin";
+const REALTIME_ADMIN_PASS = process.env.ADMIN_PASS || (typeof OWNER_PREMIUM_PIN !== "undefined" ? OWNER_PREMIUM_PIN : "654321");
+const GUESTTALK_USAGE_FILE = path.join(DATA_DIR, "salve_guesttalk_usage.json");
+const GUESTTALK_TIERS = { instap: 300, zakelijk: 1000, pro: 2500 };
 
-async function mintRealtimeToken(res){
+let guesttalkUsage = { codes: {} };
+function loadGuesttalkUsage(){
   try{
-    if(!OPENAI_API_KEY){
-      return res.status(500).json({ error: "OPENAI_API_KEY ontbreekt op de server" });
+    const raw = fs.readFileSync(GUESTTALK_USAGE_FILE, "utf8");
+    const data = JSON.parse(raw || "{}");
+    if(data && typeof data === "object") guesttalkUsage = { codes: data.codes || {} };
+  }catch(e){ guesttalkUsage = { codes: {} }; }
+}
+function saveGuesttalkUsage(){
+  try{ safeWriteFileSync(GUESTTALK_USAGE_FILE, JSON.stringify(guesttalkUsage)); }
+  catch(e){ console.error("Guesttalk verbruik opslaan mislukt:", (e && e.message) || e); }
+}
+loadGuesttalkUsage();
+
+function guesttalkPeriodMonth(){
+  const d = new Date();
+  return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
+}
+function guesttalkNormCode(c){ return String(c || "").trim().toLowerCase().slice(0, 60); }
+function guesttalkGetRecord(code){
+  const key = guesttalkNormCode(code);
+  if(!key) return null;
+  const rec = guesttalkUsage.codes[key];
+  if(!rec) return null;
+  const nowMonth = guesttalkPeriodMonth();
+  if(rec.periodMonth !== nowMonth){
+    rec.periodMonth = nowMonth;
+    rec.secondsUsed = 0;
+    saveGuesttalkUsage();
+  }
+  return rec;
+}
+
+function guesttalkAdmin(req, res){
+  const q = Object.assign({}, req.query || {}, req.body || {});
+  if(String(q.adminPass || "") !== String(REALTIME_ADMIN_PASS)){
+    return res.status(403).json({ error: "Geen toegang" });
+  }
+  const action = String(q.action || "").toLowerCase();
+  if(action === "list"){
+    return res.json({ ok: true, tiers: GUESTTALK_TIERS, codes: guesttalkUsage.codes });
+  }
+  const key = guesttalkNormCode(q.code);
+  if(!key) return res.status(400).json({ error: "code ontbreekt" });
+  if(action === "remove"){
+    delete guesttalkUsage.codes[key];
+    saveGuesttalkUsage();
+    return res.json({ ok: true, removed: key });
+  }
+  let rec = guesttalkUsage.codes[key];
+  if(!rec){
+    rec = { tier: "instap", limitMinutes: GUESTTALK_TIERS.instap, secondsUsed: 0, periodMonth: guesttalkPeriodMonth(), label: "" };
+    guesttalkUsage.codes[key] = rec;
+  }
+  if(action === "reset"){ rec.secondsUsed = 0; rec.periodMonth = guesttalkPeriodMonth(); }
+  if(q.tier && GUESTTALK_TIERS[String(q.tier).toLowerCase()]){
+    rec.tier = String(q.tier).toLowerCase();
+    rec.limitMinutes = GUESTTALK_TIERS[rec.tier];
+  }
+  if(q.minutes !== undefined && q.minutes !== ""){
+    const m = parseInt(q.minutes, 10);
+    if(!isNaN(m) && m >= 0) rec.limitMinutes = m;
+  }
+  if(q.label !== undefined) rec.label = String(q.label).slice(0, 120);
+  saveGuesttalkUsage();
+  return res.json({ ok: true, code: key, record: rec });
+}
+app.get("/api/realtime/admin", guesttalkAdmin);
+app.post("/api/realtime/admin", guesttalkAdmin);
+
+async function mintRealtimeToken(req, res){
+  try{
+    if(!OPENAI_API_KEY) return res.status(500).json({ error: "OPENAI_API_KEY ontbreekt op de server" });
+    const code = guesttalkNormCode((req.query && req.query.code) || (req.body && req.body.code));
+    if(!code) return res.status(400).json({ error: "Geen locatiecode meegegeven", limitReached: false });
+    const rec = guesttalkGetRecord(code);
+    if(!rec) return res.status(404).json({ error: "Onbekende locatiecode", limitReached: false });
+    const limitSec = (rec.limitMinutes || 0) * 60;
+    if(rec.secondsUsed >= limitSec){
+      return res.status(402).json({ error: "Bundel op", limitReached: true, limitMinutes: rec.limitMinutes, minutesUsed: Math.round(rec.secondsUsed / 60) });
     }
     const r = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
       method: "POST",
-      headers: {
-        "Authorization": "Bearer " + OPENAI_API_KEY,
-        "Content-Type": "application/json"
-      },
+      headers: { "Authorization": "Bearer " + OPENAI_API_KEY, "Content-Type": "application/json" },
       body: JSON.stringify({
-        session: {
-          type: "realtime",
-          model: OPENAI_REALTIME_MODEL,
-          audio: { output: { voice: OPENAI_REALTIME_VOICE } }
-        }
+        session: { type: "realtime", model: OPENAI_REALTIME_MODEL, audio: { output: { voice: OPENAI_REALTIME_VOICE } } }
       })
     });
     const data = await r.json().catch(() => ({}));
-    if(!r.ok){
-      console.error("Realtime token fout:", JSON.stringify(data));
-      return res.status(r.status).json({ error: "Token maken mislukt", details: data });
-    }
+    if(!r.ok){ console.error("Realtime token fout:", JSON.stringify(data)); return res.status(r.status).json({ error: "Token maken mislukt", details: data }); }
     const value = data && (data.value || (data.client_secret && data.client_secret.value));
-    if(!value){
-      console.error("Realtime token: geen value in antwoord:", JSON.stringify(data));
-      return res.status(500).json({ error: "Token maken mislukt", details: data });
-    }
+    if(!value){ console.error("Realtime token: geen value:", JSON.stringify(data)); return res.status(500).json({ error: "Token maken mislukt", details: data }); }
     return res.json({
       value: value,
       expires_at: data.expires_at || (data.client_secret && data.client_secret.expires_at) || null,
       model: OPENAI_REALTIME_MODEL,
-      voice: OPENAI_REALTIME_VOICE
+      voice: OPENAI_REALTIME_VOICE,
+      remainingSeconds: Math.max(0, limitSec - rec.secondsUsed),
+      limitMinutes: rec.limitMinutes,
+      minutesUsed: Math.round(rec.secondsUsed / 60)
     });
   }catch(error){
     console.error("Realtime token uitzondering:", (error && error.message) || error);
     return res.status(500).json({ error: "Token maken mislukt" });
   }
 }
+app.post("/api/realtime/token", (req, res) => mintRealtimeToken(req, res));
+app.get("/api/realtime/token", (req, res) => mintRealtimeToken(req, res));
 
-app.post("/api/realtime/token", (req, res) => mintRealtimeToken(res));
-app.get("/api/realtime/token", (req, res) => mintRealtimeToken(res));
+function guesttalkUsageBeat(req, res){
+  const q = Object.assign({}, req.query || {}, req.body || {});
+  const code = guesttalkNormCode(q.code);
+  if(!code) return res.status(400).json({ error: "code ontbreekt" });
+  const rec = guesttalkGetRecord(code);
+  if(!rec) return res.status(404).json({ error: "Onbekende locatiecode" });
+  let sec = parseFloat(q.seconds);
+  if(isNaN(sec) || sec < 0) sec = 0;
+  if(sec > 120) sec = 120;
+  rec.secondsUsed += sec;
+  saveGuesttalkUsage();
+  const limitSec = (rec.limitMinutes || 0) * 60;
+  return res.json({ ok: true, limitReached: rec.secondsUsed >= limitSec, remainingSeconds: Math.max(0, limitSec - rec.secondsUsed) });
+}
+app.post("/api/realtime/usage", guesttalkUsageBeat);
+app.get("/api/realtime/usage", guesttalkUsageBeat);
 
 app.post("/api/openai/translate", async (req, res) => {
   try{
