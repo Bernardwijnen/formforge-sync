@@ -1640,6 +1640,38 @@ async function guesttalkSubscribeLink(req, res){
 app.get("/api/realtime/subscribe-link", guesttalkSubscribeLink);
 app.post("/api/realtime/subscribe-link", guesttalkSubscribeLink);
 
+/* ---- Aanmeldingen vanaf de verkooppagina (mailt naar info@formforge.nl) ---- */
+const GUESTTALK_LEAD_EMAIL = process.env.GUESTTALK_LEAD_EMAIL || "info@formforge.nl";
+async function guesttalkLead(req, res){
+  try{
+    const q = Object.assign({}, req.query || {}, req.body || {});
+    if(q.hp){ return res.json({ ok:true }); } /* honeypot: waarschijnlijk een bot */
+    const naam = String(q.naam || "").slice(0,120).trim();
+    const email = String(q.email || "").slice(0,160).trim();
+    const bedrijf = String(q.bedrijf || "").slice(0,160).trim();
+    const telefoon = String(q.telefoon || "").slice(0,60).trim();
+    const onderwerp = String(q.onderwerp || "").slice(0,140).trim();
+    const bericht = String(q.bericht || "").slice(0,2000).trim();
+    if(!naam || !email || email.indexOf("@") < 0){
+      return res.status(400).json({ error:"Naam en een geldig e-mailadres zijn verplicht" });
+    }
+    const esc = s => String(s).replace(/</g,"&lt;");
+    const subject = "Guesttalk aanmelding: " + (bedrijf || naam);
+    const text = "Nieuwe aanmelding via de Guesttalk-pagina.\n\nNaam: " + naam + "\nBedrijf: " + bedrijf + "\nE-mail: " + email + "\nTelefoon: " + telefoon + "\nOnderwerp: " + onderwerp + "\n\nBericht:\n" + bericht;
+    const html = '<div style="font-family:Arial,Helvetica,sans-serif;color:#1d2b50;line-height:1.55">' +
+      '<h2 style="font-family:Georgia,serif;color:#1d2b50">Nieuwe Guesttalk-aanmelding</h2>' +
+      '<p><b>Naam:</b> ' + esc(naam) + '<br><b>Bedrijf:</b> ' + esc(bedrijf) + '<br><b>E-mail:</b> ' + esc(email) + '<br><b>Telefoon:</b> ' + esc(telefoon) + '<br><b>Onderwerp:</b> ' + esc(onderwerp) + '</p>' +
+      '<p><b>Bericht:</b><br>' + esc(bericht).replace(/\n/g,"<br>") + '</p></div>';
+    await sendResendEmail({ to: GUESTTALK_LEAD_EMAIL, subject: subject, text: text, html: html });
+    return res.json({ ok:true });
+  }catch(e){
+    console.error("Guesttalk lead mislukt:", (e && e.message) || e);
+    return res.status(500).json({ error:"Versturen mislukt" });
+  }
+}
+app.post("/api/realtime/lead", guesttalkLead);
+app.get("/api/realtime/lead", guesttalkLead);
+
 async function mintRealtimeToken(req, res){
   try{
     if(!OPENAI_API_KEY) return res.status(500).json({ error: "OPENAI_API_KEY ontbreekt op de server" });
