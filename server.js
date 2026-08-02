@@ -1296,17 +1296,20 @@ app.get("/api/openai/status", (req, res) => {
 });
 
 /* ==========================================================
-   GUESTTALK realtime vertaler: tokens + verbruikslimiet
-   - /api/realtime/token?code=..   geeft ephemeral token, weigert als bundel op is
-   - /api/realtime/usage           telt gesproken seconden mee (hartslag vanuit de app)
-   - /api/realtime/admin           locatiecodes aanmaken/bijwerken (adminPass vereist)
-   Verbruik staat op de persistente schijf, reset automatisch per kalendermaand.
+   GUESTTALK realtime vertaler: tokens, verbruikslimiet,
+   apparaatvergrendeling en klant-uitnodiging per e-mail.
+   - /api/realtime/token?code=..&deviceId=..  ephemeral token; weigert bij volle bundel of vreemd apparaat
+   - /api/realtime/usage                      telt gesproken seconden mee (hartslag)
+   - /api/realtime/admin                      codes beheren (adminPass vereist)
+   - /api/realtime/send-invite                mailt de klantlink (adminPass vereist)
+   Verbruik + apparaten staan op de persistente schijf, bundel reset per kalendermaand.
    ========================================================== */
 const OPENAI_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || "gpt-realtime";
 const OPENAI_REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE || "marin";
 const REALTIME_ADMIN_PASS = process.env.ADMIN_PASS || (typeof OWNER_PREMIUM_PIN !== "undefined" ? OWNER_PREMIUM_PIN : "654321");
 const GUESTTALK_USAGE_FILE = path.join(DATA_DIR, "salve_guesttalk_usage.json");
 const GUESTTALK_TIERS = { instap: 300, zakelijk: 1000, pro: 2500 };
+const GUESTTALK_BASE_URL = process.env.GUESTTALK_BASE_URL || "https://formforge.nl/guesttalk/";
 
 let guesttalkUsage = { codes: {} };
 function loadGuesttalkUsage(){
@@ -1327,11 +1330,14 @@ function guesttalkPeriodMonth(){
   return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
 }
 function guesttalkNormCode(c){ return String(c || "").trim().toLowerCase().slice(0, 60); }
+function guesttalkLink(code){ return GUESTTALK_BASE_URL + (GUESTTALK_BASE_URL.indexOf("?")>=0 ? "&" : "?") + "code=" + encodeURIComponent(code); }
 function guesttalkGetRecord(code){
   const key = guesttalkNormCode(code);
   if(!key) return null;
   const rec = guesttalkUsage.codes[key];
   if(!rec) return null;
+  if(!Array.isArray(rec.devices)) rec.devices = [];
+  if(!rec.maxDevices) rec.maxDevices = 1;
   const nowMonth = guesttalkPeriodMonth();
   if(rec.periodMonth !== nowMonth){
     rec.periodMonth = nowMonth;
@@ -1348,7 +1354,7 @@ function guesttalkAdmin(req, res){
   }
   const action = String(q.action || "").toLowerCase();
   if(action === "list"){
-    return res.json({ ok: true, tiers: GUESTTALK_TIERS, codes: guesttalkUsage.codes });
+    return res.json({ ok: true, tiers: GUESTTALK_TIERS, baseUrl: GUESTTALK_BASE_URL, codes: guesttalkUsage.codes });
   }
   const key = guesttalkNormCode(q.code);
   if(!key) return res.status(400).json({ error: "code ontbreekt" });
@@ -1359,10 +1365,12 @@ function guesttalkAdmin(req, res){
   }
   let rec = guesttalkUsage.codes[key];
   if(!rec){
-    rec = { tier: "instap", limitMinutes: GUESTTALK_TIERS.instap, secondsUsed: 0, periodMonth: guesttalkPeriodMonth(), label: "" };
+    rec = { tier: "instap", limitMinutes: GUESTTALK_TIERS.instap, secondsUsed: 0, periodMonth: guesttalkPeriodMonth(), label: "", email: "", devices: [], maxDevices: 1 };
     guesttalkUsage.codes[key] = rec;
   }
+  if(!Array.isArray(rec.devices)) rec.devices = [];
   if(action === "reset"){ rec.secondsUsed = 0; rec.periodMonth = guesttalkPeriodMonth(); }
+  if(action === "resetdevice"){ rec.devices = []; }
   if(q.tier && GUESTTALK_TIERS[String(q.tier).toLowerCase()]){
     rec.tier = String(q.tier).toLowerCase();
     rec.limitMinutes = GUESTTALK_TIERS[rec.tier];
@@ -1371,24 +1379,86 @@ function guesttalkAdmin(req, res){
     const m = parseInt(q.minutes, 10);
     if(!isNaN(m) && m >= 0) rec.limitMinutes = m;
   }
+  if(q.maxDevices !== undefined && q.maxDevices !== ""){
+    const md = parseInt(q.maxDevices, 10);
+    if(!isNaN(md) && md >= 1) rec.maxDevices = md;
+  }
   if(q.label !== undefined) rec.label = String(q.label).slice(0, 120);
+  if(q.email !== undefined) rec.email = String(q.email).slice(0, 160);
   saveGuesttalkUsage();
-  return res.json({ ok: true, code: key, record: rec });
+  return res.json({ ok: true, code: key, link: guesttalkLink(key), record: rec });
 }
 app.get("/api/realtime/admin", guesttalkAdmin);
 app.post("/api/realtime/admin", guesttalkAdmin);
 
+async function guesttalkSendInvite(req, res){
+  const q = Object.assign({}, req.query || {}, req.body || {});
+  if(String(q.adminPass || "") !== String(REALTIME_ADMIN_PASS)){
+    return res.status(403).json({ error: "Geen toegang" });
+  }
+  const key = guesttalkNormCode(q.code);
+  if(!key) return res.status(400).json({ error: "code ontbreekt" });
+  const rec = guesttalkUsage.codes[key];
+  if(!rec) return res.status(404).json({ error: "Onbekende locatiecode" });
+  const to = String(q.email || rec.email || "").trim();
+  if(!to || to.indexOf("@") < 0) return res.status(400).json({ error: "Geen geldig e-mailadres" });
+  const link = guesttalkLink(key);
+  const naam = rec.label || "uw locatie";
+  const extra = String(q.message || "").trim();
+  const subject = "Uw Guesttalk vertaler is klaar";
+  const text = "Beste,\n\nUw persoonlijke Guesttalk live vertaler staat klaar voor " + naam + ".\n\nOpen deze link op het apparaat waarop u de vertaler wilt gebruiken (tablet, telefoon of computer):\n" + link + "\n\nLet op: de vertaler werkt op 1 apparaat. Het eerste apparaat dat de link opent, wordt het vaste apparaat. Wilt u wisselen van apparaat, neem dan contact met ons op.\n" + (extra ? ("\n" + extra + "\n") : "") + "\nMet vriendelijke groet,\nFormForge";
+  const html = '<div style="font-family:Arial,Helvetica,sans-serif;color:#1d2b50;line-height:1.5">' +
+    '<h2 style="font-family:Georgia,serif;color:#1d2b50">Uw Guesttalk vertaler is klaar</h2>' +
+    '<p>Beste,</p>' +
+    '<p>Uw persoonlijke Guesttalk live vertaler staat klaar voor <b>' + naam + '</b>.</p>' +
+    '<p>Open deze link op het apparaat waarop u de vertaler wilt gebruiken (tablet, telefoon of computer):</p>' +
+    '<p><a href="' + link + '" style="display:inline-block;background:#1d2b50;color:#fff;text-decoration:none;padding:12px 20px;border-radius:999px;font-weight:bold">Guesttalk openen</a></p>' +
+    '<p style="font-size:13px;color:#667085">Of kopieer: ' + link + '</p>' +
+    '<p style="font-size:13px;color:#667085">Let op: de vertaler werkt op 1 apparaat. Het eerste apparaat dat de link opent wordt het vaste apparaat. Wilt u wisselen, neem dan contact met ons op.</p>' +
+    (extra ? ('<p>' + extra.replace(/</g,"&lt;") + '</p>') : '') +
+    '<p>Met vriendelijke groet,<br>FormForge</p></div>';
+  try{
+    await sendResendEmail({ to: to, subject: subject, text: text, html: html });
+    if(q.email){ rec.email = to; saveGuesttalkUsage(); }
+    return res.json({ ok: true, sentTo: to, link: link });
+  }catch(e){
+    console.error("Guesttalk invite mail mislukt:", (e && e.message) || e);
+    return res.status(500).json({ error: "Mail versturen mislukt: " + ((e && e.message) || "onbekend") });
+  }
+}
+app.get("/api/realtime/send-invite", guesttalkSendInvite);
+app.post("/api/realtime/send-invite", guesttalkSendInvite);
+
 async function mintRealtimeToken(req, res){
   try{
     if(!OPENAI_API_KEY) return res.status(500).json({ error: "OPENAI_API_KEY ontbreekt op de server" });
-    const code = guesttalkNormCode((req.query && req.query.code) || (req.body && req.body.code));
+    const src = Object.assign({}, req.query || {}, req.body || {});
+    const code = guesttalkNormCode(src.code);
     if(!code) return res.status(400).json({ error: "Geen locatiecode meegegeven", limitReached: false });
     const rec = guesttalkGetRecord(code);
     if(!rec) return res.status(404).json({ error: "Onbekende locatiecode", limitReached: false });
+
+    /* Apparaatvergrendeling */
+    const deviceId = String(src.deviceId || "").trim().slice(0, 80);
+    if(!deviceId) return res.status(400).json({ error: "Geen apparaat-id meegegeven" });
+    const nowIso = new Date().toISOString();
+    let dev = rec.devices.find(d => d.id === deviceId);
+    if(dev){
+      dev.lastSeen = nowIso;
+    }else{
+      if(rec.devices.length >= (rec.maxDevices || 1)){
+        return res.status(423).json({ error: "Deze code is al in gebruik op een ander apparaat", deviceBlocked: true });
+      }
+      rec.devices.push({ id: deviceId, firstSeen: nowIso, lastSeen: nowIso });
+    }
+    saveGuesttalkUsage();
+
+    /* Minutenlimiet */
     const limitSec = (rec.limitMinutes || 0) * 60;
     if(rec.secondsUsed >= limitSec){
       return res.status(402).json({ error: "Bundel op", limitReached: true, limitMinutes: rec.limitMinutes, minutesUsed: Math.round(rec.secondsUsed / 60) });
     }
+
     const r = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
       method: "POST",
       headers: { "Authorization": "Bearer " + OPENAI_API_KEY, "Content-Type": "application/json" },
