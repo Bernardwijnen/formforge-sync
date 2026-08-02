@@ -1694,7 +1694,10 @@ async function mintRealtimeToken(req, res){
       remainingSeconds: Math.max(0, limitSec - rec.secondsUsed),
       limitMinutes: guesttalkLimitMinutes(rec),
       minutesUsed: Math.round(rec.secondsUsed / 60),
-      onlinePay: !!(GUESTTALK_TOPUP_PACKS["300"] && GUESTTALK_TOPUP_PACKS["300"].priceId)
+      onlinePay: !!(GUESTTALK_TOPUP_PACKS["300"] && GUESTTALK_TOPUP_PACKS["300"].priceId),
+      demo: !!(rec.perDeviceMinutes && rec.perDeviceMinutes > 0),
+      perDeviceMinutes: rec.perDeviceMinutes || 0,
+      perDeviceRemainingSeconds: (rec.perDeviceMinutes && rec.perDeviceMinutes > 0) ? Math.max(0, rec.perDeviceMinutes * 60 - ((rec.deviceUsage && rec.deviceUsage[deviceId]) || 0)) : null
     });
   }catch(error){
     console.error("Realtime token uitzondering:", (error && error.message) || error);
@@ -1725,7 +1728,8 @@ function guesttalkUsageBeat(req, res){
   if(rec.perDeviceMinutes && rec.perDeviceMinutes > 0 && deviceId){
     perDeviceReached = ((rec.deviceUsage[deviceId] || 0) >= rec.perDeviceMinutes * 60);
   }
-  return res.json({ ok: true, limitReached: rec.secondsUsed >= limitSec, perDeviceReached: perDeviceReached, remainingSeconds: Math.max(0, limitSec - rec.secondsUsed), limitMinutes: guesttalkLimitMinutes(rec) });
+  const perDeviceRemainingSeconds = (rec.perDeviceMinutes && rec.perDeviceMinutes > 0 && deviceId) ? Math.max(0, rec.perDeviceMinutes * 60 - (rec.deviceUsage[deviceId] || 0)) : null;
+  return res.json({ ok: true, limitReached: rec.secondsUsed >= limitSec, perDeviceReached: perDeviceReached, remainingSeconds: Math.max(0, limitSec - rec.secondsUsed), limitMinutes: guesttalkLimitMinutes(rec), demo: !!(rec.perDeviceMinutes && rec.perDeviceMinutes > 0), perDeviceRemainingSeconds: perDeviceRemainingSeconds });
 }
 app.post("/api/realtime/usage", guesttalkUsageBeat);
 app.get("/api/realtime/usage", guesttalkUsageBeat);
