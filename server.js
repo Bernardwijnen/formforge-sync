@@ -1365,11 +1365,14 @@ function guesttalkGetRecord(code){
   if(typeof rec.bonusMinutes !== "number") rec.bonusMinutes = 0;
   if(!Array.isArray(rec.requests)) rec.requests = [];
   if(!Array.isArray(rec.log)) rec.log = [];
+  if(typeof rec.perDeviceMinutes !== "number") rec.perDeviceMinutes = 0;
+  if(!rec.deviceUsage || typeof rec.deviceUsage !== "object") rec.deviceUsage = {};
   const nowMonth = guesttalkPeriodMonth();
   if(rec.periodMonth !== nowMonth){
     rec.periodMonth = nowMonth;
     rec.secondsUsed = 0;
     rec.bonusMinutes = 0;
+    rec.deviceUsage = {};
     saveGuesttalkUsage();
   }
   return rec;
@@ -1404,7 +1407,7 @@ function guesttalkAdmin(req, res){
   }
   let rec = guesttalkUsage.codes[key];
   if(!rec){
-    rec = { tier: "instap", limitMinutes: GUESTTALK_TIERS.instap, bonusMinutes: 0, secondsUsed: 0, periodMonth: guesttalkPeriodMonth(), label: "", email: "", devices: [], maxDevices: 1, requests: [], log: [] };
+    rec = { tier: "instap", limitMinutes: GUESTTALK_TIERS.instap, bonusMinutes: 0, secondsUsed: 0, periodMonth: guesttalkPeriodMonth(), label: "", email: "", devices: [], maxDevices: 1, perDeviceMinutes: 0, deviceUsage: {}, requests: [], log: [] };
     guesttalkUsage.codes[key] = rec;
     guesttalkLog(rec, "Aangemaakt");
   }
@@ -1435,6 +1438,10 @@ function guesttalkAdmin(req, res){
   if(q.maxDevices !== undefined && q.maxDevices !== ""){
     const md = parseInt(q.maxDevices, 10);
     if(!isNaN(md) && md >= 1) rec.maxDevices = md;
+  }
+  if(q.perDeviceMinutes !== undefined && q.perDeviceMinutes !== ""){
+    const pdm = parseInt(q.perDeviceMinutes, 10);
+    if(!isNaN(pdm) && pdm >= 0) rec.perDeviceMinutes = pdm;
   }
   if(q.label !== undefined) rec.label = String(q.label).slice(0, 120);
   if(q.email !== undefined) rec.email = String(q.email).slice(0, 160);
@@ -1658,6 +1665,13 @@ async function mintRealtimeToken(req, res){
     }
     saveGuesttalkUsage();
 
+    if(rec.perDeviceMinutes && rec.perDeviceMinutes > 0){
+      const du = (rec.deviceUsage && rec.deviceUsage[deviceId]) || 0;
+      if(du >= rec.perDeviceMinutes * 60){
+        return res.status(402).json({ error: "Demo-limiet bereikt", perDeviceReached: true, perDeviceMinutes: rec.perDeviceMinutes });
+      }
+    }
+
     const limitSec = guesttalkLimitMinutes(rec) * 60;
     if(rec.secondsUsed >= limitSec){
       return res.status(402).json({ error: "Bundel op", limitReached: true, limitMinutes: guesttalkLimitMinutes(rec), minutesUsed: Math.round(rec.secondsUsed / 60) });
@@ -1699,10 +1713,19 @@ function guesttalkUsageBeat(req, res){
   let sec = parseFloat(q.seconds);
   if(isNaN(sec) || sec < 0) sec = 0;
   if(sec > 120) sec = 120;
+  const deviceId = String(q.deviceId || "").trim().slice(0, 80);
   rec.secondsUsed += sec;
+  if(rec.perDeviceMinutes && rec.perDeviceMinutes > 0 && deviceId){
+    if(!rec.deviceUsage || typeof rec.deviceUsage !== "object") rec.deviceUsage = {};
+    rec.deviceUsage[deviceId] = (rec.deviceUsage[deviceId] || 0) + sec;
+  }
   saveGuesttalkUsage();
   const limitSec = guesttalkLimitMinutes(rec) * 60;
-  return res.json({ ok: true, limitReached: rec.secondsUsed >= limitSec, remainingSeconds: Math.max(0, limitSec - rec.secondsUsed), limitMinutes: guesttalkLimitMinutes(rec) });
+  let perDeviceReached = false;
+  if(rec.perDeviceMinutes && rec.perDeviceMinutes > 0 && deviceId){
+    perDeviceReached = ((rec.deviceUsage[deviceId] || 0) >= rec.perDeviceMinutes * 60);
+  }
+  return res.json({ ok: true, limitReached: rec.secondsUsed >= limitSec, perDeviceReached: perDeviceReached, remainingSeconds: Math.max(0, limitSec - rec.secondsUsed), limitMinutes: guesttalkLimitMinutes(rec) });
 }
 app.post("/api/realtime/usage", guesttalkUsageBeat);
 app.get("/api/realtime/usage", guesttalkUsageBeat);
