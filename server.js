@@ -9568,7 +9568,7 @@ app.post("/api/zzp/item", zzpUpload.single("foto"), (req, res) => {
     const account = zzpGetAccount(email);
     if(!account) return res.status(400).json({ ok: false, error: "Account kon niet worden gelezen" });
 
-    const tekst = zzpSchoon(req.body && req.body.tekst, 400);
+    const tekst = zzpSchoon(req.body && req.body.tekst, 2200);
     if(!tekst && !req.file) return res.status(400).json({ ok: false, error: "Geef een foto of een tekstje mee" });
 
     if(account.items.length >= ZZP_MAX_ITEMS_PER_ACCOUNT){
@@ -9724,7 +9724,7 @@ app.post("/api/zzp/week", express.json({ limit: "200kb" }), async (req, res) => 
         id: crypto.randomBytes(6).toString("hex"),
         soort: soort.id,
         soortNaam: soort.naam,
-        tekst: zzpSchoon(gevonden.tekst, 900),
+        tekst: zzpSchoon(gevonden.tekst, 2200),
         foto: bijItem ? bijItem.foto : "",
         wanneer: zzpDatumPlus(startDatum, index),
         geplaatst: false
@@ -9777,7 +9777,7 @@ app.post("/api/zzp/bericht", express.json({ limit: "100kb" }), (req, res) => {
   const bericht = week.berichten.find((b) => b.id === berichtId);
   if(!bericht) return res.status(404).json({ ok: false, error: "Bericht niet gevonden" });
 
-  if(typeof req.body.tekst === "string") bericht.tekst = zzpSchoon(req.body.tekst, 900);
+  if(typeof req.body.tekst === "string") bericht.tekst = zzpSchoon(req.body.tekst, 2200);
   if(typeof req.body.wanneer === "string") bericht.wanneer = zzpSchoon(req.body.wanneer, 16);
   if(typeof req.body.geplaatst === "boolean") bericht.geplaatst = req.body.geplaatst;
   zzpMarkDirty();
@@ -9847,7 +9847,6 @@ const ZZP2_REDIRECT = ZZP2_PUBLIC_URL + "/api/zzp/koppel/terug";
 const ZZP2_SCOPES = [
   "pages_show_list",
   "pages_read_engagement",
-  "pages_manage_posts",
   "instagram_basic",
   "instagram_content_publish",
   "business_management"
