@@ -9831,6 +9831,49 @@ app.post("/api/zzp/bericht", express.json({ limit: "100kb" }), (req, res) => {
   return res.json({ ok: true, bericht });
 });
 
+/* 7b. De foto bij een bericht vervangen. */
+app.post("/api/zzp/bericht-foto", zzpUpload.single("foto"), (req, res) => {
+  try{
+    const email = normalizePremiumKey(req.body && req.body.email);
+    const weekId = zzpSchoon(req.body && req.body.weekId, 40);
+    const berichtId = zzpSchoon(req.body && req.body.berichtId, 40);
+    if(!email || !weekId || !berichtId) return res.status(400).json({ ok: false, error: "Gegevens ontbreken" });
+    if(!req.file || !req.file.buffer || req.file.buffer.length === 0){
+      return res.status(400).json({ ok: false, error: "Geen foto ontvangen" });
+    }
+
+    const account = zzpGetAccount(email);
+    const week = (account.weken || []).find((w) => w.id === weekId);
+    if(!week) return res.status(404).json({ ok: false, error: "Week niet gevonden" });
+    const bericht = week.berichten.find((b) => b.id === berichtId);
+    if(!bericht) return res.status(404).json({ ok: false, error: "Bericht niet gevonden" });
+
+    const fotoNaam = "zzp_" + crypto.randomBytes(10).toString("hex") + zzpExtensie(req.file.mimetype);
+    fs.writeFileSync(path.join(ZZP_PHOTOS_DIR, fotoNaam), req.file.buffer);
+
+    const oud = bericht.foto;
+    bericht.foto = fotoNaam;
+    zzpMarkDirty();
+    zzpSaveNow();
+
+    /* de oude foto opruimen, tenzij een ander bericht hem ook gebruikt */
+    if(oud && oud !== fotoNaam){
+      let nogInGebruik = false;
+      (account.weken || []).forEach((w) => {
+        (w.berichten || []).forEach((b) => { if(b.foto === oud) nogInGebruik = true; });
+      });
+      if(!nogInGebruik){
+        try{ fs.unlinkSync(path.join(ZZP_PHOTOS_DIR, oud)); }catch(e){}
+      }
+    }
+
+    return res.json({ ok: true, foto: fotoNaam });
+  }catch(err){
+    console.error("ZZP foto vervangen mislukt:", err.message || String(err));
+    return res.status(500).json({ ok: false, error: "Foto vervangen mislukt" });
+  }
+});
+
 /* 8. Een foto uitserveren. */
 app.get("/api/zzp/foto/:naam", (req, res) => {
   const naam = String(req.params.naam || "");
