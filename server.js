@@ -10210,6 +10210,27 @@ function zzp2IsJpeg(naam){
   return /\.jpe?g$/i.test(String(naam || ""));
 }
 
+async function zzp2WachtOpFoto(containerId, token){
+  for(let poging = 0; poging < 20; poging++){
+    await new Promise((klaar) => setTimeout(klaar, 2000));
+    let status;
+    try{
+      status = await zzp2Graph("/" + containerId, {
+        fields: "status_code,status",
+        access_token: token
+      });
+    }catch(err){
+      continue; /* nog niet leesbaar, gewoon opnieuw proberen */
+    }
+    const code = String(status && status.status_code ? status.status_code : "").toUpperCase();
+    if(code === "FINISHED") return true;
+    if(code === "ERROR" || code === "EXPIRED"){
+      throw new Error("Instagram kon de foto niet verwerken: " + (status.status || code));
+    }
+  }
+  throw new Error("Instagram is nog bezig met de foto. Probeer het over een minuut opnieuw.");
+}
+
 async function zzp2PlaatsInstagram(k, tekst, fotoNaam){
   const igToken = zzp2Ontsleutel(k.pageToken) || zzp2Ontsleutel(k.userToken);
   if(!k.igUserId || !igToken) throw new Error("Instagram is niet gekoppeld");
@@ -10223,6 +10244,11 @@ async function zzp2PlaatsInstagram(k, tekst, fotoNaam){
   }, "POST");
 
   if(!container || !container.id) throw new Error("Instagram maakte geen bericht aan");
+
+  /* Instagram haalt de foto zelf op en verwerkt hem. Dat duurt een paar
+     seconden. Publiceren voordat dat klaar is geeft "Media ID is not
+     available", dus we wachten tot de status FINISHED is. */
+  await zzp2WachtOpFoto(container.id, igToken);
 
   const geplaatst = await zzp2Graph("/" + k.igUserId + "/media_publish", {
     creation_id: container.id,
