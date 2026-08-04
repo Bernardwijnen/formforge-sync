@@ -9814,6 +9814,522 @@ process.on("SIGINT", () => { try{ zzpSaveNow(); }catch(e){} });
 
 /* ==================== EINDE ZZP WEEKMARKETING ==================== */
 
+/* ==========================================================================
+   ZZP KOPPELEN EN PLAATSEN  -  tweede blok, hoort achter het weekmarketingblok
+   --------------------------------------------------------------------------
+   PLAATSEN: direct onder het blok ZZP WEEKMARKETING, dus nog steeds VOOR
+             app.use((req, res) => { res.status(404) ... })
+
+   Wat dit doet:
+     - bewaart de eigen Meta-app-sleutels van een gebruiker (versleuteld)
+     - regelt het toestemmingsscherm van Facebook en haalt de tokens op
+     - zoekt de Facebook-pagina en het gekoppelde Instagram-account
+     - plaatst geplande berichten vanzelf op het juiste moment
+     - vernieuwt tokens voordat ze verlopen
+
+   OMGEVINGSVARIABELEN die je op Render moet zetten:
+     ZZP_CRYPTO_KEY      verplicht. Lange willekeurige reeks, minimaal 32 tekens.
+                         Verlies je hem, dan moeten alle gebruikers opnieuw koppelen.
+     ZZP_PUBLIC_URL      standaard https://formforge-sync-1.onrender.com
+     ZZP_TOOL_URL        waar de gebruiker naartoe gaat na het koppelen
+     META_API_VERSION    standaard v21.0. LET OP: Meta laat versies na ongeveer
+                         twee jaar vervallen. Kijk in de Meta-documentatie welke
+                         versie nu actueel is en zet die hier. Ik kan dat niet
+                         voor je controleren.
+   ========================================================================== */
+
+const ZZP2_CRYPTO_KEY = process.env.ZZP_CRYPTO_KEY || "";
+const ZZP2_PUBLIC_URL = (process.env.ZZP_PUBLIC_URL || "https://formforge-sync-1.onrender.com").replace(/\/+$/, "");
+const ZZP2_TOOL_URL = process.env.ZZP_TOOL_URL || "https://www.formforge.nl/marketingtool/";
+const ZZP2_API = "https://graph.facebook.com/" + (process.env.META_API_VERSION || "v21.0");
+const ZZP2_DIALOG = "https://www.facebook.com/" + (process.env.META_API_VERSION || "v21.0") + "/dialog/oauth";
+const ZZP2_REDIRECT = ZZP2_PUBLIC_URL + "/api/zzp/koppel/terug";
+const ZZP2_SCOPES = [
+  "pages_show_list",
+  "pages_read_engagement",
+  "pages_manage_posts",
+  "instagram_basic",
+  "instagram_content_publish",
+  "business_management"
+].join(",");
+
+if(!ZZP2_CRYPTO_KEY){
+  console.warn("ZZP: ZZP_CRYPTO_KEY ontbreekt. Koppelen is uitgeschakeld tot die is ingesteld.");
+}
+
+/* ---------- versleutelen ---------- */
+
+function zzp2Sleutel(){
+  return crypto.createHash("sha256").update(String(ZZP2_CRYPTO_KEY)).digest();
+}
+
+function zzp2Versleutel(tekst){
+  if(!ZZP2_CRYPTO_KEY) return "";
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", zzp2Sleutel(), iv);
+  const deel1 = cipher.update(String(tekst), "utf8");
+  const deel2 = cipher.final();
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([iv, tag, deel1, deel2]).toString("base64");
+}
+
+function zzp2Ontsleutel(pakket){
+  if(!ZZP2_CRYPTO_KEY || !pakket) return "";
+  try{
+    const buf = Buffer.from(String(pakket), "base64");
+    const iv = buf.slice(0, 12);
+    const tag = buf.slice(12, 28);
+    const rest = buf.slice(28);
+    const decipher = crypto.createDecipheriv("aes-256-gcm", zzp2Sleutel(), iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(rest), decipher.final()]).toString("utf8");
+  }catch(err){
+    console.error("ZZP: ontsleutelen mislukt:", err.message || String(err));
+    return "";
+  }
+}
+
+/* ---------- ondertekende state, zodat niemand met de terugkomst kan knoeien ---------- */
+
+function zzp2MaakState(email){
+  const nonce = crypto.randomBytes(8).toString("hex");
+  const basis = Buffer.from(email + "|" + nonce).toString("base64url");
+  const hmac = crypto.createHmac("sha256", String(ZZP2_CRYPTO_KEY)).update(basis).digest("hex").slice(0, 24);
+  return basis + "." + hmac;
+}
+
+function zzp2LeesState(state){
+  const delen = String(state || "").split(".");
+  if(delen.length !== 2) return "";
+  const hmac = crypto.createHmac("sha256", String(ZZP2_CRYPTO_KEY)).update(delen[0]).digest("hex").slice(0, 24);
+  if(hmac !== delen[1]) return "";
+  try{
+    return Buffer.from(delen[0], "base64url").toString("utf8").split("|")[0];
+  }catch(err){
+    return "";
+  }
+}
+
+/* ---------- Graph API ---------- */
+
+async function zzp2Graph(pad, params, methode){
+  const url = new URL(ZZP2_API + pad);
+  if(methode !== "POST"){
+    Object.keys(params || {}).forEach((k) => url.searchParams.set(k, params[k]));
+  }
+  const opties = { method: methode || "GET" };
+  if(methode === "POST"){
+    const body = new URLSearchParams();
+    Object.keys(params || {}).forEach((k) => body.append(k, params[k]));
+    opties.body = body;
+    opties.headers = { "Content-Type": "application/x-www-form-urlencoded" };
+  }
+  const response = await fetch(url.toString(), opties);
+  const data = await response.json().catch(() => ({}));
+  if(!response.ok || (data && data.error)){
+    const melding = data && data.error && data.error.message ? data.error.message : "Meta gaf een fout terug";
+    const fout = new Error(melding);
+    fout.details = data && data.error ? data.error : null;
+    throw fout;
+  }
+  return data;
+}
+
+/* ---------- koppeling in de opslag ---------- */
+
+function zzp2Koppeling(account){
+  if(!account.koppeling) account.koppeling = {};
+  return account.koppeling;
+}
+
+function zzp2Status(account){
+  const k = account && account.koppeling ? account.koppeling : {};
+  return {
+    sleutels: k.appId ? true : false,
+    facebook: k.pageId ? true : false,
+    instagram: k.igUserId ? true : false,
+    paginaNaam: k.pageNaam || "",
+    verlooptOp: k.tokenVerlooptOp || ""
+  };
+}
+
+/* ---------- 1. sleutels bewaren ---------- */
+
+app.post("/api/zzp/koppel/sleutels", express.json({ limit: "50kb" }), (req, res) => {
+  if(!ZZP2_CRYPTO_KEY) return res.status(503).json({ ok: false, error: "Koppelen staat nog uit op de server" });
+
+  const email = normalizePremiumKey(req.body && req.body.email);
+  const appId = zzpSchoon(req.body && req.body.appId, 60);
+  const appSecret = zzpSchoon(req.body && req.body.appSecret, 120);
+  if(!email || !appId || !appSecret) return res.status(400).json({ ok: false, error: "Vul je e-mailadres, App ID en App Secret in" });
+  if(!/^[0-9]{6,}$/.test(appId)) return res.status(400).json({ ok: false, error: "Het App ID bestaat alleen uit cijfers. Kijk of je de goede waarde hebt gekopieerd." });
+
+  const account = zzpGetAccount(email);
+  const k = zzp2Koppeling(account);
+  k.appId = appId;
+  k.appSecret = zzp2Versleutel(appSecret);
+  zzpMarkDirty();
+
+  return res.json({ ok: true, status: zzp2Status(account) });
+});
+
+/* ---------- 2. naar het toestemmingsscherm ---------- */
+
+app.get("/api/zzp/koppel/start", (req, res) => {
+  const email = normalizePremiumKey(req.query && req.query.email);
+  if(!email) return res.status(400).send("E-mailadres ontbreekt");
+
+  const account = zzpGetAccount(email);
+  const k = zzp2Koppeling(account);
+  if(!k.appId) return res.status(400).send("Vul eerst je App ID en App Secret in bij stap 8.");
+
+  const url = new URL(ZZP2_DIALOG);
+  url.searchParams.set("client_id", k.appId);
+  url.searchParams.set("redirect_uri", ZZP2_REDIRECT);
+  url.searchParams.set("scope", ZZP2_SCOPES);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("state", zzp2MaakState(email));
+  return res.redirect(url.toString());
+});
+
+/* ---------- 3. terug van Facebook ---------- */
+
+app.get("/api/zzp/koppel/terug", async (req, res) => {
+  function terugNaarTool(melding, gelukt){
+    const scheiding = ZZP2_TOOL_URL.indexOf("?") >= 0 ? "&" : "?";
+    return res.redirect(ZZP2_TOOL_URL + scheiding + (gelukt ? "gekoppeld=1" : "fout=" + encodeURIComponent(melding)));
+  }
+
+  try{
+    if(req.query && req.query.error){
+      return terugNaarTool(String(req.query.error_description || req.query.error), false);
+    }
+    const email = zzp2LeesState(req.query && req.query.state);
+    const code = zzpSchoon(req.query && req.query.code, 600);
+    if(!email || !code) return terugNaarTool("De koppeling is onderbroken. Probeer het opnieuw.", false);
+
+    const account = zzpGetAccount(email);
+    const k = zzp2Koppeling(account);
+    const secret = zzp2Ontsleutel(k.appSecret);
+    if(!k.appId || !secret) return terugNaarTool("Je app-sleutels ontbreken. Doe stap 8 opnieuw.", false);
+
+    /* korte token ophalen */
+    const kort = await zzp2Graph("/oauth/access_token", {
+      client_id: k.appId,
+      client_secret: secret,
+      redirect_uri: ZZP2_REDIRECT,
+      code: code
+    });
+
+    /* omzetten naar een langlevende token (ongeveer 60 dagen) */
+    const lang = await zzp2Graph("/oauth/access_token", {
+      grant_type: "fb_exchange_token",
+      client_id: k.appId,
+      client_secret: secret,
+      fb_exchange_token: kort.access_token
+    });
+
+    const gebruikerToken = lang.access_token || kort.access_token;
+    const seconden = Number(lang.expires_in || 5184000);
+
+    /* pagina's en het gekoppelde Instagram-account zoeken */
+    const paginas = await zzp2Graph("/me/accounts", {
+      fields: "id,name,access_token,instagram_business_account{id,username}",
+      access_token: gebruikerToken
+    });
+
+    const lijst = (paginas && paginas.data) || [];
+    if(lijst.length === 0){
+      return terugNaarTool("We vinden geen Facebook-pagina bij je account. Controleer stap 2 en 3.", false);
+    }
+    const metInstagram = lijst.find((p) => p.instagram_business_account && p.instagram_business_account.id);
+    const gekozen = metInstagram || lijst[0];
+
+    k.userToken = zzp2Versleutel(gebruikerToken);
+    k.tokenVerlooptOp = new Date(Date.now() + seconden * 1000).toISOString();
+    k.pageId = gekozen.id;
+    k.pageNaam = gekozen.name || "";
+    k.pageToken = zzp2Versleutel(gekozen.access_token || "");
+    k.igUserId = metInstagram ? metInstagram.instagram_business_account.id : "";
+    k.igNaam = metInstagram && metInstagram.instagram_business_account.username ? metInstagram.instagram_business_account.username : "";
+    k.gekoppeldOp = new Date().toISOString();
+    zzpMarkDirty();
+    zzpSaveNow();
+
+    if(!k.igUserId){
+      return terugNaarTool("Facebook is gekoppeld, maar er hangt nog geen Instagram aan je pagina. Doe stap 3 opnieuw.", false);
+    }
+    return terugNaarTool("", true);
+  }catch(err){
+    console.error("ZZP koppelen mislukt:", err.message || String(err));
+    return terugNaarTool(err.message || "Koppelen mislukt", false);
+  }
+});
+
+/* ---------- 4. status en loskoppelen ---------- */
+
+app.get("/api/zzp/koppel/status", (req, res) => {
+  const email = normalizePremiumKey(req.query && req.query.email);
+  if(!email) return res.status(400).json({ ok: false, error: "E-mailadres ontbreekt" });
+  const account = zzpGetAccount(email);
+  return res.json({ ok: true, status: zzp2Status(account), startUrl: ZZP2_PUBLIC_URL + "/api/zzp/koppel/start?email=" + encodeURIComponent(email) });
+});
+
+app.post("/api/zzp/koppel/los", express.json({ limit: "20kb" }), (req, res) => {
+  const email = normalizePremiumKey(req.body && req.body.email);
+  if(!email) return res.status(400).json({ ok: false, error: "E-mailadres ontbreekt" });
+  const account = zzpGetAccount(email);
+  account.koppeling = {};
+  zzpMarkDirty();
+  return res.json({ ok: true, status: zzp2Status(account) });
+});
+
+/* ---------- 5. plaatsen ---------- */
+
+function zzp2FotoUrl(naam){
+  return ZZP2_PUBLIC_URL + "/api/zzp/foto/" + encodeURIComponent(naam);
+}
+
+function zzp2IsJpeg(naam){
+  return /\.jpe?g$/i.test(String(naam || ""));
+}
+
+async function zzp2PlaatsInstagram(k, tekst, fotoNaam){
+  const igToken = zzp2Ontsleutel(k.pageToken) || zzp2Ontsleutel(k.userToken);
+  if(!k.igUserId || !igToken) throw new Error("Instagram is niet gekoppeld");
+  if(!fotoNaam) throw new Error("Instagram vraagt altijd een foto");
+  if(!zzp2IsJpeg(fotoNaam)) throw new Error("Instagram accepteert alleen JPEG. Deze foto staat in een ander formaat.");
+
+  const container = await zzp2Graph("/" + k.igUserId + "/media", {
+    image_url: zzp2FotoUrl(fotoNaam),
+    caption: String(tekst || "").slice(0, 2200),
+    access_token: igToken
+  }, "POST");
+
+  if(!container || !container.id) throw new Error("Instagram maakte geen bericht aan");
+
+  const geplaatst = await zzp2Graph("/" + k.igUserId + "/media_publish", {
+    creation_id: container.id,
+    access_token: igToken
+  }, "POST");
+
+  return geplaatst && geplaatst.id ? geplaatst.id : "";
+}
+
+async function zzp2PlaatsFacebook(k, tekst, fotoNaam){
+  const pageToken = zzp2Ontsleutel(k.pageToken);
+  if(!k.pageId || !pageToken) throw new Error("Facebook-pagina is niet gekoppeld");
+
+  if(fotoNaam){
+    const resultaat = await zzp2Graph("/" + k.pageId + "/photos", {
+      url: zzp2FotoUrl(fotoNaam),
+      caption: String(tekst || "").slice(0, 5000),
+      published: "true",
+      access_token: pageToken
+    }, "POST");
+    return resultaat && (resultaat.post_id || resultaat.id) ? (resultaat.post_id || resultaat.id) : "";
+  }
+
+  const resultaat = await zzp2Graph("/" + k.pageId + "/feed", {
+    message: String(tekst || "").slice(0, 5000),
+    access_token: pageToken
+  }, "POST");
+  return resultaat && resultaat.id ? resultaat.id : "";
+}
+
+/* Een bericht nu plaatsen, met de kanalen die de gebruiker heeft gekoppeld. */
+async function zzp2PlaatsBericht(account, bericht){
+  const k = account.koppeling || {};
+  const uitkomst = { instagram: "", facebook: "", fouten: [] };
+
+  if(k.igUserId){
+    try{
+      uitkomst.instagram = await zzp2PlaatsInstagram(k, bericht.tekst, bericht.foto);
+    }catch(err){
+      uitkomst.fouten.push("Instagram: " + (err.message || String(err)));
+    }
+  }
+  if(k.pageId){
+    try{
+      uitkomst.facebook = await zzp2PlaatsFacebook(k, bericht.tekst, bericht.foto);
+    }catch(err){
+      uitkomst.fouten.push("Facebook: " + (err.message || String(err)));
+    }
+  }
+  if(!k.igUserId && !k.pageId){
+    uitkomst.fouten.push("Er is nog geen enkel kanaal gekoppeld");
+  }
+  return uitkomst;
+}
+
+/* Handmatig nu plaatsen, bijvoorbeeld voor het eerste gratis bericht. */
+app.post("/api/zzp/plaats-nu", express.json({ limit: "50kb" }), async (req, res) => {
+  const email = normalizePremiumKey(req.body && req.body.email);
+  const weekId = zzpSchoon(req.body && req.body.weekId, 40);
+  const berichtId = zzpSchoon(req.body && req.body.berichtId, 40);
+  if(!email || !weekId || !berichtId) return res.status(400).json({ ok: false, error: "Gegevens ontbreken" });
+
+  const account = zzpGetAccount(email);
+  const week = (account.weken || []).find((w) => w.id === weekId);
+  if(!week) return res.status(404).json({ ok: false, error: "Week niet gevonden" });
+  const bericht = week.berichten.find((b) => b.id === berichtId);
+  if(!bericht) return res.status(404).json({ ok: false, error: "Bericht niet gevonden" });
+  if(bericht.geplaatst) return res.json({ ok: true, alGeplaatst: true });
+
+  try{
+    const uitkomst = await zzp2PlaatsBericht(account, bericht);
+    if(uitkomst.instagram || uitkomst.facebook){
+      bericht.geplaatst = true;
+      bericht.geplaatstOp = new Date().toISOString();
+      bericht.resultaat = uitkomst;
+      bericht.fout = uitkomst.fouten.length ? uitkomst.fouten.join(" | ") : "";
+      zzpMarkDirty();
+      return res.json({ ok: true, uitkomst });
+    }
+    bericht.fout = uitkomst.fouten.join(" | ");
+    zzpMarkDirty();
+    return res.status(502).json({ ok: false, error: bericht.fout || "Plaatsen mislukt" });
+  }catch(err){
+    return res.status(500).json({ ok: false, error: err.message || "Plaatsen mislukt" });
+  }
+});
+
+/* ---------- 6. de planner: elke vijf minuten kijken wat aan de beurt is ---------- */
+
+let zzp2Bezig = false;
+
+async function zzp2LoopPlanning(){
+  if(zzp2Bezig) return;
+  zzp2Bezig = true;
+  try{
+    const nu = Date.now();
+    const emails = [];
+    zzpAccounts.forEach((account, key) => {
+      if(account && account.koppeling && (account.koppeling.igUserId || account.koppeling.pageId)) emails.push(key);
+    });
+
+    for(const key of emails){
+      const account = zzpAccounts.get(key);
+      if(!account || !Array.isArray(account.weken)) continue;
+
+      for(const week of account.weken){
+        for(const bericht of (week.berichten || [])){
+          if(bericht.geplaatst) continue;
+          if(!bericht.wanneer) continue;
+          if(Number(bericht.pogingen || 0) >= 3) continue;
+
+          const moment = new Date(bericht.wanneer).getTime();
+          if(isNaN(moment) || moment > nu) continue;
+          /* niets meer plaatsen dat langer dan twee dagen te laat is */
+          if(nu - moment > 48 * 3600 * 1000){
+            bericht.pogingen = 3;
+            bericht.fout = "Te lang geleden gepland, overgeslagen";
+            zzpMarkDirty();
+            continue;
+          }
+
+          bericht.pogingen = Number(bericht.pogingen || 0) + 1;
+          try{
+            const uitkomst = await zzp2PlaatsBericht(account, bericht);
+            if(uitkomst.instagram || uitkomst.facebook){
+              bericht.geplaatst = true;
+              bericht.geplaatstOp = new Date().toISOString();
+              bericht.resultaat = uitkomst;
+              bericht.fout = uitkomst.fouten.length ? uitkomst.fouten.join(" | ") : "";
+              console.log("ZZP: bericht geplaatst voor " + key);
+            }else{
+              bericht.fout = uitkomst.fouten.join(" | ");
+              console.warn("ZZP: plaatsen mislukt voor " + key + ": " + bericht.fout);
+            }
+          }catch(err){
+            bericht.fout = err.message || String(err);
+            console.error("ZZP: plaatsen gaf een fout voor " + key + ":", bericht.fout);
+          }
+          zzpMarkDirty();
+        }
+      }
+    }
+    if(zzpDirty) zzpSaveNow();
+  }catch(err){
+    console.error("ZZP planner fout:", err.message || String(err));
+  }finally{
+    zzp2Bezig = false;
+  }
+}
+
+setInterval(zzp2LoopPlanning, 5 * 60 * 1000);
+setTimeout(zzp2LoopPlanning, 60 * 1000);
+
+/* ---------- 7. tokens vernieuwen voordat ze verlopen ---------- */
+
+async function zzp2VernieuwTokens(){
+  const grens = Date.now() + 10 * 24 * 3600 * 1000; /* tien dagen van tevoren */
+  const werk = [];
+  zzpAccounts.forEach((account, key) => {
+    const k = account && account.koppeling ? account.koppeling : null;
+    if(!k || !k.userToken || !k.tokenVerlooptOp) return;
+    const verloopt = new Date(k.tokenVerlooptOp).getTime();
+    if(!isNaN(verloopt) && verloopt < grens) werk.push(key);
+  });
+
+  for(const key of werk){
+    const account = zzpAccounts.get(key);
+    const k = account.koppeling;
+    try{
+      const secret = zzp2Ontsleutel(k.appSecret);
+      const huidig = zzp2Ontsleutel(k.userToken);
+      if(!secret || !huidig) continue;
+
+      const nieuw = await zzp2Graph("/oauth/access_token", {
+        grant_type: "fb_exchange_token",
+        client_id: k.appId,
+        client_secret: secret,
+        fb_exchange_token: huidig
+      });
+      if(nieuw && nieuw.access_token){
+        k.userToken = zzp2Versleutel(nieuw.access_token);
+        k.tokenVerlooptOp = new Date(Date.now() + Number(nieuw.expires_in || 5184000) * 1000).toISOString();
+
+        /* paginatoken opnieuw ophalen, die hangt aan de gebruikerstoken */
+        const paginas = await zzp2Graph("/me/accounts", {
+          fields: "id,name,access_token,instagram_business_account{id,username}",
+          access_token: nieuw.access_token
+        });
+        const gevonden = ((paginas && paginas.data) || []).find((p) => p.id === k.pageId);
+        if(gevonden && gevonden.access_token) k.pageToken = zzp2Versleutel(gevonden.access_token);
+        zzpMarkDirty();
+        console.log("ZZP: token vernieuwd voor " + key);
+      }
+    }catch(err){
+      k.tokenFout = err.message || String(err);
+      zzpMarkDirty();
+      console.error("ZZP: token vernieuwen mislukt voor " + key + ":", k.tokenFout);
+    }
+  }
+  if(zzpDirty) zzpSaveNow();
+}
+
+setInterval(zzp2VernieuwTokens, 12 * 3600 * 1000);
+setTimeout(zzp2VernieuwTokens, 5 * 60 * 1000);
+
+/* ---------- 8. status van dit blok ---------- */
+
+app.get("/api/zzp/koppel/systeem", (req, res) => {
+  let gekoppeld = 0;
+  zzpAccounts.forEach((a) => {
+    if(a && a.koppeling && (a.koppeling.igUserId || a.koppeling.pageId)) gekoppeld++;
+  });
+  return res.json({
+    ok: true,
+    versleuteling: ZZP2_CRYPTO_KEY ? true : false,
+    apiVersie: ZZP2_API,
+    redirectUri: ZZP2_REDIRECT,
+    gekoppeldeAccounts: gekoppeld
+  });
+});
+
+/* ================ EINDE ZZP KOPPELEN EN PLAATSEN ================ */
+
 app.use((req, res) => {
   res.status(404).json({ error: "Route niet gevonden", path: req.path });
 });
