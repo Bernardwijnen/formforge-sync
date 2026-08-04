@@ -10023,6 +10023,34 @@ async function zzp2Graph(pad, params, methode){
   return data;
 }
 
+/* ---------- tijd: een moment zonder tijdzone lezen als Nederlandse tijd ---------- */
+
+function zzp2NlOffsetMinuten(datum){
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Europe/Amsterdam",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
+  });
+  const d = {};
+  dtf.formatToParts(datum).forEach((p) => { d[p.type] = p.value; });
+  const alsUtc = Date.UTC(Number(d.year), Number(d.month) - 1, Number(d.day),
+                          Number(d.hour), Number(d.minute), Number(d.second));
+  return (alsUtc - datum.getTime()) / 60000;
+}
+
+/* Zet "2026-08-04T21:30" (Nederlandse tijd) om naar een echt tijdstip.
+   Staat er wel een tijdzone in de tekst, dan wordt die gewoon gebruikt. */
+function zzp2Moment(tekst){
+  const s = String(tekst || "").trim();
+  if(!s) return NaN;
+  if(/Z$|[+-]\d{2}:?\d{2}$/.test(s)) return new Date(s).getTime();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+  if(!m) return new Date(s).getTime();
+  const gok = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]));
+  const offset = zzp2NlOffsetMinuten(new Date(gok));
+  return gok - offset * 60000;
+}
+
 /* ---------- koppeling in de opslag ---------- */
 
 function zzp2Koppeling(account){
@@ -10306,7 +10334,7 @@ async function zzp2LoopPlanning(){
           if(!bericht.wanneer) continue;
           if(Number(bericht.pogingen || 0) >= 3) continue;
 
-          const moment = new Date(bericht.wanneer).getTime();
+          const moment = zzp2Moment(bericht.wanneer);
           if(isNaN(moment) || moment > nu) continue;
           /* niets meer plaatsen dat langer dan twee dagen te laat is */
           if(nu - moment > 48 * 3600 * 1000){
