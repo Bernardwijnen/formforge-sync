@@ -9462,6 +9462,388 @@ function flushAllStoresAndExit(signal){
 process.on("SIGTERM", () => flushAllStoresAndExit("SIGTERM"));
 process.on("SIGINT", () => flushAllStoresAndExit("SIGINT"));
 
+/* ==========================================================================
+   ZZP WEEKMARKETING  -  zelfstandig blok voor server.js
+   --------------------------------------------------------------------------
+   PLAATSEN: knip dit hele blok en plak het in server.js VLAK BOVEN de regel
+             app.listen(PORT, () => {
+             Verander verder NIETS in server.js.
+
+   Dit blok gebruikt alleen bestaande dingen en leest ze alleen:
+     app, express, fs, path, crypto, multer, DATA_DIR,
+     safeWriteFileSync, callOpenAI, normalizePremiumKey
+   Alle eigen namen beginnen met zzp of ZZP, dus botsingen zijn uitgesloten.
+
+   Eigen opslag: DATA_DIR/zzp_marketing.json en DATA_DIR/zzp_fotos/
+   Eigen routes: alles onder /api/zzp/
+   ========================================================================== */
+
+const ZZP_STORE_FILE = path.join(DATA_DIR, "zzp_marketing.json");
+const ZZP_PHOTOS_DIR = path.join(DATA_DIR, "zzp_fotos");
+const ZZP_MAX_FOTO_BYTES = 12 * 1024 * 1024;
+const ZZP_MAX_ITEMS_PER_ACCOUNT = 60;
+const ZZP_GRATIS_WEKEN_PER_DAG = Number(process.env.ZZP_GRATIS_WEKEN_PER_DAG || 2);
+
+try{
+  if(!fs.existsSync(ZZP_PHOTOS_DIR)) fs.mkdirSync(ZZP_PHOTOS_DIR, { recursive: true });
+}catch(err){
+  console.warn("ZZP: fotomap kon niet worden aangemaakt:", err.message || String(err));
+}
+
+const zzpUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: ZZP_MAX_FOTO_BYTES }
+});
+
+/* ---------- opslag ---------- */
+
+let zzpAccounts = new Map();
+
+function zzpLoadStore(){
+  try{
+    if(!fs.existsSync(ZZP_STORE_FILE)) return;
+    const raw = fs.readFileSync(ZZP_STORE_FILE, "utf8");
+    const data = JSON.parse(raw || "{}");
+    Object.keys(data).forEach((key) => zzpAccounts.set(key, data[key]));
+    console.log("ZZP weekmarketing: " + zzpAccounts.size + " accounts geladen.");
+  }catch(err){
+    console.error("ZZP: opslag onleesbaar, bestand bewaard als .corrupt:", err.message || String(err));
+    try{ fs.renameSync(ZZP_STORE_FILE, ZZP_STORE_FILE + ".corrupt." + Date.now()); }catch(e){}
+  }
+}
+zzpLoadStore();
+
+let zzpDirty = false;
+function zzpMarkDirty(){ zzpDirty = true; }
+function zzpSaveNow(){
+  try{
+    const plain = {};
+    zzpAccounts.forEach((value, key) => { plain[key] = value; });
+    safeWriteFileSync(ZZP_STORE_FILE, JSON.stringify(plain));
+    zzpDirty = false;
+  }catch(err){
+    console.error("ZZP: opslaan mislukt:", err.message || String(err));
+  }
+}
+setInterval(() => { if(zzpDirty) zzpSaveNow(); }, 15000);
+
+function zzpGetAccount(email){
+  const key = normalizePremiumKey(email);
+  if(!key) return null;
+  if(!zzpAccounts.has(key)){
+    zzpAccounts.set(key, { profiel: {}, items: [], weken: [], weekDatum: "", weekAantal: 0 });
+    zzpMarkDirty();
+  }
+  return zzpAccounts.get(key);
+}
+
+/* ---------- hulpjes ---------- */
+
+function zzpVandaag(){ return new Date().toISOString().slice(0, 10); }
+
+function zzpSchoon(value, max){
+  const s = String(value == null ? "" : value).trim();
+  return s.length > (max || 400) ? s.slice(0, max || 400) : s;
+}
+
+function zzpExtensie(mimetype){
+  const m = String(mimetype || "").toLowerCase();
+  if(m.indexOf("png") >= 0) return ".png";
+  if(m.indexOf("webp") >= 0) return ".webp";
+  if(m.indexOf("heic") >= 0) return ".heic";
+  return ".jpg";
+}
+
+function zzpVolgendeMaandag(){
+  const d = new Date();
+  const dag = d.getDay();
+  const erbij = dag === 0 ? 1 : (8 - dag);
+  d.setDate(d.getDate() + erbij);
+  return d.toISOString().slice(0, 10);
+}
+
+function zzpDatumPlus(startDatum, dagen){
+  const d = new Date(startDatum + "T09:00:00");
+  d.setDate(d.getDate() + dagen);
+  return d.toISOString().slice(0, 16);
+}
+
+function zzpParseJson(tekst){
+  let s = String(tekst || "").trim();
+  s = s.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+  const start = s.indexOf("[");
+  const eind = s.lastIndexOf("]");
+  if(start >= 0 && eind > start) s = s.slice(start, eind + 1);
+  return JSON.parse(s);
+}
+
+/* ---------- de vijf soorten berichten ---------- */
+
+const ZZP_SOORTEN = [
+  { id: "klus",           naam: "De klus van deze week",   uitleg: "Laat zien wat je hebt gedaan. Concreet, met de plaats erbij." },
+  { id: "tip",            naam: "Een tip uit het vak",     uitleg: "Een praktische tip die past bij het werk dat je doet." },
+  { id: "voorna",         naam: "Voor en na",              uitleg: "Beschrijf het verschil tussen de situatie vooraf en het resultaat." },
+  { id: "beschikbaar",    naam: "Ruimte in de agenda",     uitleg: "Nodig mensen uit om contact op te nemen, zonder opdringerig te zijn." },
+  { id: "klant",          naam: "Wat een klant zei",       uitleg: "Een reactie of bedankje van een klant, kort en echt." }
+];
+
+/* ---------- routes ---------- */
+
+/* 1. Foto met tekstje toevoegen. Gratis, kost geen credit. */
+app.post("/api/zzp/item", zzpUpload.single("foto"), (req, res) => {
+  try{
+    const email = normalizePremiumKey(req.body && req.body.email);
+    if(!email) return res.status(400).json({ ok: false, error: "E-mailadres ontbreekt" });
+
+    const account = zzpGetAccount(email);
+    if(!account) return res.status(400).json({ ok: false, error: "Account kon niet worden gelezen" });
+
+    const tekst = zzpSchoon(req.body && req.body.tekst, 400);
+    if(!tekst && !req.file) return res.status(400).json({ ok: false, error: "Geef een foto of een tekstje mee" });
+
+    if(account.items.length >= ZZP_MAX_ITEMS_PER_ACCOUNT){
+      return res.status(409).json({ ok: false, error: "Je hebt het maximum aantal bewaarde items bereikt. Maak eerst een week aan of verwijder er een paar." });
+    }
+
+    let fotoNaam = "";
+    if(req.file && req.file.buffer && req.file.buffer.length > 0){
+      fotoNaam = "zzp_" + crypto.randomBytes(10).toString("hex") + zzpExtensie(req.file.mimetype);
+      fs.writeFileSync(path.join(ZZP_PHOTOS_DIR, fotoNaam), req.file.buffer);
+    }
+
+    const item = {
+      id: crypto.randomBytes(8).toString("hex"),
+      tekst,
+      foto: fotoNaam,
+      gemaaktOp: new Date().toISOString(),
+      gebruikt: false
+    };
+    account.items.push(item);
+    zzpMarkDirty();
+
+    return res.json({ ok: true, item, aantal: account.items.filter((i) => !i.gebruikt).length });
+  }catch(err){
+    console.error("ZZP item toevoegen mislukt:", err.message || String(err));
+    return res.status(500).json({ ok: false, error: "Toevoegen mislukt" });
+  }
+});
+
+/* 2. Alles ophalen wat er deze week in de bak zit. */
+app.get("/api/zzp/items", (req, res) => {
+  const email = normalizePremiumKey(req.query && req.query.email);
+  if(!email) return res.status(400).json({ ok: false, error: "E-mailadres ontbreekt" });
+  const account = zzpGetAccount(email);
+  const open = account.items.filter((i) => !i.gebruikt);
+  return res.json({ ok: true, profiel: account.profiel || {}, items: open, aantal: open.length });
+});
+
+/* 3. Een item weghalen. */
+app.delete("/api/zzp/item", (req, res) => {
+  const email = normalizePremiumKey((req.query && req.query.email) || (req.body && req.body.email));
+  const id = zzpSchoon((req.query && req.query.id) || (req.body && req.body.id), 40);
+  if(!email || !id) return res.status(400).json({ ok: false, error: "E-mailadres of id ontbreekt" });
+
+  const account = zzpGetAccount(email);
+  const index = account.items.findIndex((i) => i.id === id);
+  if(index < 0) return res.status(404).json({ ok: false, error: "Item niet gevonden" });
+
+  const weg = account.items[index];
+  if(weg.foto){
+    try{ fs.unlinkSync(path.join(ZZP_PHOTOS_DIR, weg.foto)); }catch(e){}
+  }
+  account.items.splice(index, 1);
+  zzpMarkDirty();
+  return res.json({ ok: true });
+});
+
+/* 4. Het beroep en de plaats onthouden, zodat hij dat niet elke week invult. */
+app.post("/api/zzp/profiel", express.json({ limit: "100kb" }), (req, res) => {
+  const email = normalizePremiumKey(req.body && req.body.email);
+  if(!email) return res.status(400).json({ ok: false, error: "E-mailadres ontbreekt" });
+  const account = zzpGetAccount(email);
+  account.profiel = {
+    beroep: zzpSchoon(req.body && req.body.beroep, 60),
+    bedrijf: zzpSchoon(req.body && req.body.bedrijf, 80),
+    plaats: zzpSchoon(req.body && req.body.plaats, 60),
+    toon: zzpSchoon(req.body && req.body.toon, 40)
+  };
+  zzpMarkDirty();
+  return res.json({ ok: true, profiel: account.profiel });
+});
+
+/* 5. De week maken: vijf berichten plus een kalender. */
+app.post("/api/zzp/week", express.json({ limit: "200kb" }), async (req, res) => {
+  try{
+    const email = normalizePremiumKey(req.body && req.body.email);
+    if(!email) return res.status(400).json({ ok: false, error: "E-mailadres ontbreekt" });
+
+    const account = zzpGetAccount(email);
+
+    /* eenvoudige rem tegen misbruik, los van het creditsysteem */
+    const vandaag = zzpVandaag();
+    if(account.weekDatum !== vandaag){
+      account.weekDatum = vandaag;
+      account.weekAantal = 0;
+    }
+    if(account.weekAantal >= ZZP_GRATIS_WEKEN_PER_DAG){
+      return res.status(429).json({ ok: false, error: "Je hebt vandaag al genoeg weken aangemaakt. Probeer het morgen opnieuw." });
+    }
+
+    const profiel = account.profiel || {};
+    const beroep = zzpSchoon((req.body && req.body.beroep) || profiel.beroep, 60) || "zelfstandig ondernemer";
+    const plaats = zzpSchoon((req.body && req.body.plaats) || profiel.plaats, 60);
+    const bedrijf = zzpSchoon((req.body && req.body.bedrijf) || profiel.bedrijf, 80);
+    const startDatum = zzpSchoon(req.body && req.body.startDatum, 10) || zzpVolgendeMaandag();
+
+    const open = account.items.filter((i) => !i.gebruikt);
+    if(open.length === 0){
+      return res.status(400).json({ ok: false, error: "Er staan nog geen foto's of tekstjes klaar. Voeg er eerst een paar toe." });
+    }
+
+    const aantekeningen = open.map((i, n) => {
+      return (n + 1) + ". " + (i.tekst || "(alleen een foto, geen tekst)");
+    }).join("\n");
+
+    const soortenUitleg = ZZP_SOORTEN.map((s) => "- " + s.id + " (" + s.naam + "): " + s.uitleg).join("\n");
+
+    const systeem = [
+      "Je schrijft socialmediaberichten voor een Nederlandse zzp'er.",
+      "Schrijf zoals de ondernemer zelf zou praten: gewoon, kort en concreet.",
+      "Verboden: marketingtaal, uitroeptekens aan elk eind, meer dan twee emoji per bericht,",
+      "rijtjes hashtags, en woorden als 'ontzorgen', 'passie', 'trots om te delen'.",
+      "Elk bericht maximaal 60 woorden. Nederlands. Geen koppen of opmaak, alleen lopende tekst."
+    ].join(" ");
+
+    const opdracht = [
+      "Beroep: " + beroep,
+      bedrijf ? "Bedrijf: " + bedrijf : "",
+      plaats ? "Plaats: " + plaats : "",
+      "",
+      "Aantekeningen van deze week:",
+      aantekeningen,
+      "",
+      "Maak precies vijf berichten, een van elk van deze soorten:",
+      soortenUitleg,
+      "",
+      "Gebruik de aantekeningen waar ze passen. Verzin geen klantnamen, geen bedragen en geen resultaten die er niet staan.",
+      "Als er te weinig informatie is voor een soort, houd dat bericht dan algemeen maar wel passend bij het beroep.",
+      "",
+      "Antwoord uitsluitend met JSON: een array van vijf objecten met de velden \"soort\" en \"tekst\". Geen uitleg eromheen."
+    ].filter(Boolean).join("\n");
+
+    const antwoord = await callOpenAI([
+      { role: "system", content: systeem },
+      { role: "user", content: opdracht }
+    ], 0.7);
+
+    let ruw;
+    try{
+      ruw = zzpParseJson(antwoord);
+    }catch(err){
+      console.error("ZZP: antwoord was geen geldige JSON:", antwoord.slice(0, 300));
+      return res.status(502).json({ ok: false, error: "Het opstellen ging mis. Probeer het nog een keer." });
+    }
+    if(!Array.isArray(ruw) || ruw.length === 0){
+      return res.status(502).json({ ok: false, error: "Het opstellen ging mis. Probeer het nog een keer." });
+    }
+
+    const berichten = ZZP_SOORTEN.map((soort, index) => {
+      const gevonden = ruw.find((r) => String(r && r.soort || "").toLowerCase() === soort.id) || ruw[index] || {};
+      const bijItem = open[index] || null;
+      return {
+        id: crypto.randomBytes(6).toString("hex"),
+        soort: soort.id,
+        soortNaam: soort.naam,
+        tekst: zzpSchoon(gevonden.tekst, 900),
+        foto: bijItem ? bijItem.foto : "",
+        wanneer: zzpDatumPlus(startDatum, index),
+        geplaatst: false
+      };
+    }).filter((b) => b.tekst);
+
+    if(berichten.length === 0){
+      return res.status(502).json({ ok: false, error: "Er kwam geen bruikbare tekst uit. Probeer het nog een keer." });
+    }
+
+    open.forEach((i) => { i.gebruikt = true; });
+
+    const week = {
+      id: crypto.randomBytes(8).toString("hex"),
+      gemaaktOp: new Date().toISOString(),
+      startDatum,
+      berichten
+    };
+    account.weken.unshift(week);
+    if(account.weken.length > 20) account.weken.length = 20;
+    account.items = account.items.filter((i) => !i.gebruikt);
+    account.weekAantal = account.weekAantal + 1;
+    zzpMarkDirty();
+
+    return res.json({ ok: true, week });
+  }catch(err){
+    console.error("ZZP week maken mislukt:", err.message || String(err));
+    return res.status(500).json({ ok: false, error: "Het maken van de week is mislukt" });
+  }
+});
+
+/* 6. De laatst gemaakte week ophalen. */
+app.get("/api/zzp/week", (req, res) => {
+  const email = normalizePremiumKey(req.query && req.query.email);
+  if(!email) return res.status(400).json({ ok: false, error: "E-mailadres ontbreekt" });
+  const account = zzpGetAccount(email);
+  return res.json({ ok: true, week: account.weken[0] || null, geschiedenis: account.weken.length });
+});
+
+/* 7. Een bericht bijwerken of afvinken als geplaatst. */
+app.post("/api/zzp/bericht", express.json({ limit: "100kb" }), (req, res) => {
+  const email = normalizePremiumKey(req.body && req.body.email);
+  const weekId = zzpSchoon(req.body && req.body.weekId, 40);
+  const berichtId = zzpSchoon(req.body && req.body.berichtId, 40);
+  if(!email || !weekId || !berichtId) return res.status(400).json({ ok: false, error: "Gegevens ontbreken" });
+
+  const account = zzpGetAccount(email);
+  const week = account.weken.find((w) => w.id === weekId);
+  if(!week) return res.status(404).json({ ok: false, error: "Week niet gevonden" });
+  const bericht = week.berichten.find((b) => b.id === berichtId);
+  if(!bericht) return res.status(404).json({ ok: false, error: "Bericht niet gevonden" });
+
+  if(typeof req.body.tekst === "string") bericht.tekst = zzpSchoon(req.body.tekst, 900);
+  if(typeof req.body.wanneer === "string") bericht.wanneer = zzpSchoon(req.body.wanneer, 16);
+  if(typeof req.body.geplaatst === "boolean") bericht.geplaatst = req.body.geplaatst;
+  zzpMarkDirty();
+
+  return res.json({ ok: true, bericht });
+});
+
+/* 8. Een foto uitserveren. */
+app.get("/api/zzp/foto/:naam", (req, res) => {
+  const naam = String(req.params.naam || "");
+  if(!/^zzp_[a-f0-9]+\.(jpg|png|webp|heic)$/i.test(naam)){
+    return res.status(400).send("Ongeldige naam");
+  }
+  const bestand = path.join(ZZP_PHOTOS_DIR, naam);
+  if(!fs.existsSync(bestand)) return res.status(404).send("Niet gevonden");
+  return res.sendFile(bestand);
+});
+
+/* 9. Statuscontrole. */
+app.get("/api/zzp/status", (req, res) => {
+  return res.json({
+    ok: true,
+    module: "zzp-weekmarketing",
+    accounts: zzpAccounts.size,
+    openai: OPENAI_API_KEY ? true : false,
+    opslag: ZZP_STORE_FILE
+  });
+});
+
+/* Bij afsluiten meteen wegschrijven. Dit hangt naast de bestaande afhandeling
+   en raakt die niet aan. */
+process.on("SIGTERM", () => { try{ zzpSaveNow(); }catch(e){} });
+process.on("SIGINT", () => { try{ zzpSaveNow(); }catch(e){} });
+
+/* ==================== EINDE ZZP WEEKMARKETING ==================== */
+
 app.listen(PORT, () => {
   console.log("ECHO Central Server draait op poort " + PORT);
   console.log("OpenAI actief: " + (OPENAI_API_KEY ? "ja" : "nee"));
