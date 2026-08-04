@@ -9554,7 +9554,7 @@ const ZZP_SOORTEN = [
   { id: "tip",            naam: "Een tip uit het vak",     uitleg: "Een praktische tip die past bij het werk dat je doet." },
   { id: "voorna",         naam: "Voor en na",              uitleg: "Beschrijf het verschil tussen de situatie vooraf en het resultaat." },
   { id: "beschikbaar",    naam: "Ruimte in de agenda",     uitleg: "Nodig mensen uit om contact op te nemen, zonder opdringerig te zijn." },
-  { id: "klant",          naam: "Wat een klant zei",       uitleg: "Een reactie of bedankje van een klant, kort en echt." }
+  { id: "vraag",          naam: "Vraag aan je volgers",    uitleg: "Stel een korte vraag over het vak waar mensen op kunnen reageren." }
 ];
 
 /* ---------- routes ---------- */
@@ -9696,6 +9696,7 @@ app.post("/api/zzp/week", express.json({ limit: "200kb" }), async (req, res) => 
       soortenUitleg,
       "",
       "Gebruik de aantekeningen waar ze passen. Verzin geen klantnamen, geen bedragen en geen resultaten die er niet staan.",
+      "Citeer nooit een klant en verzin nooit een reactie, review of aanbeveling. Ook niet als voorbeeld.",
       "Als er te weinig informatie is voor een soort, houd dat bericht dan algemeen maar wel passend bij het beroep.",
       "",
       "Antwoord uitsluitend met JSON: een array van vijf objecten met de velden \"soort\" en \"tekst\". Geen uitleg eromheen."
@@ -9752,6 +9753,51 @@ app.post("/api/zzp/week", express.json({ limit: "200kb" }), async (req, res) => 
     return res.json({ ok: true, week });
   }catch(err){
     console.error("ZZP week maken mislukt:", err.message || String(err));
+    return res.status(500).json({ ok: false, error: "Het maken van de week is mislukt" });
+  }
+});
+
+/* 5b. De week maken van je EIGEN teksten. Geen AI, niets wordt herschreven. */
+app.post("/api/zzp/week-eigen", express.json({ limit: "100kb" }), (req, res) => {
+  try{
+    const email = normalizePremiumKey(req.body && req.body.email);
+    if(!email) return res.status(400).json({ ok: false, error: "E-mailadres ontbreekt" });
+
+    const account = zzpGetAccount(email);
+    const startDatum = zzpSchoon(req.body && req.body.startDatum, 10) || zzpVolgendeMaandag();
+    const open = account.items.filter((i) => !i.gebruikt);
+    if(open.length === 0){
+      return res.status(400).json({ ok: false, error: "Er staan nog geen foto's of teksten klaar. Voeg er eerst een paar toe." });
+    }
+
+    const berichten = open.map((item, index) => ({
+      id: crypto.randomBytes(6).toString("hex"),
+      soort: "eigen",
+      soortNaam: "Eigen bericht",
+      tekst: item.tekst || "",
+      foto: item.foto || "",
+      wanneer: zzpDatumPlus(startDatum, index),
+      geplaatst: false
+    })).filter((b) => b.tekst || b.foto);
+
+    open.forEach((i) => { i.gebruikt = true; });
+
+    const week = {
+      id: crypto.randomBytes(8).toString("hex"),
+      gemaaktOp: new Date().toISOString(),
+      startDatum,
+      eigen: true,
+      berichten
+    };
+    account.weken.unshift(week);
+    if(account.weken.length > 20) account.weken.length = 20;
+    account.items = account.items.filter((i) => !i.gebruikt);
+    zzpMarkDirty();
+    zzpSaveNow();
+
+    return res.json({ ok: true, week });
+  }catch(err){
+    console.error("ZZP eigen week mislukt:", err.message || String(err));
     return res.status(500).json({ ok: false, error: "Het maken van de week is mislukt" });
   }
 });
