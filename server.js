@@ -251,6 +251,26 @@ function isOwnerPremiumEmail(value){
   return ALL_OWNER_EMAILS.includes(v);
 }
 
+/* Een account van hetzelfde e-mailadres kan onder meerdere sleutels in de
+   opslag staan:
+     - de kale e-mail          (zo schrijven de Stripe-webhook, confirm-session
+                                en link-subscription weg)
+     - "formforge:" + e-mail   (zo schrijft de offerte/factuur-app weg)
+     - "echo:" + e-mail        (zo schrijft de vertaler-app weg)
+   Wie maar een van die sleutels bijwerkt, krijgt een account dat op de ene
+   plek opgezegd is en op de andere plek gewoon doorloopt. Onderstaande twee
+   hulpjes voorkomen dat. */
+function premiumAccountKeys(value){
+  const bare = normalizePremiumKey(value);
+  if(!bare) return [];
+  if(isOwnerPremiumEmail(bare)) return [bare];
+  return [bare, "formforge:" + bare, "echo:" + bare];
+}
+/* Alleen de sleutels die echt bestaan. Maakt zelf nooit een account aan. */
+function existingPremiumAccountKeys(value){
+  return premiumAccountKeys(value).filter(k => premiumAccounts.has(k));
+}
+
 function buildOwnerPremiumAccount(email){
   const ownerEmail = normalizePremiumKey(email) || OWNER_PREMIUM_EMAIL;
   return {
@@ -582,7 +602,47 @@ function setPremiumForStripeData({ email, clientReferenceId, customerId, subscri
     data.subscriptionId
   ].filter(Boolean);
 
-  keys.forEach((key) => activateSubscriptionAccount(key, data));
+  /* Bij een opzegging stuurt Stripe vaak geen e-mailadres mee: een
+     Subscription-object heeft helemaal geen customer_email. Zoek daarom ook
+     op klant-id en abonnement-id op welke records hierbij horen. Zonder deze
+     stap wordt alleen het record onder cus_... en sub_... bijgewerkt en blijft
+     het record op e-mailadres (dat de app gebruikt) gewoon actief staan. */
+  const cid = normalizePremiumKey(data.customerId);
+  const sid = normalizePremiumKey(data.subscriptionId);
+  if(cid || sid){
+    for(const [k, rec] of premiumAccounts.entries()){
+      if(!rec) continue;
+      const hoortErbij = (sid && normalizePremiumKey(rec.subscriptionId) === sid)
+                      || (cid && normalizePremiumKey(rec.customerId) === cid);
+      if(hoortErbij && keys.indexOf(k) < 0) keys.push(k);
+    }
+  }
+  /* Hetzelfde adres kan ook onder een app-sleutel staan (formforge: of echo:).
+     Die bestaande records moeten mee, anders is een abonnement in de ene app
+     opgezegd en in de andere nog gewoon actief. Nieuwe app-sleutels worden
+     hier niet aangemaakt. */
+  [data.email, data.clientReferenceId].filter(Boolean).forEach((adres) => {
+    existingPremiumAccountKeys(adres).forEach((k) => {
+      if(keys.indexOf(k) < 0) keys.push(k);
+    });
+  });
+
+  if(data.active){
+    keys.forEach((key) => activateSubscriptionAccount(key, data));
+  }else{
+    /* Opzegging of mislukte betaling. activateSubscriptionAccount zet active
+       ALTIJD op true, ook als hier false meekomt. Daardoor bleef een opgezegd
+       abonnement in de praktijk gewoon doorlopen. Voor het uitzetten schrijven
+       we daarom rechtstreeks weg, en alleen naar records die al bestaan. Het
+       pakket blijft staan zoals het was; alleen de toegang gaat uit. */
+    const uit = Object.assign({}, data);
+    if(!plan && !priceId) delete uit.plan;
+    if(!priceId) delete uit.priceId;
+    keys.forEach((key) => {
+      const k = normalizePremiumKey(key);
+      if(k && premiumAccounts.has(k)) setPremiumAccount(k, uit);
+    });
+  }
   return data;
 }
 
@@ -2720,31 +2780,69 @@ app.post("/api/stripe/cancel-subscription", async (req, res) => {
       return jsonError(res, 400, "Pincode ontbreekt");
     }
 
-    const account = getPremiumAccount(accountKey);
+    if(isOwnerPremiumEmail(email)){
+      return jsonError(res, 400, "Dit is een vast eigenaar-account. Daar hoort geen Stripe-abonnement bij.");
+    }
 
-    if(!account || !account.active){
+    /* Het account kan onder de kale e-mail staan (webhook) of onder een
+       app-sleutel (formforge: / echo:). We kijken ze alle drie na, want de
+       klant weet niet onder welke sleutel hij is aangemaakt. */
+    const keys = existingPremiumAccountKeys(email);
+    if(!keys.length){
       return jsonError(res, 404, "Geen actief Premium abonnement gevonden");
     }
 
-    if(!verifyPremiumPin(account, pin)){
+    const accounts = keys.map(k => getPremiumAccount(k)).filter(Boolean);
+
+    /* De pincode mag bij elk van die sleutels kloppen. De webhook maakt bij
+       een nieuw record namelijk zijn eigen pincode aan, dus de pincode uit de
+       welkomstmail hoeft niet op alle sleutels dezelfde te zijn. */
+    if(!accounts.some(a => verifyPremiumPin(a, pin))){
       return jsonError(res, 403, "Pincode is ongeldig");
     }
 
-    if(!account.subscriptionId){
-      return jsonError(res, 400, "Geen Stripe abonnement gevonden bij dit account");
+    const actieve = accounts.filter(a => a.active);
+    if(!actieve.length){
+      return jsonError(res, 404, "Geen actief Premium abonnement gevonden");
     }
 
-    const cancelledSubscription = await callStripe("/subscriptions/" + encodeURIComponent(account.subscriptionId), {
+    const metAbo = actieve.find(a => a.subscriptionId) || accounts.find(a => a.subscriptionId);
+    if(!metAbo || !metAbo.subscriptionId){
+      return jsonError(res, 400, "Geen Stripe abonnement gevonden bij dit account. Heb je via een andere weg betaald, neem dan contact met ons op.");
+    }
+
+    if(metAbo.cancelAtPeriodEnd){
+      return res.json({
+        ok: true,
+        cancelled: true,
+        alreadyCancelled: true,
+        cancelAtPeriodEnd: true,
+        periodEnd: String(metAbo.periodEnd || metAbo.currentPeriodEnd || ""),
+        currentPeriodEnd: String(metAbo.currentPeriodEnd || metAbo.periodEnd || ""),
+        message: "Dit abonnement was al opgezegd. Het blijft actief tot het einde van de betaalde periode."
+      });
+    }
+
+    const cancelledSubscription = await callStripe("/subscriptions/" + encodeURIComponent(metAbo.subscriptionId), {
       cancel_at_period_end: true
     });
     const periodData = extractStripeSubscriptionPeriod(cancelledSubscription);
 
-    setPremiumAccount(email, {
+    const payload = {
       ...periodData,
       cancelAtPeriodEnd: true,
       cancelRequestedAt: new Date().toISOString(),
       reason: "cancel_requested_by_user"
+    };
+
+    /* De opzegging op ALLE sleutels van dit account vastleggen, plus op de
+       Stripe-sleutels als die als los record bestaan. Zo ziet de klant in
+       elke app hetzelfde, en kan hij niet per ongeluk twee keer opzeggen. */
+    const schrijfSleutels = keys.slice();
+    [metAbo.customerId, metAbo.subscriptionId].forEach((k) => {
+      if(k && premiumAccounts.has(k) && schrijfSleutels.indexOf(k) < 0) schrijfSleutels.push(k);
     });
+    schrijfSleutels.forEach(k => setPremiumAccount(k, payload));
 
     res.json({
       ok: true,
@@ -2759,6 +2857,7 @@ app.post("/api/stripe/cancel-subscription", async (req, res) => {
     });
 
   }catch(err){
+    console.error("Abonnement opzeggen mislukt:", (err && err.message) || err);
     jsonError(res, 500, "Abonnement kon niet worden opgezegd", err.message || String(err));
   }
 });
