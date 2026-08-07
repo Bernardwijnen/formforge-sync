@@ -803,20 +803,66 @@ function activateUnlimitedAccount(email, data){
 loadPremiumAccounts();
 ALL_OWNER_EMAILS.forEach(em => ensureOwnerPremiumAccount(em));
 
-app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req, res) => {
+/* ---- Stripe webhook: alleen ondertekende events, en elk event maar een keer ----
+   Zonder STRIPE_WEBHOOK_SECRET valt de route dicht. Zou hij openblijven, dan
+   kan iedereen een verzonnen betaling posten en zichzelf een abonnement of
+   extra minuten geven. Verwerkte event-ids gaan naar de schijf, zodat een
+   herlevering van Stripe (die gebeurt tot drie dagen lang) nooit dubbel telt. */
+const STRIPE_EVENTS_FILE = path.join(DATA_DIR, "salve_stripe_events.json");
+let stripeHandledEvents = [];
+const stripeHandledSet = new Set();
+const stripeEventsInFlight = new Set();
+function loadStripeHandledEvents(){
+  try{
+    if(!fs.existsSync(STRIPE_EVENTS_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(STRIPE_EVENTS_FILE, "utf8") || "{}");
+    if(data && Array.isArray(data.ids)){
+      stripeHandledEvents = data.ids.filter(x => typeof x === "string").slice(-2000);
+      stripeHandledEvents.forEach(id => stripeHandledSet.add(id));
+    }
+  }catch(e){ rescueCorruptStore(STRIPE_EVENTS_FILE, e); }
+}
+loadStripeHandledEvents();
+/* false = dit event is al verwerkt of wordt op dit moment verwerkt. */
+function stripeEventStart(id){
+  if(!id) return true;
+  if(stripeHandledSet.has(id) || stripeEventsInFlight.has(id)) return false;
+  stripeEventsInFlight.add(id);
+  return true;
+}
+/* Pas na een geslaagde verwerking vastleggen. Gaat er iets mis, dan mag de
+   herlevering van Stripe het gewoon opnieuw proberen. */
+function stripeEventDone(id, gelukt){
+  if(!id) return;
+  stripeEventsInFlight.delete(id);
+  if(!gelukt || stripeHandledSet.has(id)) return;
+  stripeHandledSet.add(id);
+  stripeHandledEvents.push(id);
+  if(stripeHandledEvents.length > 2000){
+    stripeHandledEvents.splice(0, stripeHandledEvents.length - 2000).forEach(x => stripeHandledSet.delete(x));
+  }
+  try{ safeWriteFileSync(STRIPE_EVENTS_FILE, JSON.stringify({ ids: stripeHandledEvents })); }
+  catch(e){ console.error("Stripe event-log opslaan mislukt:", (e && e.message) || e); }
+}
+
+app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   let event = null;
 
+  if(!STRIPE_WEBHOOK_SECRET || !stripeClient){
+    console.error("Stripe webhook geweigerd: STRIPE_WEBHOOK_SECRET of de stripe-client ontbreekt. Zet STRIPE_WEBHOOK_SECRET in de Render Environment Variables.");
+    return res.status(503).json({ error: "Webhook niet geconfigureerd" });
+  }
   try{
-    if(STRIPE_WEBHOOK_SECRET && stripeClient){
-      const signature = req.headers["stripe-signature"];
-      event = stripeClient.webhooks.constructEvent(req.body, signature, STRIPE_WEBHOOK_SECRET);
-    }else{
-      const rawBody = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : String(req.body || "{}");
-      event = JSON.parse(rawBody || "{}");
-    }
+    const signature = req.headers["stripe-signature"];
+    event = stripeClient.webhooks.constructEvent(req.body, signature, STRIPE_WEBHOOK_SECRET);
   }catch(err){
     console.error("Stripe webhook verificatie fout:", err.message || String(err));
     return res.status(400).json({ error: "Webhook verificatie mislukt" });
+  }
+
+  const eventId = String((event && event.id) || "");
+  if(!stripeEventStart(eventId)){
+    return res.json({ received: true, duplicate: true });
   }
 
   try{
@@ -830,9 +876,11 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req,
       const packageCredits = Number(metadata.credits || 0);
       const packageType = String(metadata.packageType || "");
 
-      // Ondernemer-abonnement (stadsgids): zet de onderneming automatisch online
+      // Guesttalk: online gekochte extra minuten, of een nieuw abonnement.
+      // De sessie-id gaat mee als referentie, zodat dezelfde betaling nooit
+      // twee keer wordt bijgeboekt.
       if(metadata.kind === "guesttalk_topup"){
-        try{ guesttalkAddMinutes(metadata.code, Number(metadata.addMinutes || 0), "Online betaald " + (object.id || "")); }
+        try{ guesttalkAddMinutes(metadata.code, Number(metadata.addMinutes || 0), "Online betaald " + (object.id || ""), object.id || eventId); }
         catch(e){ console.error("Guesttalk topup verwerken mislukt:", (e && e.message) || e); }
       }else if(metadata.kind === "guesttalk_sub"){
         try{ guesttalkActivateSub(metadata.code, metadata.tier, object.customer || "", object.subscription || ""); }
@@ -855,44 +903,71 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req,
       }
     }
 
-    if(type === "invoice.payment.paid"){
+    /* Betaalde factuur. Verschillende Stripe API-versies sturen hier een ander
+       event en een ander object:
+         invoice.payment_succeeded / invoice.paid  -> het Invoice-object zelf
+         invoice.payment.paid                      -> een InvoicePayment, dus
+           zonder customer, subscription of metadata. Daarom halen we in dat
+           geval de bijbehorende factuur er alsnog bij.
+       Sinds API-versie 2025-03-31 staat de abonnementsinfo bovendien onder
+       invoice.parent.subscription_details in plaats van invoice.subscription.
+       Beide vormen worden hieronder gelezen. */
+    if(type === "invoice.payment_succeeded" || type === "invoice.paid" || type === "invoice.payment.paid"){
+      let inv = object || {};
+      if(type === "invoice.payment.paid"){
+        try{
+          const invId = typeof inv.invoice === "string" ? inv.invoice : ((inv.invoice && inv.invoice.id) || "");
+          inv = invId ? await callStripeGet("/invoices/" + encodeURIComponent(invId)) : {};
+        }catch(e){
+          console.error("Factuur bij invoice.payment.paid ophalen mislukt:", (e && e.message) || e);
+          inv = {};
+        }
+      }
+      const invSubDetails = inv.subscription_details || (inv.parent && inv.parent.subscription_details) || null;
+      const invSubId = (typeof inv.subscription === "string" ? inv.subscription : "")
+        || ((invSubDetails && typeof invSubDetails.subscription === "string") ? invSubDetails.subscription : "");
+      const invSubMeta = (invSubDetails && invSubDetails.metadata) || null;
+      const invOwnMeta = inv.metadata || {};
       try{
-        const gm = object.subscription_details && object.subscription_details.metadata;
-        if(gm && gm.kind === "guesttalk_sub"){ guesttalkActivateSub(gm.code, gm.tier, object.customer || "", object.subscription || ""); }
+        if(invSubMeta && invSubMeta.kind === "guesttalk_sub"){ guesttalkActivateSub(invSubMeta.code, invSubMeta.tier, inv.customer || "", invSubId); }
       }catch(e){ console.error("Guesttalk sub verlenging mislukt:", (e && e.message) || e); }
       // Ondernemer-abonnement: houd de onderneming bij elke maandelijkse
       // verlenging expliciet uitgelicht (consistent met de andere merchant-events).
-      const invMeta = object.metadata?.kind === "merchant"
-        ? object.metadata
-        : (object.subscription_details?.metadata?.kind === "merchant" ? object.subscription_details.metadata : null);
+      const invMeta = invOwnMeta.kind === "merchant"
+        ? invOwnMeta
+        : ((invSubMeta && invSubMeta.kind === "merchant") ? invSubMeta : null);
       if(invMeta){
-        setMerchantActiveFromMeta(invMeta, true, object.customer || "", object.subscription || "");
+        setMerchantActiveFromMeta(invMeta, true, inv.customer || "", invSubId);
       }
       setPremiumForStripeData({
-        email: object.customer_email || object.metadata?.email || "",
-        clientReferenceId: object.metadata?.clientReferenceId || "",
-        customerId: object.customer || "",
-        subscriptionId: object.subscription || "",
+        email: inv.customer_email || invOwnMeta.email || "",
+        clientReferenceId: invOwnMeta.clientReferenceId || "",
+        customerId: inv.customer || "",
+        subscriptionId: invSubId,
         active: true,
-        plan: object.metadata?.plan || object.metadata?.aiPlan || "",
-        priceId: object.metadata?.priceId || "",
-        reason: "invoice.payment.paid"
+        plan: invOwnMeta.plan || invOwnMeta.aiPlan || "",
+        priceId: invOwnMeta.priceId || "",
+        reason: type
       });
     }
 
     if(type === "invoice.payment_failed"){
+      const failSubDetails = object.subscription_details || (object.parent && object.parent.subscription_details) || null;
+      const failSubId = (typeof object.subscription === "string" ? object.subscription : "")
+        || ((failSubDetails && typeof failSubDetails.subscription === "string") ? failSubDetails.subscription : "");
+      const failSubMeta = (failSubDetails && failSubDetails.metadata) || null;
+      const failOwnMeta = object.metadata || {};
       try{
-        const gm = object.subscription_details && object.subscription_details.metadata;
-        if(gm && gm.kind === "guesttalk_sub"){ guesttalkDeactivateSub(gm.code || "", object.subscription || "", "betaling mislukt"); }
-      }catch(e){}
-      if(object.metadata?.kind === "merchant" || object.subscription_details?.metadata?.kind === "merchant"){
-        setMerchantActiveFromMeta(object.metadata || object.subscription_details?.metadata, false, object.customer || "");
+        if(failSubMeta && failSubMeta.kind === "guesttalk_sub"){ guesttalkDeactivateSub(failSubMeta.code || "", failSubId, "betaling mislukt"); }
+      }catch(e){ console.error("Guesttalk sub blokkeren mislukt:", (e && e.message) || e); }
+      if(failOwnMeta.kind === "merchant" || (failSubMeta && failSubMeta.kind === "merchant")){
+        setMerchantActiveFromMeta(failOwnMeta.kind === "merchant" ? failOwnMeta : failSubMeta, false, object.customer || "");
       }
       setPremiumForStripeData({
-        email: object.customer_email || object.metadata?.email || "",
-        clientReferenceId: object.metadata?.clientReferenceId || "",
+        email: object.customer_email || failOwnMeta.email || "",
+        clientReferenceId: failOwnMeta.clientReferenceId || "",
         customerId: object.customer || "",
-        subscriptionId: object.subscription || "",
+        subscriptionId: failSubId,
         active: false,
         reason: "invoice.payment_failed"
       });
@@ -901,7 +976,8 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req,
     if(type === "customer.subscription.deleted"){
       try{
         if(object.metadata && object.metadata.kind === "guesttalk_sub"){ guesttalkDeactivateSub(object.metadata.code || "", object.id || "", "opgezegd"); }
-      }catch(e){}
+        else if(object.id){ guesttalkDeactivateSub("", object.id, "opgezegd"); }
+      }catch(e){ console.error("Guesttalk sub opzeggen mislukt:", (e && e.message) || e); }
       // Ondernemer-abonnement opgezegd: zet de onderneming automatisch offline
       if(object.metadata?.kind === "merchant"){
         setMerchantActiveFromMeta(object.metadata, false, object.customer || "");
@@ -917,8 +993,10 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), (req,
       });
     }
 
+    stripeEventDone(eventId, true);
     res.json({ received: true });
   }catch(err){
+    stripeEventDone(eventId, false);
     console.error("Stripe webhook verwerking fout:", err.message || String(err));
     res.status(500).json({ error: "Webhook verwerking mislukt" });
   }
@@ -1316,34 +1394,84 @@ app.get("/api/openai/status", (req, res) => {
    GUESTTALK realtime vertaler
    tokens, verbruikslimiet, apparaatslot, top-ups (online of
    op aanvraag), upgrade-aanvragen en per-code activiteitenlog.
+
+   Vaste regels in dit blok:
+   - elk record loopt via guesttalkGetRecord, zodat de maandwissel
+     en de standaardwaarden overal op dezelfde manier gaan
+   - elke publieke route heeft een rem per IP (rateLimited)
+   - beheerroutes: timing-veilige wachtwoordcontrole, extra rem op
+     mislukte pogingen, antwoorden nooit in de cache
+   - betaalde top-ups worden per Stripe-referentie maar een keer
+     bijgeboekt
+   - alles wat in een e-mail belandt gaat door escHtmlServer
+   - verbruik kan nooit sneller oplopen dan de klok, ook niet als
+     iemand de heartbeat-route misbruikt
    ========================================================== */
 const OPENAI_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || "gpt-realtime";
 const OPENAI_REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE || "marin";
-const REALTIME_ADMIN_PASS = process.env.ADMIN_PASS || (typeof OWNER_PREMIUM_PIN !== "undefined" ? OWNER_PREMIUM_PIN : "654321");
+const REALTIME_ADMIN_PASS = process.env.ADMIN_PASS || (typeof OWNER_PREMIUM_PIN !== "undefined" ? OWNER_PREMIUM_PIN : "");
 const GUESTTALK_USAGE_FILE = path.join(DATA_DIR, "salve_guesttalk_usage.json");
 const GUESTTALK_TIERS = { instap: 300, zakelijk: 1000, pro: 2500 };
 const GUESTTALK_BASE_URL = process.env.GUESTTALK_BASE_URL || "https://formforge.nl/guesttalk/";
 const GUESTTALK_ADMIN_EMAIL = process.env.GUESTTALK_ADMIN_EMAIL || (typeof OWNER_PREMIUM_EMAIL !== "undefined" ? OWNER_PREMIUM_EMAIL : (typeof FROM_EMAIL !== "undefined" ? FROM_EMAIL : ""));
+/* Een apparaatslot dat zo lang niet gebruikt is, komt vanzelf vrij. */
+const GUESTTALK_DEVICE_TTL_DAYS = Math.max(1, parseInt(process.env.GUESTTALK_DEVICE_TTL_DAYS || "30", 10) || 30);
+/* Hoeveel realtime-tokens een code per uur mag aanmaken. */
+const GUESTTALK_MAX_TOKENS_PER_HOUR = Math.max(1, parseInt(process.env.GUESTTALK_MAX_TOKENS_PER_HOUR || "120", 10) || 120);
 const GUESTTALK_TOPUP_PACKS = {
   "300":  { minutes: 300,  priceId: process.env.GUESTTALK_TOPUP_300_PRICE_ID  || "price_1Tzz925s8MDSsy0eJEjxBe7o", label: "Guesttalk 300 extra minuten" },
   "1000": { minutes: 1000, priceId: process.env.GUESTTALK_TOPUP_1000_PRICE_ID || "price_1Tzz9z5s8MDSsy0e79REQOVe", label: "Guesttalk 1000 extra minuten" }
 };
 
+if(!process.env.ADMIN_PASS){
+  console.warn("GUESTTALK LET OP: ADMIN_PASS staat niet in de Render Environment Variables. Het beheer draait nu op de ingebouwde standaardpincode. Zet ADMIN_PASS zo snel mogelijk.");
+}
+if(!REALTIME_ADMIN_PASS){
+  console.error("GUESTTALK LET OP: er is helemaal geen beheerwachtwoord ingesteld. Alle beheerroutes worden geweigerd tot ADMIN_PASS gezet is.");
+}
+if(!process.env.GUESTTALK_TOPUP_300_PRICE_ID || !process.env.GUESTTALK_TOPUP_1000_PRICE_ID){
+  console.warn("GUESTTALK LET OP: GUESTTALK_TOPUP_300_PRICE_ID of GUESTTALK_TOPUP_1000_PRICE_ID staat niet in de omgeving. Er wordt teruggevallen op de ingebouwde price-id. Controleer of die bij deze Stripe-account hoort.");
+}
+
 let guesttalkUsage = { codes: {} };
+let _guesttalkSaveTimer = null;
+
 function loadGuesttalkUsage(){
   try{
+    if(!fs.existsSync(GUESTTALK_USAGE_FILE)){ guesttalkUsage = { codes: {} }; return; }
     const raw = fs.readFileSync(GUESTTALK_USAGE_FILE, "utf8");
     const data = JSON.parse(raw || "{}");
-    if(data && typeof data === "object") guesttalkUsage = { codes: data.codes || {} };
-  }catch(e){ guesttalkUsage = { codes: {} }; }
+    if(!data || typeof data !== "object") throw new Error("onverwachte inhoud in het verbruiksbestand");
+    guesttalkUsage = { codes: (data.codes && typeof data.codes === "object") ? data.codes : {} };
+  }catch(e){
+    /* Niet stil leegmaken: het originele bestand wordt eerst veiliggesteld,
+       anders zou de eerstvolgende save alle klantsaldi definitief wissen. */
+    rescueCorruptStore(GUESTTALK_USAGE_FILE, e);
+    guesttalkUsage = { codes: {} };
+  }
 }
-function saveGuesttalkUsage(){
+function saveGuesttalkUsageNow(){
+  if(_guesttalkSaveTimer){ clearTimeout(_guesttalkSaveTimer); _guesttalkSaveTimer = null; }
   try{ safeWriteFileSync(GUESTTALK_USAGE_FILE, JSON.stringify(guesttalkUsage)); }
   catch(e){ console.error("Guesttalk verbruik opslaan mislukt:", (e && e.message) || e); }
 }
+/* Uitgestelde save voor de heartbeats. Alles wat met geld of beheer te maken
+   heeft gebruikt saveGuesttalkUsageNow, zodat dat nooit kan verdampen. */
+function saveGuesttalkUsage(){
+  if(_guesttalkSaveTimer) return;
+  _guesttalkSaveTimer = setTimeout(() => {
+    _guesttalkSaveTimer = null;
+    saveGuesttalkUsageNow();
+  }, 1500);
+}
 loadGuesttalkUsage();
 
+/* De bundelmaand volgt de Nederlandse kalender, niet UTC. */
 function guesttalkPeriodMonth(){
+  try{
+    const t = nlNow();
+    if(t && typeof t.day === "string" && t.day.length >= 7) return t.day.slice(0, 7);
+  }catch(e){}
   const d = new Date();
   return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
 }
@@ -1355,45 +1483,158 @@ function guesttalkLog(rec, text){
   rec.log.push({ t: new Date().toISOString(), text: String(text).slice(0, 200) });
   if(rec.log.length > 50) rec.log = rec.log.slice(-50);
 }
+
+/* Timing-veilige vergelijking, zodat het wachtwoord niet teken voor teken
+   te raden is. Zonder ingesteld wachtwoord gaat alles dicht. */
+function guesttalkAuthOk(given){
+  if(!REALTIME_ADMIN_PASS) return false;
+  const a = Buffer.from(String(given || ""), "utf8");
+  const b = Buffer.from(String(REALTIME_ADMIN_PASS), "utf8");
+  if(a.length !== b.length) return false;
+  try{ return crypto.timingSafeEqual(a, b); }catch(e){ return false; }
+}
+/* Beheerpoort: rem, wachtwoord, geen caching. Geeft true als de aanroep door mag. */
+function guesttalkAdminGate(req, res, q){
+  res.set("Cache-Control", "no-store");
+  const ip = clientIp(req);
+  if(rateLimited("gtadmin", ip, 120, 5 * 60 * 1000)){
+    res.status(429).json({ error: "Te veel verzoeken, probeer het straks opnieuw" });
+    return false;
+  }
+  if(!guesttalkAuthOk(q.adminPass)){
+    rateLimited("gtadminfail", ip, 10, 10 * 60 * 1000);
+    console.warn("Guesttalk beheer: mislukte inlogpoging vanaf " + ip);
+    res.status(403).json({ error: "Geen toegang" });
+    return false;
+  }
+  return true;
+}
+/* Extra rem die alleen op mislukte pogingen loopt. */
+function guesttalkAdminBlocked(req, res){
+  const ip = clientIp(req);
+  const key = "gtadminfail|" + ip;
+  const e = _rateBuckets.get(key);
+  if(e && Date.now() < e.resetAt && e.count > 10){
+    res.set("Cache-Control", "no-store");
+    res.status(429).json({ error: "Te veel mislukte pogingen, probeer het over tien minuten opnieuw" });
+    return true;
+  }
+  return false;
+}
+
+function guesttalkNewRecord(){
+  return {
+    tier: "instap", limitMinutes: GUESTTALK_TIERS.instap, bonusMinutes: 0, secondsUsed: 0,
+    periodMonth: guesttalkPeriodMonth(), label: "", email: "", devices: [], maxDevices: 1,
+    perDeviceMinutes: 0, deviceUsage: {}, beatAt: {}, paidRefs: [], requests: [], log: [],
+    active: true, pendingSub: false
+  };
+}
+
+/* Alle velden op een veilige waarde zetten. Een half of handmatig aangepast
+   record kan hierna geen NaN of undefined meer veroorzaken. */
+function guesttalkNormRecord(rec){
+  if(!rec || typeof rec !== "object") return null;
+  const num = (v, fallback) => (typeof v === "number" && isFinite(v) && v >= 0) ? v : fallback;
+  if(typeof rec.tier !== "string" || !rec.tier) rec.tier = "instap";
+  rec.limitMinutes = num(rec.limitMinutes, GUESTTALK_TIERS[rec.tier] || GUESTTALK_TIERS.instap);
+  rec.bonusMinutes = num(rec.bonusMinutes, 0);
+  rec.secondsUsed = num(rec.secondsUsed, 0);
+  rec.perDeviceMinutes = num(rec.perDeviceMinutes, 0);
+  rec.maxDevices = Math.max(1, Math.floor(num(rec.maxDevices, 1)) || 1);
+  if(typeof rec.label !== "string") rec.label = "";
+  if(typeof rec.email !== "string") rec.email = "";
+  if(typeof rec.periodMonth !== "string") rec.periodMonth = "";
+  if(!Array.isArray(rec.devices)) rec.devices = [];
+  if(!Array.isArray(rec.requests)) rec.requests = [];
+  if(!Array.isArray(rec.log)) rec.log = [];
+  if(!Array.isArray(rec.paidRefs)) rec.paidRefs = [];
+  if(!rec.deviceUsage || typeof rec.deviceUsage !== "object") rec.deviceUsage = {};
+  if(!rec.beatAt || typeof rec.beatAt !== "object") rec.beatAt = {};
+  /* Oude records hebben geen active-veld en werkten gewoon. Dat blijft zo,
+     maar het veld staat er vanaf nu altijd expliciet in. */
+  if(typeof rec.active !== "boolean") rec.active = true;
+  if(typeof rec.pendingSub !== "boolean") rec.pendingSub = false;
+  rec.devices = rec.devices.filter(d => d && typeof d === "object" && d.id);
+  return rec;
+}
+
+/* Apparaatsloten die lang niet gebruikt zijn vrijgeven. */
+function guesttalkPruneDevices(rec){
+  const ttl = GUESTTALK_DEVICE_TTL_DAYS * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const before = rec.devices.length;
+  rec.devices = rec.devices.filter(d => {
+    const seen = Date.parse(d.lastSeen || d.firstSeen || "");
+    if(!isFinite(seen)) return true;
+    return (now - seen) < ttl;
+  });
+  return rec.devices.length !== before;
+}
+
+/* Losse mappen (verbruik en heartbeat-tijden) niet ongelimiteerd laten groeien. */
+function guesttalkTrimMaps(rec){
+  ["deviceUsage", "beatAt"].forEach((veld) => {
+    const keys = Object.keys(rec[veld]);
+    if(keys.length > 200){
+      keys.slice(0, keys.length - 200).forEach(k => { delete rec[veld][k]; });
+    }
+  });
+}
+
+/* De enige plek waar een record uit de opslag wordt gehaald. */
 function guesttalkGetRecord(code){
   const key = guesttalkNormCode(code);
   if(!key) return null;
-  const rec = guesttalkUsage.codes[key];
+  const rec = guesttalkNormRecord(guesttalkUsage.codes[key]);
   if(!rec) return null;
-  if(!Array.isArray(rec.devices)) rec.devices = [];
-  if(!rec.maxDevices) rec.maxDevices = 1;
-  if(typeof rec.bonusMinutes !== "number") rec.bonusMinutes = 0;
-  if(!Array.isArray(rec.requests)) rec.requests = [];
-  if(!Array.isArray(rec.log)) rec.log = [];
-  if(typeof rec.perDeviceMinutes !== "number") rec.perDeviceMinutes = 0;
-  if(!rec.deviceUsage || typeof rec.deviceUsage !== "object") rec.deviceUsage = {};
+  let changed = false;
   const nowMonth = guesttalkPeriodMonth();
   if(rec.periodMonth !== nowMonth){
     rec.periodMonth = nowMonth;
     rec.secondsUsed = 0;
     rec.bonusMinutes = 0;
     rec.deviceUsage = {};
-    saveGuesttalkUsage();
+    rec.beatAt = {};
+    changed = true;
+    /* paidRefs blijft staan: die bewaakt dubbele Stripe-leveringen en mag
+       niet met de maand mee opnieuw beginnen. */
   }
+  if(guesttalkPruneDevices(rec)) changed = true;
+  guesttalkTrimMaps(rec);
+  if(changed) saveGuesttalkUsageNow();
   return rec;
 }
-function guesttalkAddMinutes(code, minutes, reason){
-  const key = guesttalkNormCode(code);
-  const rec = guesttalkUsage.codes[key];
-  if(!rec) return false;
-  const m = parseInt(minutes, 10) || 0;
-  if(m <= 0) return false;
-  rec.bonusMinutes = (rec.bonusMinutes || 0) + m;
+
+/* Minuten bijboeken. ref is de Stripe-sessie of het event, zodat dezelfde
+   betaling nooit twee keer wordt bijgeschreven bij een herlevering. */
+function guesttalkAddMinutes(code, minutes, reason, ref){
+  const rec = guesttalkGetRecord(code);
+  if(!rec){
+    console.error("Guesttalk: minuten bijboeken voor onbekende code " + guesttalkNormCode(code));
+    return false;
+  }
+  const m = parseInt(minutes, 10);
+  if(!isFinite(m) || m <= 0) return false;
+  const refKey = String(ref || "").trim().slice(0, 120);
+  if(refKey && rec.paidRefs.indexOf(refKey) >= 0){
+    console.log("Guesttalk: betaling " + refKey + " was al verwerkt, overgeslagen.");
+    return false;
+  }
+  rec.bonusMinutes += m;
+  if(refKey){
+    rec.paidRefs.push(refKey);
+    if(rec.paidRefs.length > 100) rec.paidRefs = rec.paidRefs.slice(-100);
+  }
   guesttalkLog(rec, "Plus " + m + " minuten (" + (reason || "handmatig") + ")");
-  saveGuesttalkUsage();
+  saveGuesttalkUsageNow();
   return true;
 }
 
 function guesttalkAdmin(req, res){
   const q = Object.assign({}, req.query || {}, req.body || {});
-  if(String(q.adminPass || "") !== String(REALTIME_ADMIN_PASS)){
-    return res.status(403).json({ error: "Geen toegang" });
-  }
+  if(guesttalkAdminBlocked(req, res)) return;
+  if(!guesttalkAdminGate(req, res, q)) return;
   const action = String(q.action || "").toLowerCase();
   if(action === "list"){
     return res.json({ ok: true, tiers: GUESTTALK_TIERS, baseUrl: GUESTTALK_BASE_URL, codes: guesttalkUsage.codes });
@@ -1401,30 +1642,34 @@ function guesttalkAdmin(req, res){
   const key = guesttalkNormCode(q.code);
   if(!key) return res.status(400).json({ error: "code ontbreekt" });
   if(action === "remove"){
+    if(!guesttalkUsage.codes[key]) return res.status(404).json({ error: "Onbekende locatiecode" });
     delete guesttalkUsage.codes[key];
-    saveGuesttalkUsage();
+    saveGuesttalkUsageNow();
     return res.json({ ok: true, removed: key });
   }
-  let rec = guesttalkUsage.codes[key];
+  /* Bij deze acties hoort de code al te bestaan. Zo levert een typefout geen
+     spookrecord meer op. */
+  const bestaandVereist = ["reset", "resetdevice", "topup", "resolverequest"];
+  let rec = guesttalkGetRecord(key);
   if(!rec){
-    rec = { tier: "instap", limitMinutes: GUESTTALK_TIERS.instap, bonusMinutes: 0, secondsUsed: 0, periodMonth: guesttalkPeriodMonth(), label: "", email: "", devices: [], maxDevices: 1, perDeviceMinutes: 0, deviceUsage: {}, requests: [], log: [] };
+    if(bestaandVereist.indexOf(action) >= 0) return res.status(404).json({ error: "Onbekende locatiecode" });
+    rec = guesttalkNewRecord();
     guesttalkUsage.codes[key] = rec;
     guesttalkLog(rec, "Aangemaakt");
   }
-  if(!Array.isArray(rec.devices)) rec.devices = [];
-  if(!Array.isArray(rec.requests)) rec.requests = [];
-  if(typeof rec.bonusMinutes !== "number") rec.bonusMinutes = 0;
-  if(action === "reset"){ rec.secondsUsed = 0; rec.periodMonth = guesttalkPeriodMonth(); guesttalkLog(rec, "Bundel gereset"); }
+  if(action === "reset"){ rec.secondsUsed = 0; rec.periodMonth = guesttalkPeriodMonth(); rec.beatAt = {}; guesttalkLog(rec, "Bundel gereset"); }
   if(action === "resetdevice"){ rec.devices = []; guesttalkLog(rec, "Apparaat losgekoppeld"); }
   if(action === "topup"){
     const m = parseInt(q.minutes, 10);
-    if(!isNaN(m) && m > 0){ rec.bonusMinutes = (rec.bonusMinutes || 0) + m; guesttalkLog(rec, "Plus " + m + " minuten (handmatig)"); }
+    if(!isNaN(m) && m > 0){ rec.bonusMinutes += m; guesttalkLog(rec, "Plus " + m + " minuten (handmatig)"); }
   }
   if(action === "resolverequest"){
     const rid = String(q.requestId || "");
-    const rq = rec.requests.find(r => r.id === rid);
+    const rq = rec.requests.find(r => r && r.id === rid);
     if(rq){ rq.status = "afgehandeld"; guesttalkLog(rec, "Aanvraag afgehandeld"); }
   }
+  if(action === "activate"){ rec.active = true; rec.pendingSub = false; guesttalkLog(rec, "Handmatig op actief gezet"); }
+  if(action === "deactivate"){ rec.active = false; guesttalkLog(rec, "Handmatig op non-actief gezet"); }
   if(q.tier && GUESTTALK_TIERS[String(q.tier).toLowerCase()]){
     const nt = String(q.tier).toLowerCase();
     if(nt !== rec.tier) guesttalkLog(rec, "Pakket gewijzigd naar " + nt);
@@ -1445,7 +1690,7 @@ function guesttalkAdmin(req, res){
   }
   if(q.label !== undefined) rec.label = String(q.label).slice(0, 120);
   if(q.email !== undefined) rec.email = String(q.email).slice(0, 160);
-  saveGuesttalkUsage();
+  saveGuesttalkUsageNow();
   return res.json({ ok: true, code: key, link: guesttalkLink(key), record: rec });
 }
 app.get("/api/realtime/admin", guesttalkAdmin);
@@ -1453,36 +1698,38 @@ app.post("/api/realtime/admin", guesttalkAdmin);
 
 async function guesttalkSendInvite(req, res){
   const q = Object.assign({}, req.query || {}, req.body || {});
-  if(String(q.adminPass || "") !== String(REALTIME_ADMIN_PASS)){
-    return res.status(403).json({ error: "Geen toegang" });
+  if(guesttalkAdminBlocked(req, res)) return;
+  if(!guesttalkAdminGate(req, res, q)) return;
+  if(rateLimited("gtinvite", clientIp(req), 30, 60 * 60 * 1000)){
+    return res.status(429).json({ error: "Te veel uitnodigingen achter elkaar" });
   }
   const key = guesttalkNormCode(q.code);
   if(!key) return res.status(400).json({ error: "code ontbreekt" });
-  const rec = guesttalkUsage.codes[key];
+  const rec = guesttalkGetRecord(key);
   if(!rec) return res.status(404).json({ error: "Onbekende locatiecode" });
-  const to = String(q.email || rec.email || "").trim();
-  if(!to || to.indexOf("@") < 0) return res.status(400).json({ error: "Geen geldig e-mailadres" });
+  const to = String(q.email || rec.email || "").trim().slice(0, 160);
+  if(!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(to)) return res.status(400).json({ error: "Geen geldig e-mailadres" });
   const link = guesttalkLink(key);
   const naam = rec.label || "uw locatie";
-  const extra = String(q.message || "").trim();
+  const extra = String(q.message || "").slice(0, 1000).trim();
   const subject = "Uw Guesttalk vertaler is klaar";
   const text = "Beste,\n\nUw persoonlijke Guesttalk live vertaler staat klaar voor " + naam + ".\n\nOpen deze link op het apparaat waarop u de vertaler wilt gebruiken (tablet, telefoon of computer):\n" + link + "\n\nLet op: de vertaler werkt op 1 apparaat. Het eerste apparaat dat de link opent, wordt het vaste apparaat.\n" + (extra ? ("\n" + extra + "\n") : "") + "\nMet vriendelijke groet,\nFormForge";
   const html = '<div style="font-family:Arial,Helvetica,sans-serif;color:#1d2b50;line-height:1.5">' +
     '<h2 style="font-family:Georgia,serif;color:#1d2b50">Uw Guesttalk vertaler is klaar</h2>' +
-    '<p>Beste,</p><p>Uw persoonlijke Guesttalk live vertaler staat klaar voor <b>' + naam + '</b>.</p>' +
+    '<p>Beste,</p><p>Uw persoonlijke Guesttalk live vertaler staat klaar voor <b>' + escHtmlServer(naam) + '</b>.</p>' +
     '<p>Open deze link op het apparaat waarop u de vertaler wilt gebruiken (tablet, telefoon of computer):</p>' +
-    '<p><a href="' + link + '" style="display:inline-block;background:#1d2b50;color:#fff;text-decoration:none;padding:12px 20px;border-radius:999px;font-weight:bold">Guesttalk openen</a></p>' +
-    '<p style="font-size:13px;color:#667085">Of kopieer: ' + link + '</p>' +
+    '<p><a href="' + escHtmlServer(link) + '" style="display:inline-block;background:#1d2b50;color:#fff;text-decoration:none;padding:12px 20px;border-radius:999px;font-weight:bold">Guesttalk openen</a></p>' +
+    '<p style="font-size:13px;color:#667085">Of kopieer: ' + escHtmlServer(link) + '</p>' +
     '<p style="font-size:13px;color:#667085">Let op: de vertaler werkt op 1 apparaat. Het eerste apparaat dat de link opent wordt het vaste apparaat.</p>' +
-    (extra ? ('<p>' + extra.replace(/</g, "&lt;") + '</p>') : '') +
+    (extra ? ('<p>' + escHtmlServer(extra).replace(/\n/g, "<br>") + '</p>') : '') +
     '<p>Met vriendelijke groet,<br>FormForge</p></div>';
   try{
     await sendResendEmail({ to: to, subject: subject, text: text, html: html });
-    if(q.email){ rec.email = to; saveGuesttalkUsage(); }
+    if(q.email){ rec.email = to; saveGuesttalkUsageNow(); }
     return res.json({ ok: true, sentTo: to, link: link });
   }catch(e){
     console.error("Guesttalk invite mail mislukt:", (e && e.message) || e);
-    return res.status(500).json({ error: "Mail versturen mislukt: " + ((e && e.message) || "onbekend") });
+    return res.status(500).json({ error: "Mail versturen mislukt" });
   }
 }
 app.get("/api/realtime/send-invite", guesttalkSendInvite);
@@ -1491,8 +1738,11 @@ app.post("/api/realtime/send-invite", guesttalkSendInvite);
 /* Klant vraagt zelf een upgrade of extra minuten aan (jij keurt goed in de admin) */
 async function guesttalkRequestUpgrade(req, res){
   const q = Object.assign({}, req.query || {}, req.body || {});
+  res.set("Cache-Control", "no-store");
   const code = guesttalkNormCode(q.code);
   if(!code) return res.status(400).json({ error: "code ontbreekt" });
+  if(rateLimited("gtupgrade", clientIp(req), 5, 60 * 60 * 1000)) return res.status(429).json({ error: "Te veel aanvragen achter elkaar" });
+  if(rateLimited("gtupgradecode", code, 5, 60 * 60 * 1000)) return res.status(429).json({ error: "Te veel aanvragen achter elkaar" });
   const rec = guesttalkGetRecord(code);
   if(!rec) return res.status(404).json({ error: "Onbekende locatiecode" });
   const type = (String(q.type || "minuten").slice(0, 24)) || "minuten";
@@ -1501,16 +1751,17 @@ async function guesttalkRequestUpgrade(req, res){
   rec.requests.push(reqObj);
   if(rec.requests.length > 30) rec.requests = rec.requests.slice(-30);
   guesttalkLog(rec, "Aanvraag: " + type + (detail ? (" - " + detail) : ""));
-  saveGuesttalkUsage();
+  saveGuesttalkUsageNow();
   try{
     if(GUESTTALK_ADMIN_EMAIL){
       const used = Math.round((rec.secondsUsed || 0) / 60);
       const lim = guesttalkLimitMinutes(rec);
+      const naam = rec.label || code;
       await sendResendEmail({
         to: GUESTTALK_ADMIN_EMAIL,
-        subject: "Guesttalk aanvraag: " + (rec.label || code),
-        text: "Locatie " + (rec.label || code) + " (" + code + ") vraagt: " + type + (detail ? (" - " + detail) : "") + "\nVerbruik deze maand: " + used + " / " + lim + " min.\nHandel dit af in je Guesttalk beheer.",
-        html: "<p>Locatie <b>" + (rec.label || code) + "</b> (" + code + ") vraagt: <b>" + type + "</b>" + (detail ? (" - " + detail.replace(/</g,"&lt;")) : "") + "</p><p>Verbruik deze maand: " + used + " / " + lim + " min.</p><p>Handel dit af in je Guesttalk beheer.</p>"
+        subject: "Guesttalk aanvraag: " + naam,
+        text: "Locatie " + naam + " (" + code + ") vraagt: " + type + (detail ? (" - " + detail) : "") + "\nVerbruik deze maand: " + used + " / " + lim + " min.\nHandel dit af in je Guesttalk beheer.",
+        html: "<p>Locatie <b>" + escHtmlServer(naam) + "</b> (" + escHtmlServer(code) + ") vraagt: <b>" + escHtmlServer(type) + "</b>" + (detail ? (" - " + escHtmlServer(detail)) : "") + "</p><p>Verbruik deze maand: " + used + " / " + lim + " min.</p><p>Handel dit af in je Guesttalk beheer.</p>"
       });
     }
   }catch(e){ console.error("Guesttalk aanvraag mail mislukt:", (e && e.message) || e); }
@@ -1523,9 +1774,11 @@ app.post("/api/realtime/request-upgrade", guesttalkRequestUpgrade);
 async function guesttalkBuyMinutes(req, res){
   try{
     const q = Object.assign({}, req.query || {}, req.body || {});
+    res.set("Cache-Control", "no-store");
     const code = guesttalkNormCode(q.code);
     if(!code) return res.status(400).json({ error: "code ontbreekt" });
-    const rec = guesttalkUsage.codes[code];
+    if(rateLimited("gtbuy", clientIp(req), 10, 60 * 60 * 1000)) return res.status(429).json({ error: "Te veel pogingen achter elkaar" });
+    const rec = guesttalkGetRecord(code);
     if(!rec) return res.status(404).json({ error: "Onbekende locatiecode" });
     const packKey = String(q.pack || "300").trim();
     const pack = GUESTTALK_TOPUP_PACKS[packKey];
@@ -1558,62 +1811,68 @@ const GUESTTALK_SUB_PRICES = {
   zakelijk: process.env.GUESTTALK_SUB_ZAKELIJK_PRICE_ID || "price_1Tzz4t5s8MDSsy0eqlVIpRXA",
   pro:      process.env.GUESTTALK_SUB_PRO_PRICE_ID      || "price_1Tzz615s8MDSsy0edJfb6kmM"
 };
+if(!process.env.GUESTTALK_SUB_INSTAP_PRICE_ID || !process.env.GUESTTALK_SUB_ZAKELIJK_PRICE_ID || !process.env.GUESTTALK_SUB_PRO_PRICE_ID){
+  console.warn("GUESTTALK LET OP: een of meer GUESTTALK_SUB_*_PRICE_ID ontbreken in de omgeving. Er wordt teruggevallen op de ingebouwde price-id. Controleer of die bij deze Stripe-account hoort.");
+}
+
 function guesttalkActivateSub(code, tier, customerId, subId){
   const key = guesttalkNormCode(code);
   if(!key) return;
-  let rec = guesttalkUsage.codes[key];
+  let rec = guesttalkGetRecord(key);
   if(!rec){
-    rec = { tier:"instap", limitMinutes:GUESTTALK_TIERS.instap, bonusMinutes:0, secondsUsed:0, periodMonth:guesttalkPeriodMonth(), label:"", email:"", devices:[], maxDevices:1, requests:[], log:[] };
+    rec = guesttalkNewRecord();
     guesttalkUsage.codes[key] = rec;
+    guesttalkLog(rec, "Aangemaakt via betaling");
   }
-  const t = String(tier||"").toLowerCase();
+  const t = String(tier || "").toLowerCase();
   if(GUESTTALK_TIERS[t]){ rec.tier = t; rec.limitMinutes = GUESTTALK_TIERS[t]; }
   rec.active = true;
   rec.pendingSub = false;
-  if(customerId) rec.stripeCustomerId = customerId;
-  if(subId) rec.subscriptionId = subId;
+  if(customerId) rec.stripeCustomerId = String(customerId).slice(0, 80);
+  if(subId) rec.subscriptionId = String(subId).slice(0, 80);
   guesttalkLog(rec, "Abonnement actief (" + rec.tier + ")");
-  saveGuesttalkUsage();
+  saveGuesttalkUsageNow();
 }
 function guesttalkFindBySub(subId){
-  const s = String(subId||"");
+  const s = String(subId || "");
   if(!s) return null;
-  const k = Object.keys(guesttalkUsage.codes).find(k => guesttalkUsage.codes[k].subscriptionId === s);
-  return k ? guesttalkUsage.codes[k] : null;
+  const key = Object.keys(guesttalkUsage.codes).find(k => guesttalkUsage.codes[k] && guesttalkUsage.codes[k].subscriptionId === s);
+  return key ? guesttalkGetRecord(key) : null;
 }
 function guesttalkDeactivateSub(code, subId, reason){
-  let rec = code ? guesttalkUsage.codes[guesttalkNormCode(code)] : null;
+  let rec = code ? guesttalkGetRecord(code) : null;
   if(!rec) rec = guesttalkFindBySub(subId);
   if(!rec) return;
   rec.active = false;
-  guesttalkLog(rec, "Abonnement non-actief (" + (reason||"") + ")");
-  saveGuesttalkUsage();
+  guesttalkLog(rec, "Abonnement non-actief (" + (reason || "") + ")");
+  saveGuesttalkUsageNow();
 }
 async function guesttalkSubscribeLink(req, res){
   const q = Object.assign({}, req.query || {}, req.body || {});
-  if(String(q.adminPass || "") !== String(REALTIME_ADMIN_PASS)) return res.status(403).json({ error:"Geen toegang" });
+  if(guesttalkAdminBlocked(req, res)) return;
+  if(!guesttalkAdminGate(req, res, q)) return;
   const code = guesttalkNormCode(q.code);
-  if(!code) return res.status(400).json({ error:"code ontbreekt" });
-  let rec = guesttalkUsage.codes[code];
-  if(!rec) return res.status(404).json({ error:"Onbekende locatiecode" });
+  if(!code) return res.status(400).json({ error: "code ontbreekt" });
+  const rec = guesttalkGetRecord(code);
+  if(!rec) return res.status(404).json({ error: "Onbekende locatiecode" });
   const tier = String(q.tier || rec.tier || "instap").toLowerCase();
   const priceId = GUESTTALK_SUB_PRICES[tier];
-  if(!priceId) return res.status(400).json({ error:"Stripe-abonnement niet ingesteld voor pakket " + tier, notConfigured:true });
-  const email = String(q.email || rec.email || "").trim();
+  if(!priceId) return res.status(400).json({ error: "Stripe-abonnement niet ingesteld voor pakket " + tier, notConfigured: true });
+  const email = String(q.email || rec.email || "").trim().slice(0, 160);
   const link = guesttalkLink(code);
   try{
     const payload = {
-      mode:"subscription",
-      line_items:[{ price:priceId, quantity:1 }],
+      mode: "subscription",
+      line_items: [{ price: priceId, quantity: 1 }],
       success_url: link + "&welkom=1",
       cancel_url: link + "&betaald=0",
-      allow_promotion_codes:true,
-      billing_address_collection:"auto",
+      allow_promotion_codes: true,
+      billing_address_collection: "auto",
       client_reference_id: code,
-      metadata:{ kind:"guesttalk_sub", code:code, tier:tier, source:"guesttalk" },
-      subscription_data:{ metadata:{ kind:"guesttalk_sub", code:code, tier:tier } }
+      metadata: { kind: "guesttalk_sub", code: code, tier: tier, source: "guesttalk" },
+      subscription_data: { metadata: { kind: "guesttalk_sub", code: code, tier: tier } }
     };
-    if(email) payload.customer_email = email;
+    if(email && email.indexOf("@") > 0) payload.customer_email = email;
     const session = await callStripe("/checkout/sessions", payload);
     rec.tier = tier;
     rec.limitMinutes = GUESTTALK_TIERS[tier] || rec.limitMinutes;
@@ -1621,20 +1880,20 @@ async function guesttalkSubscribeLink(req, res){
     rec.pendingSub = true;
     if(email) rec.email = email;
     guesttalkLog(rec, "Betaallink aangemaakt (" + tier + "), wacht op betaling");
-    saveGuesttalkUsage();
+    saveGuesttalkUsageNow();
     let mailed = false;
-    if(String(q.send||"") === "1" && email && email.indexOf("@") >= 0){
+    if(String(q.send || "") === "1" && /^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(email)){
       const naam = rec.label || "uw locatie";
       const subject = "Uw Guesttalk abonnement activeren";
       const text = "Beste,\n\nUw Guesttalk live vertaler voor " + naam + " staat klaar. Rond de betaling af via onderstaande link, daarna is de vertaler direct actief:\n" + session.url + "\n\nMet vriendelijke groet,\nFormForge";
-      const html = '<div style="font-family:Arial,Helvetica,sans-serif;color:#1d2b50;line-height:1.5"><h2 style="font-family:Georgia,serif;color:#1d2b50">Uw Guesttalk abonnement activeren</h2><p>Beste,</p><p>Uw Guesttalk live vertaler voor <b>' + naam + '</b> staat klaar. Rond de betaling af, daarna is de vertaler direct actief:</p><p><a href="' + session.url + '" style="display:inline-block;background:#1d2b50;color:#fff;text-decoration:none;padding:12px 20px;border-radius:999px;font-weight:bold">Abonnement activeren</a></p><p style="font-size:13px;color:#667085">Of kopieer: ' + session.url + '</p><p>Met vriendelijke groet,<br>FormForge</p></div>';
-      try{ await sendResendEmail({ to:email, subject:subject, text:text, html:html }); mailed = true; }
+      const html = '<div style="font-family:Arial,Helvetica,sans-serif;color:#1d2b50;line-height:1.5"><h2 style="font-family:Georgia,serif;color:#1d2b50">Uw Guesttalk abonnement activeren</h2><p>Beste,</p><p>Uw Guesttalk live vertaler voor <b>' + escHtmlServer(naam) + '</b> staat klaar. Rond de betaling af, daarna is de vertaler direct actief:</p><p><a href="' + escHtmlServer(session.url || "") + '" style="display:inline-block;background:#1d2b50;color:#fff;text-decoration:none;padding:12px 20px;border-radius:999px;font-weight:bold">Abonnement activeren</a></p><p style="font-size:13px;color:#667085">Of kopieer: ' + escHtmlServer(session.url || "") + '</p><p>Met vriendelijke groet,<br>FormForge</p></div>';
+      try{ await sendResendEmail({ to: email, subject: subject, text: text, html: html }); mailed = true; }
       catch(e){ console.error("Betaallink mail mislukt:", (e && e.message) || e); }
     }
-    return res.json({ ok:true, url:session.url, mailed:mailed, tier:tier });
+    return res.json({ ok: true, url: session.url, mailed: mailed, tier: tier });
   }catch(err){
     console.error("Guesttalk subscribe-link fout:", (err && err.message) || err);
-    return res.status(500).json({ error:"Betaallink maken mislukt" });
+    return res.status(500).json({ error: "Betaallink maken mislukt" });
   }
 }
 app.get("/api/realtime/subscribe-link", guesttalkSubscribeLink);
@@ -1645,28 +1904,31 @@ const GUESTTALK_LEAD_EMAIL = process.env.GUESTTALK_LEAD_EMAIL || "info@formforge
 async function guesttalkLead(req, res){
   try{
     const q = Object.assign({}, req.query || {}, req.body || {});
-    if(q.hp){ return res.json({ ok:true }); } /* honeypot: waarschijnlijk een bot */
-    const naam = String(q.naam || "").slice(0,120).trim();
-    const email = String(q.email || "").slice(0,160).trim();
-    const bedrijf = String(q.bedrijf || "").slice(0,160).trim();
-    const telefoon = String(q.telefoon || "").slice(0,60).trim();
-    const onderwerp = String(q.onderwerp || "").slice(0,140).trim();
-    const bericht = String(q.bericht || "").slice(0,2000).trim();
-    if(!naam || !email || email.indexOf("@") < 0){
-      return res.status(400).json({ error:"Naam en een geldig e-mailadres zijn verplicht" });
+    res.set("Cache-Control", "no-store");
+    if(q.hp){ return res.json({ ok: true }); } /* honeypot: waarschijnlijk een bot */
+    if(rateLimited("gtlead", clientIp(req), 5, 60 * 60 * 1000)){
+      return res.status(429).json({ error: "Te veel aanmeldingen achter elkaar, probeer het later opnieuw" });
     }
-    const esc = s => String(s).replace(/</g,"&lt;");
+    const naam = String(q.naam || "").slice(0, 120).trim();
+    const email = String(q.email || "").slice(0, 160).trim();
+    const bedrijf = String(q.bedrijf || "").slice(0, 160).trim();
+    const telefoon = String(q.telefoon || "").slice(0, 60).trim();
+    const onderwerp = String(q.onderwerp || "").slice(0, 140).trim();
+    const bericht = String(q.bericht || "").slice(0, 2000).trim();
+    if(!naam || !/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(email)){
+      return res.status(400).json({ error: "Naam en een geldig e-mailadres zijn verplicht" });
+    }
     const subject = "Guesttalk aanmelding: " + (bedrijf || naam);
     const text = "Nieuwe aanmelding via de Guesttalk-pagina.\n\nNaam: " + naam + "\nBedrijf: " + bedrijf + "\nE-mail: " + email + "\nTelefoon: " + telefoon + "\nOnderwerp: " + onderwerp + "\n\nBericht:\n" + bericht;
     const html = '<div style="font-family:Arial,Helvetica,sans-serif;color:#1d2b50;line-height:1.55">' +
       '<h2 style="font-family:Georgia,serif;color:#1d2b50">Nieuwe Guesttalk-aanmelding</h2>' +
-      '<p><b>Naam:</b> ' + esc(naam) + '<br><b>Bedrijf:</b> ' + esc(bedrijf) + '<br><b>E-mail:</b> ' + esc(email) + '<br><b>Telefoon:</b> ' + esc(telefoon) + '<br><b>Onderwerp:</b> ' + esc(onderwerp) + '</p>' +
-      '<p><b>Bericht:</b><br>' + esc(bericht).replace(/\n/g,"<br>") + '</p></div>';
+      '<p><b>Naam:</b> ' + escHtmlServer(naam) + '<br><b>Bedrijf:</b> ' + escHtmlServer(bedrijf) + '<br><b>E-mail:</b> ' + escHtmlServer(email) + '<br><b>Telefoon:</b> ' + escHtmlServer(telefoon) + '<br><b>Onderwerp:</b> ' + escHtmlServer(onderwerp) + '</p>' +
+      '<p><b>Bericht:</b><br>' + escHtmlServer(bericht).replace(/\n/g, "<br>") + '</p></div>';
     await sendResendEmail({ to: GUESTTALK_LEAD_EMAIL, subject: subject, text: text, html: html });
-    return res.json({ ok:true });
+    return res.json({ ok: true });
   }catch(e){
     console.error("Guesttalk lead mislukt:", (e && e.message) || e);
-    return res.status(500).json({ error:"Versturen mislukt" });
+    return res.status(500).json({ error: "Versturen mislukt" });
   }
 }
 app.post("/api/realtime/lead", guesttalkLead);
@@ -1674,14 +1936,21 @@ app.get("/api/realtime/lead", guesttalkLead);
 
 async function mintRealtimeToken(req, res){
   try{
+    res.set("Cache-Control", "no-store");
     if(!OPENAI_API_KEY) return res.status(500).json({ error: "OPENAI_API_KEY ontbreekt op de server" });
     const src = Object.assign({}, req.query || {}, req.body || {});
     const code = guesttalkNormCode(src.code);
     if(!code) return res.status(400).json({ error: "Geen locatiecode meegegeven", limitReached: false });
+    if(rateLimited("gttokenip", clientIp(req), 60, 60 * 1000)){
+      return res.status(429).json({ error: "Te veel verzoeken, probeer het zo opnieuw" });
+    }
     const rec = guesttalkGetRecord(code);
     if(!rec) return res.status(404).json({ error: "Onbekende locatiecode", limitReached: false });
-    if(rec.active === false){
+    if(rec.active !== true){
       return res.status(402).json({ error: "Dit abonnement is nog niet actief of de betaling ontbreekt.", subInactive: true });
+    }
+    if(rateLimited("gttokencode", code, GUESTTALK_MAX_TOKENS_PER_HOUR, 60 * 60 * 1000)){
+      return res.status(429).json({ error: "Te veel sessies op deze code in een uur", rateLimited: true });
     }
 
     const deviceId = String(src.deviceId || "").trim().slice(0, 80);
@@ -1695,7 +1964,7 @@ async function mintRealtimeToken(req, res){
       }
       rec.devices.push({ id: deviceId, firstSeen: nowIso, lastSeen: nowIso });
     }
-    saveGuesttalkUsage();
+    saveGuesttalkUsageNow();
 
     if(rec.perDeviceMinutes && rec.perDeviceMinutes > 0){
       const du = (rec.deviceUsage && rec.deviceUsage[deviceId]) || 0;
@@ -1715,9 +1984,14 @@ async function mintRealtimeToken(req, res){
       body: JSON.stringify({ session: { type: "realtime", model: OPENAI_REALTIME_MODEL, audio: { output: { voice: OPENAI_REALTIME_VOICE } } } })
     });
     const data = await r.json().catch(() => ({}));
-    if(!r.ok){ console.error("Realtime token fout:", JSON.stringify(data)); return res.status(r.status).json({ error: "Token maken mislukt", details: data }); }
+    if(!r.ok){ console.error("Realtime token fout:", JSON.stringify(data)); return res.status(r.status).json({ error: "Token maken mislukt" }); }
     const value = data && (data.value || (data.client_secret && data.client_secret.value));
-    if(!value){ console.error("Realtime token: geen value:", JSON.stringify(data)); return res.status(500).json({ error: "Token maken mislukt", details: data }); }
+    if(!value){ console.error("Realtime token: geen value:", JSON.stringify(data)); return res.status(500).json({ error: "Token maken mislukt" }); }
+    /* Het startmoment vastleggen, zodat de eerste heartbeat niet meer seconden
+       kan boeken dan er sinds het begin van de sessie verstreken zijn. */
+    rec.beatAt[deviceId] = Date.now();
+    guesttalkTrimMaps(rec);
+    saveGuesttalkUsage();
     return res.json({
       value: value,
       expires_at: data.expires_at || (data.client_secret && data.client_secret.expires_at) || null,
@@ -1741,19 +2015,37 @@ app.get("/api/realtime/token", (req, res) => mintRealtimeToken(req, res));
 
 function guesttalkUsageBeat(req, res){
   const q = Object.assign({}, req.query || {}, req.body || {});
+  res.set("Cache-Control", "no-store");
   const code = guesttalkNormCode(q.code);
   if(!code) return res.status(400).json({ error: "code ontbreekt" });
+  if(rateLimited("gtbeatip", clientIp(req), 300, 60 * 1000)){
+    return res.status(429).json({ error: "Te veel verzoeken" });
+  }
   const rec = guesttalkGetRecord(code);
   if(!rec) return res.status(404).json({ error: "Onbekende locatiecode" });
   let sec = parseFloat(q.seconds);
-  if(isNaN(sec) || sec < 0) sec = 0;
+  if(!isFinite(sec) || sec < 0) sec = 0;
   if(sec > 120) sec = 120;
   const deviceId = String(q.deviceId || "").trim().slice(0, 80);
+  const beatKey = deviceId || "_geen_apparaat";
+
+  /* Kern van de beveiliging: er kan nooit meer tijd geboekt worden dan er
+     sinds de vorige heartbeat van dit apparaat echt verstreken is. Wie de
+     route in een lus aanroept, boekt dus niets extra en kan de bundel van een
+     klant niet leegtrekken. */
+  const nowMs = Date.now();
+  const vorige = Number(rec.beatAt[beatKey] || 0);
+  if(vorige > 0){
+    const verstreken = Math.max(0, Math.round((nowMs - vorige) / 1000)) + 5;
+    if(sec > verstreken) sec = verstreken;
+  }
+  rec.beatAt[beatKey] = nowMs;
+
   rec.secondsUsed += sec;
   if(rec.perDeviceMinutes && rec.perDeviceMinutes > 0 && deviceId){
-    if(!rec.deviceUsage || typeof rec.deviceUsage !== "object") rec.deviceUsage = {};
     rec.deviceUsage[deviceId] = (rec.deviceUsage[deviceId] || 0) + sec;
   }
+  guesttalkTrimMaps(rec);
   saveGuesttalkUsage();
   const limitSec = guesttalkLimitMinutes(rec) * 60;
   let perDeviceReached = false;
@@ -1761,7 +2053,7 @@ function guesttalkUsageBeat(req, res){
     perDeviceReached = ((rec.deviceUsage[deviceId] || 0) >= rec.perDeviceMinutes * 60);
   }
   const perDeviceRemainingSeconds = (rec.perDeviceMinutes && rec.perDeviceMinutes > 0 && deviceId) ? Math.max(0, rec.perDeviceMinutes * 60 - (rec.deviceUsage[deviceId] || 0)) : null;
-  return res.json({ ok: true, limitReached: rec.secondsUsed >= limitSec, perDeviceReached: perDeviceReached, remainingSeconds: Math.max(0, limitSec - rec.secondsUsed), limitMinutes: guesttalkLimitMinutes(rec), demo: !!(rec.perDeviceMinutes && rec.perDeviceMinutes > 0), perDeviceRemainingSeconds: perDeviceRemainingSeconds });
+  return res.json({ ok: true, limitReached: rec.secondsUsed >= limitSec, perDeviceReached: perDeviceReached, remainingSeconds: Math.max(0, limitSec - rec.secondsUsed), limitMinutes: guesttalkLimitMinutes(rec), demo: !!(rec.perDeviceMinutes && rec.perDeviceMinutes > 0), perDeviceRemainingSeconds: perDeviceRemainingSeconds, deviceCounted: !!deviceId });
 }
 app.post("/api/realtime/usage", guesttalkUsageBeat);
 app.get("/api/realtime/usage", guesttalkUsageBeat);
@@ -10494,6 +10786,7 @@ function flushAllStoresAndExit(signal){
   try{ saveRooms(); }catch(e){}
   try{ saveCityCache(); }catch(e){}
   try{ saveGuideTransCacheNow(); }catch(e){}
+  try{ saveGuesttalkUsageNow(); }catch(e){}
   try{ saveDMNow(); }catch(e){}
   try{ saveDirectChats(); }catch(e){}
   console.log("Alle data is weggeschreven. Server sluit af.");
