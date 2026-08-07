@@ -1959,6 +1959,7 @@ async function guesttalkSubscribeLink(req, res){
 app.get("/api/realtime/subscribe-link", guesttalkSubscribeLink);
 app.post("/api/realtime/subscribe-link", guesttalkSubscribeLink);
 
+
 /* ---- Aanmeldingen vanaf de verkooppagina (mailt naar info@formforge.nl) ---- */
 const GUESTTALK_LEAD_EMAIL = process.env.GUESTTALK_LEAD_EMAIL || "info@formforge.nl";
 async function guesttalkLead(req, res){
@@ -4915,6 +4916,387 @@ app.post("/api/marketplace-bod", async (req, res) => {
 /* =========================
    EINDE FORMFORGE MARKETPLACE BOD FORMULIER
 ========================= */
+
+
+/* ==========================================================================
+   OPZEGGEN  -  gedeeld opzegformulier voor alle abonnementen
+   --------------------------------------------------------------------------
+   De klant kiest op formforge.nl/opzeggen welk abonnement hij wil stoppen en
+   vult zijn e-mailadres in. Dat is op zichzelf GEEN bewijs: iedereen kan een
+   willekeurig adres intypen. Daarom gaat het in twee stappen:
+
+     1. Het verzoek wordt vastgelegd als "wacht op bevestiging" en er gaat een
+        mail met een eenmalige link naar het INGEVULDE adres. Jij hoort hier
+        nog niets van.
+     2. Pas als iemand op die link klikt, staat vast dat hij bij die mailbox
+        kan. Dan pas krijg jij bericht, en dan pas telt het als opzegging.
+
+   Een grappenmaker die het adres van een ander invult, bereikt dus niets:
+   de link belandt bij de echte eigenaar, en zonder klik verloopt het verzoek
+   vanzelf. Rate limiting voorkomt dat iemand daarmee een mailbox volpompt.
+
+   Bovendien zoekt de server bij de bevestiging op of dat adres voorkomt bij
+   een bekende klant (Guesttalk-code, ondernemersvermelding, AI-account). Dat
+   staat in jouw mail, zodat je meteen ziet of het klopt of dat je het beter
+   even nabelt.
+
+   BLIJFT WAAR: dit is een opzegVERZOEK. Er wordt pas gestopt met incasseren
+   als jij het abonnement in Stripe stopzet en de klant verwijdert.
+   ========================================================================== */
+
+const OPZEG_EMAIL = process.env.OPZEG_EMAIL || "info@formforge.nl";
+const OPZEG_FILE = path.join(DATA_DIR, "formforge_opzegverzoeken.json");
+/* Basis-URL voor de bevestigingslink in de mail. */
+const OPZEG_BASE = String(process.env.OPZEG_BASE_URL || process.env.PUBLIC_MEDIA_BASE ||
+  process.env.RENDER_EXTERNAL_URL || "https://formforge-sync-1.onrender.com").replace(/\/+$/, "");
+/* Hoelang een niet-bevestigd verzoek geldig blijft. */
+const OPZEG_TTL_MS = 48 * 60 * 60 * 1000;
+
+/* De abonnementen die de klant kan kiezen. Vul gerust aan; "anders" vangt de
+   rest op, dus een ontbrekende regel blokkeert nooit een opzegging. */
+const OPZEG_PRODUCTEN = {
+  guesttalk:      "Guesttalk live vertaler",
+  salve_hotel:    "Salve hotelabonnement",
+  salve_merchant: "Salve uitgelicht abonnement voor ondernemers",
+  ai_plus:        "FormForge AI Plus",
+  ai_pro:         "FormForge AI Pro",
+  credits:        "Losse AI credits",
+  anders:         "Anders"
+};
+
+let opzegVerzoeken = [];
+function loadOpzeg(){
+  try{
+    if(!fs.existsSync(OPZEG_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(OPZEG_FILE, "utf8") || "{}");
+    if(data && Array.isArray(data.verzoeken)) opzegVerzoeken = data.verzoeken.slice(-500);
+    console.log("Opzegverzoeken geladen: " + opzegVerzoeken.length);
+  }catch(e){ rescueCorruptStore(OPZEG_FILE, e); opzegVerzoeken = []; }
+}
+function saveOpzeg(){
+  try{ safeWriteFileSync(OPZEG_FILE, JSON.stringify({ verzoeken: opzegVerzoeken })); }
+  catch(e){ console.error("Opzegverzoeken opslaan mislukt:", (e && e.message) || e); }
+}
+loadOpzeg();
+
+/* Niet-bevestigde verzoeken lopen na twee dagen af. Bevestigde blijven staan
+   tot jij ze afvinkt. */
+function opzegOpruimen(){
+  const nu = Date.now();
+  const voor = opzegVerzoeken.length;
+  opzegVerzoeken = opzegVerzoeken.filter(v => {
+    if(v.bevestigd) return true;
+    const t = Date.parse(v.t || "");
+    if(!isFinite(t)) return true;
+    return (nu - t) < OPZEG_TTL_MS;
+  });
+  if(opzegVerzoeken.length !== voor) saveOpzeg();
+}
+setInterval(opzegOpruimen, 60 * 60 * 1000);
+
+function opzegKenmerk(){
+  const d = new Date();
+  const dag = d.getUTCFullYear().toString().slice(2) +
+              String(d.getUTCMonth() + 1).padStart(2, "0") +
+              String(d.getUTCDate()).padStart(2, "0");
+  return "OPZ-" + dag + "-" + crypto.randomBytes(2).toString("hex").toUpperCase();
+}
+
+/* Zoekt op waar dit e-mailadres als klant voorkomt. Puur ter controle voor
+   jou; de uitkomst wordt NOOIT aan de bezoeker getoond, anders kan iemand het
+   formulier gebruiken om te achterhalen wie er klant is. */
+function opzegZoekKlant(email){
+  const adres = normalizePremiumKey(email);
+  const gevonden = [];
+  if(!adres) return gevonden;
+  try{
+    Object.keys(guesttalkUsage.codes || {}).forEach((k) => {
+      const r = guesttalkUsage.codes[k];
+      if(r && normalizePremiumKey(r.email) === adres){
+        gevonden.push("Guesttalk: code " + k + (r.label ? (" (" + r.label + ")") : "") +
+          ", pakket " + (r.tier || "?") + ", " + (r.active === false ? "non-actief" : "actief") +
+          (r.subscriptionId ? (", Stripe " + r.subscriptionId) : ""));
+      }
+    });
+  }catch(e){}
+  try{
+    for(const [stad, lijst] of merchants.entries()){
+      (lijst || []).forEach((m) => {
+        if(m && normalizePremiumKey(m.email) === adres){
+          gevonden.push("Salve " + (m.categoryId === "hotels" ? "hotel" : "ondernemer") + ": " +
+            (m.name || "?") + " (" + stad + "), " + (m.subscribed ? "betaald" : "gratis") +
+            (m.subscriptionId ? (", Stripe " + m.subscriptionId) : ""));
+        }
+      });
+    }
+  }catch(e){}
+  try{
+    for(const [sleutel, a] of premiumAccounts.entries()){
+      if(a && normalizePremiumKey(a.email) === adres && a.active){
+        gevonden.push("FormForge AI: sleutel " + sleutel + ", pakket " + (a.plan || "?") +
+          (a.subscriptionId ? (", Stripe " + a.subscriptionId) : ""));
+      }
+    }
+  }catch(e){}
+  return gevonden;
+}
+
+/* ---- Stap 1: verzoek indienen, bevestigingsmail versturen ---- */
+app.post("/api/opzeggen", async (req, res) => {
+  try{
+    const q = req.body || {};
+    res.set("Cache-Control", "no-store");
+    if(q.hp){ return res.json({ ok: true, bevestigingNodig: true }); } /* honeypot */
+
+    if(rateLimited("opzegip", clientIp(req), 5, 60 * 60 * 1000)){
+      return res.status(429).json({ error: "Te veel verzoeken achter elkaar. Probeer het later opnieuw of mail ons rechtstreeks." });
+    }
+
+    const productKey = String(q.product || "").trim().toLowerCase();
+    const product = OPZEG_PRODUCTEN[productKey] || "";
+    if(!product) return res.status(400).json({ error: "Kies welk abonnement u wilt opzeggen." });
+
+    const email = String(q.email || "").trim().slice(0, 160);
+    if(!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(email)){
+      return res.status(400).json({ error: "Vul een geldig e-mailadres in." });
+    }
+    /* Rem per adres: voorkomt dat iemand de mailbox van een ander volpompt
+       met bevestigingsverzoeken. */
+    if(rateLimited("opzegmail", normalizePremiumKey(email), 3, 60 * 60 * 1000)){
+      return res.status(429).json({ error: "Er is kort geleden al een bevestigingsmail naar dit adres gestuurd. Kijk in uw postvak, ook in de map ongewenste e-mail." });
+    }
+
+    const anders = productKey === "anders" ? String(q.anders || "").trim().slice(0, 120) : "";
+    if(productKey === "anders" && !anders){
+      return res.status(400).json({ error: "Omschrijf even om welk abonnement het gaat." });
+    }
+
+    const kenmerk = opzegKenmerk();
+    const nu = new Date();
+    const verzoek = {
+      kenmerk: kenmerk,
+      token: crypto.randomBytes(24).toString("hex"),
+      t: nu.toISOString(),
+      product: product + (anders ? (": " + anders) : ""),
+      productKey: productKey,
+      email: email,
+      naam: String(q.naam || "").trim().slice(0, 120),
+      bedrijf: String(q.bedrijf || "").trim().slice(0, 160),
+      code: String(q.code || "").trim().slice(0, 60),
+      telefoon: String(q.telefoon || "").trim().slice(0, 60),
+      toelichting: String(q.toelichting || "").trim().slice(0, 1000),
+      ip: clientIp(req),
+      bevestigd: false,
+      afgehandeld: false
+    };
+    opzegVerzoeken.push(verzoek);
+    if(opzegVerzoeken.length > 500) opzegVerzoeken = opzegVerzoeken.slice(-500);
+    saveOpzeg();
+
+    const link = OPZEG_BASE + "/api/opzeggen/bevestig?token=" + encodeURIComponent(verzoek.token);
+    const datumNl = nu.toLocaleString("nl-NL", { timeZone: "Europe/Amsterdam" });
+
+    try{
+      const text = "Beste" + (verzoek.naam ? (" " + verzoek.naam) : "") + ",\n\n" +
+        "Er is een opzegging aangevraagd voor: " + verzoek.product + "\n" +
+        "Kenmerk: " + kenmerk + "\n" +
+        "Aangevraagd op: " + datumNl + "\n\n" +
+        "Klik op onderstaande link om uw opzegging te bevestigen. Pas daarna wordt hij bij ons in behandeling genomen:\n" +
+        link + "\n\n" +
+        "Deze link is 48 uur geldig.\n\n" +
+        "HEEFT U DIT NIET AANGEVRAAGD? Doe dan niets. Zonder uw bevestiging gebeurt er niets " +
+        "en vervalt het verzoek vanzelf. Uw abonnement loopt gewoon door.\n\n" +
+        "Met vriendelijke groet,\nFormForge";
+      const html = '<div style="font-family:Arial,Helvetica,sans-serif;color:#1d2b50;line-height:1.55">' +
+        '<h2 style="font-family:Georgia,serif;color:#1d2b50">Bevestig uw opzegging</h2>' +
+        '<p>Beste' + (verzoek.naam ? (" " + escHtmlServer(verzoek.naam)) : "") + ',</p>' +
+        '<p>Er is een opzegging aangevraagd voor <b>' + escHtmlServer(verzoek.product) + '</b>.</p>' +
+        '<p><b>Kenmerk:</b> ' + escHtmlServer(kenmerk) + '<br><b>Aangevraagd op:</b> ' + escHtmlServer(datumNl) + '</p>' +
+        '<p>Klik op de knop om uw opzegging te bevestigen. Pas daarna wordt hij bij ons in behandeling genomen.</p>' +
+        '<p><a href="' + escHtmlServer(link) + '" style="display:inline-block;background:#1d2b50;color:#fff;text-decoration:none;padding:14px 26px;border-radius:999px;font-weight:bold">Opzegging bevestigen</a></p>' +
+        '<p style="font-size:13px;color:#667085">Of kopieer deze link: ' + escHtmlServer(link) + '<br>De link is 48 uur geldig.</p>' +
+        '<p style="background:#fef3f2;border:1px solid #fecdc9;border-radius:8px;padding:12px 14px">' +
+        '<b>Heeft u dit niet aangevraagd?</b> Doe dan niets. Zonder uw bevestiging gebeurt er niets en ' +
+        'vervalt het verzoek vanzelf. Uw abonnement loopt gewoon door.</p>' +
+        '<p>Met vriendelijke groet,<br>FormForge</p></div>';
+      await sendResendEmail({ to: email, subject: "Bevestig uw opzegging (" + kenmerk + ")", text: text, html: html });
+    }catch(e){
+      console.error("Opzeg-bevestigingsmail mislukt:", (e && e.message) || e);
+      return res.status(500).json({ error: "De bevestigingsmail kon niet worden verstuurd. Probeer het later opnieuw of mail ons rechtstreeks." });
+    }
+
+    return res.json({ ok: true, kenmerk: kenmerk, bevestigingNodig: true });
+  }catch(err){
+    console.error("Opzegging verwerken mislukt:", (err && err.message) || err);
+    return res.status(500).json({ error: "Versturen mislukt. Probeer het later opnieuw of mail ons rechtstreeks." });
+  }
+});
+
+/* ---- Stap 2: de klant klikt op de link uit zijn mail ---- */
+function opzegPagina(titel, tekst, kleur){
+  return '<!DOCTYPE html><html lang="nl"><head><meta charset="UTF-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    '<title>' + escHtmlServer(titel) + ' - FormForge</title></head>' +
+    '<body style="margin:0;background:#f7f6f2;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1d2b50">' +
+    '<div style="max-width:560px;margin:0 auto;padding:40px 18px">' +
+    '<div style="text-align:center;margin-bottom:22px">' +
+    '<div style="font-family:Georgia,serif;font-size:26px;font-weight:700;letter-spacing:5px">FORMFORGE</div>' +
+    '<div style="height:2px;width:60px;background:#c79a3a;margin:12px auto 0"></div></div>' +
+    '<div style="background:#fff;border-radius:18px;padding:26px;box-shadow:0 10px 30px rgba(15,23,42,.10);text-align:center">' +
+    '<h1 style="font-family:Georgia,serif;font-size:22px;margin:0 0 12px;color:' + (kleur || "#1d2b50") + '">' + escHtmlServer(titel) + '</h1>' +
+    '<p style="color:#667085;font-size:15px;line-height:1.6;margin:0">' + tekst + '</p></div>' +
+    '<p style="text-align:center;color:#667085;font-size:12.5px;margin-top:22px">' +
+    'Vragen? Mail ons via <a href="mailto:info@formforge.nl" style="color:#1d2b50">info@formforge.nl</a></p>' +
+    '</div></body></html>';
+}
+
+app.get("/api/opzeggen/bevestig", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.set("Content-Type", "text/html; charset=utf-8");
+  try{
+    if(rateLimited("opzegbevestig", clientIp(req), 30, 60 * 60 * 1000)){
+      return res.status(429).send(opzegPagina("Te veel pogingen",
+        "Probeer het over een uur opnieuw.", "#b42318"));
+    }
+    opzegOpruimen();
+    const token = String((req.query && req.query.token) || "").trim();
+    const v = token ? opzegVerzoeken.find(x => x.token === token) : null;
+    if(!v){
+      return res.status(404).send(opzegPagina("Link niet geldig",
+        "Deze bevestigingslink is verlopen of al gebruikt. Vraag de opzegging opnieuw aan via " +
+        "<a href=\"https://formforge.nl/opzeggen/\" style=\"color:#1d2b50\">formforge.nl/opzeggen</a>.", "#b42318"));
+    }
+    if(v.bevestigd){
+      return res.send(opzegPagina("Al bevestigd",
+        "Uw opzegging met kenmerk <b>" + escHtmlServer(v.kenmerk) + "</b> is al bij ons binnen. " +
+        "Wij nemen contact met u op zodra hij verwerkt is."));
+    }
+
+    v.bevestigd = true;
+    v.bevestigdOp = new Date().toISOString();
+    v.bevestigdIp = clientIp(req);
+    /* Het token blijft staan, zodat wie twee keer klikt (of wiens mailprogramma
+       de link vooraf ophaalt) een nette "al bevestigd"-pagina ziet in plaats
+       van een foutmelding. Nogmaals klikken doet niets: bevestigd blijft
+       bevestigd, en er gaat geen tweede melding uit. Naar buiten toe wordt het
+       token nergens getoond. */
+    v.klantTreffers = opzegZoekKlant(v.email);
+    saveOpzeg();
+
+    /* Hoort er een Guesttalk-code bij, zet het dan ook in het activiteitenlog
+       van die code. Zo zie je het staan in je Guesttalk-beheer, ook als de
+       mail je niet bereikt. */
+    if(v.code){
+      try{
+        const rec = guesttalkGetRecord(v.code);
+        if(rec){
+          guesttalkLog(rec, "Opzegging bevestigd (" + v.kenmerk + ")");
+          rec.requests.push({ id: v.kenmerk, t: v.bevestigdOp, type: "opzegging", detail: v.email, status: "open" });
+          if(rec.requests.length > 30) rec.requests = rec.requests.slice(-30);
+          saveGuesttalkUsageNow();
+        }
+      }catch(e){ console.error("Opzegging bij code vastleggen mislukt:", (e && e.message) || e); }
+    }
+
+    /* Nu pas jouw melding. */
+    const datumNl = new Date(v.bevestigdOp).toLocaleString("nl-NL", { timeZone: "Europe/Amsterdam" });
+    const regels = [
+      ["Kenmerk", v.kenmerk],
+      ["Abonnement", v.product],
+      ["E-mailadres", v.email],
+      ["Naam", v.naam],
+      ["Bedrijf", v.bedrijf],
+      ["Locatiecode", v.code],
+      ["Telefoon", v.telefoon],
+      ["Aangevraagd op", new Date(v.t).toLocaleString("nl-NL", { timeZone: "Europe/Amsterdam" })],
+      ["Bevestigd op", datumNl]
+    ].filter(r => r[1]);
+
+    const treffers = Array.isArray(v.klantTreffers) ? v.klantTreffers : [];
+    const controleTekst = treffers.length
+      ? ("Dit e-mailadres is teruggevonden bij:\n  - " + treffers.join("\n  - "))
+      : "LET OP: dit e-mailadres komt bij geen enkele klant in het systeem voor. Controleer handmatig voordat je iets verwijdert.";
+    const controleHtml = treffers.length
+      ? ('<p style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px 14px">' +
+         '<b>Adres teruggevonden bij:</b><br>' + treffers.map(x => "&bull; " + escHtmlServer(x)).join("<br>") + '</p>')
+      : ('<p style="background:#fef3f2;border:1px solid #fecdc9;border-radius:8px;padding:12px 14px">' +
+         '<b>Let op:</b> dit e-mailadres komt bij geen enkele klant in het systeem voor. ' +
+         'Controleer handmatig voordat je iets verwijdert.</p>');
+
+    try{
+      const text = "Een opzegging is BEVESTIGD via de link in de e-mail.\n\n" +
+        regels.map(r => r[0] + ": " + r[1]).join("\n") +
+        (v.toelichting ? ("\n\nToelichting:\n" + v.toelichting) : "") +
+        "\n\n" + controleTekst +
+        "\n\nLET OP: dit is een verzoek. Er wordt pas gestopt met incasseren als je het abonnement " +
+        "in Stripe stopzet en de klant verwijdert.";
+      const html = '<div style="font-family:Arial,Helvetica,sans-serif;color:#1d2b50;line-height:1.55">' +
+        '<h2 style="font-family:Georgia,serif;color:#1d2b50">Opzegging bevestigd</h2>' +
+        '<p>' + regels.map(r => "<b>" + escHtmlServer(r[0]) + ":</b> " + escHtmlServer(r[1])).join("<br>") + '</p>' +
+        (v.toelichting ? ('<p><b>Toelichting:</b><br>' + escHtmlServer(v.toelichting).replace(/\n/g, "<br>") + '</p>') : '') +
+        controleHtml +
+        '<p style="background:#fff8ec;border:1px solid #f0dfb8;border-radius:8px;padding:10px 12px;font-size:13px">' +
+        'Dit is een verzoek. Er wordt pas gestopt met incasseren als je het abonnement in Stripe stopzet ' +
+        'en de klant verwijdert.</p></div>';
+      await sendResendEmail({ to: OPZEG_EMAIL, subject: "Opzegging bevestigd " + v.kenmerk + ": " + v.product, text: text, html: html });
+      v.gemeld = true;
+    }catch(e){
+      v.gemeld = false;
+      console.error("Opzegmelding naar ons mislukt:", (e && e.message) || e);
+    }
+    saveOpzeg();
+
+    return res.send(opzegPagina("Uw opzegging is bevestigd",
+      "Kenmerk <b>" + escHtmlServer(v.kenmerk) + "</b><br><br>" +
+      "Wij hebben uw opzegging voor <b>" + escHtmlServer(v.product) + "</b> ontvangen en nemen contact " +
+      "met u op zodra hij verwerkt is. Uw abonnement blijft werken tot het einde van de betaalde periode.<br><br>" +
+      "U kunt dit venster sluiten."));
+  }catch(err){
+    console.error("Opzegbevestiging mislukt:", (err && err.message) || err);
+    return res.status(500).send(opzegPagina("Er ging iets mis",
+      "Probeer de link nog een keer, of mail ons via info@formforge.nl.", "#b42318"));
+  }
+});
+
+/* Overzicht voor jou. Niet-bevestigde verzoeken staan er ook in, zodat je ziet
+   dat iemand het geprobeerd heeft maar nooit heeft bevestigd. */
+function opzegBeheer(req, res){
+  const q = Object.assign({}, req.query || {}, req.body || {});
+  res.set("Cache-Control", "no-store");
+  if(!adminOk(req)) return jsonError(res, 401, "Geen toegang. Beheerwachtwoord ontbreekt of is onjuist.");
+  opzegOpruimen();
+  const actie = String(q.action || "").toLowerCase();
+  if(actie === "afgehandeld" || actie === "verwijder"){
+    const kenmerk = String(q.kenmerk || "").trim();
+    const v = opzegVerzoeken.find(x => x.kenmerk === kenmerk);
+    if(!v) return jsonError(res, 404, "Kenmerk niet gevonden");
+    if(actie === "verwijder"){
+      opzegVerzoeken = opzegVerzoeken.filter(x => x.kenmerk !== kenmerk);
+    }else{
+      v.afgehandeld = true;
+      v.afgehandeldOp = new Date().toISOString();
+    }
+    saveOpzeg();
+  }
+  /* De tokens gaan niet mee naar buiten. */
+  const lijst = opzegVerzoeken.map(v => {
+    const kopie = Object.assign({}, v);
+    delete kopie.token;
+    return kopie;
+  }).reverse();
+  return res.json({
+    ok: true,
+    open: opzegVerzoeken.filter(x => x.bevestigd && !x.afgehandeld).length,
+    onbevestigd: opzegVerzoeken.filter(x => !x.bevestigd).length,
+    totaal: opzegVerzoeken.length,
+    producten: OPZEG_PRODUCTEN,
+    verzoeken: lijst
+  });
+}
+app.get("/api/opzeggen/lijst", opzegBeheer);
+app.post("/api/opzeggen/lijst", opzegBeheer);
+
+/* ==================== EINDE OPZEGGEN ==================== */
 
 
 /* ===== UNIVERSELE VERTAALCHAT (kamers, vluchtig) =====
