@@ -4421,8 +4421,72 @@ function extractJsonObjectFromText(value){
   return {};
 }
 
-app.post("/api/pdfstudio/ai/workorder", async (req, res) => {
-  try{
+/* ---- PDF Studio: bedragen horen nooit in een omschrijving ----
+   De AI mag prijzen, tarieven en btw bedragen uitsluitend in de numerieke
+   velden zetten (qty, price, vat). Staat er toch een bedrag in een
+   omschrijving, dan halen we het er hier uit en zetten we het in price. */
+const PDFSTUDIO_DANGLING_WORDS = ["prijs","tarief","bedrag","totaal","subtotaal","aanbetaling","btw","eur","euro","is","van","per","voor","tegen","stuk","stuks"];
+
+function pdfStudioTrimDanglingWords(value){
+  const bare = (word) => String(word || "").toLowerCase().replace(/^[,;:.\-]+/,"").replace(/[,;:.\-]+$/,"");
+  const dropable = (word) => bare(word) === "" || PDFSTUDIO_DANGLING_WORDS.indexOf(bare(word)) >= 0;
+  const words = String(value || "").split(/\s+/).filter(Boolean);
+  while(words.length && dropable(words[words.length - 1])) words.pop();
+  while(words.length && dropable(words[0])) words.shift();
+  return words.join(" ");
+}
+
+function pdfStudioStripAmountsFromLine(value){
+  const withoutAmounts = String(value || "")
+    .replace(/\u20ac/g," euro ")
+    .replace(/\b[0-9]+(?:[.,][0-9]{1,2})?\s*(?:eur|euro)?\s*per\s*(?:stuks|stuk|uur|m2|m1|meter|dag|dagdeel|post|behandeling|sessie|les|persoon)\b/gi," ")
+    .replace(/\b(?:eur|euro)\s*[0-9]+(?:[.,][0-9]{1,2})?/gi," ")
+    .replace(/\b[0-9]+(?:[.,][0-9]{1,2})?\s*(?:eur|euro)\b/gi," ")
+    .replace(/\b(?:excl\.?|incl\.?|exclusief|inclusief)\s*(?:[0-9]+\s*%?\s*)?btw\b/gi," ")
+    .replace(/\b(?:prijs|tarief|bedrag|totaal|subtotaal|aanbetaling)\s*(?:is|van)?\s*:?\s*[0-9]+(?:[.,][0-9]{1,2})?/gi," ")
+    .replace(/\s{2,}/g," ")
+    .trim();
+
+  return pdfStudioTrimDanglingWords(withoutAmounts)
+    .replace(/\s+([,.;:])/g,"$1")
+    .replace(/^[\s,;:.-]+/,"")
+    .replace(/[\s,;:-]+$/,"")
+    .replace(/\s{2,}/g," ")
+    .trim();
+}
+
+function pdfStudioStripAmountsFromText(value){
+  return String(value || "")
+    .replace(/\r/g,"")
+    .split("\n")
+    .map((line) => pdfStudioStripAmountsFromLine(line))
+    .join("\n")
+    .replace(/\n{3,}/g,"\n\n")
+    .trim();
+}
+
+function pdfStudioFindAmount(value){
+  const text = String(value || "").replace(/\u20ac/g," euro ").toLowerCase().replace(/\s+/g," ");
+  const patterns = [
+    /([0-9]+(?:[.,][0-9]{1,2})?)\s*(?:euro|eur)?\s*per\s*(stuks|stuk|uur|m2|m1|meter|dag|dagdeel|post|behandeling|sessie|les|persoon)\b/,
+    /(?:euro|eur)\s*([0-9]+(?:[.,][0-9]{1,2})?)/,
+    /([0-9]+(?:[.,][0-9]{1,2})?)\s*(?:euro|eur)\b/,
+    /(?:prijs|tarief|bedrag)\s*(?:is|van)?\s*:?\s*([0-9]+(?:[.,][0-9]{1,2})?)/
+  ];
+  for(const pattern of patterns){
+    const match = text.match(pattern);
+    if(match){
+      const price = Number(String(match[1]).replace(",","."));
+      if(price > 0){
+        const unit = match[2] ? (match[2] === "stuk" ? "stuks" : match[2]) : "";
+        return { price: Math.round(price * 100) / 100, unit: unit };
+      }
+    }
+  }
+  return { price: 0, unit: "" };
+}
+
+app.post("/api/pdfstudio/ai/workorder", async (req, res) => {  try{
     const rawText = String(req.body && (req.body.text || req.body.note || req.body.input || req.body.question) ? (req.body.text || req.body.note || req.body.input || req.body.question) : "").trim();
     const documentType = String(req.body && req.body.type ? req.body.type : "offerte").trim();
 
@@ -4457,7 +4521,11 @@ app.post("/api/pdfstudio/ai/workorder", async (req, res) => {
           "Voor schilderwerk, stukadoorswerk, kappersdiensten, schoonheidsbehandelingen, consulten, uren, producten, tandartsbehandelingen en zakelijke diensten moet je professioneel en neutraal blijven. " +
           "Voor medische of juridische onderwerpen geef je geen definitieve diagnose of juridisch bindend advies, maar wel veilige algemene uitleg en verwijs bij risico naar een bevoegde professional. " +
           "Geef uitsluitend geldig JSON terug. Geen markdown. Geen tekst buiten JSON. " +
-          "Bedragen en aantallen moeten numeriek zijn. Rond geld af op 2 decimalen. Rond m2 of uren logisch af op maximaal 2 decimalen."
+          "Bedragen en aantallen moeten numeriek zijn. Rond geld af op 2 decimalen. Rond m2 of uren logisch af op maximaal 2 decimalen. " +
+          "Zeer belangrijke regel: in de tekstvelden description, projectName en in item.description mag NOOIT een bedrag, prijs, tarief, valuta, korting of btw bedrag staan. " +
+          "Geen euro, geen EUR, geen euroteken, geen prijs per stuk, per uur of per m2 en geen totaalbedragen in die tekstvelden. " +
+          "Elk bedrag hoort uitsluitend in de numerieke velden price, qty, vat, lineTotalExVat en totals. " +
+          "In item.description staat alleen wat er gedaan of geleverd wordt, bijvoorbeeld Binnenschilderwerk wanden woonkamer, en niet de prijs daarvan."
       },
       {
         role: "user",
@@ -4477,7 +4545,8 @@ app.post("/api/pdfstudio/ai/workorder", async (req, res) => {
           "  \"totals\":{\"subtotalExVat\":0,\"vatTotal\":0,\"totalIncVat\":0},\n" +
           "  \"warnings\":[\"\"]\n" +
           "}\n\n" +
-          "Belangrijk: vul description altijd met een professionele werkomschrijving, ook wanneer er calculatieregels worden gemaakt. " +
+          "Belangrijk: vul description altijd met een professionele werkomschrijving zonder enig bedrag, ook wanneer er calculatieregels worden gemaakt. " +
+          "Zet prijzen, tarieven, kortingen en btw bedragen alleen in de numerieke velden price, qty, vat en totals, nooit in description, projectName of item.description. " +
           "Als de gebruiker bijvoorbeeld schrijft: houtwerk schuren, afwassen, kitten en lakken, schrijf dan in description netjes uit dat het houtwerk wordt gereinigd, ontvet, geschuurd, waar nodig gekit en afgewerkt met lak voor een duurzame en verzorgde afwerking. " +
           "Gebruik geen opsomming met symbolen in description, maar gewone zakelijke tekst. " +
           "Als het alleen een adviesvraag is zonder prijs of aantal, laat items leeg en vul advice goed in. " +
@@ -4493,13 +4562,18 @@ app.post("/api/pdfstudio/ai/workorder", async (req, res) => {
     const parsed = extractJsonObjectFromText(answer);
 
     const safeItems = Array.isArray(parsed.items) ? parsed.items.map((item) => {
+      const rawDescription = String(item.description || "");
+      const found = pdfStudioFindAmount(rawDescription);
       const qty = Number(item.qty || 0);
-      const price = Number(item.price || 0);
+      let price = Number(item.price || 0);
+      if(!price && found.price) price = found.price;
+      let unit = String(item.unit || "").trim();
+      if((!unit || unit === "stuks") && found.unit) unit = found.unit;
       const vat = Number(item.vat === 0 ? 0 : (item.vat || 21));
       return {
-        description: String(item.description || "").trim(),
+        description: pdfStudioStripAmountsFromLine(rawDescription),
         qty,
-        unit: String(item.unit || "stuks").trim(),
+        unit: unit || "stuks",
         price,
         vat,
         lineTotalExVat: Number(item.lineTotalExVat || (qty * price))
@@ -4518,8 +4592,8 @@ app.post("/api/pdfstudio/ai/workorder", async (req, res) => {
       ok: true,
       detectedSector: String(parsed.detectedSector || "").trim(),
       detectedIntent: String(parsed.detectedIntent || "").trim(),
-      projectName: String(parsed.projectName || "").trim(),
-      description: String(parsed.description || "").trim(),
+      projectName: pdfStudioStripAmountsFromLine(parsed.projectName),
+      description: pdfStudioStripAmountsFromText(parsed.description),
       advice: String(parsed.advice || "").trim(),
       calculationExplanation: Array.isArray(parsed.calculationExplanation) ? parsed.calculationExplanation : [],
       client: parsed.client || {},
