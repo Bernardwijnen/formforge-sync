@@ -1,0 +1,32 @@
+{
+  "name": "Guesttalk",
+  "short_name": "Guesttalk",
+  "description": "Live vertaler voor uw receptie. Spreek Nederlands, uw gast hoort zijn eigen taal.",
+  "lang": "nl",
+  "dir": "ltr",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1d2b50",
+  "theme_color": "#1d2b50",
+  "scope": "./",
+  "icons": [
+    {
+      "src": "https://formforge-sync-1.onrender.com/icons/guesttalk-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "https://formforge-sync-1.onrender.com/icons/guesttalk-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "https://formforge-sync-1.onrender.com/icons/guesttalk-icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
