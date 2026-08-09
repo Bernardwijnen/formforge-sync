@@ -4921,9 +4921,9 @@ app.post("/api/marketplace-bod", async (req, res) => {
 /* ==========================================================================
    OPZEGGEN  -  gedeeld opzegformulier voor alle abonnementen
    --------------------------------------------------------------------------
-   De klant kiest op formforge.nl/opzeggen welk abonnement hij wil stoppen en
-   vult zijn e-mailadres in. Dat is op zichzelf GEEN bewijs: iedereen kan een
-   willekeurig adres intypen. Daarom gaat het in twee stappen:
+   De klant kiest op formforge.nl/abonnement-opzeggen welk abonnement hij wil
+   stoppen en vult zijn e-mailadres in. Dat is op zichzelf GEEN bewijs:
+   iedereen kan een willekeurig adres intypen. Daarom gaat het in twee stappen:
 
      1. Het verzoek wordt vastgelegd als "wacht op bevestiging" en er gaat een
         mail met een eenmalige link naar het INGEVULDE adres. Jij hoort hier
@@ -5164,7 +5164,7 @@ app.get("/api/opzeggen/bevestig", async (req, res) => {
     if(!v){
       return res.status(404).send(opzegPagina("Link niet geldig",
         "Deze bevestigingslink is verlopen of al gebruikt. Vraag de opzegging opnieuw aan via " +
-        "<a href=\"https://formforge.nl/opzeggen/\" style=\"color:#1d2b50\">formforge.nl/opzeggen</a>.", "#b42318"));
+        "<a href=\"https://formforge.nl/abonnement-opzeggen/\" style=\"color:#1d2b50\">formforge.nl/abonnement-opzeggen</a>.", "#b42318"));
     }
     if(v.bevestigd){
       return res.send(opzegPagina("Al bevestigd",
