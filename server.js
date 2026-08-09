@@ -29,6 +29,23 @@ const PORT = process.env.PORT || 10000;
 
 app.use(cors({ origin: true }));
 
+/* ---- Vaste bestanden (iconen, logo's, PDF's) ----
+   Alles wat in de map "icons" naast server.js staat, wordt hier uitgeserveerd
+   op /icons/<bestandsnaam>. Zo kun je een afbeelding gewoon via GitHub
+   uploaden en is hij meteen live, zonder FTP en zonder WebReus.
+
+   Bijvoorbeeld: icons/guesttalk-icon-180.png wordt
+   https://formforge-sync-1.onrender.com/icons/guesttalk-icon-180.png
+
+   Alleen lezen, alleen die ene map, en een jaar cache omdat een icoon toch
+   niet verandert (verander je hem wel, geef het bestand dan een nieuwe naam). */
+app.use("/icons", express.static(path.join(__dirname, "icons"), {
+  maxAge: "365d",
+  fallthrough: true,
+  index: false,
+  dotfiles: "ignore"
+}));
+
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 // Apart (sterker) model voor de stadsgids-vertalingen. gpt-4o vertaalt veel
