@@ -10738,6 +10738,112 @@ app.post("/api/zzp/bericht-foto", zzpUpload.single("foto"), (req, res) => {
   }
 });
 
+/* 7c en 7d: bericht verwijderen en los bericht toevoegen. */
+const ZZP_MAX_BERICHTEN_PER_WEEK = 60;
+
+/* 7c. Een bericht verwijderen. */
+app.delete("/api/zzp/bericht", express.json({ limit: "20kb" }), (req, res) => {
+  try{
+    const email = normalizePremiumKey((req.query && req.query.email) || (req.body && req.body.email));
+    const weekId = zzpSchoon((req.query && req.query.weekId) || (req.body && req.body.weekId), 40);
+    const berichtId = zzpSchoon((req.query && req.query.berichtId) || (req.body && req.body.berichtId), 40);
+    if(!email || !weekId || !berichtId) return res.status(400).json({ ok: false, error: "Gegevens ontbreken" });
+
+    const account = zzpGetAccount(email);
+    const week = (account.weken || []).find((w) => w.id === weekId);
+    if(!week) return res.status(404).json({ ok: false, error: "Week niet gevonden" });
+
+    const index = (week.berichten || []).findIndex((b) => b.id === berichtId);
+    if(index < 0) return res.status(404).json({ ok: false, error: "Bericht niet gevonden" });
+
+    const weg = week.berichten[index];
+    week.berichten.splice(index, 1);
+
+    /* de foto pas weggooien als geen enkel ander bericht of item hem nog gebruikt */
+    if(weg.foto){
+      let nogInGebruik = false;
+      (account.weken || []).forEach((w) => {
+        (w.berichten || []).forEach((b) => { if(b.foto === weg.foto) nogInGebruik = true; });
+      });
+      (account.items || []).forEach((i) => { if(i.foto === weg.foto) nogInGebruik = true; });
+      if(!nogInGebruik){
+        try{ fs.unlinkSync(path.join(ZZP_PHOTOS_DIR, weg.foto)); }catch(e){}
+      }
+    }
+
+    zzpMarkDirty();
+    zzpSaveNow();
+
+    return res.json({ ok: true, week });
+  }catch(err){
+    console.error("ZZP bericht verwijderen mislukt:", err.message || String(err));
+    return res.status(500).json({ ok: false, error: "Verwijderen mislukt" });
+  }
+});
+
+/* 7d. Een los bericht toevoegen, zonder een hele week te maken.
+       Het bericht komt in de bovenste week te staan. Bestaat die nog niet,
+       dan wordt er een lege week aangemaakt om het in te bewaren. */
+app.post("/api/zzp/bericht-nieuw", zzpUpload.single("foto"), (req, res) => {
+  try{
+    const email = normalizePremiumKey(req.body && req.body.email);
+    if(!email) return res.status(400).json({ ok: false, error: "E-mailadres ontbreekt" });
+
+    const account = zzpGetAccount(email);
+    const tekst = zzpSchoon(req.body && req.body.tekst, 2200);
+    const wanneer = zzpSchoon(req.body && req.body.wanneer, 16);
+    const heeftFoto = !!(req.file && req.file.buffer && req.file.buffer.length > 0);
+
+    if(!tekst && !heeftFoto){
+      return res.status(400).json({ ok: false, error: "Geef een tekst of een foto mee" });
+    }
+
+    if(!Array.isArray(account.weken)) account.weken = [];
+    let week = account.weken[0];
+    if(!week){
+      week = {
+        id: crypto.randomBytes(8).toString("hex"),
+        gemaaktOp: new Date().toISOString(),
+        startDatum: zzpVandaag(),
+        eigen: true,
+        los: true,
+        berichten: []
+      };
+      account.weken.unshift(week);
+    }
+    if(!Array.isArray(week.berichten)) week.berichten = [];
+
+    if(week.berichten.length >= ZZP_MAX_BERICHTEN_PER_WEEK){
+      return res.status(409).json({ ok: false, error: "Deze lijst zit vol. Verwijder eerst een paar berichten." });
+    }
+
+    let fotoNaam = "";
+    if(heeftFoto){
+      fotoNaam = "zzp_" + crypto.randomBytes(10).toString("hex") + zzpExtensie(req.file.mimetype);
+      fs.writeFileSync(path.join(ZZP_PHOTOS_DIR, fotoNaam), req.file.buffer);
+    }
+
+    const bericht = {
+      id: crypto.randomBytes(6).toString("hex"),
+      soort: "los",
+      soortNaam: "Los bericht",
+      tekst,
+      foto: fotoNaam,
+      wanneer,
+      geplaatst: false
+    };
+
+    week.berichten.unshift(bericht);
+    zzpMarkDirty();
+    zzpSaveNow();
+
+    return res.json({ ok: true, bericht, week });
+  }catch(err){
+    console.error("ZZP los bericht mislukt:", err.message || String(err));
+    return res.status(500).json({ ok: false, error: "Toevoegen mislukt" });
+  }
+});
+
 /* 8. Een foto uitserveren. */
 app.get("/api/zzp/foto/:naam", (req, res) => {
   const naam = String(req.params.naam || "");
