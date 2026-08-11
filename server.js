@@ -9402,7 +9402,9 @@ const LANG_NAMES = {
   it: "Italian", pt: "Portuguese", pl: "Polish", tr: "Turkish", ar: "Arabic",
   uk: "Ukrainian", ru: "Russian", zh: "Chinese", ja: "Japanese", ko: "Korean",
   hi: "Hindi", id: "Indonesian", th: "Thai", vi: "Vietnamese", ro: "Romanian",
-  cs: "Czech", sv: "Swedish"
+  cs: "Czech", sv: "Swedish",
+  hu: "Hungarian", el: "Greek", da: "Danish", fi: "Finnish", no: "Norwegian",
+  sk: "Slovak", hr: "Croatian", bg: "Bulgarian"
 };
 function langName(code){
   return LANG_NAMES[String(code || "").toLowerCase()] || String(code || "");
