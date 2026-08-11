@@ -29,6 +29,19 @@ const PORT = process.env.PORT || 10000;
 
 app.use(cors({ origin: true }));
 
+/* ---- WACHTER: verzoekmeter ----------------------------------------------
+   Deze middleware moet BOVEN alle routes staan, want alleen dan ziet hij
+   elk verzoek. Hij meet alleen de duur en de statuscode en verandert niets
+   aan het verzoek zelf. De verwerking gebeurt in het WACHTER-blok verderop
+   (vlak boven app.listen). ------------------------------------------------ */
+app.use((req, res, next) => {
+  const _wdStart = Date.now();
+  res.on("finish", () => {
+    try{ wdVerzoekKlaar(req, res, Date.now() - _wdStart); }catch(e){}
+  });
+  next();
+});
+
 /* ---- Vaste bestanden (iconen, logo's, PDF's) ----
    Alles wat in de map "icons" naast server.js staat, wordt hier uitgeserveerd
    op /icons/<bestandsnaam>. Zo kun je een afbeelding gewoon via GitHub
@@ -11442,6 +11455,589 @@ app.get("/api/zzp/koppel/systeem", (req, res) => {
 
 /* ================ EINDE ZZP KOPPELEN EN PLAATSEN ================ */
 
+
+/* ==========================================================================
+   WACHTER  -  zelfstandig blok voor server.js
+   --------------------------------------------------------------------------
+   PLAATSEN: dit blok staat VLAK BOVEN de regel app.listen(PORT, () => {
+             Er hoort een klein stukje bij dat BOVEN alle routes staat
+             (de verzoekmeter, vlak onder app.use(cors(...))).
+
+   Wat dit blok doet:
+     1. Opvangen  - crashes, mislukte verzoeken, trage verzoeken en alles wat
+                    via console.error wordt gemeld, komen in een logboek op de
+                    schijf (DATA_DIR/wachter_log.json, maximaal 500 regels).
+     2. Herstellen- een vaste, korte lijst met toegestane herstelacties. Meer
+                    mag de wachter niet. Hij past NOOIT zelf code aan.
+     3. Melden    - bij een kritieke fout meteen een mail (met rem erop), en
+                    een keer per dag een samenvatting die door het model in
+                    gewone taal is geschreven.
+
+   Gebruikt alleen bestaande dingen: app, fs, path, crypto, DATA_DIR,
+   safeWriteFileSync, rescueCorruptStore, clientIp, rateLimited, callOpenAI,
+   sendResendEmail, guesttalkAuthOk, OPENAI_API_KEY, RESEND_API_KEY, PORT.
+   Alle eigen namen beginnen met wd of WACHTER, dus botsingen zijn uitgesloten.
+
+   Instellingen (Render Environment Variables, allemaal optioneel):
+     WACHTER_AAN              0 = helemaal uit                (standaard aan)
+     WACHTER_MAIL             adres voor de meldingen         (standaard bernardwijnen@gmail.com)
+     WACHTER_AI               0 = geen AI-samenvatting        (standaard aan)
+     WACHTER_TRAAG_MS         grens voor "traag verzoek"      (standaard 10000)
+     WACHTER_RAPPORT_UUR      uur van het dagrapport, NL-tijd (standaard 7)
+     WACHTER_ALTIJD_MAILEN    1 = ook mailen als er niets is  (standaard nee)
+     WACHTER_HERSTART_BIJ_CRASH  1 = na een crash netjes afsluiten zodat
+                              Render opnieuw start            (standaard nee)
+   ========================================================================== */
+
+const WACHTER_AAN = String(process.env.WACHTER_AAN || "1") !== "0";
+const WACHTER_MAIL = String(process.env.WACHTER_MAIL || "bernardwijnen@gmail.com").trim();
+const WACHTER_AI = String(process.env.WACHTER_AI || "1") !== "0";
+const WACHTER_TRAAG_MS = Number(process.env.WACHTER_TRAAG_MS || 10000);
+const WACHTER_RAPPORT_UUR = Number(process.env.WACHTER_RAPPORT_UUR || 7);
+const WACHTER_ALTIJD_MAILEN = String(process.env.WACHTER_ALTIJD_MAILEN || "0") === "1";
+const WACHTER_HERSTART_BIJ_CRASH = String(process.env.WACHTER_HERSTART_BIJ_CRASH || "0") === "1";
+
+const WD_LOG_FILE = path.join(DATA_DIR, "wachter_log.json");
+const WD_MAX_MELDINGEN = 500;
+const WD_BEWAARDAGEN = 14;
+const WD_SAMENVOEG_MS = 24 * 60 * 60 * 1000;   // zelfde fout binnen een dag = optellen
+const WD_MAIL_REM_MS = 15 * 60 * 1000;         // per fout hoogstens 1 directe mail per kwartier
+const WD_MAIL_MAX_PER_UUR = 10;
+
+/* De originele console-functies vasthouden, anders krijg je een oneindige lus
+   zodra de wachter zelf iets logt. */
+const wdConsoleError = console.error.bind(console);
+const wdConsoleLog = console.log.bind(console);
+
+let wdMeldingen = [];           // [{ sleutel, type, ernst, waar, tekst, stack, aantal, eerst, laatst, hersteld }]
+let wdVuil = false;
+let wdBezig = false;            // recursierem
+const wdMailRem = new Map();    // sleutel -> tijdstip laatste mail
+let wdMailsDitUur = 0;
+let wdMailUurStart = Date.now();
+let wdLaatsteRapportDag = "";
+
+let wdTellers = {
+  vanaf: new Date().toISOString(),
+  verzoeken: 0,
+  fout4xx: 0,
+  fout5xx: 0,
+  traag: 0,
+  herstelGelukt: 0,
+  herstelMislukt: 0
+};
+
+/* ---------------- opslag ---------------- */
+
+function wdLaad(){
+  try{
+    if(!fs.existsSync(WD_LOG_FILE)) return;
+    const ruw = JSON.parse(fs.readFileSync(WD_LOG_FILE, "utf8"));
+    if(ruw && Array.isArray(ruw.meldingen)) wdMeldingen = ruw.meldingen;
+    if(ruw && ruw.tellers) wdTellers = Object.assign(wdTellers, ruw.tellers);
+    if(ruw && ruw.laatsteRapportDag) wdLaatsteRapportDag = String(ruw.laatsteRapportDag);
+  }catch(e){
+    try{ rescueCorruptStore(WD_LOG_FILE, e); }catch(e2){}
+    wdMeldingen = [];
+  }
+}
+
+function wdBewaarNu(){
+  try{
+    safeWriteFileSync(WD_LOG_FILE, JSON.stringify({
+      meldingen: wdMeldingen,
+      tellers: wdTellers,
+      laatsteRapportDag: wdLaatsteRapportDag
+    }));
+    wdVuil = false;
+  }catch(e){
+    wdConsoleError("WACHTER: logboek kon niet worden weggeschreven: " + (e && e.message ? e.message : e));
+  }
+}
+
+/* ---------------- meldingen ---------------- */
+
+function wdTekstVan(waarde){
+  if(waarde instanceof Error) return String(waarde.message || waarde);
+  if(typeof waarde === "string") return waarde;
+  try{ return JSON.stringify(waarde); }catch(e){ return String(waarde); }
+}
+
+/* Vingerafdruk: cijfers, tijden en id's eruit, zodat 40 keer dezelfde fout
+   ook echt als een fout wordt geteld en niet als 40 losse regels. */
+function wdSleutel(type, waar, tekst){
+  const kaal = String(tekst || "")
+    .replace(/[0-9a-f]{8,}/gi, "#")
+    .replace(/\d+/g, "#")
+    .slice(0, 120);
+  return type + "|" + String(waar || "") + "|" + kaal;
+}
+
+function wdMeld(gegevens){
+  if(!WACHTER_AAN) return null;
+  if(wdBezig) return null;
+  wdBezig = true;
+  try{
+    const nu = Date.now();
+    const type = String(gegevens.type || "onbekend");
+    const ernst = String(gegevens.ernst || "waarschuwing");   // kritiek | waarschuwing | info
+    const waar = String(gegevens.waar || "");
+    const tekst = wdTekstVan(gegevens.tekst).slice(0, 500);
+    const sleutel = wdSleutel(type, waar, tekst);
+
+    let melding = null;
+    for(let i = wdMeldingen.length - 1; i >= 0; i--){
+      const m = wdMeldingen[i];
+      if(m.sleutel === sleutel && (nu - new Date(m.laatst).getTime()) < WD_SAMENVOEG_MS){ melding = m; break; }
+    }
+
+    if(melding){
+      melding.aantal += 1;
+      melding.laatst = new Date(nu).toISOString();
+      if(gegevens.hersteld) melding.hersteld = gegevens.hersteld;
+    }else{
+      melding = {
+        sleutel: sleutel,
+        type: type,
+        ernst: ernst,
+        waar: waar,
+        tekst: tekst,
+        stack: gegevens.stack ? String(gegevens.stack).split("\n").slice(0, 6).join("\n") : "",
+        aantal: 1,
+        eerst: new Date(nu).toISOString(),
+        laatst: new Date(nu).toISOString(),
+        hersteld: gegevens.hersteld || null
+      };
+      wdMeldingen.push(melding);
+      if(wdMeldingen.length > WD_MAX_MELDINGEN) wdMeldingen = wdMeldingen.slice(-WD_MAX_MELDINGEN);
+    }
+
+    wdVuil = true;
+    if(ernst === "kritiek") wdDirecteMail(melding);
+    return melding;
+  }catch(e){
+    return null;
+  }finally{
+    wdBezig = false;
+  }
+}
+
+/* console.error wordt meegenomen, zodat bestaande foutmeldingen (inclusief
+   rescueCorruptStore) vanzelf in het logboek komen. console.log en
+   console.warn blijven met rust, anders loopt het logboek vol met opstartruis. */
+console.error = function(){
+  const args = Array.prototype.slice.call(arguments);
+  wdConsoleError.apply(null, args);
+  try{
+    wdMeld({
+      type: "console",
+      ernst: "waarschuwing",
+      waar: "console.error",
+      tekst: args.map(wdTekstVan).join(" ")
+    });
+  }catch(e){}
+};
+
+/* ---------------- verzoeken ---------------- */
+
+function wdVerzoekKlaar(req, res, duurMs){
+  if(!WACHTER_AAN) return;
+  wdTellers.verzoeken += 1;
+  const code = res.statusCode || 0;
+  const waar = String(req.method || "") + " " + String(req.path || "").slice(0, 80);
+
+  if(code >= 500){
+    wdTellers.fout5xx += 1;
+    // Is de fout al door de foutafhandelaar gemeld (met melding en stack),
+    // dan hoeft hij hier niet nog een keer in het logboek.
+    if(!res._wdAlGemeld){
+      wdMeld({ type: "http500", ernst: "waarschuwing", waar: waar, tekst: "Serverfout " + code });
+    }
+  }else if(code >= 400){
+    wdTellers.fout4xx += 1;
+  }
+
+  if(duurMs > WACHTER_TRAAG_MS){
+    wdTellers.traag += 1;
+    wdMeld({ type: "traag", ernst: "info", waar: waar, tekst: "Verzoek duurde " + Math.round(duurMs / 1000) + " seconden" });
+  }
+}
+
+/* ---------------- herstelacties ----------------
+   Dit is de VOLLEDIGE lijst van wat de wachter zelf mag doen. Staat een
+   handeling hier niet in, dan gebeurt hij niet. Codewijzigingen staan er
+   bewust niet in en horen er ook niet in. */
+async function wdHerstel(actie){
+  try{
+    if(actie === "mapAanmaken"){
+      if(!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+      if(typeof PHOTOS_DIR === "string" && !fs.existsSync(PHOTOS_DIR)) fs.mkdirSync(PHOTOS_DIR, { recursive: true });
+      return { actie: actie, gelukt: true };
+    }
+    if(actie === "schijfTest"){
+      const proef = path.join(DATA_DIR, "wachter_schijftest.tmp");
+      fs.writeFileSync(proef, String(Date.now()));
+      fs.readFileSync(proef, "utf8");
+      fs.unlinkSync(proef);
+      return { actie: actie, gelukt: true };
+    }
+    if(actie === "logOpschonen"){
+      const grens = Date.now() - WD_BEWAARDAGEN * 24 * 60 * 60 * 1000;
+      wdMeldingen = wdMeldingen.filter((m) => new Date(m.laatst).getTime() >= grens);
+      if(wdMeldingen.length > WD_MAX_MELDINGEN) wdMeldingen = wdMeldingen.slice(-WD_MAX_MELDINGEN);
+      wdVuil = true;
+      return { actie: actie, gelukt: true };
+    }
+    return { actie: actie, gelukt: false, reden: "onbekende actie" };
+  }catch(e){
+    return { actie: actie, gelukt: false, reden: e && e.message ? e.message : String(e) };
+  }
+}
+
+/* Hulpmiddel om een wankele aanroep opnieuw te proberen. Deze functie wordt
+   nergens automatisch toegepast: je kunt hem later zelf om een aanroep heen
+   zetten, bijvoorbeeld wdProbeerOpnieuw("vertaling", () => callOpenAI(...), 3, 1500). */
+async function wdProbeerOpnieuw(naam, functie, pogingen, wachtMs){
+  const max = Number(pogingen || 3);
+  const wacht = Number(wachtMs || 1000);
+  let laatsteFout = null;
+  for(let poging = 1; poging <= max; poging++){
+    try{
+      const uitkomst = await functie();
+      if(poging > 1){
+        wdTellers.herstelGelukt += 1;
+        wdMeld({
+          type: "herstel", ernst: "info", waar: String(naam),
+          tekst: "Gelukt na poging " + poging + " van " + max,
+          hersteld: { actie: "opnieuwProberen", gelukt: true }
+        });
+      }
+      return uitkomst;
+    }catch(e){
+      laatsteFout = e;
+      if(poging < max) await new Promise((r) => setTimeout(r, wacht * poging));
+    }
+  }
+  wdTellers.herstelMislukt += 1;
+  wdMeld({
+    type: "herstel", ernst: "kritiek", waar: String(naam),
+    tekst: "Na " + max + " pogingen nog steeds mislukt: " + (laatsteFout && laatsteFout.message ? laatsteFout.message : String(laatsteFout)),
+    hersteld: { actie: "opnieuwProberen", gelukt: false }
+  });
+  throw laatsteFout;
+}
+
+/* ---------------- zelftest ---------------- */
+
+async function wdZelftest(){
+  if(!WACHTER_AAN) return;
+
+  // 1. Antwoordt de server zelf nog?
+  try{
+    const antwoord = await fetchWithTimeout("http://127.0.0.1:" + PORT + "/api/health", {}, 10000);
+    if(!antwoord.ok){
+      wdMeld({ type: "zelftest", ernst: "kritiek", waar: "/api/health", tekst: "Eigen gezondheidscontrole gaf status " + antwoord.status });
+    }
+  }catch(e){
+    wdMeld({ type: "zelftest", ernst: "kritiek", waar: "/api/health", tekst: "Eigen gezondheidscontrole antwoordde niet: " + (e && e.message ? e.message : e) });
+  }
+
+  // 2. Kan er naar de schijf geschreven worden? Zo nee: mappen aanmaken en opnieuw proberen.
+  let schijf = await wdHerstel("schijfTest");
+  if(!schijf.gelukt){
+    const maak = await wdHerstel("mapAanmaken");
+    schijf = await wdHerstel("schijfTest");
+    if(schijf.gelukt){
+      wdTellers.herstelGelukt += 1;
+      wdMeld({
+        type: "schijf", ernst: "waarschuwing", waar: DATA_DIR,
+        tekst: "Schijf was niet beschrijfbaar, de datamap is opnieuw aangemaakt en daarna werkte het weer",
+        hersteld: { actie: "mapAanmaken", gelukt: true }
+      });
+    }else{
+      wdTellers.herstelMislukt += 1;
+      wdMeld({
+        type: "schijf", ernst: "kritiek", waar: DATA_DIR,
+        tekst: "Kan niet naar de schijf schrijven: " + (schijf.reden || "onbekend") + (maak.gelukt ? "" : " (map aanmaken lukte ook niet)"),
+        hersteld: { actie: "mapAanmaken", gelukt: false }
+      });
+    }
+  }
+
+  // 3. Geheugengebruik in de gaten houden.
+  try{
+    const rss = Math.round(process.memoryUsage().rss / (1024 * 1024));
+    if(rss > 450){
+      wdMeld({ type: "geheugen", ernst: "waarschuwing", waar: "proces", tekst: "Geheugengebruik is " + rss + " MB" });
+    }
+  }catch(e){}
+
+  if(wdVuil) wdBewaarNu();
+}
+
+/* Een keer per uur: zijn alle opslagbestanden nog leesbaar? Bij een corrupt
+   bestand wordt het origineel veiliggesteld en gemeld. De wachter schrijft
+   het NIET zelf opnieuw, want dan zou hij data kunnen wissen. */
+async function wdControleerBestanden(){
+  if(!WACHTER_AAN) return;
+  try{
+    const bestanden = fs.readdirSync(DATA_DIR).filter((n) => n.toLowerCase().endsWith(".json"));
+    for(const naam of bestanden){
+      const volledig = path.join(DATA_DIR, naam);
+      try{
+        const info = fs.statSync(volledig);
+        if(info.size > 5 * 1024 * 1024) continue;   // te groot om elk uur te controleren
+        JSON.parse(fs.readFileSync(volledig, "utf8"));
+      }catch(e){
+        wdMeld({
+          type: "bestand", ernst: "kritiek", waar: naam,
+          tekst: "Opslagbestand is onleesbaar of corrupt: " + (e && e.message ? e.message : e)
+        });
+        try{ rescueCorruptStore(volledig, e); }catch(e2){}
+      }
+    }
+  }catch(e){}
+  await wdHerstel("logOpschonen");
+  if(wdVuil) wdBewaarNu();
+}
+
+/* ---------------- crashes ---------------- */
+
+process.on("uncaughtException", (err) => {
+  try{
+    wdMeld({
+      type: "crash", ernst: "kritiek", waar: "uncaughtException",
+      tekst: err && err.message ? err.message : String(err),
+      stack: err && err.stack ? err.stack : ""
+    });
+    wdBewaarNu();
+  }catch(e){}
+  wdConsoleError("WACHTER: onafgevangen fout: " + (err && err.stack ? err.stack : err));
+  if(WACHTER_HERSTART_BIJ_CRASH){
+    setTimeout(() => { try{ process.exit(1); }catch(e){} }, 3000);
+  }
+});
+
+process.on("unhandledRejection", (reden) => {
+  try{
+    wdMeld({
+      type: "crash", ernst: "kritiek", waar: "unhandledRejection",
+      tekst: reden && reden.message ? reden.message : String(reden),
+      stack: reden && reden.stack ? reden.stack : ""
+    });
+    wdBewaarNu();
+  }catch(e){}
+  wdConsoleError("WACHTER: niet afgehandelde promise: " + (reden && reden.stack ? reden.stack : reden));
+});
+
+/* ---------------- mail ---------------- */
+
+function wdMagMailen(sleutel){
+  const nu = Date.now();
+  if(nu - wdMailUurStart > 60 * 60 * 1000){ wdMailUurStart = nu; wdMailsDitUur = 0; }
+  if(wdMailsDitUur >= WD_MAIL_MAX_PER_UUR) return false;
+  const vorige = wdMailRem.get(sleutel) || 0;
+  if(nu - vorige < WD_MAIL_REM_MS) return false;
+  wdMailRem.set(sleutel, nu);
+  wdMailsDitUur += 1;
+  return true;
+}
+
+async function wdMail(onderwerp, tekst){
+  if(!RESEND_API_KEY || !WACHTER_MAIL) return false;
+  try{
+    await sendResendEmail({
+      to: WACHTER_MAIL,
+      subject: onderwerp,
+      text: tekst,
+      html: "<pre style=\"font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;white-space:pre-wrap\">" + escHtmlServer(tekst) + "</pre>"
+    });
+    return true;
+  }catch(e){
+    wdConsoleError("WACHTER: mail versturen mislukt: " + (e && e.message ? e.message : e));
+    return false;
+  }
+}
+
+function wdDirecteMail(melding){
+  if(!melding || !wdMagMailen(melding.sleutel)) return;
+  const tekst = [
+    "Er is een kritieke fout opgetreden op de Salve-server.",
+    "",
+    "Tijd:   " + melding.laatst,
+    "Waar:   " + (melding.waar || "onbekend"),
+    "Soort:  " + melding.type,
+    "Aantal: " + melding.aantal + " keer",
+    "",
+    "Melding:",
+    melding.tekst,
+    melding.stack ? "\nTechnische regels:\n" + melding.stack : "",
+    "",
+    "Het volledige logboek staat in het beheer via /api/wachter/log."
+  ].join("\n");
+  wdMail("Salve wachter: kritieke fout (" + melding.type + ")", tekst).catch(() => {});
+}
+
+/* ---------------- dagrapport ---------------- */
+
+function wdOverzichtTekst(){
+  const regels = [];
+  regels.push("Periode sinds: " + wdTellers.vanaf);
+  regels.push("Verzoeken: " + wdTellers.verzoeken + " | 4xx: " + wdTellers.fout4xx + " | 5xx: " + wdTellers.fout5xx + " | traag: " + wdTellers.traag);
+  regels.push("Automatisch hersteld: " + wdTellers.herstelGelukt + " | herstel mislukt: " + wdTellers.herstelMislukt);
+  regels.push("");
+
+  const grens = Date.now() - 24 * 60 * 60 * 1000;
+  const recent = wdMeldingen.filter((m) => new Date(m.laatst).getTime() >= grens);
+  const gesorteerd = recent.slice().sort((a, b) => {
+    const rang = { kritiek: 0, waarschuwing: 1, info: 2 };
+    const verschil = (rang[a.ernst] || 3) - (rang[b.ernst] || 3);
+    return verschil !== 0 ? verschil : b.aantal - a.aantal;
+  }).slice(0, 25);
+
+  if(!gesorteerd.length){
+    regels.push("Geen meldingen in de afgelopen 24 uur.");
+    return regels.join("\n");
+  }
+
+  regels.push("Meldingen afgelopen 24 uur (" + recent.length + " soorten):");
+  for(const m of gesorteerd){
+    regels.push("- [" + m.ernst + "] " + m.type + " | " + (m.waar || "-") + " | " + m.aantal + "x | laatst " + m.laatst);
+    regels.push("  " + m.tekst);
+    if(m.hersteld) regels.push("  herstelactie: " + m.hersteld.actie + " -> " + (m.hersteld.gelukt ? "gelukt" : "mislukt"));
+    if(m.stack) regels.push("  " + m.stack.split("\n").slice(0, 3).join(" | "));
+  }
+  return regels.join("\n");
+}
+
+async function wdDagrapport(handmatig){
+  if(!WACHTER_AAN) return { verstuurd: false, reden: "wachter staat uit" };
+
+  const grens = Date.now() - 24 * 60 * 60 * 1000;
+  const recent = wdMeldingen.filter((m) => new Date(m.laatst).getTime() >= grens);
+  const isMaandag = new Date().getDay() === 1;
+
+  if(!handmatig && !recent.length && !WACHTER_ALTIJD_MAILEN && !isMaandag){
+    return { verstuurd: false, reden: "niets te melden" };
+  }
+
+  const ruw = wdOverzichtTekst();
+  let tekst = ruw;
+
+  if(WACHTER_AI && OPENAI_API_KEY && recent.length){
+    try{
+      const uitleg = await callOpenAI([
+        {
+          role: "system",
+          content: [
+            "Je bent de wachter van een Node.js/Express server (Salve, een meertalige hotelgids).",
+            "Je krijgt een ruw foutenlogboek. Schrijf een kort rapport in het Nederlands voor de eigenaar, die geen ontwikkelaar is.",
+            "Regels: gebruik gewone taal, geen jargon zonder uitleg. Groepeer meldingen die dezelfde oorzaak lijken te hebben.",
+            "Zet bovenaan wat er vandaag echt aandacht nodig heeft, en wat vanzelf is opgelost.",
+            "Benoem een mogelijke oorzaak altijd als vermoeden, nooit als vaststaand feit.",
+            "Geef bij een terugkerende fout een voorstel voor wat er onderzocht of aangepast kan worden, maar zeg er bij dat dit met de hand gecontroleerd moet worden.",
+            "Verzin geen bestandsnamen, regelnummers of functienamen die niet in het logboek staan.",
+            "Maximaal 400 woorden. Gebruik gewone streepjes, geen lange streepjes."
+          ].join(" ")
+        },
+        { role: "user", content: ruw }
+      ], 0.2);
+      if(uitleg) tekst = uitleg + "\n\n----- ruw logboek -----\n" + ruw;
+    }catch(e){
+      wdConsoleError("WACHTER: samenvatting door het model mislukt, ruwe versie wordt gemaild: " + (e && e.message ? e.message : e));
+    }
+  }
+
+  const gelukt = await wdMail("Salve wachter: dagrapport " + new Date().toLocaleDateString("nl-NL"), tekst);
+
+  // tellers resetten voor de volgende periode
+  wdTellers = {
+    vanaf: new Date().toISOString(),
+    verzoeken: 0, fout4xx: 0, fout5xx: 0, traag: 0,
+    herstelGelukt: 0, herstelMislukt: 0
+  };
+  wdBewaarNu();
+  return { verstuurd: gelukt, meldingen: recent.length };
+}
+
+/* Elke minuut kijken of het tijd is voor het dagrapport (Nederlandse tijd,
+   dus zomer- en wintertijd gaan vanzelf goed). */
+function wdRapportKlok(){
+  if(!WACHTER_AAN) return;
+  try{
+    const nl = new Intl.DateTimeFormat("nl-NL", {
+      timeZone: "Europe/Amsterdam",
+      year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hour12: false
+    }).formatToParts(new Date());
+    const deel = {};
+    for(const p of nl.parts) deel[p.type] = p.value;
+    const dag = deel.year + "-" + deel.month + "-" + deel.day;
+    const uur = Number(deel.hour);
+    if(uur === WACHTER_RAPPORT_UUR && wdLaatsteRapportDag !== dag){
+      wdLaatsteRapportDag = dag;
+      wdBewaarNu();
+      wdDagrapport(false).catch(() => {});
+    }
+  }catch(e){}
+}
+
+/* ---------------- beheerroutes ---------------- */
+
+app.get("/api/wachter/log", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const ip = clientIp(req);
+  if(rateLimited("wachter", ip, 60, 5 * 60 * 1000)) return jsonError(res, 429, "Te veel verzoeken");
+  if(!guesttalkAuthOk(req.query.adminPass)) return jsonError(res, 403, "Geen toegang");
+  res.json({
+    ok: true,
+    aan: WACHTER_AAN,
+    mailNaar: WACHTER_MAIL,
+    aiSamenvatting: WACHTER_AI && !!OPENAI_API_KEY,
+    tellers: wdTellers,
+    meldingen: wdMeldingen.slice(-200).reverse()
+  });
+});
+
+app.get("/api/wachter/rapport", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const ip = clientIp(req);
+  if(rateLimited("wachter", ip, 60, 5 * 60 * 1000)) return jsonError(res, 429, "Te veel verzoeken");
+  if(!guesttalkAuthOk(req.query.adminPass)) return jsonError(res, 403, "Geen toegang");
+  try{
+    const uitkomst = await wdDagrapport(true);
+    res.json({ ok: true, uitkomst: uitkomst });
+  }catch(e){
+    jsonError(res, 500, "Rapport maken mislukt", e && e.message ? e.message : String(e));
+  }
+});
+
+app.get("/api/wachter/wis", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const ip = clientIp(req);
+  if(rateLimited("wachter", ip, 60, 5 * 60 * 1000)) return jsonError(res, 429, "Te veel verzoeken");
+  if(!guesttalkAuthOk(req.query.adminPass)) return jsonError(res, 403, "Geen toegang");
+  wdMeldingen = [];
+  wdBewaarNu();
+  res.json({ ok: true, gewist: true });
+});
+
+/* ---------------- starten ---------------- */
+
+wdLaad();
+if(WACHTER_AAN){
+  setInterval(() => { if(wdVuil) wdBewaarNu(); }, 30 * 1000);
+  setInterval(() => { wdZelftest().catch(() => {}); }, 15 * 60 * 1000);
+  setInterval(() => { wdControleerBestanden().catch(() => {}); }, 60 * 60 * 1000);
+  setInterval(wdRapportKlok, 60 * 1000);
+  setTimeout(() => { wdZelftest().catch(() => {}); }, 60 * 1000);
+  wdConsoleLog("Wachter actief. Meldingen gaan naar: " + (WACHTER_MAIL || "geen adres ingesteld") + " | AI-samenvatting: " + (WACHTER_AI && OPENAI_API_KEY ? "ja" : "nee"));
+}else{
+  wdConsoleLog("Wachter staat uit (WACHTER_AAN=0).");
+}
+
+/* ======================= EINDE WACHTER ======================= */
+
+
 app.use((req, res) => {
   res.status(404).json({ error: "Route niet gevonden", path: req.path });
 });
@@ -11467,11 +12063,31 @@ function flushAllStoresAndExit(signal){
   try{ saveGuesttalkUsageNow(); }catch(e){}
   try{ saveDMNow(); }catch(e){}
   try{ saveDirectChats(); }catch(e){}
+  try{ wdBewaarNu(); }catch(e){}
   console.log("Alle data is weggeschreven. Server sluit af.");
   process.exit(0);
 }
 process.on("SIGTERM", () => flushAllStoresAndExit("SIGTERM"));
 process.on("SIGINT", () => flushAllStoresAndExit("SIGINT"));
+
+
+/* ---------------- foutafhandeling van routes ----------------
+   Deze middleware heeft VIER parameters. Daaraan herkent Express hem als
+   foutafhandelaar. Hij moet onder alle routes staan. */
+app.use((err, req, res, next) => {
+  try{
+    res._wdAlGemeld = true;
+    wdMeld({
+      type: "route", ernst: "kritiek",
+      waar: String(req.method || "") + " " + String(req.path || ""),
+      tekst: err && err.message ? err.message : String(err),
+      stack: err && err.stack ? err.stack : ""
+    });
+  }catch(e){}
+  if(res.headersSent) return next(err);
+  res.status(500).json({ error: "Er ging iets mis op de server" });
+});
+
 
 app.listen(PORT, () => {
   console.log("ECHO Central Server draait op poort " + PORT);
