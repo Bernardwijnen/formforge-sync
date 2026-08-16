@@ -65,6 +65,11 @@ const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 // natuurlijker dan gpt-4o-mini, vooral naar talen als Thai, Hindi, Arabisch en
 // Vietnamees. Instelbaar via Render Environment Variable OPENAI_GUIDE_MODEL.
 const OPENAI_GUIDE_MODEL = process.env.OPENAI_GUIDE_MODEL || "gpt-4o";
+// Apart model voor de korte gast<->hotel chatberichten. Standaard hetzelfde
+// model als de gids, dus zonder deze variabele verandert er niets. Zet
+// OPENAI_CHAT_MODEL op gpt-4o-mini om op de chat te besparen; de gidsteksten
+// (die jaren blijven staan) blijven dan gewoon op het sterke model.
+const OPENAI_CHAT_MODEL = process.env.OPENAI_CHAT_MODEL || OPENAI_GUIDE_MODEL;
 
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || "";
 const STRIPE_DEFAULT_PRICE_ID = process.env.STRIPE_PRICE_ID || "";
@@ -4944,6 +4949,87 @@ app.post("/api/pdfstudio/sign/:token/approve", (req, res) => {
   }
 });
 
+/* ---- Opruimen van oude klantlinks ----------------------------------------
+   pdfstudio_render_links.json bewaart per document de hele inhoud, inclusief
+   de HTML van de PDF. Er zat geen enkele opruiming op, dus dat bestand groeit
+   alleen maar. Deze route ruimt op, maar met de rem erop:
+
+     - standaard laat hij ALLEEN ZIEN wat hij zou weggooien (proefdraaien)
+     - pas met &echt=1 wordt er echt iets verwijderd
+     - ondertekende documenten worden NOOIT verwijderd
+     - een document met een nog geldige klantlink wordt NOOIT verwijderd
+     - standaard blijft alles van het afgelopen jaar staan
+
+   Gebruik:
+     /api/pdfstudio/opruimen?adminPass=...                      (alleen kijken)
+     /api/pdfstudio/opruimen?adminPass=...&ouderDanDagen=365    (andere grens)
+     /api/pdfstudio/opruimen?adminPass=...&echt=1               (echt opruimen)
+--------------------------------------------------------------------------- */
+app.get("/api/pdfstudio/opruimen", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if(!adminOk(req)) return jsonError(res, 401, "Geen toegang. Beheerwachtwoord ontbreekt of is onjuist.");
+
+  const dagen = Math.max(30, parseInt(req.query.ouderDanDagen, 10) || 365);
+  const echt = String(req.query.echt || "") === "1";
+  const grens = Date.now() - dagen * 24 * 60 * 60 * 1000;
+  const nu = Date.now();
+
+  /* Welke documenten hebben nog een geldige klantlink? Die blijven sowieso. */
+  const beschermd = new Set();
+  for(const tok of pdfStudioRenderTokens.values()){
+    if(!tok || !tok.documentId) continue;
+    const verloopt = Date.parse(tok.expiresAt || "");
+    if(tok.status === "signed" || !isFinite(verloopt) || verloopt > nu) beschermd.add(tok.documentId);
+  }
+
+  const weg = [];
+  let bytes = 0;
+  for(const [id, doc] of pdfStudioRenderDocs.entries()){
+    if(!doc) continue;
+    if(doc.status === "signed" || doc.clientSignature) continue;   /* ondertekend blijft */
+    if(beschermd.has(id)) continue;                                /* link nog geldig */
+    const laatst = Date.parse(doc.updatedAt || doc.createdAt || "");
+    if(!isFinite(laatst) || laatst >= grens) continue;             /* te recent */
+    let grootte = 0;
+    try{ grootte = Buffer.byteLength(JSON.stringify(doc), "utf8"); }catch(e){}
+    bytes += grootte;
+    weg.push({ id: id, type: doc.type || "", status: doc.status || "", bijgewerkt: doc.updatedAt || doc.createdAt || "", bytes: grootte });
+  }
+
+  /* Tokens die naar een verdwenen document wijzen of allang verlopen zijn. */
+  const wegTokens = [];
+  const wegIds = new Set(weg.map(w => w.id));
+  for(const [token, tok] of pdfStudioRenderTokens.entries()){
+    if(!tok) continue;
+    if(tok.status === "signed") continue;
+    const verloopt = Date.parse(tok.expiresAt || "");
+    const dood = wegIds.has(tok.documentId) || !pdfStudioRenderDocs.has(tok.documentId);
+    const oud = isFinite(verloopt) && verloopt < grens;
+    if(dood || oud) wegTokens.push(token);
+  }
+
+  if(echt){
+    for(const w of weg) pdfStudioRenderDocs.delete(w.id);
+    for(const t of wegTokens) pdfStudioRenderTokens.delete(t);
+    if(weg.length || wegTokens.length) savePdfStudioRenderStore();
+  }
+
+  return res.json({
+    ok: true,
+    proefdraai: !echt,
+    ouderDanDagen: dagen,
+    documentenTotaal: pdfStudioRenderDocs.size + (echt ? weg.length : 0),
+    documentenOpgeruimd: weg.length,
+    klantlinksOpgeruimd: wegTokens.length,
+    ongeveerVrijgemaakt: Math.round(bytes / 1024) + " kB",
+    beschermdOndertekendOfActief: beschermd.size,
+    voorbeeld: weg.slice(0, 20),
+    uitleg: echt
+      ? "Er is echt opgeruimd."
+      : "Dit was alleen kijken. Zet &echt=1 achter de link om het door te voeren."
+  });
+});
+
 /* =========================
    EINDE PDF STUDIO RENDER KLANTLINK OPSLAG
 ========================= */
@@ -9449,6 +9535,7 @@ function loadGuideTransCache(){
 // Debounced opslaan: niet bij elke vertaling naar de disk schrijven, maar kort
 // verzamelen en dan in een keer wegschrijven. Dat spaart de disk bij een warm-up
 // die snel achter elkaar veel teksten vertaalt.
+const GIDS_CACHE_MAX = Math.max(50000, Number(process.env.GIDS_CACHE_MAX || 200000));
 let _guideTransSaveTimer = null;
 function saveGuideTransCacheNow(){
   try{
@@ -9462,19 +9549,25 @@ function saveGuideTransCacheSoon(){
   _guideTransSaveTimer = setTimeout(() => {
     _guideTransSaveTimer = null;
     saveGuideTransCacheNow();
-  }, 3000);
+  }, 8000);
 }
 
 function guideCacheKey(from,to,text){ return GUIDE_TRANS_VERSION+"|"+from+"|"+to+"|"+text; }
+/* GEEN vervaltijd meer. De cachesleutel IS de brontekst: wijzigt een ondernemer
+   zijn tekst, dan ontstaat vanzelf een nieuwe sleutel en wordt die ene tekst
+   opnieuw vertaald. Een vertaling na een week laten vervallen betekende dus
+   alleen dat je precies dezelfde vertaling nog een keer betaalde. */
 function getGuideTranslation(from,to,text){
   const hit = guideTransCache.get(guideCacheKey(from,to,text));
-  // 7 dagen geldig: gidsteksten veranderen zelden, dus niet elke minuut opnieuw vertalen
-  if(hit && (Date.now()-hit.ts) < 7*24*60*60*1000) return hit.text;
+  if(hit && typeof hit.text === "string") return hit.text;
   return null;
 }
 function setGuideTranslation(from,to,text,translated){
   guideTransCache.set(guideCacheKey(from,to,text), { text: translated, ts: Date.now() });
-  if(guideTransCache.size > 50000){
+  /* Bovengrens ruim genoeg voor alle ondernemers maal alle talen. Zat hij te
+     laag, dan gooide hij de oudste vertalingen weg die daarna opnieuw betaald
+     moesten worden. */
+  while(guideTransCache.size > GIDS_CACHE_MAX){
     const firstKey = guideTransCache.keys().next().value;
     guideTransCache.delete(firstKey);
   }
@@ -9523,7 +9616,7 @@ async function translateChatNow(text, from, to){
         "Preserve names, numbers, prices, times, phone numbers, URLs and emoji exactly. " +
         "Output ONLY the translation in " + toName + " - no quotes, no notes, no explanation, no other language." },
       { role:"user", content: src }
-    ], 0.2, OPENAI_GUIDE_MODEL);
+    ], 0.2, OPENAI_CHAT_MODEL);
     const clean = String(out || "").trim();
     if(clean) return clean;
   }catch(e){}
@@ -11837,6 +11930,7 @@ async function wdProbeerOpnieuw(naam, functie, pogingen, wachtMs){
 /* ---------------- zelftest ---------------- */
 
 let wdLaatsteZelftest = null;
+let wdGrootControle = 0;   // wanneer de grote bestanden voor het laatst zijn nagekeken
 
 async function wdZelftest(){
   if(!WACHTER_AAN) return;
@@ -11900,13 +11994,21 @@ async function wdZelftest(){
    het NIET zelf opnieuw, want dan zou hij data kunnen wissen. */
 async function wdControleerBestanden(){
   if(!WACHTER_AAN) return;
+  let groteGedaan = false;
   try{
     const bestanden = fs.readdirSync(DATA_DIR).filter((n) => n.toLowerCase().endsWith(".json"));
     for(const naam of bestanden){
       const volledig = path.join(DATA_DIR, naam);
       try{
         const info = fs.statSync(volledig);
-        if(info.size > 5 * 1024 * 1024) continue;   // te groot om elk uur te controleren
+        /* Kleine bestanden elk uur. Grote bestanden kosten tijd en geheugen om
+           te lezen, dus die gaan een keer per dag mee. Ze helemaal overslaan
+           zou betekenen dat juist je grootste bestand nooit gecontroleerd wordt. */
+        if(info.size > 5 * 1024 * 1024){
+          if(info.size > 128 * 1024 * 1024) continue;
+          if(Date.now() - wdGrootControle < 24 * 60 * 60 * 1000) continue;
+          groteGedaan = true;
+        }
         JSON.parse(fs.readFileSync(volledig, "utf8"));
       }catch(e){
         wdMeld({
@@ -11917,6 +12019,7 @@ async function wdControleerBestanden(){
       }
     }
   }catch(e){}
+  if(groteGedaan) wdGrootControle = Date.now();
   await wdHerstel("logOpschonen");
   if(wdVuil) wdBewaarNu();
 }
@@ -12367,10 +12470,13 @@ function wdRapportBlokken(momentopname, schijf){
   /* ---- In het kort ---- */
   sub("In het kort");
   if(!kritiek.length && !waarschuwing.length){
-    r("Er waren geen fouten of waarschuwingen in de afgelopen 24 uur. De server heeft " + wdTellers.verzoeken + " verzoeken afgehandeld.");
+    r("Geen fouten of waarschuwingen in deze meetperiode. De server heeft " + wdTellers.verzoeken + " verzoeken afgehandeld.");
   }else{
     r("Aandacht nodig: " + wdMv(kritiek.length, "kritieke melding", "kritieke meldingen") + " en " + wdMv(waarschuwing.length, "waarschuwing", "waarschuwingen") + " in de afgelopen 24 uur.");
     for(const m of kritiek.slice(0, 5)) r("  Kritiek: " + m.type + " bij " + (m.waar || "-") + " (" + ((typeof m.aantal24 === "number") ? m.aantal24 : m.aantal) + "x) - " + m.tekst);
+  }
+  if(wdTellers.traag > 0){
+    r("Let op: " + wdMv(wdTellers.traag, "verzoek duurde", "verzoeken duurden") + " langer dan " + Math.round(WACHTER_TRAAG_MS / 1000) + " seconden. Dat wijst meestal op een gids die live opgebouwd moest worden.");
   }
   r("Gasten: " + s.scansTotaal + " gidsopeningen in totaal" + (v ? wdVerschil(s.scansTotaal, v.scansTotaal) + " sinds het vorige rapport" : "") + ".");
   r("Klanten: " + s.hotels + " hotels" + (v ? wdVerschil(s.hotels, v.hotels) : "") + ", " + s.ondernemers + " ondernemers" + (v ? wdVerschil(s.ondernemers, v.ondernemers) : "") + ", " + s.guesttalkActief + " actieve Guesttalk-codes" + (v ? wdVerschil(s.guesttalkActief, v.guesttalkActief) : "") + ".");
@@ -12552,7 +12658,7 @@ async function wdSamenvatting(ruweTekst){
           "Maximaal 350 woorden. Gebruik gewone streepjes, geen lange streepjes."
         ].join(" ")
       },
-      { role: "user", content: String(ruweTekst).slice(0, 24000) }
+      { role: "user", content: String(ruweTekst).slice(0, 12000) }
     ], 0.2);
   }catch(e){
     wdConsoleError("WACHTER: samenvatting door het model mislukt, het rapport wordt zonder samenvatting gemaild: " + (e && e.message ? e.message : e));
