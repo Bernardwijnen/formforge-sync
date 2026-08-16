@@ -4949,6 +4949,104 @@ app.post("/api/pdfstudio/sign/:token/approve", (req, res) => {
   }
 });
 
+/* ---- Ondertekende documenten automatisch wissen --------------------------
+   Zodra een klant heeft getekend heeft hij zijn PDF. De servercopie mag dan
+   weg, inclusief de handtekening. We wachten nog een korte bewaartermijn af,
+   zodat je een vergissing kunt merken voordat het onherroepelijk is.
+
+   Instelling (Render Environment Variable, optioneel):
+     PDFSTUDIO_BEWAAR_DAGEN   aantal dagen na ondertekening (standaard 10)
+                              0 = wissen bij de eerstvolgende ronde
+
+   De ronde loopt elk uur. Wat weg is, is echt weg: er wordt niets
+   veiliggesteld en er gaat geen kopie naar de mail.
+--------------------------------------------------------------------------- */
+
+const PDFSTUDIO_BEWAAR_DAGEN = Math.max(0, Number(process.env.PDFSTUDIO_BEWAAR_DAGEN || 10));
+
+function pdfStudioIsOndertekend(d){
+  return !!(d && (d.status === "signed" || d.signedAt || d.clientSignature));
+}
+
+/* Wanneer is er getekend? Valt terug op de laatste wijziging als het losse
+   veld ontbreekt, zodat oude records ook meegaan. */
+function pdfStudioOndertekendOp(d){
+  const t = Date.parse((d && (d.signedAt || d.updatedAt || d.createdAt)) || "");
+  return isFinite(t) ? t : 0;
+}
+
+/* echt = false betekent alleen kijken. Geeft altijd terug wat er zou gebeuren. */
+function pdfStudioWisOndertekend(echt){
+  const grens = Date.now() - PDFSTUDIO_BEWAAR_DAGEN * 24 * 60 * 60 * 1000;
+  const uit = { documenten: 0, klantlinks: 0, bytes: 0, lijst: [] };
+
+  /* 1. De klantlink-opslag (pdfstudio_render_links.json) */
+  const wegIds = [];
+  try{
+    for(const [id, doc] of pdfStudioRenderDocs.entries()){
+      if(!pdfStudioIsOndertekend(doc)) continue;
+      const op = pdfStudioOndertekendOp(doc);
+      if(!op || op >= grens) continue;
+      let grootte = 0;
+      try{ grootte = Buffer.byteLength(JSON.stringify(doc), "utf8"); }catch(e){}
+      uit.bytes += grootte;
+      uit.lijst.push({ opslag: "klantlinks", id: id, type: doc.type || "", getekendOp: doc.signedAt || doc.updatedAt || "", bytes: grootte });
+      wegIds.push(id);
+    }
+    const wegTokens = [];
+    for(const [token, tok] of pdfStudioRenderTokens.entries()){
+      if(tok && wegIds.indexOf(tok.documentId) >= 0) wegTokens.push(token);
+    }
+    uit.documenten += wegIds.length;
+    uit.klantlinks += wegTokens.length;
+    if(echt && (wegIds.length || wegTokens.length)){
+      for(const id of wegIds) pdfStudioRenderDocs.delete(id);
+      for(const t of wegTokens) pdfStudioRenderTokens.delete(t);
+      savePdfStudioRenderStore();
+    }
+  }catch(e){
+    console.error("PDF Studio: opruimen van klantlinks mislukt:", (e && e.message) || e);
+  }
+
+  /* 2. De oudere documentopslag (formforge_pdf_studio_documents.json) */
+  try{
+    const weg = [];
+    for(const [id, rec] of pdfStudioDocuments.entries()){
+      if(!pdfStudioIsOndertekend(rec)) continue;
+      const op = pdfStudioOndertekendOp(rec);
+      if(!op || op >= grens) continue;
+      let grootte = 0;
+      try{ grootte = Buffer.byteLength(JSON.stringify(rec), "utf8"); }catch(e){}
+      uit.bytes += grootte;
+      uit.lijst.push({ opslag: "documenten", id: id, type: rec.type || "", getekendOp: rec.signedAt || rec.updatedAt || "", bytes: grootte });
+      weg.push(id);
+    }
+    uit.documenten += weg.length;
+    if(echt && weg.length){
+      for(const id of weg) pdfStudioDocuments.delete(id);
+      savePdfStudioDocuments();
+    }
+  }catch(e){
+    console.error("PDF Studio: opruimen van documenten mislukt:", (e && e.message) || e);
+  }
+
+  return uit;
+}
+
+function pdfStudioWisRonde(){
+  try{
+    const uit = pdfStudioWisOndertekend(true);
+    if(uit.documenten || uit.klantlinks){
+      console.log("PDF Studio: " + uit.documenten + " ondertekend(e) document(en) en " + uit.klantlinks +
+                  " klantlink(s) gewist na " + PDFSTUDIO_BEWAAR_DAGEN + " dagen (" + Math.round(uit.bytes / 1024) + " kB vrij).");
+    }
+  }catch(e){
+    console.error("PDF Studio: wisronde mislukt:", (e && e.message) || e);
+  }
+}
+setInterval(pdfStudioWisRonde, 60 * 60 * 1000);
+setTimeout(pdfStudioWisRonde, 5 * 60 * 1000);
+
 /* ---- Opruimen van oude klantlinks ----------------------------------------
    pdfstudio_render_links.json bewaart per document de hele inhoud, inclusief
    de HTML van de PDF. Er zat geen enkele opruiming op, dus dat bestand groeit
@@ -5008,6 +5106,10 @@ app.get("/api/pdfstudio/opruimen", (req, res) => {
     if(dood || oud) wegTokens.push(token);
   }
 
+  /* Wat de automatische wisronde binnenkort weghaalt, puur ter informatie.
+     Dit wordt hier NIET verwijderd, ook niet met echt=1; dat doet de ronde. */
+  const ondertekend = pdfStudioWisOndertekend(false);
+
   if(echt){
     for(const w of weg) pdfStudioRenderDocs.delete(w.id);
     for(const t of wegTokens) pdfStudioRenderTokens.delete(t);
@@ -5024,6 +5126,10 @@ app.get("/api/pdfstudio/opruimen", (req, res) => {
     ongeveerVrijgemaakt: Math.round(bytes / 1024) + " kB",
     beschermdOndertekendOfActief: beschermd.size,
     voorbeeld: weg.slice(0, 20),
+    ondertekendBewaardagen: PDFSTUDIO_BEWAAR_DAGEN,
+    ondertekendKlaarVoorWissen: ondertekend.documenten,
+    ondertekendOngeveer: Math.round(ondertekend.bytes / 1024) + " kB",
+    ondertekendVoorbeeld: ondertekend.lijst.slice(0, 20),
     uitleg: echt
       ? "Er is echt opgeruimd."
       : "Dit was alleen kijken. Zet &echt=1 achter de link om het door te voeren."
