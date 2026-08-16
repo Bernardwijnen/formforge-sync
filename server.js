@@ -11462,22 +11462,30 @@ app.get("/api/zzp/koppel/systeem", (req, res) => {
    WACHTER  -  zelfstandig blok voor server.js
    --------------------------------------------------------------------------
    PLAATSEN: dit blok staat VLAK BOVEN de regel app.listen(PORT, () => {
-             Er hoort een klein stukje bij dat BOVEN alle routes staat
-             (de verzoekmeter, vlak onder app.use(cors(...))).
+             en vervangt het vorige WACHTER-blok volledig.
+             Het kleine stukje bovenaan (de verzoekmeter, vlak onder
+             app.use(cors(...))) blijft ongewijzigd staan.
 
    Wat dit blok doet:
      1. Opvangen  - crashes, mislukte verzoeken, trage verzoeken en alles wat
                     via console.error wordt gemeld, komen in een logboek op de
                     schijf (DATA_DIR/wachter_log.json, maximaal 500 regels).
-     2. Herstellen- een vaste, korte lijst met toegestane herstelacties. Meer
+     2. Meten     - verzoeken per route, AI-aanroepen, verstuurde mail, en een
+                    dagelijkse momentopname van hotels, ondernemers, scans,
+                    chats, Guesttalk-verbruik en abonnementen.
+     3. Herstellen- een vaste, korte lijst met toegestane herstelacties. Meer
                     mag de wachter niet. Hij past NOOIT zelf code aan.
-     3. Melden    - bij een kritieke fout meteen een mail (met rem erop), en
-                    een keer per dag een samenvatting die door het model in
-                    gewone taal is geschreven.
+     4. Melden    - bij een kritieke fout meteen een mail, en ELKE DAG een
+                    volledig rapport als PDF-bijlage, ook als alles goed ging.
 
    Gebruikt alleen bestaande dingen: app, fs, path, crypto, DATA_DIR,
    safeWriteFileSync, rescueCorruptStore, clientIp, rateLimited, callOpenAI,
-   sendResendEmail, guesttalkAuthOk, OPENAI_API_KEY, RESEND_API_KEY, PORT.
+   sendResendEmail, guesttalkAuthOk, escHtmlServer, jsonError, fetchWithTimeout,
+   OPENAI_API_KEY, RESEND_API_KEY, PORT. De opslagvariabelen die in het rapport
+   worden geteld (merchants, hotelChats, rooms, guesttalkUsage, premiumAccounts,
+   opzegVerzoeken, pdfStudioDocuments, directRooms, zzpAccounts, cityCache,
+   guideTransCache, CITIES) worden alleen gelezen en altijd achter een
+   typeof-controle, zodat een ontbrekende variabele nooit een fout geeft.
    Alle eigen namen beginnen met wd of WACHTER, dus botsingen zijn uitgesloten.
 
    Instellingen (Render Environment Variables, allemaal optioneel):
@@ -11486,7 +11494,9 @@ app.get("/api/zzp/koppel/systeem", (req, res) => {
      WACHTER_AI               0 = geen AI-samenvatting        (standaard aan)
      WACHTER_TRAAG_MS         grens voor "traag verzoek"      (standaard 10000)
      WACHTER_RAPPORT_UUR      uur van het dagrapport, NL-tijd (standaard 7)
-     WACHTER_ALTIJD_MAILEN    1 = ook mailen als er niets is  (standaard nee)
+     WACHTER_PDF              0 = geen PDF-bijlage            (standaard aan)
+     WACHTER_ALLEEN_BIJ_FOUTEN  1 = alleen mailen als er iets te melden is
+                              (standaard nee: er gaat ELKE dag een rapport uit)
      WACHTER_HERSTART_BIJ_CRASH  1 = na een crash netjes afsluiten zodat
                               Render opnieuw start            (standaard nee)
    ========================================================================== */
@@ -11496,7 +11506,8 @@ const WACHTER_MAIL = String(process.env.WACHTER_MAIL || "bernardwijnen@gmail.com
 const WACHTER_AI = String(process.env.WACHTER_AI || "1") !== "0";
 const WACHTER_TRAAG_MS = Number(process.env.WACHTER_TRAAG_MS || 10000);
 const WACHTER_RAPPORT_UUR = Number(process.env.WACHTER_RAPPORT_UUR || 7);
-const WACHTER_ALTIJD_MAILEN = String(process.env.WACHTER_ALTIJD_MAILEN || "0") === "1";
+const WACHTER_PDF = String(process.env.WACHTER_PDF || "1") !== "0";
+const WACHTER_ALLEEN_BIJ_FOUTEN = String(process.env.WACHTER_ALLEEN_BIJ_FOUTEN || "0") === "1";
 const WACHTER_HERSTART_BIJ_CRASH = String(process.env.WACHTER_HERSTART_BIJ_CRASH || "0") === "1";
 
 const WD_LOG_FILE = path.join(DATA_DIR, "wachter_log.json");
@@ -11505,6 +11516,7 @@ const WD_BEWAARDAGEN = 14;
 const WD_SAMENVOEG_MS = 24 * 60 * 60 * 1000;   // zelfde fout binnen een dag = optellen
 const WD_MAIL_REM_MS = 15 * 60 * 1000;         // per fout hoogstens 1 directe mail per kwartier
 const WD_MAIL_MAX_PER_UUR = 10;
+const WD_MAX_ROUTES = 300;                     // bovengrens op de routeteller
 
 /* De originele console-functies vasthouden, anders krijg je een oneindige lus
    zodra de wachter zelf iets logt. */
@@ -11518,16 +11530,29 @@ const wdMailRem = new Map();    // sleutel -> tijdstip laatste mail
 let wdMailsDitUur = 0;
 let wdMailUurStart = Date.now();
 let wdLaatsteRapportDag = "";
+let wdVorigeStand = null;       // momentopname van het vorige rapport
+let wdGestartOp = Date.now();
 
-let wdTellers = {
-  vanaf: new Date().toISOString(),
-  verzoeken: 0,
-  fout4xx: 0,
-  fout5xx: 0,
-  traag: 0,
-  herstelGelukt: 0,
-  herstelMislukt: 0
-};
+function wdNieuweTellers(){
+  return {
+    vanaf: new Date().toISOString(),
+    verzoeken: 0,
+    fout4xx: 0,
+    fout5xx: 0,
+    traag: 0,
+    herstelGelukt: 0,
+    herstelMislukt: 0,
+    aiAanroepen: 0,
+    aiFouten: 0,
+    aiMs: 0,
+    mailVerstuurd: 0,
+    mailMislukt: 0,
+    routes: {},               // "GET /api/city" -> { n, f4, f5, ms, traagste }
+    traagsteVerzoek: null     // { waar, ms, tijd }
+  };
+}
+
+let wdTellers = wdNieuweTellers();
 
 /* ---------------- opslag ---------------- */
 
@@ -11536,8 +11561,10 @@ function wdLaad(){
     if(!fs.existsSync(WD_LOG_FILE)) return;
     const ruw = JSON.parse(fs.readFileSync(WD_LOG_FILE, "utf8"));
     if(ruw && Array.isArray(ruw.meldingen)) wdMeldingen = ruw.meldingen;
-    if(ruw && ruw.tellers) wdTellers = Object.assign(wdTellers, ruw.tellers);
+    if(ruw && ruw.tellers) wdTellers = Object.assign(wdNieuweTellers(), ruw.tellers);
+    if(!wdTellers.routes || typeof wdTellers.routes !== "object") wdTellers.routes = {};
     if(ruw && ruw.laatsteRapportDag) wdLaatsteRapportDag = String(ruw.laatsteRapportDag);
+    if(ruw && ruw.vorigeStand) wdVorigeStand = ruw.vorigeStand;
   }catch(e){
     try{ rescueCorruptStore(WD_LOG_FILE, e); }catch(e2){}
     wdMeldingen = [];
@@ -11549,7 +11576,8 @@ function wdBewaarNu(){
     safeWriteFileSync(WD_LOG_FILE, JSON.stringify({
       meldingen: wdMeldingen,
       tellers: wdTellers,
-      laatsteRapportDag: wdLaatsteRapportDag
+      laatsteRapportDag: wdLaatsteRapportDag,
+      vorigeStand: wdVorigeStand
     }));
     wdVuil = false;
   }catch(e){
@@ -11596,6 +11624,7 @@ function wdMeld(gegevens){
     if(melding){
       melding.aantal += 1;
       melding.laatst = new Date(nu).toISOString();
+      melding.aantal24 = (melding.aantal24 || 0) + 1;
       if(gegevens.hersteld) melding.hersteld = gegevens.hersteld;
     }else{
       melding = {
@@ -11606,6 +11635,7 @@ function wdMeld(gegevens){
         tekst: tekst,
         stack: gegevens.stack ? String(gegevens.stack).split("\n").slice(0, 6).join("\n") : "",
         aantal: 1,
+        aantal24: 1,
         eerst: new Date(nu).toISOString(),
         laatst: new Date(nu).toISOString(),
         hersteld: gegevens.hersteld || null
@@ -11640,16 +11670,51 @@ console.error = function(){
   }catch(e){}
 };
 
-/* ---------------- verzoeken ---------------- */
+/* ---------------- verzoeken tellen ---------------- */
+
+/* Losse id's en nummers uit het pad halen, anders krijg je duizend losse
+   regels voor dezelfde route. Per padstuk, want alleen dan herken je een
+   id als m_mf3k2a9x1q of een lange sleutel betrouwbaar. */
+function wdRouteStuk(stuk){
+  if(!stuk) return stuk;
+  if(/^\d+$/.test(stuk)) return ":n";
+  if(/^[0-9a-f]{12,}$/i.test(stuk)) return ":id";
+  /* Bestandsnamen en routes met streepjes blijven staan: die zijn geen id. */
+  if(stuk.indexOf(".") >= 0 || stuk.indexOf("-") >= 0) return stuk;
+  if(stuk.length >= 10 && /\d/.test(stuk) && /[A-Za-z]/.test(stuk)) return ":id";
+  if(stuk.length >= 24) return ":id";
+  return stuk;
+}
+
+function wdRouteNaam(req){
+  const p = String((req && req.path) || "/").slice(0, 120);
+  const schoon = p.split("/").map(wdRouteStuk).join("/").slice(0, 90);
+  return String((req && req.method) || "") + " " + schoon;
+}
 
 function wdVerzoekKlaar(req, res, duurMs){
   if(!WACHTER_AAN) return;
   wdTellers.verzoeken += 1;
   const code = res.statusCode || 0;
+  const naam = wdRouteNaam(req);
   const waar = String(req.method || "") + " " + String(req.path || "").slice(0, 80);
+
+  if(!wdTellers.routes) wdTellers.routes = {};
+  let r = wdTellers.routes[naam];
+  if(!r){
+    if(Object.keys(wdTellers.routes).length >= WD_MAX_ROUTES){
+      r = wdTellers.routes["overig"] || (wdTellers.routes["overig"] = { n: 0, f4: 0, f5: 0, ms: 0, traagste: 0 });
+    }else{
+      r = wdTellers.routes[naam] = { n: 0, f4: 0, f5: 0, ms: 0, traagste: 0 };
+    }
+  }
+  r.n += 1;
+  r.ms += Math.max(0, Math.round(duurMs));
+  if(duurMs > r.traagste) r.traagste = Math.round(duurMs);
 
   if(code >= 500){
     wdTellers.fout5xx += 1;
+    r.f5 += 1;
     // Is de fout al door de foutafhandelaar gemeld (met melding en stack),
     // dan hoeft hij hier niet nog een keer in het logboek.
     if(!res._wdAlGemeld){
@@ -11657,12 +11722,52 @@ function wdVerzoekKlaar(req, res, duurMs){
     }
   }else if(code >= 400){
     wdTellers.fout4xx += 1;
+    r.f4 += 1;
   }
 
   if(duurMs > WACHTER_TRAAG_MS){
     wdTellers.traag += 1;
     wdMeld({ type: "traag", ernst: "info", waar: waar, tekst: "Verzoek duurde " + Math.round(duurMs / 1000) + " seconden" });
   }
+
+  if(!wdTellers.traagsteVerzoek || duurMs > wdTellers.traagsteVerzoek.ms){
+    wdTellers.traagsteVerzoek = { waar: naam, ms: Math.round(duurMs), tijd: new Date().toISOString() };
+  }
+}
+
+/* ---------------- AI en mail meetellen ----------------
+   De bestaande functies blijven precies hetzelfde werken; er komt alleen een
+   teller omheen. Zo hoeft er nergens anders in server.js iets te wijzigen. */
+
+if(typeof callOpenAI === "function"){
+  const wdOrigCallOpenAI = callOpenAI;
+  callOpenAI = async function(){
+    const start = Date.now();
+    wdTellers.aiAanroepen += 1;
+    try{
+      const uit = await wdOrigCallOpenAI.apply(this, arguments);
+      wdTellers.aiMs += (Date.now() - start);
+      return uit;
+    }catch(e){
+      wdTellers.aiMs += (Date.now() - start);
+      wdTellers.aiFouten += 1;
+      throw e;
+    }
+  };
+}
+
+if(typeof sendResendEmail === "function"){
+  const wdOrigSendResendEmail = sendResendEmail;
+  sendResendEmail = async function(){
+    try{
+      const uit = await wdOrigSendResendEmail.apply(this, arguments);
+      wdTellers.mailVerstuurd += 1;
+      return uit;
+    }catch(e){
+      wdTellers.mailMislukt += 1;
+      throw e;
+    }
+  };
 }
 
 /* ---------------- herstelacties ----------------
@@ -11731,16 +11836,23 @@ async function wdProbeerOpnieuw(naam, functie, pogingen, wachtMs){
 
 /* ---------------- zelftest ---------------- */
 
+let wdLaatsteZelftest = null;
+
 async function wdZelftest(){
   if(!WACHTER_AAN) return;
+  const uitslag = { tijd: new Date().toISOString(), health: "onbekend", schijf: "onbekend", geheugenMb: 0 };
 
   // 1. Antwoordt de server zelf nog?
   try{
     const antwoord = await fetchWithTimeout("http://127.0.0.1:" + PORT + "/api/health", {}, 10000);
     if(!antwoord.ok){
+      uitslag.health = "status " + antwoord.status;
       wdMeld({ type: "zelftest", ernst: "kritiek", waar: "/api/health", tekst: "Eigen gezondheidscontrole gaf status " + antwoord.status });
+    }else{
+      uitslag.health = "goed";
     }
   }catch(e){
+    uitslag.health = "geen antwoord";
     wdMeld({ type: "zelftest", ernst: "kritiek", waar: "/api/health", tekst: "Eigen gezondheidscontrole antwoordde niet: " + (e && e.message ? e.message : e) });
   }
 
@@ -11750,6 +11862,7 @@ async function wdZelftest(){
     const maak = await wdHerstel("mapAanmaken");
     schijf = await wdHerstel("schijfTest");
     if(schijf.gelukt){
+      uitslag.schijf = "hersteld";
       wdTellers.herstelGelukt += 1;
       wdMeld({
         type: "schijf", ernst: "waarschuwing", waar: DATA_DIR,
@@ -11757,6 +11870,7 @@ async function wdZelftest(){
         hersteld: { actie: "mapAanmaken", gelukt: true }
       });
     }else{
+      uitslag.schijf = "niet beschrijfbaar";
       wdTellers.herstelMislukt += 1;
       wdMeld({
         type: "schijf", ernst: "kritiek", waar: DATA_DIR,
@@ -11764,16 +11878,20 @@ async function wdZelftest(){
         hersteld: { actie: "mapAanmaken", gelukt: false }
       });
     }
+  }else{
+    uitslag.schijf = "goed";
   }
 
   // 3. Geheugengebruik in de gaten houden.
   try{
     const rss = Math.round(process.memoryUsage().rss / (1024 * 1024));
+    uitslag.geheugenMb = rss;
     if(rss > 450){
       wdMeld({ type: "geheugen", ernst: "waarschuwing", waar: "proces", tekst: "Geheugengebruik is " + rss + " MB" });
     }
   }catch(e){}
 
+  wdLaatsteZelftest = uitslag;
   if(wdVuil) wdBewaarNu();
 }
 
@@ -11845,15 +11963,24 @@ function wdMagMailen(sleutel){
   return true;
 }
 
-async function wdMail(onderwerp, tekst){
-  if(!RESEND_API_KEY || !WACHTER_MAIL) return false;
+async function wdMail(onderwerp, tekst, bijlagen){
+  if(!RESEND_API_KEY){
+    wdConsoleError("WACHTER: geen RESEND_API_KEY, mail kon niet worden verstuurd");
+    return false;
+  }
+  if(!WACHTER_MAIL){
+    wdConsoleError("WACHTER: geen ontvanger ingesteld (WACHTER_MAIL), mail kon niet worden verstuurd");
+    return false;
+  }
   try{
-    await sendResendEmail({
+    const bericht = {
       to: WACHTER_MAIL,
       subject: onderwerp,
       text: tekst,
       html: "<pre style=\"font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;white-space:pre-wrap\">" + escHtmlServer(tekst) + "</pre>"
-    });
+    };
+    if(Array.isArray(bijlagen) && bijlagen.length) bericht.attachments = bijlagen;
+    await sendResendEmail(bericht);
     return true;
   }catch(e){
     wdConsoleError("WACHTER: mail versturen mislukt: " + (e && e.message ? e.message : e));
@@ -11880,101 +12007,656 @@ function wdDirecteMail(melding){
   wdMail("Salve wachter: kritieke fout (" + melding.type + ")", tekst).catch(() => {});
 }
 
-/* ---------------- dagrapport ---------------- */
+/* ==========================================================================
+   MOMENTOPNAME  -  wat staat er op dit moment in de server?
+   Alles achter een typeof-controle: ontbreekt een variabele, dan blijft het
+   veld gewoon leeg en gaat het rapport door.
+   ========================================================================== */
 
-function wdOverzichtTekst(){
-  const regels = [];
-  regels.push("Periode sinds: " + wdTellers.vanaf);
-  regels.push("Verzoeken: " + wdTellers.verzoeken + " | 4xx: " + wdTellers.fout4xx + " | 5xx: " + wdTellers.fout5xx + " | traag: " + wdTellers.traag);
-  regels.push("Automatisch hersteld: " + wdTellers.herstelGelukt + " | herstel mislukt: " + wdTellers.herstelMislukt);
-  regels.push("");
+function wdGetal(v){ return (typeof v === "number" && isFinite(v)) ? v : 0; }
 
-  const grens = Date.now() - 24 * 60 * 60 * 1000;
-  const recent = wdMeldingen.filter((m) => new Date(m.laatst).getTime() >= grens);
-  const gesorteerd = recent.slice().sort((a, b) => {
-    const rang = { kritiek: 0, waarschuwing: 1, info: 2 };
-    const verschil = (rang[a.ernst] || 3) - (rang[b.ernst] || 3);
-    return verschil !== 0 ? verschil : b.aantal - a.aantal;
-  }).slice(0, 25);
+function wdMomentopname(){
+  const s = {
+    tijd: new Date().toISOString(),
+    hotels: 0, ondernemers: 0, ondernemersActief: 0, ondernemersUitgelicht: 0,
+    ondernemersMetLogin: 0, wijzigingenInWacht: 0, scansTotaal: 0, stedenMetInhoud: 0,
+    chatGesprekken: 0, chatBerichten: 0, chatGesprekkenActief24u: 0,
+    wereldchatKamers: 0, wereldchatDeelnemers: 0,
+    directeLijnKamers: 0,
+    guesttalkCodes: 0, guesttalkActief: 0, guesttalkMinutenGebruikt: 0,
+    guesttalkMinutenBundel: 0, guesttalkAanvragenOpen: 0,
+    premiumAccounts: 0, pdfStudioDocumenten: 0, zzpAccounts: 0,
+    opzegTotaal: 0, opzegBevestigd: 0, opzegOpenstaand: 0,
+    vertaalcacheItems: 0, tekstcacheItems: 0, stedenInServer: 0
+  };
+  const extra = { hotelsPerStad: [], drukkeHotels: [], guesttalkTop: [], nieuweOpzeggingen: [] };
 
-  if(!gesorteerd.length){
-    regels.push("Geen meldingen in de afgelopen 24 uur.");
-    return regels.join("\n");
-  }
+  try{
+    if(typeof CITIES === "object" && CITIES) s.stedenInServer = Object.keys(CITIES).length;
+  }catch(e){}
 
-  regels.push("Meldingen afgelopen 24 uur (" + recent.length + " soorten):");
-  for(const m of gesorteerd){
-    regels.push("- [" + m.ernst + "] " + m.type + " | " + (m.waar || "-") + " | " + m.aantal + "x | laatst " + m.laatst);
-    regels.push("  " + m.tekst);
-    if(m.hersteld) regels.push("  herstelactie: " + m.hersteld.actie + " -> " + (m.hersteld.gelukt ? "gelukt" : "mislukt"));
-    if(m.stack) regels.push("  " + m.stack.split("\n").slice(0, 3).join(" | "));
-  }
-  return regels.join("\n");
+  try{
+    if(typeof merchants !== "undefined" && merchants && typeof merchants.forEach === "function"){
+      merchants.forEach((lijst, stad) => {
+        if(!Array.isArray(lijst)) return;
+        let hotelsHier = 0;
+        for(const m of lijst){
+          if(!m) continue;
+          s.ondernemers += 1;
+          if(m.active) s.ondernemersActief += 1;
+          if(m.subscribed) s.ondernemersUitgelicht += 1;
+          if(m.loginCount) s.ondernemersMetLogin += 1;
+          if(m.pending && Object.keys(m.pending).length) s.wijzigingenInWacht += 1;
+          if(m.categoryId === "hotels"){
+            s.hotels += 1;
+            hotelsHier += 1;
+            const scans = wdGetal(m.scans);
+            s.scansTotaal += scans;
+            if(scans > 0) extra.drukkeHotels.push({ naam: String(m.name || "?"), stad: String(stad || "?"), scans: scans });
+          }
+        }
+        if(lijst.length) s.stedenMetInhoud += 1;
+        if(hotelsHier) extra.hotelsPerStad.push({ stad: String(stad || "?"), hotels: hotelsHier, ondernemers: lijst.length });
+      });
+    }
+  }catch(e){}
+
+  try{
+    if(typeof hotelChats !== "undefined" && hotelChats && typeof hotelChats.forEach === "function"){
+      const grens = Date.now() - 24 * 60 * 60 * 1000;
+      hotelChats.forEach((h) => {
+        if(!h || !h.convos || typeof h.convos.forEach !== "function") return;
+        h.convos.forEach((c) => {
+          if(!c) return;
+          s.chatGesprekken += 1;
+          if(Array.isArray(c.messages)) s.chatBerichten += c.messages.length;
+          if(wdGetal(c.lastActive) >= grens) s.chatGesprekkenActief24u += 1;
+        });
+      });
+    }
+  }catch(e){}
+
+  try{
+    if(typeof rooms !== "undefined" && rooms && typeof rooms.forEach === "function"){
+      rooms.forEach((r) => {
+        if(!r) return;
+        s.wereldchatKamers += 1;
+        if(r.members && typeof r.members.size === "number") s.wereldchatDeelnemers += r.members.size;
+      });
+    }
+  }catch(e){}
+
+  try{
+    if(typeof directRooms !== "undefined" && directRooms && typeof directRooms.size === "number"){
+      s.directeLijnKamers = directRooms.size;
+    }
+  }catch(e){}
+
+  try{
+    if(typeof guesttalkUsage === "object" && guesttalkUsage && guesttalkUsage.codes){
+      const codes = guesttalkUsage.codes;
+      for(const sleutel of Object.keys(codes)){
+        const rec = codes[sleutel];
+        if(!rec) continue;
+        s.guesttalkCodes += 1;
+        if(rec.active !== false) s.guesttalkActief += 1;
+        const gebruikt = Math.round(wdGetal(rec.secondsUsed) / 60);
+        const bundel = wdGetal(rec.limitMinutes) + wdGetal(rec.bonusMinutes);
+        s.guesttalkMinutenGebruikt += gebruikt;
+        s.guesttalkMinutenBundel += bundel;
+        if(Array.isArray(rec.requests)) s.guesttalkAanvragenOpen += rec.requests.filter(v => v && !v.afgehandeld && !v.handled).length;
+        if(gebruikt > 0 || bundel > 0){
+          extra.guesttalkTop.push({
+            code: String(sleutel), label: String(rec.label || ""), tier: String(rec.tier || ""),
+            gebruikt: gebruikt, bundel: bundel, actief: rec.active !== false
+          });
+        }
+      }
+    }
+  }catch(e){}
+
+  try{
+    if(typeof premiumAccounts !== "undefined" && premiumAccounts && typeof premiumAccounts.size === "number") s.premiumAccounts = premiumAccounts.size;
+  }catch(e){}
+  try{
+    if(typeof pdfStudioDocuments !== "undefined" && pdfStudioDocuments && typeof pdfStudioDocuments.size === "number") s.pdfStudioDocumenten = pdfStudioDocuments.size;
+  }catch(e){}
+  try{
+    if(typeof zzpAccounts !== "undefined" && zzpAccounts && typeof zzpAccounts.size === "number") s.zzpAccounts = zzpAccounts.size;
+  }catch(e){}
+  try{
+    if(typeof cityCache !== "undefined" && cityCache && typeof cityCache.size === "number") s.vertaalcacheItems = cityCache.size;
+  }catch(e){}
+  try{
+    if(typeof guideTransCache !== "undefined" && guideTransCache && typeof guideTransCache.size === "number") s.tekstcacheItems = guideTransCache.size;
+  }catch(e){}
+
+  try{
+    if(typeof opzegVerzoeken !== "undefined" && Array.isArray(opzegVerzoeken)){
+      const grens = Date.now() - 24 * 60 * 60 * 1000;
+      s.opzegTotaal = opzegVerzoeken.length;
+      for(const v of opzegVerzoeken){
+        if(!v) continue;
+        if(v.bevestigd) s.opzegBevestigd += 1;
+        if(v.bevestigd && !v.afgehandeld) s.opzegOpenstaand += 1;
+        const t = Date.parse(v.t || "");
+        if(isFinite(t) && t >= grens){
+          extra.nieuweOpzeggingen.push({
+            product: String(v.product || "?"), bedrijf: String(v.bedrijf || v.naam || "?"),
+            bevestigd: !!v.bevestigd, tijd: String(v.t || "")
+          });
+        }
+      }
+    }
+  }catch(e){}
+
+  extra.drukkeHotels.sort((a, b) => b.scans - a.scans);
+  extra.hotelsPerStad.sort((a, b) => b.ondernemers - a.ondernemers);
+  extra.guesttalkTop.sort((a, b) => b.gebruikt - a.gebruikt);
+
+  return { stand: s, extra: extra };
 }
 
-async function wdDagrapport(handmatig){
-  if(!WACHTER_AAN) return { verstuurd: false, reden: "wachter staat uit" };
+/* Bestanden op de schijf, zodat je ziet of iets ongemerkt groeit. */
+function wdSchijfOverzicht(){
+  const uit = { bestanden: [], totaalBytes: 0 };
+  try{
+    const namen = fs.readdirSync(DATA_DIR);
+    for(const naam of namen){
+      try{
+        const info = fs.statSync(path.join(DATA_DIR, naam));
+        if(!info.isFile()) continue;
+        uit.bestanden.push({ naam: naam, bytes: info.size, gewijzigd: info.mtime.toISOString() });
+        uit.totaalBytes += info.size;
+      }catch(e){}
+    }
+  }catch(e){}
+  uit.bestanden.sort((a, b) => b.bytes - a.bytes);
+  return uit;
+}
 
-  const grens = Date.now() - 24 * 60 * 60 * 1000;
-  const recent = wdMeldingen.filter((m) => new Date(m.laatst).getTime() >= grens);
-  const isMaandag = new Date().getDay() === 1;
+/* ---------------- opmaakhulpjes ---------------- */
 
-  if(!handmatig && !recent.length && !WACHTER_ALTIJD_MAILEN && !isMaandag){
-    return { verstuurd: false, reden: "niets te melden" };
+function wdMv(aantal, enkelvoud, meervoud){
+  const n = wdGetal(aantal);
+  return n + " " + (n === 1 ? enkelvoud : meervoud);
+}
+
+function wdMb(bytes){
+  const b = wdGetal(bytes);
+  if(b >= 1024 * 1024) return (b / (1024 * 1024)).toFixed(1) + " MB";
+  if(b >= 1024) return Math.round(b / 1024) + " kB";
+  return b + " B";
+}
+
+function wdDuur(ms){
+  const sec = Math.floor(wdGetal(ms) / 1000);
+  const d = Math.floor(sec / 86400);
+  const u = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if(d > 0) return d + " dagen, " + u + " uur";
+  if(u > 0) return u + " uur, " + m + " minuten";
+  return m + " minuten";
+}
+
+function wdVerschil(nu, eerder){
+  if(typeof eerder !== "number") return "";
+  const d = wdGetal(nu) - eerder;
+  if(d === 0) return " (gelijk)";
+  return d > 0 ? " (+" + d + ")" : " (" + d + ")";
+}
+
+function wdNlDatum(){
+  try{
+    return new Intl.DateTimeFormat("nl-NL", {
+      timeZone: "Europe/Amsterdam", weekday: "long", day: "numeric", month: "long", year: "numeric"
+    }).format(new Date());
+  }catch(e){
+    return new Date().toLocaleDateString("nl-NL");
+  }
+}
+
+/* ==========================================================================
+   PDF  -  eenvoudige, ingebouwde PDF-maker. Geen extra bibliotheek nodig,
+   dus er verandert niets aan package.json en de deploy kan er niet op stuk.
+   Alleen tekst, lettertype Helvetica, automatische pagina's.
+   ========================================================================== */
+
+function wdPdfTekst(s){
+  let uit = "";
+  const ruw = String(s === undefined || s === null ? "" : s);
+  for(let i = 0; i < ruw.length; i++){
+    const c = ruw.charCodeAt(i);
+    const teken = ruw[i];
+    if(teken === "(" || teken === ")" || teken === "\\"){ uit += "\\" + teken; continue; }
+    if(c < 32){ uit += " "; continue; }
+    if(c > 255){ uit += "?"; continue; }
+    uit += teken;
+  }
+  return uit;
+}
+
+function wdPdfBreek(tekst, maxTekens){
+  const woorden = String(tekst === undefined || tekst === null ? "" : tekst).split(/\s+/).filter(Boolean);
+  const regels = [];
+  let huidig = "";
+  for(const w of woorden){
+    if(!huidig.length){ huidig = w; }
+    else if((huidig.length + 1 + w.length) <= maxTekens){ huidig += " " + w; }
+    else { regels.push(huidig); huidig = w; }
+    while(huidig.length > maxTekens){
+      regels.push(huidig.slice(0, maxTekens));
+      huidig = huidig.slice(maxTekens);
+    }
+  }
+  if(huidig.length) regels.push(huidig);
+  if(!regels.length) regels.push("");
+  return regels;
+}
+
+function wdPdfMaak(titel, blokken){
+  const BREEDTE = 595, HOOGTE = 842;
+  const MARGE = 40, ONDER = 46;
+  const GROOTTE = 9, REGELHOOGTE = 11.5;
+  const MAXTEKENS = 104;
+
+  const paginas = [];
+  let regels = [];
+  let y = HOOGTE - MARGE - 26;
+
+  function nieuwePagina(){
+    if(regels.length) paginas.push(regels);
+    regels = [];
+    y = HOOGTE - MARGE - 26;
   }
 
-  const ruw = wdOverzichtTekst();
-  let tekst = ruw;
+  function zet(soort, tekst){
+    const isKop = soort === "h1" || soort === "h2";
+    const hoogte = soort === "h1" ? REGELHOOGTE + 8 : (soort === "h2" ? REGELHOOGTE + 6 : REGELHOOGTE);
+    if(y - hoogte < ONDER) nieuwePagina();
+    y -= hoogte;
+    regels.push({
+      font: isKop ? "F2" : "F1",
+      grootte: soort === "h1" ? 13 : (soort === "h2" ? 10.5 : GROOTTE),
+      x: MARGE, y: y, tekst: tekst
+    });
+  }
 
-  if(WACHTER_AI && OPENAI_API_KEY && recent.length){
+  for(const blok of (blokken || [])){
+    const soort = (blok && blok.soort) ? blok.soort : "tekst";
+    if(soort === "leeg"){ if(y - REGELHOOGTE >= ONDER){ y -= REGELHOOGTE; } continue; }
+    if(soort === "paginabreuk"){ nieuwePagina(); continue; }
+    const stukken = wdPdfBreek(blok.tekst, soort === "h1" ? 72 : (soort === "h2" ? 88 : MAXTEKENS));
+    stukken.forEach((r, i) => zet(soort, (i === 0 ? "" : "   ") + r));
+  }
+  if(regels.length) paginas.push(regels);
+  if(!paginas.length) paginas.push([]);
+
+  const objecten = [];
+  function obj(inhoud){ objecten.push(inhoud); return objecten.length; }
+
+  const catalogusNr = 1, pagesNr = 2, fontNr = 3, fontVetNr = 4;
+  objecten.push(null, null, null, null);
+
+  const paginaNrs = [];
+  paginas.forEach((paginaRegels, index) => {
+    let stroom = "";
+    for(const r of paginaRegels){
+      stroom += "BT /" + r.font + " " + r.grootte + " Tf 1 0 0 1 " + r.x.toFixed(2) + " " + r.y.toFixed(2) + " Tm (" + wdPdfTekst(r.tekst) + ") Tj ET\n";
+    }
+    stroom += "BT /F1 7.5 Tf 1 0 0 1 " + MARGE + " 28 Tm (" + wdPdfTekst(titel + "  |  pagina " + (index + 1) + " van " + paginas.length) + ") Tj ET\n";
+    const stroomNr = obj("<< /Length " + Buffer.byteLength(stroom, "latin1") + " >>\nstream\n" + stroom + "endstream");
+    const paginaNr = obj("<< /Type /Page /Parent " + pagesNr + " 0 R /MediaBox [0 0 " + BREEDTE + " " + HOOGTE + "] /Resources << /Font << /F1 " + fontNr + " 0 R /F2 " + fontVetNr + " 0 R >> >> /Contents " + stroomNr + " 0 R >>");
+    paginaNrs.push(paginaNr);
+  });
+
+  objecten[catalogusNr - 1] = "<< /Type /Catalog /Pages " + pagesNr + " 0 R >>";
+  objecten[pagesNr - 1] = "<< /Type /Pages /Count " + paginaNrs.length + " /Kids [" + paginaNrs.map(n => n + " 0 R").join(" ") + "] >>";
+  objecten[fontNr - 1] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>";
+  objecten[fontVetNr - 1] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>";
+
+  let pdf = "%PDF-1.4\n";
+  const posities = [];
+  objecten.forEach((inhoud, i) => {
+    posities.push(Buffer.byteLength(pdf, "latin1"));
+    pdf += (i + 1) + " 0 obj\n" + inhoud + "\nendobj\n";
+  });
+  const xrefPos = Buffer.byteLength(pdf, "latin1");
+  pdf += "xref\n0 " + (objecten.length + 1) + "\n0000000000 65535 f \n";
+  for(const p of posities){
+    pdf += String(p).padStart(10, "0") + " 00000 n \n";
+  }
+  pdf += "trailer\n<< /Size " + (objecten.length + 1) + " /Root " + catalogusNr + " 0 R >>\nstartxref\n" + xrefPos + "\n%%EOF\n";
+
+  return Buffer.from(pdf, "latin1");
+}
+
+/* ==========================================================================
+   HET RAPPORT
+   ========================================================================== */
+
+function wdMeldingen24(){
+  const grens = Date.now() - 24 * 60 * 60 * 1000;
+  return wdMeldingen.filter((m) => new Date(m.laatst).getTime() >= grens);
+}
+
+/* Bouwt het volledige rapport op als een lijst blokken. Diezelfde lijst wordt
+   gebruikt voor de PDF en (platgeslagen) voor de tekst in de mail. */
+function wdRapportBlokken(momentopname, schijf){
+  const B = [];
+  const kop = (t) => B.push({ soort: "h1", tekst: t });
+  const sub = (t) => B.push({ soort: "h2", tekst: t });
+  const r = (t) => B.push({ soort: "tekst", tekst: t });
+  const leeg = () => B.push({ soort: "leeg" });
+
+  const s = momentopname.stand;
+  const x = momentopname.extra;
+  const v = wdVorigeStand && wdVorigeStand.stand ? wdVorigeStand.stand : null;
+  const meldingen = wdMeldingen24();
+  const kritiek = meldingen.filter(m => m.ernst === "kritiek");
+  const waarschuwing = meldingen.filter(m => m.ernst === "waarschuwing");
+  const info = meldingen.filter(m => m.ernst === "info");
+
+  kop("Salve dagrapport - " + wdNlDatum());
+  r("Opgemaakt: " + new Date().toISOString() + " | Server draait al: " + wdDuur(Date.now() - wdGestartOp) + " | Node " + process.version);
+  r("Meetperiode van de cijfers: vanaf " + wdTellers.vanaf);
+  if(v) r("Vergeleken met de stand van: " + (wdVorigeStand.stand ? wdVorigeStand.tijd : "onbekend"));
+  else r("Dit is het eerste rapport, er is nog geen vorige stand om mee te vergelijken.");
+  leeg();
+
+  /* ---- In het kort ---- */
+  sub("In het kort");
+  if(!kritiek.length && !waarschuwing.length){
+    r("Er waren geen fouten of waarschuwingen in de afgelopen 24 uur. De server heeft " + wdTellers.verzoeken + " verzoeken afgehandeld.");
+  }else{
+    r("Aandacht nodig: " + wdMv(kritiek.length, "kritieke melding", "kritieke meldingen") + " en " + wdMv(waarschuwing.length, "waarschuwing", "waarschuwingen") + " in de afgelopen 24 uur.");
+    for(const m of kritiek.slice(0, 5)) r("  Kritiek: " + m.type + " bij " + (m.waar || "-") + " (" + ((typeof m.aantal24 === "number") ? m.aantal24 : m.aantal) + "x) - " + m.tekst);
+  }
+  r("Gasten: " + s.scansTotaal + " gidsopeningen in totaal" + (v ? wdVerschil(s.scansTotaal, v.scansTotaal) + " sinds het vorige rapport" : "") + ".");
+  r("Klanten: " + s.hotels + " hotels" + (v ? wdVerschil(s.hotels, v.hotels) : "") + ", " + s.ondernemers + " ondernemers" + (v ? wdVerschil(s.ondernemers, v.ondernemers) : "") + ", " + s.guesttalkActief + " actieve Guesttalk-codes" + (v ? wdVerschil(s.guesttalkActief, v.guesttalkActief) : "") + ".");
+  if(s.wijzigingenInWacht) r("Let op: " + wdMv(s.wijzigingenInWacht, "ondernemerswijziging staat", "ondernemerswijzigingen staan") + " klaar om vannacht om 06:00 live te gaan.");
+  if(s.guesttalkAanvragenOpen) r("Let op: " + wdMv(s.guesttalkAanvragenOpen, "openstaande Guesttalk-aanvraag", "openstaande Guesttalk-aanvragen") + " in het beheer.");
+  if(s.opzegOpenstaand) r("Let op: " + wdMv(s.opzegOpenstaand, "bevestigde opzegging is", "bevestigde opzeggingen zijn") + " nog niet afgehandeld.");
+  leeg();
+
+  /* ---- 1. Techniek ---- */
+  sub("1. Techniek");
+  r("Verzoeken: " + wdTellers.verzoeken + " | client-fouten (4xx): " + wdTellers.fout4xx + " | serverfouten (5xx): " + wdTellers.fout5xx + " | trager dan " + Math.round(WACHTER_TRAAG_MS / 1000) + " sec: " + wdTellers.traag);
+  r("Automatisch hersteld: " + wdTellers.herstelGelukt + " | herstel mislukt: " + wdTellers.herstelMislukt);
+  r("AI-aanroepen (OpenAI): " + wdTellers.aiAanroepen + " | daarvan mislukt: " + wdTellers.aiFouten + " | gemiddeld " + (wdTellers.aiAanroepen ? Math.round(wdTellers.aiMs / wdTellers.aiAanroepen) : 0) + " ms per aanroep");
+  r("Verstuurde mail vanuit de hele server: " + wdTellers.mailVerstuurd + " gelukt, " + wdTellers.mailMislukt + " mislukt");
+  if(wdLaatsteZelftest){
+    r("Laatste zelftest (" + wdLaatsteZelftest.tijd + "): gezondheidscontrole " + wdLaatsteZelftest.health + ", schijf " + wdLaatsteZelftest.schijf + ", geheugen " + wdLaatsteZelftest.geheugenMb + " MB");
+  }
+  try{
+    const mu = process.memoryUsage();
+    r("Geheugen nu: " + Math.round(mu.rss / (1024 * 1024)) + " MB werkgeheugen, " + Math.round(mu.heapUsed / (1024 * 1024)) + " MB in gebruik door JavaScript");
+  }catch(e){}
+  if(wdTellers.traagsteVerzoek){
+    r("Traagste verzoek deze periode: " + wdTellers.traagsteVerzoek.waar + " met " + wdTellers.traagsteVerzoek.ms + " ms op " + wdTellers.traagsteVerzoek.tijd);
+  }
+  leeg();
+
+  const routes = Object.keys(wdTellers.routes || {}).map(k => Object.assign({ naam: k }, wdTellers.routes[k]));
+  routes.sort((a, b) => b.n - a.n);
+  if(routes.length){
+    r("Drukste routes (aantal, gemiddelde tijd, traagste, fouten):");
+    for(const rt of routes.slice(0, 20)){
+      r("  " + rt.naam + " - " + rt.n + "x, gem. " + Math.round(rt.ms / Math.max(1, rt.n)) + " ms, traagst " + rt.traagste + " ms, 4xx " + rt.f4 + ", 5xx " + rt.f5);
+    }
+    const metFouten = routes.filter(rt => (rt.f4 + rt.f5) > 0).sort((a, b) => (b.f5 * 100 + b.f4) - (a.f5 * 100 + a.f4));
+    if(metFouten.length){
+      leeg();
+      r("Routes met fouten:");
+      for(const rt of metFouten.slice(0, 15)) r("  " + rt.naam + " - " + rt.f5 + " serverfouten, " + rt.f4 + " client-fouten op " + rt.n + " verzoeken");
+    }
+  }else{
+    r("Er zijn deze periode geen verzoeken geteld.");
+  }
+  leeg();
+
+  /* ---- 2. Gebruik ---- */
+  sub("2. Gebruik door gasten en hotels");
+  r("Gidsopeningen (QR-scans) totaal: " + s.scansTotaal + (v ? wdVerschil(s.scansTotaal, v.scansTotaal) : ""));
+  r("Gastenchats: " + wdMv(s.chatGesprekken, "gesprek", "gesprekken") + (v ? wdVerschil(s.chatGesprekken, v.chatGesprekken) : "") + ", " + wdMv(s.chatBerichten, "bericht", "berichten") + (v ? wdVerschil(s.chatBerichten, v.chatBerichten) : "") + ", " + s.chatGesprekkenActief24u + " actief in de laatste 24 uur");
+  r("Wereldchat: " + wdMv(s.wereldchatKamers, "kamer", "kamers") + " open, " + wdMv(s.wereldchatDeelnemers, "deelnemer", "deelnemers"));
+  r("Directe lijn: " + wdMv(s.directeLijnKamers, "kamer", "kamers") + (v ? wdVerschil(s.directeLijnKamers, v.directeLijnKamers) : ""));
+  r("Guesttalk: " + s.guesttalkMinutenGebruikt + " minuten gebruikt deze maand" + (v ? wdVerschil(s.guesttalkMinutenGebruikt, v.guesttalkMinutenGebruikt) : "") + " van " + s.guesttalkMinutenBundel + " minuten aan bundels");
+  r("Vertaalcache: " + s.vertaalcacheItems + " gids-items" + (v ? wdVerschil(s.vertaalcacheItems, v.vertaalcacheItems) : "") + ", " + s.tekstcacheItems + " losse teksten" + (v ? wdVerschil(s.tekstcacheItems, v.tekstcacheItems) : ""));
+  r("PDF Studio: " + wdMv(s.pdfStudioDocumenten, "document", "documenten") + (v ? wdVerschil(s.pdfStudioDocumenten, v.pdfStudioDocumenten) : "") + " | ZZP-module: " + wdMv(s.zzpAccounts, "account", "accounts") + (v ? wdVerschil(s.zzpAccounts, v.zzpAccounts) : ""));
+  leeg();
+  if(x.drukkeHotels.length){
+    r("Meest gescande hotels (totaal sinds de start):");
+    for(const h of x.drukkeHotels.slice(0, 15)) r("  " + h.scans + "x - " + h.naam + " (" + h.stad + ")");
+  }else{
+    r("Er is nog geen enkel hotel gescand.");
+  }
+  leeg();
+
+  /* ---- 3. Klanten ---- */
+  sub("3. Klanten en abonnementen");
+  r("Hotels: " + s.hotels + (v ? wdVerschil(s.hotels, v.hotels) : ""));
+  r("Ondernemers: " + s.ondernemers + (v ? wdVerschil(s.ondernemers, v.ondernemers) : "") + ", waarvan " + s.ondernemersActief + " online en " + s.ondernemersUitgelicht + " met een uitgelicht-abonnement" + (v ? wdVerschil(s.ondernemersUitgelicht, v.ondernemersUitgelicht) : ""));
+  r("Ondernemers die ooit hebben ingelogd: " + s.ondernemersMetLogin + (v ? wdVerschil(s.ondernemersMetLogin, v.ondernemersMetLogin) : "") + " van " + s.ondernemers);
+  r("Steden met inhoud: " + s.stedenMetInhoud + " van " + s.stedenInServer + " in de server");
+  r("Guesttalk-codes: " + s.guesttalkCodes + " totaal" + (v ? wdVerschil(s.guesttalkCodes, v.guesttalkCodes) : "") + ", " + s.guesttalkActief + " actief, " + wdMv(s.guesttalkAanvragenOpen, "openstaande aanvraag", "openstaande aanvragen"));
+  r("FormForge premium-accounts: " + s.premiumAccounts + (v ? wdVerschil(s.premiumAccounts, v.premiumAccounts) : ""));
+  r("Opzegverzoeken: " + s.opzegTotaal + " in het logboek, " + s.opzegBevestigd + " bevestigd, " + s.opzegOpenstaand + " nog af te handelen");
+  leeg();
+  if(x.guesttalkTop.length){
+    r("Guesttalk per klant (code, verbruik van bundel):");
+    for(const g of x.guesttalkTop.slice(0, 20)){
+      const pct = g.bundel ? Math.round((g.gebruikt / g.bundel) * 100) : 0;
+      r("  " + g.code + (g.label ? " (" + g.label + ")" : "") + " - " + g.gebruikt + " van " + g.bundel + " min (" + pct + "%), pakket " + g.tier + (g.actief ? "" : ", NIET actief"));
+    }
+  }
+  if(x.nieuweOpzeggingen.length){
+    leeg();
+    r("Opzegverzoeken van de afgelopen 24 uur:");
+    for(const o of x.nieuweOpzeggingen) r("  " + o.tijd + " - " + o.product + " - " + o.bedrijf + (o.bevestigd ? " (bevestigd)" : " (nog niet bevestigd)"));
+  }
+  leeg();
+
+  /* ---- 4. Wijzigingen ---- */
+  sub("4. Wat is er veranderd sinds het vorige rapport");
+  if(!v){
+    r("Er is nog geen vorige stand opgeslagen. Vanaf het volgende rapport staan de verschillen hier.");
+  }else{
+    const velden = [
+      ["Hotels", "hotels"], ["Ondernemers", "ondernemers"], ["Uitgelicht (betaald)", "ondernemersUitgelicht"],
+      ["Gidsopeningen", "scansTotaal"], ["Gastenchats", "chatGesprekken"], ["Chatberichten", "chatBerichten"],
+      ["Guesttalk-codes", "guesttalkCodes"], ["Guesttalk-minuten gebruikt", "guesttalkMinutenGebruikt"],
+      ["Premium-accounts", "premiumAccounts"], ["PDF Studio documenten", "pdfStudioDocumenten"],
+      ["ZZP-accounts", "zzpAccounts"], ["Opzegverzoeken", "opzegTotaal"],
+      ["Vertaalcache items", "vertaalcacheItems"], ["Losse tekstvertalingen", "tekstcacheItems"]
+    ];
+    let iets = false;
+    for(const [label, sleutel] of velden){
+      const d = wdGetal(s[sleutel]) - wdGetal(v[sleutel]);
+      if(d !== 0){ iets = true; r("  " + label + ": " + (d > 0 ? "+" : "") + d + " (nu " + s[sleutel] + ")"); }
+    }
+    if(!iets) r("Er is niets veranderd in de aantallen sinds het vorige rapport.");
+  }
+  r("Ondernemerswijzigingen die nog in de wacht staan voor de publicatie van 06:00: " + s.wijzigingenInWacht);
+  leeg();
+
+  /* ---- 5. Meldingen ---- */
+  sub("5. Alle meldingen van de afgelopen 24 uur");
+  if(!meldingen.length){
+    r("Geen enkele melding. Er zijn geen crashes, fouten of trage verzoeken vastgelegd.");
+  }else{
+    r("Totaal " + meldingen.length + " soorten: " + kritiek.length + " kritiek, " + waarschuwing.length + " waarschuwing, " + info.length + " informatief.");
+    const rang = { kritiek: 0, waarschuwing: 1, info: 2 };
+    const gesorteerd = meldingen.slice().sort((a, b) => {
+      const d = (rang[a.ernst] === undefined ? 3 : rang[a.ernst]) - (rang[b.ernst] === undefined ? 3 : rang[b.ernst]);
+      return d !== 0 ? d : b.aantal - a.aantal;
+    });
+    for(const m of gesorteerd){
+      leeg();
+      const in24 = (typeof m.aantal24 === "number") ? m.aantal24 : m.aantal;
+      r("[" + m.ernst.toUpperCase() + "] " + m.type + " bij " + (m.waar || "-"));
+      r("  " + in24 + "x in deze meetperiode (" + m.aantal + "x sinds " + m.eerst + "), voor het laatst " + m.laatst);
+      r("  " + m.tekst);
+      if(m.hersteld) r("  Herstelactie: " + m.hersteld.actie + " -> " + (m.hersteld.gelukt ? "gelukt" : "mislukt"));
+      if(m.stack) r("  Technisch: " + m.stack.split("\n").slice(0, 3).join(" | "));
+    }
+  }
+  leeg();
+
+  /* ---- 6. Opslag ---- */
+  sub("6. Opslag op de schijf");
+  r("Datamap: " + DATA_DIR + " | totaal " + wdMb(schijf.totaalBytes) + " in " + schijf.bestanden.length + " bestanden");
+  for(const b of schijf.bestanden.slice(0, 25)){
+    r("  " + wdMb(b.bytes).padStart(9, " ") + "  " + b.naam + "  (gewijzigd " + b.gewijzigd + ")");
+  }
+  leeg();
+
+  /* ---- 7. Instellingen ---- */
+  sub("7. Instellingen van de wachter");
+  r("Rapport-uur: " + WACHTER_RAPPORT_UUR + ":00 NL-tijd | mail naar: " + (WACHTER_MAIL || "niet ingesteld"));
+  r("Dagelijks rapport ook zonder meldingen: " + (WACHTER_ALLEEN_BIJ_FOUTEN ? "nee" : "ja") + " | PDF-bijlage: " + (WACHTER_PDF ? "ja" : "nee") + " | AI-samenvatting: " + ((WACHTER_AI && OPENAI_API_KEY) ? "ja" : "nee"));
+  r("Grens voor traag verzoek: " + WACHTER_TRAAG_MS + " ms | herstart na crash: " + (WACHTER_HERSTART_BIJ_CRASH ? "ja" : "nee"));
+  r("Logboek: " + wdMeldingen.length + " meldingen bewaard, " + WD_BEWAARDAGEN + " dagen historie, maximaal " + WD_MAX_MELDINGEN + " regels.");
+
+  return B;
+}
+
+/* Blokken omzetten naar platte tekst voor de mail zelf. */
+function wdBlokkenNaarTekst(blokken){
+  const uit = [];
+  for(const b of blokken){
+    if(b.soort === "leeg" || b.soort === "paginabreuk"){ uit.push(""); continue; }
+    if(b.soort === "h1"){ uit.push(""); uit.push(String(b.tekst).toUpperCase()); uit.push("=".repeat(Math.min(80, String(b.tekst).length))); continue; }
+    if(b.soort === "h2"){ uit.push(""); uit.push(String(b.tekst)); uit.push("-".repeat(Math.min(80, String(b.tekst).length))); continue; }
+    uit.push(String(b.tekst));
+  }
+  return uit.join("\n");
+}
+
+/* De AI-samenvatting bovenaan de mail. Faalt dit, dan gaat het rapport
+   gewoon zonder samenvatting de deur uit. */
+async function wdSamenvatting(ruweTekst){
+  if(!WACHTER_AI || !OPENAI_API_KEY) return "";
+  try{
+    return await callOpenAI([
+      {
+        role: "system",
+        content: [
+          "Je bent de wachter van een Node.js/Express server (Salve, een meertalige hotelgids met chat, Guesttalk-vertaler, PDF Studio en een ondernemersportaal).",
+          "Je krijgt het volledige dagrapport. Schrijf er een korte samenvatting bij in het Nederlands voor de eigenaar, die geen ontwikkelaar is.",
+          "Regels: gewone taal, geen jargon zonder uitleg. Begin met of alles goed gaat of niet.",
+          "Zet daarna wat er echt aandacht nodig heeft, wat vanzelf is opgelost, en wat er opvalt aan het gebruik en de klanten.",
+          "Benoem een mogelijke oorzaak altijd als vermoeden, nooit als vaststaand feit.",
+          "Geef bij een terugkerende fout een voorstel voor wat er onderzocht kan worden, en zeg erbij dat dit met de hand gecontroleerd moet worden.",
+          "Verzin geen bestandsnamen, regelnummers, functienamen of cijfers die niet in het rapport staan.",
+          "Maximaal 350 woorden. Gebruik gewone streepjes, geen lange streepjes."
+        ].join(" ")
+      },
+      { role: "user", content: String(ruweTekst).slice(0, 24000) }
+    ], 0.2);
+  }catch(e){
+    wdConsoleError("WACHTER: samenvatting door het model mislukt, het rapport wordt zonder samenvatting gemaild: " + (e && e.message ? e.message : e));
+    return "";
+  }
+}
+
+/* Bouwt het rapport op en levert alles terug. Verstuurt niets.
+   Zo kan dezelfde functie gebruikt worden voor de dagelijkse mail en voor
+   het bekijken/downloaden via de beheerroute. */
+async function wdBouwRapport(){
+  const moment = wdMomentopname();
+  const schijf = wdSchijfOverzicht();
+  const blokken = wdRapportBlokken(moment, schijf);
+  const ruw = wdBlokkenNaarTekst(blokken);
+  const samenvatting = await wdSamenvatting(ruw);
+
+  const pdfBlokken = [];
+  if(samenvatting){
+    pdfBlokken.push({ soort: "h1", tekst: "Samenvatting" });
+    for(const regel of samenvatting.split("\n")){
+      if(!regel.trim()) pdfBlokken.push({ soort: "leeg" });
+      else pdfBlokken.push({ soort: "tekst", tekst: regel.trim() });
+    }
+    pdfBlokken.push({ soort: "paginabreuk" });
+  }
+  for(const b of blokken) pdfBlokken.push(b);
+
+  let pdf = null;
+  if(WACHTER_PDF){
     try{
-      const uitleg = await callOpenAI([
-        {
-          role: "system",
-          content: [
-            "Je bent de wachter van een Node.js/Express server (Salve, een meertalige hotelgids).",
-            "Je krijgt een ruw foutenlogboek. Schrijf een kort rapport in het Nederlands voor de eigenaar, die geen ontwikkelaar is.",
-            "Regels: gebruik gewone taal, geen jargon zonder uitleg. Groepeer meldingen die dezelfde oorzaak lijken te hebben.",
-            "Zet bovenaan wat er vandaag echt aandacht nodig heeft, en wat vanzelf is opgelost.",
-            "Benoem een mogelijke oorzaak altijd als vermoeden, nooit als vaststaand feit.",
-            "Geef bij een terugkerende fout een voorstel voor wat er onderzocht of aangepast kan worden, maar zeg er bij dat dit met de hand gecontroleerd moet worden.",
-            "Verzin geen bestandsnamen, regelnummers of functienamen die niet in het logboek staan.",
-            "Maximaal 400 woorden. Gebruik gewone streepjes, geen lange streepjes."
-          ].join(" ")
-        },
-        { role: "user", content: ruw }
-      ], 0.2);
-      if(uitleg) tekst = uitleg + "\n\n----- ruw logboek -----\n" + ruw;
+      pdf = wdPdfMaak("Salve dagrapport " + new Date().toISOString().slice(0, 10), pdfBlokken);
     }catch(e){
-      wdConsoleError("WACHTER: samenvatting door het model mislukt, ruwe versie wordt gemaild: " + (e && e.message ? e.message : e));
+      wdConsoleError("WACHTER: PDF maken mislukt, het rapport gaat als tekst mee: " + (e && e.message ? e.message : e));
     }
   }
 
-  const gelukt = await wdMail("Salve wachter: dagrapport " + new Date().toLocaleDateString("nl-NL"), tekst);
+  const tekst = (samenvatting ? (samenvatting + "\n\n" + "=".repeat(60) + "\n") : "") +
+    (pdf ? "Het volledige rapport zit als PDF bij deze mail.\n" : "") + ruw;
 
-  // tellers resetten voor de volgende periode
-  wdTellers = {
-    vanaf: new Date().toISOString(),
-    verzoeken: 0, fout4xx: 0, fout5xx: 0, traag: 0,
-    herstelGelukt: 0, herstelMislukt: 0
-  };
+  return { moment: moment, blokken: blokken, ruw: ruw, samenvatting: samenvatting, tekst: tekst, pdf: pdf };
+}
+
+/* Het echte dagrapport: bouwen, mailen, en pas daarna de tellers doorschuiven.
+   handmatig = true betekent: alleen kijken, niets resetten. */
+async function wdDagrapport(handmatig){
+  if(!WACHTER_AAN) return { verstuurd: false, reden: "wachter staat uit" };
+
+  const meldingen = wdMeldingen24();
+  if(!handmatig && WACHTER_ALLEEN_BIJ_FOUTEN && !meldingen.length){
+    return { verstuurd: false, reden: "niets te melden en WACHTER_ALLEEN_BIJ_FOUTEN staat aan" };
+  }
+
+  const rapport = await wdBouwRapport();
+
+  const bijlagen = [];
+  if(rapport.pdf){
+    bijlagen.push({
+      filename: "salve-dagrapport-" + new Date().toISOString().slice(0, 10) + ".pdf",
+      content: rapport.pdf.toString("base64")
+    });
+  }
+
+  const kritiek = meldingen.filter(m => m.ernst === "kritiek").length;
+  const onderwerp = "Salve dagrapport " + new Date().toLocaleDateString("nl-NL") +
+    (kritiek ? (" - " + kritiek + " kritieke melding" + (kritiek === 1 ? "" : "en")) : " - alles in orde");
+
+  const gelukt = await wdMail(onderwerp, rapport.tekst, bijlagen);
+
+  if(handmatig){
+    return { verstuurd: gelukt, handmatig: true, meldingen: meldingen.length, paginaBytes: rapport.pdf ? rapport.pdf.length : 0 };
+  }
+
+  /* De stand van vandaag wordt de vergelijkingsbasis voor morgen. Dit gebeurt
+     ook als de mail mislukte, anders zou het verschil morgen over twee dagen
+     gaan zonder dat dat ergens uit blijkt. */
+  wdVorigeStand = { tijd: new Date().toISOString(), stand: rapport.moment.stand };
+
+  /* De tellers gaan alleen op nul als de mail echt verstuurd is. Mislukt de
+     mail, dan blijven de cijfers staan en zitten ze morgen alsnog in het
+     rapport, met de juiste meetperiode erbij. */
+  if(gelukt){
+    wdTellers = wdNieuweTellers();
+    for(const m of wdMeldingen) m.aantal24 = 0;
+  }
+
   wdBewaarNu();
-  return { verstuurd: gelukt, meldingen: recent.length };
+  return { verstuurd: gelukt, meldingen: meldingen.length, pdfBytes: rapport.pdf ? rapport.pdf.length : 0 };
 }
 
 /* Elke minuut kijken of het tijd is voor het dagrapport (Nederlandse tijd,
-   dus zomer- en wintertijd gaan vanzelf goed). */
+   dus zomer- en wintertijd gaan vanzelf goed). hourCycle h23 zodat middernacht
+   als 0 wordt gelezen en niet als 24. */
 function wdRapportKlok(){
   if(!WACHTER_AAN) return;
   try{
     const nl = new Intl.DateTimeFormat("nl-NL", {
       timeZone: "Europe/Amsterdam",
-      year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hour12: false
+      year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23"
     }).formatToParts(new Date());
     const deel = {};
     for(const p of nl.parts) deel[p.type] = p.value;
     const dag = deel.year + "-" + deel.month + "-" + deel.day;
-    const uur = Number(deel.hour);
+    const uur = Number(deel.hour) % 24;
     if(uur === WACHTER_RAPPORT_UUR && wdLaatsteRapportDag !== dag){
       wdLaatsteRapportDag = dag;
       wdBewaarNu();
@@ -11995,17 +12677,38 @@ app.get("/api/wachter/log", (req, res) => {
     aan: WACHTER_AAN,
     mailNaar: WACHTER_MAIL,
     aiSamenvatting: WACHTER_AI && !!OPENAI_API_KEY,
+    pdfBijlage: WACHTER_PDF,
+    elkeDag: !WACHTER_ALLEEN_BIJ_FOUTEN,
+    rapportUur: WACHTER_RAPPORT_UUR,
+    laatsteRapportDag: wdLaatsteRapportDag,
     tellers: wdTellers,
+    laatsteZelftest: wdLaatsteZelftest,
+    vorigeStand: wdVorigeStand,
     meldingen: wdMeldingen.slice(-200).reverse()
   });
 });
 
+/* Rapport nu maken. Zonder parameters wordt het gemaild.
+   Met &download=1 krijg je de PDF meteen in de browser en gaat er geen mail.
+   Met &tekst=1 zie je de platte tekst. In alle gevallen worden de tellers
+   NIET gereset, want dit is bedoeld om even te kijken. */
 app.get("/api/wachter/rapport", async (req, res) => {
   res.set("Cache-Control", "no-store");
   const ip = clientIp(req);
   if(rateLimited("wachter", ip, 60, 5 * 60 * 1000)) return jsonError(res, 429, "Te veel verzoeken");
   if(!guesttalkAuthOk(req.query.adminPass)) return jsonError(res, 403, "Geen toegang");
   try{
+    if(String(req.query.download || "") === "1" || String(req.query.tekst || "") === "1"){
+      const rapport = await wdBouwRapport();
+      if(String(req.query.tekst || "") === "1"){
+        res.set("Content-Type", "text/plain; charset=utf-8");
+        return res.send(rapport.tekst);
+      }
+      if(!rapport.pdf) return jsonError(res, 500, "PDF maken lukte niet");
+      res.set("Content-Type", "application/pdf");
+      res.set("Content-Disposition", "inline; filename=\"salve-dagrapport-" + new Date().toISOString().slice(0, 10) + ".pdf\"");
+      return res.send(rapport.pdf);
+    }
     const uitkomst = await wdDagrapport(true);
     res.json({ ok: true, uitkomst: uitkomst });
   }catch(e){
@@ -12032,7 +12735,10 @@ if(WACHTER_AAN){
   setInterval(() => { wdControleerBestanden().catch(() => {}); }, 60 * 60 * 1000);
   setInterval(wdRapportKlok, 60 * 1000);
   setTimeout(() => { wdZelftest().catch(() => {}); }, 60 * 1000);
-  wdConsoleLog("Wachter actief. Meldingen gaan naar: " + (WACHTER_MAIL || "geen adres ingesteld") + " | AI-samenvatting: " + (WACHTER_AI && OPENAI_API_KEY ? "ja" : "nee"));
+  wdConsoleLog("Wachter actief. Dagrapport om " + WACHTER_RAPPORT_UUR + ":00 NL-tijd naar: " + (WACHTER_MAIL || "geen adres ingesteld") +
+    " | elke dag: " + (WACHTER_ALLEEN_BIJ_FOUTEN ? "nee" : "ja") +
+    " | PDF: " + (WACHTER_PDF ? "ja" : "nee") +
+    " | AI-samenvatting: " + (WACHTER_AI && OPENAI_API_KEY ? "ja" : "nee"));
 }else{
   wdConsoleLog("Wachter staat uit (WACHTER_AAN=0).");
 }
