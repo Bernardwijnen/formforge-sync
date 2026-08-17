@@ -5649,6 +5649,7 @@ function saveRooms(){
       data[code] = {
         code: room.code,
         createdAt: room.createdAt,
+        naam: room.naam || "",
         hostName: room.hostName || "",
         hostLang: room.hostLang || "en",
         freeMode: !!room.freeMode,
@@ -5678,6 +5679,7 @@ function loadRooms(){
         code: r.code || code,
         createdAt: r.createdAt || Date.now(),
         lastActive: Date.now(),
+        naam: r.naam || "",
         hostName: r.hostName || "",
         hostLang: r.hostLang || "en",
         freeMode: !!r.freeMode,
@@ -9997,6 +9999,27 @@ function pruneBans(room){
    met een betaalde kamer, waar de host zelf een bewaartijd kiest. */
 const WORLDCHAT_GRATIS_REGELS = Math.max(1, Number(process.env.WORLDCHAT_GRATIS_REGELS || 1));
 
+/* Hoeveel gratis kamers mag iemand tegelijk open hebben staan? Met credits of
+   een abonnement is er geen grens: elke vertaalde regel wordt dan betaald.
+     WORLDCHAT_GRATIS_MAX_KAMERS   standaard 3
+     WORLDCHAT_GRATIS_KAMER_UREN   een stille gratis kamer wordt na zoveel uur
+                                   opgeruimd, zodat de teller weer ruimte geeft
+                                   (standaard 24; er wordt in zo'n kamer toch
+                                   niets bewaard) */
+const WORLDCHAT_GRATIS_MAX_KAMERS = Math.max(1, Number(process.env.WORLDCHAT_GRATIS_MAX_KAMERS || 3));
+const WORLDCHAT_GRATIS_KAMER_UREN = Math.max(1, Number(process.env.WORLDCHAT_GRATIS_KAMER_UREN || 24));
+
+/* Hoeveel gratis kamers staan er nu open op naam van dit adres? */
+function wcGratisKamersVan(ip){
+  let n = 0;
+  try{
+    for(const r of rooms.values()){
+      if(r && r.freeMode && r.makerIp && r.makerIp === ip) n++;
+    }
+  }catch(e){}
+  return n;
+}
+
 function pruneRoom(room){
   /* Gratis kamer: geen geschiedenis. Alleen het laatste bericht blijft staan,
      dus een regel verdwijnt zodra er een nieuwe wordt verstuurd. */
@@ -10257,6 +10280,19 @@ app.post("/api/room/create", (req, res) => {
   const name = String(req.body && req.body.name ? req.body.name : "").trim().slice(0,40);
   const lang = String(req.body && req.body.lang ? req.body.lang : "").trim() || "en";
   if(!name) return jsonError(res, 400, "Naam ontbreekt");
+
+  /* Gratis kamers zijn begrensd. Wie betaalt mag er zoveel openen als hij wil,
+     want daar staat verbruik tegenover. */
+  const makerIp = clientIp(req);
+  if(wantFree){
+    const open = wcGratisKamersVan(makerIp);
+    if(open >= WORLDCHAT_GRATIS_MAX_KAMERS){
+      return res.status(403).json({
+        error: "Je hebt al " + open + " gratis kamers open staan. Sluit er een of neem credits.",
+        gratisMax: WORLDCHAT_GRATIS_MAX_KAMERS
+      });
+    }
+  }
   const code = makeRoomCode();
   const memberId = "m_" + Date.now() + "_" + Math.random().toString(36).slice(2,8);
   // Bewaartijd voor berichten: 0 = permanent, anders milliseconden tot verdwijnen.
@@ -10266,12 +10302,16 @@ app.post("/api/room/create", (req, res) => {
     const sec = parseInt(rawTtl, 10);
     if(!isNaN(sec) && sec > 0){ msgTtlMs = Math.min(sec, 30*24*60*60) * 1000; } // max 30 dagen
   }
-  const room = { code, createdAt: Date.now(), lastActive: Date.now(), members: new Map(), messages: [], translationsToday: 0, translationDay: roomToday(), hostName: name, hostLang: lang, hostKey: gate.accountKey || "", hostEmail: gate.email || "", banned: new Set(), banAt: new Map(), persistent: true, freeMode: wantFree, roomLang: wantFree ? lang : "", msgTtlMs: msgTtlMs };
+  /* De host mag zijn kamer een naam geven, bijvoorbeeld "Receptie" of
+     "Familie". Laat hij het leeg, dan blijft de kamercode de aanduiding. */
+  const kamerNaam = String((req.body && req.body.roomName) || "").trim().slice(0, 60);
+
+  const room = { naam: kamerNaam, code, createdAt: Date.now(), lastActive: Date.now(), members: new Map(), messages: [], translationsToday: 0, translationDay: roomToday(), hostName: name, hostLang: lang, hostKey: gate.accountKey || "", hostEmail: gate.email || "", banned: new Set(), banAt: new Map(), persistent: true, freeMode: wantFree, roomLang: wantFree ? lang : "", msgTtlMs: msgTtlMs, makerIp: makerIp };
   room.members.set(memberId, { id: memberId, name, lang, lastSeen: Date.now(), isHost: true });
   rooms.set(code, room);
   saveRooms();
   const reconnect = issueReconnectToken(code, name, lang, true);
-  res.json({ ok:true, code, memberId, name, lang, isHost:true, reconnect });
+  res.json({ ok:true, code, memberId, name, lang, isHost:true, reconnect, naam: room.naam || "", freeMode: !!room.freeMode });
 });
 
 // Kamer joinen
@@ -10322,7 +10362,7 @@ app.post("/api/room/join", (req, res) => {
   room.members.set(memberId, { id: memberId, name, lang: useLang, lastSeen: Date.now() });
   room.lastActive = Date.now();
   const reconnect = issueReconnectToken(code, name, useLang, false);
-  res.json({ ok:true, code, memberId, name, lang: useLang, reconnect, freeMode: !!room.freeMode });
+  res.json({ ok:true, code, memberId, name, lang: useLang, reconnect, freeMode: !!room.freeMode, naam: room.naam || "" });
 });
 
 // Bestaand lid herverbindt (na korte stilte of herstart) zonder nieuwe uitnodiging
@@ -10354,7 +10394,7 @@ app.post("/api/room/rejoin", (req, res) => {
   const isHost = !!r.isHost;
   room.members.set(memberId, { id: memberId, name: r.name, lang: r.lang, lastSeen: Date.now(), isHost });
   room.lastActive = Date.now();
-  res.json({ ok:true, code: r.code, memberId, name: r.name, lang: r.lang, isHost });
+  res.json({ ok:true, code: r.code, memberId, name: r.name, lang: r.lang, isHost, naam: room.naam || "", freeMode: !!room.freeMode });
 });
 
 // Host maakt een eenmalige / verlopende uitnodiging aan
@@ -10516,6 +10556,7 @@ app.post("/api/room/poll", async (req, res) => {
     members,
     iAmHost,
     myId: member.id,
+    naam: room.naam || "",
     freeMode: !!room.freeMode,
     msgTtlMs: room.msgTtlMs || 0,
     limitReached,
@@ -10526,6 +10567,22 @@ app.post("/api/room/poll", async (req, res) => {
     dailyLimit: ROOM_DAILY_TRANSLATION_LIMIT,
     translationsLeft: roomTranslationsLeft(room)
   });
+});
+
+/* De host geeft de kamer een naam of wijzigt hem. Leeg maken mag ook: dan
+   is de kamercode weer de aanduiding. */
+app.post("/api/room/set-name", (req, res) => {
+  const code = String(req.body && req.body.code ? req.body.code : "").trim();
+  const memberId = String(req.body && req.body.memberId ? req.body.memberId : "").trim();
+  const naam = String(req.body && req.body.naam ? req.body.naam : "").trim().slice(0, 60);
+  const room = rooms.get(code);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden");
+  const me = room.members.get(memberId);
+  if(!me || !me.isHost) return jsonError(res, 403, "Alleen de host kan de naam wijzigen.");
+  room.naam = naam;
+  room.lastActive = Date.now();
+  saveRooms();
+  res.json({ ok:true, naam: room.naam });
 });
 
 // Host verwijdert een ander lid uit de kamer
