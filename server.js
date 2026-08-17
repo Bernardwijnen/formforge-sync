@@ -5862,6 +5862,286 @@ function requireChatTegoed(req){
   return { ok:true, accountKey: gebruikt, email: kaal, plan: plan, saldo: saldo };
 }
 
+/* ==========================================================================
+   WORLDCHAT: PINCODE AANVRAGEN
+   --------------------------------------------------------------------------
+   Wie meerdere talen in een kamer wil, heeft een account nodig. Dat account
+   bestaat uit een e-mailadres plus een pincode van zes cijfers. Deze route
+   maakt dat account aan (of vindt het terug) en mailt de pincode.
+
+   Meertalig chatten kan pas nadat er betaald is. De mail legt dat uit en
+   bevat de knop naar de app, waar credits of een abonnement gekocht worden.
+
+   Instellingen (Render Environment Variables, allemaal optioneel):
+     WORLDCHAT_START_CREDITS   gratis credits bij een nieuw account (standaard 0)
+                               Meertalig chatten kan pas na betalen, dus dit
+                               staat bewust uit. Zet er een getal neer als je
+                               later toch een proef wilt weggeven.
+     WORLDCHAT_URL             adres van de chatpagina, voor de knop in de mail
+   ========================================================================== */
+
+const WORLDCHAT_START_CREDITS = Math.max(0, Number(process.env.WORLDCHAT_START_CREDITS || 0));
+const WORLDCHAT_URL = String(process.env.WORLDCHAT_URL || "https://formforge.nl/worldchat/").trim();
+
+function wcPinMail(pin, credits, nieuw, taal){
+  const nl = String(taal || "").toLowerCase() === "nl";
+  const t = nl ? {
+    titel: nieuw ? "Je Worldchat-account staat klaar" : "Je pincode voor Worldchat",
+    hoi: "Beste,",
+    intro: nieuw
+      ? "Je account voor Worldchat United is aangemaakt. Met je e-mailadres en de pincode hieronder open je een kamer waarin iedereen in zijn eigen taal leest."
+      : "Hier is de pincode die bij je e-mailadres hoort. Gebruik hem samen met je e-mailadres om een kamer te openen.",
+    pinkop: "Je pincode",
+    proef: credits > 0
+      ? ("Je hebt nog " + credits + " credits staan. Elke vertaalde regel kost een credit; een regel die al vertaald is, is gratis.")
+      : "Om in meerdere talen te chatten heb je credits of een abonnement nodig. Zonder dat werkt alleen een kamer in een taal, en die is gratis.",
+    koop: "Credits koop je in de app zelf, bij Kamer openen. Je kunt daar ook kiezen voor een Unlimited-abonnement, dan is vertalen onbeperkt.",
+    knop: "Worldchat openen",
+    slot: "Met vriendelijke groet,\nFormForge",
+    opzeg: "Een abonnement opzeggen kan altijd via formforge.nl/abonnement-opzeggen"
+  } : {
+    titel: nieuw ? "Your Worldchat account is ready" : "Your Worldchat pin code",
+    hoi: "Hello,",
+    intro: nieuw
+      ? "Your account for Worldchat United has been created. Use your e-mail address and the pin code below to open a room where everyone reads in their own language."
+      : "Here is the pin code that belongs to your e-mail address. Use it together with your e-mail address to open a room.",
+    pinkop: "Your pin code",
+    proef: credits > 0
+      ? ("You have " + credits + " credits left. Every translated line costs one credit; a line that was already translated is free.")
+      : "To chat in several languages you need credits or a subscription. Without those, only a one-language room works, and that one is free.",
+    koop: "You can buy credits in the app itself, under Open a room. You can also choose an Unlimited subscription there, which makes translating unlimited.",
+    knop: "Open Worldchat",
+    slot: "Kind regards,\nFormForge",
+    opzeg: "You can cancel a subscription at any time via formforge.nl/abonnement-opzeggen"
+  };
+
+  const tekst = t.hoi + "\n\n" + t.intro + "\n\n" + t.pinkop + ": " + pin + "\n\n" +
+    t.proef + "\n\n" + t.koop + "\n\n" + WORLDCHAT_URL + "\n\n" + t.slot + "\n\n" + t.opzeg;
+
+  const html =
+    '<div style="margin:0;padding:0;background:#eef1f6">' +
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef1f6;padding:24px 0"><tr><td align="center">' +
+    '<table role="presentation" width="560" cellpadding="0" cellspacing="0" style="width:560px;max-width:560px;background:#fff;border-radius:16px;overflow:hidden;font-family:Arial,Helvetica,sans-serif">' +
+    '<tr><td style="background:#1e2d4f;padding:30px 24px;text-align:center">' +
+      '<div style="font-size:34px;line-height:1;color:#fff">&#9812;</div>' +
+      '<div style="font-family:Georgia,serif;font-size:23px;letter-spacing:2px;color:#fff;font-weight:700;margin-top:8px">Worldchat United</div>' +
+      '<div style="height:2px;width:56px;background:#c9a24b;margin:14px auto 0"></div>' +
+    '</td></tr>' +
+    '<tr><td style="padding:28px 32px 8px">' +
+      '<h2 style="font-family:Georgia,serif;font-size:19px;color:#1e2d4f;margin:0 0 14px">' + escHtmlServer(t.titel) + '</h2>' +
+      '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 8px">' + escHtmlServer(t.hoi) + '</p>' +
+      '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 18px">' + escHtmlServer(t.intro) + '</p>' +
+    '</td></tr>' +
+    '<tr><td style="padding:0 32px">' +
+      '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#1e2d4f;border-radius:12px"><tr><td style="padding:18px;text-align:center">' +
+        '<div style="font-size:11.5px;letter-spacing:2px;color:#d8b866;font-weight:700;text-transform:uppercase">' + escHtmlServer(t.pinkop) + '</div>' +
+        '<div style="font-size:32px;letter-spacing:8px;color:#fff;font-weight:700;margin-top:6px">' + escHtmlServer(pin) + '</div>' +
+      '</td></tr></table>' +
+    '</td></tr>' +
+    '<tr><td style="padding:18px 32px 4px">' +
+      '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 14px">' + escHtmlServer(t.proef) + '</p>' +
+      '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 18px">' + escHtmlServer(t.koop) + '</p>' +
+      '<table role="presentation" cellpadding="0" cellspacing="0" align="center"><tr><td style="background:#c9a24b;border-radius:9px">' +
+        '<a href="' + escHtmlServer(WORLDCHAT_URL) + '" style="display:inline-block;padding:13px 30px;font-size:15px;font-weight:700;color:#1e2d4f;text-decoration:none">' + escHtmlServer(t.knop) + '</a>' +
+      '</td></tr></table>' +
+    '</td></tr>' +
+    '<tr><td style="padding:22px 32px 26px">' +
+      '<p style="font-size:12.5px;color:#667085;margin:0;text-align:center">' + escHtmlServer(t.opzeg) + '</p>' +
+    '</td></tr>' +
+    '<tr><td style="background:#1e2d4f;padding:14px;text-align:center;border-top:3px solid #c9a24b">' +
+      '<div style="font-size:12px;color:#dfe4ee">Worldchat United &middot; powered by FormForge</div>' +
+    '</td></tr>' +
+    '</table></td></tr></table></div>';
+
+  return { tekst: tekst, html: html, onderwerp: t.titel };
+}
+
+/* ==========================================================================
+   WORLDCHAT: DE KNOPTEKSTEN IN DE TAAL VAN DE BEZOEKER
+   --------------------------------------------------------------------------
+   De vaste teksten van de app (knoppen, labels, meldingen) staan hieronder in
+   het Engels. Kiest een bezoeker een andere taal, dan gaan ze EEN KEER door de
+   vertaler en daarna staan ze permanent op de schijf in salve_guide_trans.json,
+   dezelfde cache die de stadsgids gebruikt.
+
+   Dus: de eerste bezoeker in het Japans wacht kort, alle Japanners daarna
+   krijgen het meteen, ook na een herstart of een nieuwe deploy. Verander je
+   later een tekst, dan wordt alleen die ene regel opnieuw vertaald, want de
+   cachesleutel is de brontekst zelf.
+
+   Nederlands en Engels zitten al in het HTML-bestand zelf en komen hier dus
+   nooit langs; die kosten helemaal niets.
+   ========================================================================== */
+
+const WC_UI = {
+  joinKop: "Join the room",
+  join: "Join",
+  naam: "Your name",
+  taal: "Your language",
+  openKop: "Open a room",
+  open: "Open room",
+  vertaald: "Everyone their own language",
+  vrij: "One language",
+  uitlegVertaald: "Messages are translated for every reader. This needs credits or a subscription.",
+  uitlegVrij: "No translation, everyone types in the same language. Free.",
+  mail: "Your e-mail",
+  pin: "Pin code",
+  bericht: "Message",
+  mensen: "In this room",
+  uitnodigen: "Invite someone",
+  taalWijzig: "Change my language",
+  verlaat: "Leave room",
+  persoon: "person",
+  personen: "people",
+  abo: "Buy credits",
+  mailNodig: "Fill in your e-mail address.",
+  aboBezig: "Opening payment page...",
+  aboKlaar: "Your credits are ready. This is your pin code, keep it safe:",
+  kiesPakket: "Choose a package",
+  credits: "credits",
+  creditsOp: "Credits used up. Messages still arrive, in the original language.",
+  creditsOver: "credits left",
+  opzeg: "Cancel subscription",
+  vrijNotitie: "Messages in this room are not translated. Everyone reads what was typed. Want everyone to read in their own language? Then the room needs credits.",
+  bewaarKop: "Keep messages for",
+  vrijBewaar: "Free rooms keep nothing: a line disappears as soon as the next message is sent.",
+  verdwijntVrij: "Only the last message stays on screen.",
+  min: "minutes",
+  uur: "hour",
+  uren: "hours",
+  pinVraag: "Send me a pin code",
+  pinBezig: "Sending...",
+  pinGestuurd: "Check your mail. Your pin code is on its way. After that, buy credits to start a multilingual room.",
+  deel: "Share link",
+  nieuwLink: "New link",
+  bewaar: "Save",
+  eenmalig: "This link works once, for one person.",
+  leegChat: "No messages yet. Say hello.",
+  host: "host",
+  verwijder: "Remove",
+  gekopieerd: "Link copied",
+  vertaald2: "translated",
+  verdwijnt: "Messages disappear after",
+  limiet: "Translation limit for today reached. Messages still arrive, in the original language.",
+  weg: "You are no longer in this room.",
+  naamNodig: "Fill in your name.",
+  inlogNodig: "Fill in your e-mail and pin code.",
+  drukte: "Too many requests. Wait a moment."
+};
+
+/* De samengestelde vertaling per taal, zodat we niet elke keer 53 regels
+   hoeven op te halen uit de cache. */
+const wcUiKlaar = new Map();
+
+app.get("/api/worldchat/ui", async (req, res) => {
+  res.set("Cache-Control", "public, max-age=86400");
+  const lang = String((req.query && req.query.lang) || "").trim().toLowerCase();
+  if(!lang || !LANG_NAMES[lang]) return jsonError(res, 400, "Onbekende taal");
+  if(lang === "en") return res.json({ ok: true, lang: lang, teksten: WC_UI });
+  if(wcUiKlaar.has(lang)) return res.json({ ok: true, lang: lang, teksten: wcUiKlaar.get(lang), uitCache: true });
+
+  if(rateLimited("wcui", clientIp(req), 60, 60 * 60 * 1000)){
+    return res.status(429).json({ error: "Te veel verzoeken" });
+  }
+
+  try{
+    const sleutels = Object.keys(WC_UI);
+    /* In kleine groepjes tegelijk, net als bij de stadsgids, zodat we niet
+       tegen de snelheidslimiet van OpenAI aanlopen. */
+    const waarden = await mapLimitWc(sleutels, 6, async (k) => {
+      try{ return await translateGuideText(WC_UI[k], "en", lang); }
+      catch(e){ return WC_UI[k]; }
+    });
+    const uit = {};
+    sleutels.forEach((k, i) => { uit[k] = waarden[i] || WC_UI[k]; });
+    wcUiKlaar.set(lang, uit);
+    return res.json({ ok: true, lang: lang, teksten: uit });
+  }catch(e){
+    console.error("Worldchat interfaceteksten mislukt:", (e && e.message) || e);
+    return res.json({ ok: true, lang: "en", teksten: WC_UI, terugval: true });
+  }
+});
+
+/* Kleine parallelbegrenzer, los van die in /api/city zodat dit blok op
+   zichzelf staat. */
+async function mapLimitWc(items, limiet, functie){
+  const uit = new Array(items.length);
+  let i = 0;
+  async function werker(){
+    while(i < items.length){
+      const n = i++;
+      uit[n] = await functie(items[n], n);
+    }
+  }
+  const werkers = [];
+  for(let w = 0; w < Math.min(limiet, items.length); w++) werkers.push(werker());
+  await Promise.all(werkers);
+  return uit;
+}
+
+app.post("/api/worldchat/pincode", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try{
+    const ip = clientIp(req);
+    /* Een pincode aanvragen kost een mail, dus stevig geremd. */
+    if(rateLimited("wcpin", ip, 5, 60 * 60 * 1000)){
+      return res.status(429).json({ error: "Te veel aanvragen achter elkaar. Probeer het over een uur opnieuw." });
+    }
+    const email = normalizePremiumKey(req.body && req.body.email);
+    if(!email || !/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(email)){
+      return res.status(400).json({ error: "Vul een geldig e-mailadres in." });
+    }
+    if(rateLimited("wcpinmail", email, 3, 60 * 60 * 1000)){
+      return res.status(429).json({ error: "Er is kort geleden al een pincode naar dit adres gestuurd. Kijk in je postvak, ook bij ongewenste e-mail." });
+    }
+
+    const taal = String((req.body && req.body.taal) || "en");
+    const sleutel = "formforge:" + email;
+
+    /* Bestaat er al een account? Dan sturen we de bestaande pincode opnieuw en
+       raken we het saldo niet aan. Anders maken we een nieuw account met de
+       proefcredits. Zo kan niemand door steeds opnieuw aan te vragen gratis
+       credits blijven bijschrijven. */
+    let account = getPremiumAccount(sleutel) || getPremiumAccount(email);
+    let nieuw = false;
+    let pin = "";
+
+    if(account && account.premiumPin){
+      pin = account.premiumPin;
+    }else{
+      nieuw = true;
+      pin = makePremiumPin();
+      account = setPremiumAccount(sleutel, {
+        active: true,
+        email: email,
+        premiumPin: pin,
+        plan: WORLDCHAT_START_CREDITS > 0 ? "credits" : "starter",
+        creditsRemaining: WORLDCHAT_START_CREDITS,
+        creditsTotal: WORLDCHAT_START_CREDITS,
+        source: "worldchat",
+        appSource: "echo",
+        starterCreditsGranted: true,
+        starterCreditsGrantedAt: new Date().toISOString(),
+        reason: "worldchat_pincode_aangevraagd"
+      });
+    }
+
+    const saldo = wcSaldo(sleutel);
+    const mail = wcPinMail(pin, nieuw ? WORLDCHAT_START_CREDITS : (saldo < 0 ? 0 : saldo), nieuw, taal);
+    try{
+      await sendResendEmail({ to: email, subject: mail.onderwerp, text: mail.tekst, html: mail.html });
+    }catch(e){
+      console.error("Worldchat pincode mailen mislukt:", (e && e.message) || e);
+      return res.status(500).json({ error: "De mail kon niet worden verstuurd. Probeer het later opnieuw." });
+    }
+
+    return res.json({ ok: true, nieuw: nieuw, credits: saldo < 0 ? -1 : saldo });
+  }catch(err){
+    console.error("Worldchat pincode fout:", (err && err.message) || err);
+    return res.status(500).json({ error: "Aanvragen mislukt" });
+  }
+});
+
 function roomToday(){
   // datum als YYYY-MM-DD in lokale tijd, voor dagelijkse reset
   const d = new Date();
