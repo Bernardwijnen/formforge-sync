@@ -1233,6 +1233,32 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
+/* ---- Rem op alles wat rechtstreeks OpenAI-geld kost ----------------------
+   Deze routes roepen OpenAI aan zonder pincode of abonnement. Zonder rem kan
+   iedereen die de URL kent ze in een lus aanroepen en zo de rekening laten
+   oplopen. Twee vensters tegelijk: een korte tegen een lus, een lange tegen
+   iemand die de hele dag doorgaat. Een gewone gebruiker merkt hier niets van.
+
+   Instelbaar via Render Environment Variables, allemaal optioneel:
+     AI_REM_PER_MINUUT   standaard 20
+     AI_REM_PER_UUR      standaard 200
+--------------------------------------------------------------------------- */
+const AI_REM_PER_MINUUT = Math.max(1, Number(process.env.AI_REM_PER_MINUUT || 20));
+const AI_REM_PER_UUR = Math.max(1, Number(process.env.AI_REM_PER_UUR || 200));
+
+function aiRemOk(req, res, naam, perMinuut, perUur){
+  const ip = clientIp(req);
+  const kortMax = Number(perMinuut || AI_REM_PER_MINUUT);
+  const langMax = Number(perUur || AI_REM_PER_UUR);
+  if(rateLimited("ai:" + naam + ":m", ip, kortMax, 60 * 1000) ||
+     rateLimited("ai:" + naam + ":u", ip, langMax, 60 * 60 * 1000)){
+    console.error("AI-rem: te veel aanvragen op " + naam + " vanaf " + ip);
+    res.status(429).json({ error: "Te veel aanvragen achter elkaar. Wacht even en probeer het opnieuw." });
+    return false;
+  }
+  return true;
+}
+
 // Mislukte inlogpogingen per IP bijhouden, zodat pincodes niet te raden zijn
 // door eindeloos proberen. Na 30 mislukte pogingen binnen 15 minuten wordt
 // het IP tijdelijk geweigerd. Geslaagde logins (zoals het normale pollen van
@@ -2156,6 +2182,7 @@ app.get("/api/realtime/usage", guesttalkUsageBeat);
 
 app.post("/api/openai/translate", async (req, res) => {
   try{
+    if(!aiRemOk(req, res, "vertaal")) return;
     const text = String(req.body && req.body.text ? req.body.text : "").trim();
     const from = String(req.body && req.body.from ? req.body.from : "auto").trim();
     const to = String(req.body && req.body.to ? req.body.to : "nl").trim();
@@ -2184,6 +2211,7 @@ app.post("/api/openai/translate", async (req, res) => {
 
 app.post("/api/translate", async (req, res) => {
   try{
+    if(!aiRemOk(req, res, "vertaal")) return;
     const text = String(req.body && req.body.text ? req.body.text : "").trim();
     const source = String(req.body && (req.body.source || req.body.from) ? (req.body.source || req.body.from) : "auto").trim();
     const target = String(req.body && (req.body.target || req.body.to) ? (req.body.target || req.body.to) : "nl").trim();
@@ -2211,6 +2239,7 @@ app.post("/api/translate", async (req, res) => {
 
 app.post("/openai/translate", async (req, res) => {
   try{
+    if(!aiRemOk(req, res, "vertaal")) return;
     const text = String(req.body && req.body.text ? req.body.text : "").trim();
     const from = String(req.body && req.body.from ? req.body.from : "auto").trim();
     const to = String(req.body && req.body.to ? req.body.to : "nl").trim();
@@ -2232,6 +2261,7 @@ app.post("/openai/translate", async (req, res) => {
 
 app.post("/api/openai/chat", async (req, res) => {
   try{
+    if(!aiRemOk(req, res, "chat")) return;
     const text = String(req.body && req.body.text ? req.body.text : "").trim();
     const instruction = String(req.body && req.body.instruction ? req.body.instruction : "Geef een kort, bruikbaar antwoord.").trim();
 
@@ -3698,6 +3728,7 @@ app.post("/api/signaling/clear", (req, res) => {
 
 app.post("/api/speech/transcribe", upload.single("audio"), async (req, res) => {
   try{
+    if(!aiRemOk(req, res, "spraak", 10, 60)) return;
     if(!OPENAI_API_KEY){
       return jsonError(res, 500, "OPENAI_API_KEY ontbreekt");
     }
@@ -4641,6 +4672,7 @@ app.post("/api/pdfstudio/ai/workorder", async (req, res) => {  try{
 
 app.post("/api/pdfstudio/ai/translate-document", async (req, res) => {
   try{
+    if(!aiRemOk(req, res, "pdfvertaal")) return;
     const documentData = req.body && req.body.document ? req.body.document : req.body;
     const targetLanguage = String(req.body && req.body.targetLanguage ? req.body.targetLanguage : "English").trim();
 
@@ -4683,6 +4715,7 @@ app.post("/api/pdfstudio/ai/translate-document", async (req, res) => {
 
 app.post("/api/pdfstudio/ai/ask", async (req, res) => {
   try{
+    if(!aiRemOk(req, res, "pdfvraag")) return;
     const question = String(req.body && (req.body.question || req.body.text || req.body.input) ? (req.body.question || req.body.text || req.body.input) : "").trim();
 
     if(!question){
@@ -9571,16 +9604,22 @@ setInterval(cleanupRooms, 5000);
 
 // Eenvoudige vertaalcache: sleutel = van|naar|tekst  -> { text, ts }
 const roomTransCache = new Map();
+const ROOM_TRANS_TTL_MS = 24 * 60 * 60 * 1000;
+const ROOM_TRANS_MAX = 5000;
 function transCacheKey(from,to,text){ return from+"|"+to+"|"+text; }
 function getCachedTranslation(from,to,text){
   const k=transCacheKey(from,to,text);
   const hit=roomTransCache.get(k);
-  if(hit && (Date.now()-hit.ts) < 60000) return hit.text;
+  /* Een dag geldig in plaats van een minuut. Dezelfde zin ("goedemorgen",
+     "hoe laat is het ontbijt") wordt zo nog maar een keer per dag betaald in
+     plaats van elke minuut opnieuw. Blijft in het geheugen: chatzinnen van
+     gasten horen niet blijvend op de schijf. */
+  if(hit && (Date.now()-hit.ts) < ROOM_TRANS_TTL_MS) return hit.text;
   return null;
 }
 function setCachedTranslation(from,to,text,translated){
   roomTransCache.set(transCacheKey(from,to,text), { text: translated, ts: Date.now() });
-  if(roomTransCache.size > 500){
+  if(roomTransCache.size > ROOM_TRANS_MAX){
     // simpele opschoning
     const firstKey = roomTransCache.keys().next().value;
     roomTransCache.delete(firstKey);
@@ -11938,11 +11977,31 @@ function wdVerzoekKlaar(req, res, duurMs){
    De bestaande functies blijven precies hetzelfde werken; er komt alleen een
    teller omheen. Zo hoeft er nergens anders in server.js iets te wijzigen. */
 
+/* Dagalarm. Blokkeert NIETS: bij overschrijding krijg je een mail, de server
+   blijft gewoon werken. Zet OPENAI_DAG_ALARM op bijvoorbeeld 500 zodra je uit
+   het dagrapport weet wat een normale dag is. 0 = uit. */
+const OPENAI_DAG_ALARM = Math.max(0, Number(process.env.OPENAI_DAG_ALARM || 0));
+let wdAiDag = "";
+let wdAiDagAantal = 0;
+
+function wdAiTelDag(){
+  const vandaag = new Date().toISOString().slice(0, 10);
+  if(wdAiDag !== vandaag){ wdAiDag = vandaag; wdAiDagAantal = 0; }
+  wdAiDagAantal += 1;
+  if(OPENAI_DAG_ALARM > 0 && wdAiDagAantal === OPENAI_DAG_ALARM){
+    wdMeld({
+      type: "aikosten", ernst: "kritiek", waar: "OpenAI",
+      tekst: "Er zijn vandaag " + wdAiDagAantal + " AI-aanroepen gedaan, dat is de grens die je hebt ingesteld. De server blijft gewoon werken; dit is alleen een seintje."
+    });
+  }
+}
+
 if(typeof callOpenAI === "function"){
   const wdOrigCallOpenAI = callOpenAI;
   callOpenAI = async function(){
     const start = Date.now();
     wdTellers.aiAanroepen += 1;
+    try{ wdAiTelDag(); }catch(e){}
     try{
       const uit = await wdOrigCallOpenAI.apply(this, arguments);
       wdTellers.aiMs += (Date.now() - start);
@@ -12596,6 +12655,7 @@ function wdRapportBlokken(momentopname, schijf){
   r("Verzoeken: " + wdTellers.verzoeken + " | client-fouten (4xx): " + wdTellers.fout4xx + " | serverfouten (5xx): " + wdTellers.fout5xx + " | trager dan " + Math.round(WACHTER_TRAAG_MS / 1000) + " sec: " + wdTellers.traag);
   r("Automatisch hersteld: " + wdTellers.herstelGelukt + " | herstel mislukt: " + wdTellers.herstelMislukt);
   r("AI-aanroepen (OpenAI): " + wdTellers.aiAanroepen + " | daarvan mislukt: " + wdTellers.aiFouten + " | gemiddeld " + (wdTellers.aiAanroepen ? Math.round(wdTellers.aiMs / wdTellers.aiAanroepen) : 0) + " ms per aanroep");
+  r("AI-aanroepen vandaag: " + wdAiDagAantal + (OPENAI_DAG_ALARM > 0 ? (" van de ingestelde grens " + OPENAI_DAG_ALARM) : " (geen dagalarm ingesteld)") + " | chatmodel: " + OPENAI_CHAT_MODEL + " | gidsmodel: " + OPENAI_GUIDE_MODEL);
   r("Verstuurde mail vanuit de hele server: " + wdTellers.mailVerstuurd + " gelukt, " + wdTellers.mailMislukt + " mislukt");
   if(wdLaatsteZelftest){
     r("Laatste zelftest (" + wdLaatsteZelftest.tijd + "): gezondheidscontrole " + wdLaatsteZelftest.health + ", schijf " + wdLaatsteZelftest.schijf + ", geheugen " + wdLaatsteZelftest.geheugenMb + " MB");
