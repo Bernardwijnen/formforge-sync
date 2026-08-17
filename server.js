@@ -5995,6 +5995,28 @@ const WC_UI = {
   verlaat: "Leave room",
   persoon: "person",
   personen: "people",
+  keuzeKop: "How do you want to chat?",
+  kiesGratisKop: "Free",
+  kiesGratisUit: "One language, no translation. Only the last message stays on screen.",
+  kiesBetaaldKop: "With translation",
+  kiesBetaaldUit: "Everyone reads in their own language. You need credits for this.",
+  gratisKop: "Open a free room",
+  gratisUitleg: "Everyone picks their own language, but nothing is translated and nothing is kept.",
+  betaaldKop: "Open a room with translation",
+  kopenUitleg: "You receive your pin code by e-mail as soon as you have credits. You never make one up yourself.",
+  pinLabel: "Pin code from the e-mail",
+  terug: "Back",
+  danTekst: "then",
+  pinOpnieuw: "Send my pin code again",
+  naBetaling: "Done. Your pin code is in your mail and is filled in below, so you can start right away.",
+  kamersKop: "My rooms",
+  kamersNieuw: "New room",
+  kamerNaam: "Name for this room",
+  kamerNaamKop: "Rename this room",
+  mijnKamers: "My rooms",
+  geenKamers: "You are not in any room yet.",
+  jijHost: "you opened this room",
+  jijGast: "invited",
   abo: "Buy credits",
   mailNodig: "Fill in your e-mail address.",
   aboBezig: "Opening payment page...",
@@ -6018,6 +6040,7 @@ const WC_UI = {
   nieuwLink: "New link",
   bewaar: "Save",
   eenmalig: "This link works once, for one person.",
+  groepLink: "This is the link to your room. Send it to everyone who may join; it keeps working.",
   leegChat: "No messages yet. Say hello.",
   host: "host",
   verwijder: "Remove",
@@ -6034,7 +6057,7 @@ const WC_UI = {
 /* De vertaalde interface per taal. Eigen bestand op de schijf, los van de
    gidscache, zodat een fout hier nooit de stadsgids raakt. */
 const WC_UI_FILE = path.join(DATA_DIR, "worldchat_ui.json");
-const WC_UI_VERSIE = 2;      /* ophogen dwingt alle talen opnieuw te vertalen */
+const WC_UI_VERSIE = 3;      /* ophogen dwingt alle talen opnieuw te vertalen */
 const wcUiKlaar = new Map();
 
 function wcUiLaad(){
