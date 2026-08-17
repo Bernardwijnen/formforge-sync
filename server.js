@@ -5772,6 +5772,96 @@ function requireUnlimited(req){
   return { ok:true, accountKey: usedKey, email };
 }
 
+/* ==========================================================================
+   WORLDCHAT MET CREDITS
+   --------------------------------------------------------------------------
+   Een vertaalkamer kan op twee manieren betaald worden:
+     - pakket "pro" (Unlimited): onbeperkt, er wordt niets afgeboekt
+     - pakket "credits": er gaat een credit af, uit dezelfde portemonnee als
+       de AI van het offerte- en factuurprogramma
+
+   Wat een credit koopt, is instelbaar (Render Environment Variable):
+     WORLDCHAT_CREDIT_PER = "bericht"  1 credit per ECHT vertaald bericht
+                                       (een zin die al vertaald is, is gratis)
+                          = "kamer"    1 credit bij het openen van een kamer,
+                                       daarna onbeperkt vertalen in die kamer
+   Standaard "bericht", want dat is precies waar de server zelf voor betaalt.
+   ========================================================================== */
+const WORLDCHAT_CREDIT_PER = String(process.env.WORLDCHAT_CREDIT_PER || "bericht").toLowerCase() === "kamer" ? "kamer" : "bericht";
+
+/* Mag er in deze kamer nog vertaald worden? Bij afrekenen per kamer is de
+   credit al bij het openen betaald, dus dan altijd ja. */
+function wcMagVertalen(room){
+  if(!room || !room.hostKey) return true;              /* oude kamer zonder eigenaar */
+  if(WORLDCHAT_CREDIT_PER === "kamer") return true;
+  const saldo = wcSaldo(room.hostKey);
+  return saldo === -1 || saldo > 0;
+}
+
+/* Een vertaling afboeken bij de eigenaar van de kamer. */
+function wcAfboeken(room){
+  if(!room || !room.hostKey) return;
+  if(WORLDCHAT_CREDIT_PER === "kamer") return;
+  try{ wcNeemCredit(room.hostKey); }catch(e){}
+}
+
+/* Hoeveel credits heeft dit account nog? -1 betekent onbeperkt (Unlimited). */
+function wcSaldo(accountKey){
+  const a = getPremiumAccount(accountKey);
+  if(!a || !a.active) return 0;
+  if(normalizeAiPlan(a.plan) === "pro") return -1;
+  return Math.max(0, Math.floor(Number(a.creditsRemaining || 0)));
+}
+
+/* Een credit afboeken. Geen pincode nodig: de eigenaar van de kamer heeft zich
+   bij het openen al gelegitimeerd. Bij Unlimited gebeurt er niets. */
+function wcNeemCredit(accountKey){
+  const a = getPremiumAccount(accountKey);
+  if(!a || !a.active) return false;
+  if(normalizeAiPlan(a.plan) === "pro") return true;
+  const over = Math.max(0, Math.floor(Number(a.creditsRemaining || 0)));
+  if(over <= 0) return false;
+  setPremiumAccount(accountKey, {
+    creditsRemaining: over - 1,
+    creditsTotal: Math.max(over, Math.floor(Number(a.creditsTotal || over))),
+    lastCreditUsedAt: new Date().toISOString()
+  });
+  return true;
+}
+
+/* Toegang tot een vertaalkamer: Unlimited OF credits met saldo. */
+function requireChatTegoed(req){
+  const email = String((req.body && (req.body.email || req.body.premiumEmail)) || "").trim();
+  const pin = String((req.body && (req.body.pin || req.body.pincode || req.body.premiumPin)) || "").trim();
+  if(!email) return { ok:false, status:400, error:"Vul je e-mailadres in." };
+  if(!pin) return { ok:false, status:400, error:"Vul je pincode in." };
+  const deviceId = getRequestDeviceId(req);
+  const appSource = detectAppSourceFromReq(req);
+  const sleutels = [buildPremiumAccountKey(email, appSource)];
+  const kaal = normalizePremiumKey(email);
+  if(kaal && sleutels.indexOf(kaal) < 0) sleutels.push(kaal);
+
+  let status = null, gebruikt = "";
+  for(const k of sleutels){
+    try{
+      const st = getPremiumStatus(k, pin, { deviceId });
+      if(st && st.premium){ status = st; gebruikt = k; break; }
+      if(!status) status = st;
+    }catch(e){
+      return { ok:false, status:500, error:"Kon je account niet controleren." };
+    }
+  }
+  if(!status || !status.premium){
+    return { ok:false, status:403, error:"Geen actief account gevonden. Controleer je e-mailadres en pincode." };
+  }
+  const plan = normalizeAiPlan(status.plan || "");
+  const saldo = wcSaldo(gebruikt);
+  if(plan !== "pro" && saldo <= 0){
+    return { ok:false, status:402, error:"Je credits zijn op. Koop nieuwe credits om te blijven vertalen.", creditsOp:true };
+  }
+  return { ok:true, accountKey: gebruikt, email: kaal, plan: plan, saldo: saldo };
+}
+
 function roomToday(){
   // datum als YYYY-MM-DD in lokale tijd, voor dagelijkse reset
   const d = new Date();
@@ -9569,7 +9659,20 @@ function pruneBans(room){
   }
 }
 
+/* Hoeveel regels blijven er in een GRATIS kamer staan? Eentje: zodra de
+   volgende persoon iets verstuurt, is de vorige regel weg. Dat is het verschil
+   met een betaalde kamer, waar de host zelf een bewaartijd kiest. */
+const WORLDCHAT_GRATIS_REGELS = Math.max(1, Number(process.env.WORLDCHAT_GRATIS_REGELS || 1));
+
 function pruneRoom(room){
+  /* Gratis kamer: geen geschiedenis. Alleen het laatste bericht blijft staan,
+     dus een regel verdwijnt zodra er een nieuwe wordt verstuurd. */
+  if(room.freeMode){
+    if(room.messages.length > WORLDCHAT_GRATIS_REGELS){
+      room.messages = room.messages.slice(-WORLDCHAT_GRATIS_REGELS);
+    }
+    return;
+  }
   // Als de host een bewaartijd heeft ingesteld (msgTtlMs > 0): verwijder berichten
   // die ouder zijn dan die tijd. Media telt vanaf het moment van ophalen (firstSeenAt),
   // tekst vanaf verzendtijd. msgTtlMs = 0 betekent permanent (blijft staan).
@@ -9804,11 +9907,17 @@ async function translateGuideText(text, from, to){
 app.post("/api/room/create", (req, res) => {
   const wantFree = !!(req.body && (req.body.freeRoom === true || req.body.freeRoom === "true"));
 
-  let gate = { ok:true, accountKey:"", email:"" };
+  let gate = { ok:true, accountKey:"", email:"", plan:"", saldo:-1 };
   if(!wantFree){
-    // Vertaalkamer (meerdere talen) vereist een Unlimited-abonnement.
-    gate = requireUnlimited(req);
-    if(!gate.ok) return jsonError(res, gate.status, gate.error);
+    /* Vertaalkamer: Unlimited of credits met saldo. */
+    gate = requireChatTegoed(req);
+    if(!gate.ok) return res.status(gate.status || 403).json({ error: gate.error, creditsOp: !!gate.creditsOp });
+    /* Bij afrekenen per kamer gaat de credit er meteen af. */
+    if(WORLDCHAT_CREDIT_PER === "kamer" && gate.plan !== "pro"){
+      if(!wcNeemCredit(gate.accountKey)){
+        return res.status(402).json({ error:"Je credits zijn op.", creditsOp:true });
+      }
+    }
   }
   // Gratis kamer: iedereen mag er een aanmaken, geen abonnement nodig.
 
@@ -9870,9 +9979,11 @@ app.post("/api/room/join", (req, res) => {
     }
   }
 
-  // In een gratis kamer (één taal) krijgt de gast automatisch de kamertaal.
-  let useLang = lang;
-  if(room.freeMode && room.roomLang){ useLang = room.roomLang; }
+  /* Ook in een gratis kamer mag iedereen zijn eigen taal kiezen. Er wordt in
+     zo'n kamer niets vertaald, dus die keuze bepaalt alleen wat er bij zijn
+     naam staat en in welke taal hij zelf typt. Vroeger werd de keuze hier
+     overschreven met de kamertaal, waardoor het leek alsof kiezen niet kon. */
+  const useLang = lang;
 
   const memberId = "m_" + Date.now() + "_" + Math.random().toString(36).slice(2,8);
   room.members.set(memberId, { id: memberId, name, lang: useLang, lastSeen: Date.now() });
@@ -9970,6 +10081,7 @@ app.post("/api/room/send", (req, res) => {
     translations: {} // wordt gevuld bij ophalen per lezer-taal
   };
   room.messages.push(msg);
+  if(room.freeMode) pruneRoom(room);   /* gratis: alleen de laatste regel blijft */
 
   // Stuur een pushmelding naar alle ANDERE leden van de kamer
   notifyRoom(code, member.id, {
@@ -9995,6 +10107,7 @@ app.post("/api/room/poll", async (req, res) => {
   const now = Date.now();
   const myLang = member.lang;
   let limitReached = false;
+  let creditsOp = false;
 
   // Vertaal elk bericht naar de taal van deze lezer (met cache)
   const out = [];
@@ -10006,16 +10119,21 @@ app.post("/api/room/poll", async (req, res) => {
         // Al eerder vertaald: gratis uit cache, telt niet mee
         shown = m.translations[myLang];
         translated = true;
-      }else if(roomTranslationsLeft(room) > 0){
+      }else if(roomTranslationsLeft(room) > 0 && wcMagVertalen(room)){
         try{
           shown = await translateText(m.text, m.srcLang, myLang);
           m.translations[myLang] = shown;
           room.translationsToday += 1; // alleen ECHTE vertalingen tellen mee
+          wcAfboeken(room);            // en alleen die kosten een credit
           translated = true;
         }catch(e){
           shown = m.text; // bij fout: toon origineel
           translated = false;
         }
+      }else if(!wcMagVertalen(room)){
+        shown = m.text;
+        translated = false;
+        creditsOp = true;
       }else{
         // Dagelijkse vertaallimiet bereikt: toon origineel, blijf chatten
         shown = m.text;
@@ -10068,6 +10186,9 @@ app.post("/api/room/poll", async (req, res) => {
     freeMode: !!room.freeMode,
     msgTtlMs: room.msgTtlMs || 0,
     limitReached,
+    creditsOp,
+    creditsOver: room.hostKey ? wcSaldo(room.hostKey) : -1,
+    creditPer: WORLDCHAT_CREDIT_PER,
     translationsToday: room.translationsToday,
     dailyLimit: ROOM_DAILY_TRANSLATION_LIMIT,
     translationsLeft: roomTranslationsLeft(room)
@@ -10154,6 +10275,7 @@ app.post("/api/room/send-media", roomMediaUpload.single("file"), (req, res) => {
     }
   };
   room.messages.push(msg);
+  if(room.freeMode) pruneRoom(room);   /* gratis: alleen de laatste regel blijft */
 
   notifyRoom(code, member.id, {
     title: member.name + " in kamer " + code,
