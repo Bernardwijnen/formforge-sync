@@ -10964,6 +10964,32 @@ app.post("/api/room/push-subscribe", (req, res) => {
 });
 
 // Publieke VAPID-sleutel ophalen (heeft de app nodig om zich aan te melden)
+/* Een proefmelding naar jezelf, om te zien waar het stukloopt. Geeft precies
+   terug wat er misging in plaats van stil te blijven. */
+app.post("/api/room/push-test", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const code = String(req.body && req.body.code ? req.body.code : "").trim();
+  const memberId = String(req.body && req.body.memberId ? req.body.memberId : "").trim();
+  if(!webpush) return res.status(500).json({ error: "web-push is niet geladen op de server." });
+  if(!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return res.status(500).json({ error: "De VAPID-sleutels staan niet in Render." });
+  const room = rooms.get(code);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden");
+  if(!room.members.get(memberId)) return jsonError(res, 403, "Je zit niet in deze kamer");
+  const m = roomPushSubs.get(code);
+  const sub = m ? m.get(memberId) : null;
+  if(!sub) return res.status(404).json({ error: "Dit toestel is niet aangemeld voor meldingen." });
+  try{
+    await webpush.sendNotification(sub, JSON.stringify({
+      title: "Worldchat United",
+      body: "Dit is een proefmelding. Werkt dit, dan werkt alles.",
+      code: code, tag: "wcu-test"
+    }));
+    return res.json({ ok: true });
+  }catch(err){
+    return res.status(500).json({ error: "Versturen mislukt (" + (err && err.statusCode ? err.statusCode : "?") + "): " + ((err && err.body) || (err && err.message) || "onbekend") });
+  }
+});
+
 app.get("/api/room/push-key", (req, res) => {
   res.json({ ok:true, publicKey: VAPID_PUBLIC_KEY });
 });
