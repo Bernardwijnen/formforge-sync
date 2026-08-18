@@ -6410,7 +6410,8 @@ app.get("/worldchat-beheer", (req, res) => {
  input,button{font:inherit}
  input{padding:10px 12px;border:1px solid #dbe1ec;border-radius:9px;min-width:220px}
  button{padding:10px 16px;border:0;border-radius:9px;background:#1e2d4f;color:#fff;font-weight:600;cursor:pointer}
- button.weg{background:#b42318;padding:7px 12px;font-size:13px}
+ button.weg,label.weg{background:#b42318;color:#fff;padding:7px 12px;font-size:13px;font-weight:600;
+   border:0;border-radius:9px;cursor:pointer;display:inline-block;line-height:1.2;white-space:nowrap}
  .kaart{background:#fff;border:1px solid #dbe1ec;border-radius:12px;padding:14px 16px;margin-bottom:14px}
  table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #dbe1ec;border-radius:12px;overflow:hidden}
  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #eef1f6;font-size:14px}
