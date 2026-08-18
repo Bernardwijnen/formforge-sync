@@ -5290,6 +5290,8 @@ const OPZEG_PRODUCTEN = {
   ai_plus:        "FormForge AI Plus",
   ai_pro:         "FormForge AI Pro",
   credits:        "Losse AI credits",
+  worldchat_unlimited: "Worldchat United onbeperkt",
+  worldchat_credits:   "Worldchat United credits",
   anders:         "Anders"
 };
 
@@ -6039,6 +6041,8 @@ const WC_UI = {
   pinNodig: "Fill in the pin code from the e-mail.",
   inlogGestuurd: "Check your mail. Your pin code is on its way.",
   kamerWegVraag: "Delete the room %s? It closes for everyone and the messages are gone. This cannot be undone.",
+  unlimitedKnop: "Unlimited subscription",
+  ofAbo: "or",
   thuisIos: "Tap the share button at the bottom of your screen, then choose Add to Home Screen. The chat then opens like an app and you go straight back into this room.",
   thuisAndroid: "Open the menu with the three dots and choose Add to home screen, or Install app. The chat then opens like an app and you go straight back into this room.",
   abo: "Buy credits",
@@ -6081,7 +6085,7 @@ const WC_UI = {
 /* De vertaalde interface per taal. Eigen bestand op de schijf, los van de
    gidscache, zodat een fout hier nooit de stadsgids raakt. */
 const WC_UI_FILE = path.join(DATA_DIR, "worldchat_ui.json");
-const WC_UI_VERSIE = 7;      /* ophogen dwingt alle talen opnieuw te vertalen */
+const WC_UI_VERSIE = 8;      /* ophogen dwingt alle talen opnieuw te vertalen */
 const wcUiKlaar = new Map();
 
 function wcUiLaad(){
@@ -6263,7 +6267,7 @@ app.post("/api/worldchat/kamers", (req, res) => {
   if(!email) return res.status(403).json({ error: "E-mailadres of pincode klopt niet." });
   /* Saldo erbij, zodat de klant ook buiten een kamer ziet wat hij nog heeft.
      -1 betekent Unlimited, dus onbeperkt vertalen. */
-  res.json({ ok: true, kamers: wcKamersVan(email), credits: wcSaldoVan(email) });
+  res.json({ ok: true, kamers: wcKamersVan(email), credits: wcSaldoVan(email), unlimitedPrijs: WORLDCHAT_UNLIMITED_PRIJS });
 });
 
 app.post("/api/worldchat/kamers/opslaan", (req, res) => {
@@ -6489,6 +6493,70 @@ $("pass").onkeydown = function(e){ if(e.key === "Enter") laden(); };
 try{ var p = sessionStorage.getItem("wcpass"); if(p){ $("pass").value = p; laden(); } }catch(e){}
 </script>
 </body></html>`);
+});
+
+/* ==========================================================================
+   WORLDCHAT: UNLIMITED-ABONNEMENT
+   --------------------------------------------------------------------------
+   Onbeperkt vertalen voor een vast bedrag per maand. Er gaan dan geen credits
+   meer af, ongeacht hoeveel kamers of berichten.
+
+   Instellingen (Render Environment Variables, allebei optioneel):
+     WORLDCHAT_UNLIMITED_PRICE_ID  de price-id uit Stripe
+     WORLDCHAT_UNLIMITED_PRIJS     wat er op de knop staat, bijvoorbeeld
+                                   "50 euro per maand"
+   De price-id staat bewust hier en niet in de pagina, zodat je de prijs kunt
+   wijzigen zonder de frontend aan te raken.
+   ========================================================================== */
+
+const WORLDCHAT_UNLIMITED_PRICE_ID = String(process.env.WORLDCHAT_UNLIMITED_PRICE_ID || "price_1U5iaK5s8MDSsy0ecNSFtYrj").trim();
+const WORLDCHAT_UNLIMITED_PRIJS = String(process.env.WORLDCHAT_UNLIMITED_PRIJS || "50 euro per maand").trim();
+
+app.post("/api/worldchat/abonnement", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try{
+    if(!STRIPE_SECRET_KEY) return jsonError(res, 500, "Stripe is niet ingesteld op de server.");
+    if(!WORLDCHAT_UNLIMITED_PRICE_ID) return jsonError(res, 500, "De price-id voor Unlimited ontbreekt.");
+
+    const email = normalizePremiumKey(req.body && req.body.email);
+    if(!email) return jsonError(res, 400, "Vul een geldig e-mailadres in.");
+    if(rateLimited("wcabo", clientIp(req), 10, 60 * 60 * 1000)){
+      return res.status(429).json({ error: "Te veel pogingen. Probeer het later opnieuw." });
+    }
+
+    const terug = String((req.body && req.body.successUrl) || WORLDCHAT_URL).trim();
+    const afbreken = String((req.body && req.body.cancelUrl) || WORLDCHAT_URL).trim();
+    const deviceId = getRequestDeviceId(req);
+
+    /* plan "pro" is wat de kamercontrole als onbeperkt herkent. */
+    const meta = {
+      product: "Worldchat United onbeperkt",
+      source: "worldchat",
+      email: email,
+      plan: "pro",
+      aiPlan: "pro",
+      priceId: WORLDCHAT_UNLIMITED_PRICE_ID,
+      deviceId: deviceId
+    };
+
+    const session = await callStripe("/checkout/sessions", {
+      mode: "subscription",
+      "line_items": [{ price: WORLDCHAT_UNLIMITED_PRICE_ID, quantity: 1 }],
+      success_url: successUrlWithCheckoutSession(terug),
+      cancel_url: afbreken,
+      allow_promotion_codes: true,
+      billing_address_collection: "auto",
+      customer_email: email,
+      metadata: meta,
+      subscription_data: { metadata: meta }
+    });
+
+    if(!session || !session.url) return jsonError(res, 500, "Stripe gaf geen betaallink terug.");
+    return res.json({ ok: true, url: session.url, id: session.id });
+  }catch(err){
+    console.error("Worldchat abonnement mislukt:", (err && err.message) || err);
+    return jsonError(res, 500, "De betaalpagina kon niet worden geopend.");
+  }
 });
 
 app.post("/api/worldchat/pincode", async (req, res) => {
