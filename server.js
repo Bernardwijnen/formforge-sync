@@ -5817,6 +5817,16 @@ function wcSaldo(accountKey){
 
 /* Een credit afboeken. Geen pincode nodig: de eigenaar van de kamer heeft zich
    bij het openen al gelegitimeerd. Bij Unlimited gebeurt er niets. */
+/* Het saldo van een e-mailadres. Een gewoon account staat onder
+   "formforge:adres", maar een eigenaar-account staat onder het kale adres.
+   Daarom allebei proberen; -1 (onbeperkt) wint altijd. */
+function wcSaldoVan(email){
+  const a = wcSaldo("formforge:" + email);
+  const b = wcSaldo(email);
+  if(a === -1 || b === -1) return -1;
+  return Math.max(a, b);
+}
+
 function wcNeemCredit(accountKey){
   const a = getPremiumAccount(accountKey);
   if(!a || !a.active) return false;
@@ -6237,7 +6247,7 @@ app.post("/api/worldchat/kamers", (req, res) => {
   if(!email) return res.status(403).json({ error: "E-mailadres of pincode klopt niet." });
   /* Saldo erbij, zodat de klant ook buiten een kamer ziet wat hij nog heeft.
      -1 betekent Unlimited, dus onbeperkt vertalen. */
-  res.json({ ok: true, kamers: wcKamersVan(email), credits: wcSaldo("formforge:" + email) });
+  res.json({ ok: true, kamers: wcKamersVan(email), credits: wcSaldoVan(email) });
 });
 
 app.post("/api/worldchat/kamers/opslaan", (req, res) => {
