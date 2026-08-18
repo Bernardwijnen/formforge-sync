@@ -6391,8 +6391,15 @@ app.get("/worldchat-beheer", (req, res) => {
   res.set("Content-Type", "text/html; charset=utf-8");
   res.send(`<!DOCTYPE html>
 <html lang="nl"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1e2d4f">
 <title>Worldchat beheer</title>
+<link rel="apple-touch-icon" sizes="180x180" href="/icons/worldchat-icon-180.png">
+<link rel="apple-touch-icon" href="/icons/worldchat-icon-180.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/worldchat-icon-32.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="WC beheer">
 <style>
  *{box-sizing:border-box}
  body{margin:0;background:#eef1f6;color:#12203a;font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
@@ -6413,9 +6420,23 @@ app.get("/worldchat-beheer", (req, res) => {
  .melding{padding:10px 13px;border-radius:9px;margin-bottom:14px;display:none}
  .melding.aan{display:block}
  .fout{background:#fef3f2;border:1px solid #fecdc9;color:#b42318}
+ header{padding-top:calc(16px + env(safe-area-inset-top))}
+ main{padding-bottom:calc(20px + env(safe-area-inset-bottom))}
+ @media (max-width:760px){
+   input{min-width:0;width:100%}
+   .balk{flex-direction:column}
+   .balk button{width:100%}
+   table{border:0;background:none}
+   table,thead,tbody,tr,th,td{display:block}
+   thead{display:none}
+   tr{background:#fff;border:1px solid #dbe1ec;border-radius:12px;margin-bottom:12px;padding:6px 4px}
+   td{border-bottom:1px solid #eef1f6;padding:9px 12px}
+   td:last-child{border-bottom:0}
+   button.weg,label.weg{margin:3px 3px 3px 0}
+ }
  .goed{background:#f0fdf4;border:1px solid #bbf7d0;color:#067647}
 </style></head><body>
-<header><b>Worldchat United</b> <span style="opacity:.7;font-size:13px">beheer</span></header>
+<header><b>Worldchat United</b> <span style="opacity:.7;font-size:13px">beheer</span><span style="margin-left:auto;opacity:.45;font-size:12px">v4</span></header>
 <main>
   <div class="melding" id="melding"></div>
   <div class="kaart">
@@ -6512,7 +6533,10 @@ async function adsLaden(){
     $("adRijen").innerHTML = (d.advertenties || []).map(function(a){
       var ctr = a.vertoond ? Math.round((a.geklikt / a.vertoond) * 1000) / 10 : 0;
       return "<tr>" +
-        "<td><b>" + esc(a.titel) + "</b><br><span style='color:#6b7a95;font-size:13px'>" + esc(a.tekst || "") + "</span></td>" +
+        "<td><div style='display:flex;align-items:center;gap:10px'>" +
+          (a.logo ? "<img src='/api/worldchat/reclame/logo/" + esc(a.id) + "' alt='' style='width:40px;height:40px;object-fit:contain;border:1px solid #dbe1ec;border-radius:8px;background:#fff'>" : "") +
+          "<span><b>" + esc(a.titel) + "</b><br><span style='color:#6b7a95;font-size:13px'>" + esc(a.tekst || "") + "</span></span>" +
+        "</div></td>" +
         "<td style='font-size:13px'>" + esc(a.url) + "</td>" +
         "<td>" + esc(a.vertoond || 0) + "</td>" +
         "<td>" + esc(a.geklikt || 0) + (a.vertoond ? " (" + ctr + "%)" : "") + "</td>" +
@@ -6520,6 +6544,9 @@ async function adsLaden(){
         "<td>" +
           '<button class="weg" data-ad-aanuit="' + esc(a.id) + '" style="background:#1e2d4f">' + (a.actief ? "Uitzetten" : "Aanzetten") + "</button> " +
           '<button class="weg" data-ad-nul="' + esc(a.id) + '" style="background:#667085">Tellers op 0</button> ' +
+          '<label class="weg" style="background:#1e2d4f;cursor:pointer;display:inline-block">Logo kiezen' +
+            '<input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" style="display:none" data-ad-logo="' + esc(a.id) + '"></label> ' +
+          (a.logo ? '<button class="weg" data-ad-logoweg="' + esc(a.id) + '" style="background:#667085">Logo weg</button> ' : "") +
           '<button class="weg" data-ad-weg="' + esc(a.id) + '">Verwijderen</button>' +
         "</td></tr>";
     }).join("");
@@ -6545,6 +6572,24 @@ function koppelAdKnoppen(){
       };
     });
   }
+  /* Logo kiezen: het bestand gaat als formulier naar de server. */
+  Array.prototype.forEach.call(document.querySelectorAll("[data-ad-logo]"), function(inp){
+    inp.onchange = async function(){
+      if(!inp.files || !inp.files[0]) return;
+      var fd = new FormData();
+      fd.append("logo", inp.files[0]);
+      fd.append("id", inp.getAttribute("data-ad-logo"));
+      fd.append("adminPass", $("pass").value.trim());
+      try{
+        var r = await fetch("/api/worldchat/admin/reclame-logo", { method: "POST", body: fd });
+        var d = await r.json();
+        if(!r.ok) throw new Error(d.error || "Uploaden mislukt");
+        zegt("Logo geplaatst.", true);
+        adsLaden();
+      }catch(e){ zegt(e.message); }
+    };
+  });
+  bind("data-ad-logoweg", "logoweg", "Het logo weghalen?");
   bind("data-ad-aanuit", "aanuit", "");
   bind("data-ad-nul", "nulstellen", "Tellers op nul zetten?");
   bind("data-ad-weg", "wissen", "Deze advertentie verwijderen?");
@@ -6655,6 +6700,16 @@ app.post("/api/worldchat/abonnement", async (req, res) => {
    ========================================================================== */
 
 const WC_ADS_FILE = path.join(DATA_DIR, "worldchat_ads.json");
+const WC_ADS_DIR = path.join(DATA_DIR, "worldchat_logos");   /* de logo's zelf */
+try{ if(!fs.existsSync(WC_ADS_DIR)) fs.mkdirSync(WC_ADS_DIR, { recursive: true }); }catch(e){}
+
+/* Logo's in het geheugen ontvangen en zelf wegschrijven, met een grens zodat
+   niemand de schijf kan vullen. */
+const wcLogoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 1.5 * 1024 * 1024 }
+});
+const WC_LOGO_SOORTEN = { "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/svg+xml": ".svg" };
 const wcAds = new Map();          /* id -> { id, titel, tekst, url, actief, vertoond, geklikt, aangemaakt } */
 
 function wcAdsLaad(){
@@ -6708,7 +6763,7 @@ app.get("/api/worldchat/reclame", (req, res) => {
   const a = actief[Math.floor(Math.random() * actief.length)];
   a.vertoond = Math.max(0, Number(a.vertoond || 0)) + 1;
   wcAdsBewaar();
-  res.json({ ok: true, ad: { id: a.id, titel: a.titel, tekst: a.tekst } });
+  res.json({ ok: true, ad: { id: a.id, titel: a.titel, tekst: a.tekst, logo: a.logo ? ("/api/worldchat/reclame/logo/" + a.id) : "" } });
 });
 
 /* De klik loopt via de server, zodat hij geteld wordt, en gaat daarna door
@@ -6722,7 +6777,41 @@ app.get("/api/worldchat/reclame/klik", (req, res) => {
   res.redirect(302, a.url);
 });
 
+/* Het logo van een advertentie. Publiek, want de gast moet het zien. */
+app.get("/api/worldchat/reclame/logo/:id", (req, res) => {
+  const a = wcAds.get(String(req.params.id || "").trim());
+  if(!a || !a.logo) return res.status(404).end();
+  const pad = path.join(WC_ADS_DIR, a.logo);
+  if(!fs.existsSync(pad)) return res.status(404).end();
+  res.set("Cache-Control", "public, max-age=86400");
+  res.sendFile(pad);
+});
+
 /* ---- beheer ---- */
+
+/* Een logo uploaden bij een bestaande advertentie. */
+app.post("/api/worldchat/admin/reclame-logo", wcLogoUpload.single("logo"), (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if(!wcBeheerOk(req)) return jsonError(res, 403, "Geen toegang");
+  const a = wcAds.get(String((req.body && req.body.id) || "").trim());
+  if(!a) return jsonError(res, 404, "Advertentie niet gevonden");
+  if(!req.file || !req.file.buffer) return jsonError(res, 400, "Geen afbeelding ontvangen");
+  const ext = WC_LOGO_SOORTEN[String(req.file.mimetype || "").toLowerCase()];
+  if(!ext) return jsonError(res, 400, "Gebruik een PNG, JPG, WEBP of SVG.");
+  try{
+    /* Het oude logo weg, anders blijven er bestanden achter. */
+    if(a.logo){ try{ fs.unlinkSync(path.join(WC_ADS_DIR, a.logo)); }catch(e){} }
+    const naam = a.id + "_" + Date.now().toString(36) + ext;
+    fs.writeFileSync(path.join(WC_ADS_DIR, naam), req.file.buffer);
+    a.logo = naam;
+    wcAdsBewaar();
+    return res.json({ ok: true, logo: "/api/worldchat/reclame/logo/" + a.id });
+  }catch(e){
+    console.error("Worldchat logo opslaan mislukt:", (e && e.message) || e);
+    return jsonError(res, 500, "Het logo kon niet worden opgeslagen.");
+  }
+});
+
 app.get("/api/worldchat/admin/reclame", (req, res) => {
   res.set("Cache-Control", "no-store");
   if(!wcBeheerOk(req)) return jsonError(res, 403, "Geen toegang");
@@ -6752,7 +6841,14 @@ app.post("/api/worldchat/admin/reclame", (req, res) => {
   if(!a) return jsonError(res, 404, "Advertentie niet gevonden");
 
   if(actie === "aanuit"){ a.actief = !a.actief; wcAdsBewaar(); return res.json({ ok: true, actief: a.actief }); }
-  if(actie === "wissen"){ wcAds.delete(id); wcAdsBewaar(); return res.json({ ok: true }); }
+  if(actie === "wissen"){
+    if(a.logo){ try{ fs.unlinkSync(path.join(WC_ADS_DIR, a.logo)); }catch(e){} }
+    wcAds.delete(id); wcAdsBewaar(); return res.json({ ok: true });
+  }
+  if(actie === "logoweg"){
+    if(a.logo){ try{ fs.unlinkSync(path.join(WC_ADS_DIR, a.logo)); }catch(e){} }
+    a.logo = ""; wcAdsBewaar(); return res.json({ ok: true });
+  }
   if(actie === "nulstellen"){ a.vertoond = 0; a.geklikt = 0; wcAdsBewaar(); return res.json({ ok: true }); }
   return jsonError(res, 400, "Onbekende actie");
 });
