@@ -6027,8 +6027,8 @@ const WC_UI = {
   geenKamers: "You are not in any room yet.",
   jijHost: "you opened this room",
   jijGast: "invited",
-  geluidAan: "Sound on",
-  geluidUit: "Sound off",
+  geluidAan: "Sound: on",
+  geluidUit: "Sound: off",
   thuisKnop: "Add to home screen",
   thuisKop: "Keep this chat at hand",
   thuisOk: "Got it",
@@ -6038,6 +6038,7 @@ const WC_UI = {
   uitloggen: "Log out",
   pinNodig: "Fill in the pin code from the e-mail.",
   inlogGestuurd: "Check your mail. Your pin code is on its way.",
+  kamerWegVraag: "Delete the room %s? It closes for everyone and the messages are gone. This cannot be undone.",
   thuisIos: "Tap the share button at the bottom of your screen, then choose Add to Home Screen. The chat then opens like an app and you go straight back into this room.",
   thuisAndroid: "Open the menu with the three dots and choose Add to home screen, or Install app. The chat then opens like an app and you go straight back into this room.",
   abo: "Buy credits",
@@ -6080,7 +6081,7 @@ const WC_UI = {
 /* De vertaalde interface per taal. Eigen bestand op de schijf, los van de
    gidscache, zodat een fout hier nooit de stadsgids raakt. */
 const WC_UI_FILE = path.join(DATA_DIR, "worldchat_ui.json");
-const WC_UI_VERSIE = 5;      /* ophogen dwingt alle talen opnieuw te vertalen */
+const WC_UI_VERSIE = 7;      /* ophogen dwingt alle talen opnieuw te vertalen */
 const wcUiKlaar = new Map();
 
 function wcUiLaad(){
@@ -11065,6 +11066,30 @@ app.get("/api/room/media/:code/:id", (req, res) => {
 });
 
 // Kamer verlaten
+/* De host sluit zijn kamer definitief. Bewijs dat hij de host is levert hij met
+   zijn terugkeersleutel; daar staat in of hij de host was. Zo werkt het ook als
+   hij op dat moment niet in de kamer zit, bijvoorbeeld vanuit zijn overzicht.
+   De kamer verdwijnt daarmee voor iedereen. */
+app.post("/api/room/close", (req, res) => {
+  const rcToken = String(req.body && req.body.reconnect ? req.body.reconnect : "").trim();
+  const r = rcToken ? reconnectTokens.get(rcToken) : null;
+  if(!r) return jsonError(res, 403, "Sessie verlopen. Open de kamer eerst opnieuw.");
+  if(!r.isHost) return jsonError(res, 403, "Alleen de host kan een kamer verwijderen.");
+  const code = String(r.code || "").trim();
+  const room = rooms.get(code);
+  if(!room) return res.json({ ok: true, alWeg: true });
+
+  rooms.delete(code);
+  roomPushSubs.delete(code);
+  for(const [t, rec] of Array.from(reconnectTokens.entries())){
+    if(rec && rec.code === code) reconnectTokens.delete(t);
+  }
+  saveRooms();
+  try{ saveReconnect(); }catch(e){}
+  console.log("Worldchat: kamer " + code + " is door de host verwijderd.");
+  res.json({ ok: true });
+});
+
 app.post("/api/room/leave", (req, res) => {
   const code = String(req.body && req.body.code ? req.body.code : "").trim();
   const memberId = String(req.body && req.body.memberId ? req.body.memberId : "").trim();
