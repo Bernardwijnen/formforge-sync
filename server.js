@@ -6043,6 +6043,7 @@ const WC_UI = {
   kamerWegVraag: "Delete the room %s? It closes for everyone and the messages are gone. This cannot be undone.",
   unlimitedKnop: "Unlimited subscription",
   ofAbo: "or",
+  reclame: "Advertisement",
   thuisIos: "Tap the share button at the bottom of your screen, then choose Add to Home Screen. The chat then opens like an app and you go straight back into this room.",
   thuisAndroid: "Open the menu with the three dots and choose Add to home screen, or Install app. The chat then opens like an app and you go straight back into this room.",
   abo: "Buy credits",
@@ -6085,7 +6086,7 @@ const WC_UI = {
 /* De vertaalde interface per taal. Eigen bestand op de schijf, los van de
    gidscache, zodat een fout hier nooit de stadsgids raakt. */
 const WC_UI_FILE = path.join(DATA_DIR, "worldchat_ui.json");
-const WC_UI_VERSIE = 8;      /* ophogen dwingt alle talen opnieuw te vertalen */
+const WC_UI_VERSIE = 9;      /* ophogen dwingt alle talen opnieuw te vertalen */
 const wcUiKlaar = new Map();
 
 function wcUiLaad(){
@@ -6428,6 +6429,20 @@ app.get("/worldchat-beheer", (req, res) => {
   <table id="tabel"><thead><tr>
     <th>E-mailadres</th><th>Pakket</th><th>Credits</th><th>Kamers</th><th>Bijgewerkt</th><th></th>
   </tr></thead><tbody id="rijen"></tbody></table>
+
+  <h2 style="font-family:Georgia,serif;font-size:20px;margin:28px 0 12px">Advertenties in de gratis kamers</h2>
+  <div class="kaart">
+    <div class="balk">
+      <input id="adTitel" placeholder="Titel" maxlength="60">
+      <input id="adTekst" placeholder="Regel eronder" maxlength="140" style="min-width:280px">
+      <input id="adUrl" placeholder="https://www.voorbeeld.nl" maxlength="300">
+      <button id="adNieuw">Toevoegen</button>
+    </div>
+    <div style="font-size:13px;color:#6b7a95">Getoond in kamers zonder vertaling. Betaalde kamers krijgen geen advertenties.</div>
+  </div>
+  <table><thead><tr>
+    <th>Advertentie</th><th>Webadres</th><th>Getoond</th><th>Geklikt</th><th>Stand</th><th></th>
+  </tr></thead><tbody id="adRijen"></tbody></table>
 </main>
 <script>
 var alles = [];
@@ -6487,10 +6502,75 @@ async function verwijderen(email){
   }catch(e){ zegt(e.message); }
 }
 
-$("laad").onclick = laden;
+async function adsLaden(){
+  var pass = $("pass").value.trim();
+  if(!pass) return;
+  try{
+    var r = await fetch("/api/worldchat/admin/reclame?adminPass=" + encodeURIComponent(pass));
+    var d = await r.json();
+    if(!r.ok) throw new Error(d.error || "Ophalen mislukt");
+    $("adRijen").innerHTML = (d.advertenties || []).map(function(a){
+      var ctr = a.vertoond ? Math.round((a.geklikt / a.vertoond) * 1000) / 10 : 0;
+      return "<tr>" +
+        "<td><b>" + esc(a.titel) + "</b><br><span style='color:#6b7a95;font-size:13px'>" + esc(a.tekst || "") + "</span></td>" +
+        "<td style='font-size:13px'>" + esc(a.url) + "</td>" +
+        "<td>" + esc(a.vertoond || 0) + "</td>" +
+        "<td>" + esc(a.geklikt || 0) + (a.vertoond ? " (" + ctr + "%)" : "") + "</td>" +
+        "<td>" + (a.actief ? "actief" : "uit") + "</td>" +
+        "<td>" +
+          '<button class="weg" data-ad-aanuit="' + esc(a.id) + '" style="background:#1e2d4f">' + (a.actief ? "Uitzetten" : "Aanzetten") + "</button> " +
+          '<button class="weg" data-ad-nul="' + esc(a.id) + '" style="background:#667085">Tellers op 0</button> ' +
+          '<button class="weg" data-ad-weg="' + esc(a.id) + '">Verwijderen</button>' +
+        "</td></tr>";
+    }).join("");
+    koppelAdKnoppen();
+  }catch(e){ zegt(e.message); }
+}
+
+function koppelAdKnoppen(){
+  function bind(attr, actie, vraag){
+    Array.prototype.forEach.call(document.querySelectorAll("[" + attr + "]"), function(b){
+      b.onclick = async function(){
+        var id = b.getAttribute(attr);
+        if(vraag && !confirm(vraag)) return;
+        try{
+          var r = await fetch("/api/worldchat/admin/reclame", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ adminPass: $("pass").value.trim(), actie: actie, id: id })
+          });
+          var d = await r.json();
+          if(!r.ok) throw new Error(d.error || "Mislukt");
+          adsLaden();
+        }catch(e){ zegt(e.message); }
+      };
+    });
+  }
+  bind("data-ad-aanuit", "aanuit", "");
+  bind("data-ad-nul", "nulstellen", "Tellers op nul zetten?");
+  bind("data-ad-weg", "wissen", "Deze advertentie verwijderen?");
+}
+
+$("adNieuw").onclick = async function(){
+  try{
+    var r = await fetch("/api/worldchat/admin/reclame", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        adminPass: $("pass").value.trim(), actie: "nieuw",
+        titel: $("adTitel").value.trim(), tekst: $("adTekst").value.trim(), url: $("adUrl").value.trim()
+      })
+    });
+    var d = await r.json();
+    if(!r.ok) throw new Error(d.error || "Toevoegen mislukt");
+    $("adTitel").value = ""; $("adTekst").value = ""; $("adUrl").value = "";
+    zegt("Advertentie toegevoegd.", true);
+    adsLaden();
+  }catch(e){ zegt(e.message); }
+};
+
+$("laad").onclick = function(){ laden(); adsLaden(); };
 $("zoek").oninput = tekenen;
 $("pass").onkeydown = function(e){ if(e.key === "Enter") laden(); };
-try{ var p = sessionStorage.getItem("wcpass"); if(p){ $("pass").value = p; laden(); } }catch(e){}
+try{ var p = sessionStorage.getItem("wcpass"); if(p){ $("pass").value = p; laden(); adsLaden(); } }catch(e){}
 </script>
 </body></html>`);
 });
@@ -6557,6 +6637,124 @@ app.post("/api/worldchat/abonnement", async (req, res) => {
     console.error("Worldchat abonnement mislukt:", (err && err.message) || err);
     return jsonError(res, 500, "De betaalpagina kon niet worden geopend.");
   }
+});
+
+/* ==========================================================================
+   WORLDCHAT: ADVERTENTIES IN DE GRATIS KAMERS
+   --------------------------------------------------------------------------
+   In een gratis kamer staat maar een regel op het scherm, dus er is ruimte
+   voor een nette advertentie. Betaalde kamers krijgen er nooit een: daar
+   betaalt de klant al.
+
+   Elke advertentie houdt twee getallen bij: hoe vaak hij getoond is en hoe
+   vaak erop geklikt is. Dat heb je nodig om ruimte te kunnen verkopen; zonder
+   cijfers is het gissen. De klik loopt via de server, anders valt hij niet te
+   tellen.
+
+   Beheren doe je in het beheerscherm op /worldchat-beheer.
+   ========================================================================== */
+
+const WC_ADS_FILE = path.join(DATA_DIR, "worldchat_ads.json");
+const wcAds = new Map();          /* id -> { id, titel, tekst, url, actief, vertoond, geklikt, aangemaakt } */
+
+function wcAdsLaad(){
+  try{
+    if(!fs.existsSync(WC_ADS_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(WC_ADS_FILE, "utf8") || "{}");
+    Object.keys(data || {}).forEach((k) => { if(data[k]) wcAds.set(k, data[k]); });
+    console.log("Worldchat advertenties geladen: " + wcAds.size);
+  }catch(e){
+    try{ rescueCorruptStore(WC_ADS_FILE, e); }catch(e2){}
+  }
+}
+function wcAdsBewaar(){
+  try{
+    const uit = {};
+    for(const [k, v] of wcAds.entries()) uit[k] = v;
+    safeWriteFileSync(WC_ADS_FILE, JSON.stringify(uit));
+  }catch(e){
+    console.error("Worldchat advertenties opslaan mislukt:", (e && e.message) || e);
+  }
+}
+wcAdsLaad();
+
+/* De eerste keer opstarten: jouw eigen bedrijf erin, zodat er meteen iets
+   staat om mee te proeven. Verwijder je hem, dan komt hij niet terug. */
+function wcAdsEerste(){
+  if(wcAds.size > 0) return;
+  const id = "ad_" + Date.now().toString(36);
+  wcAds.set(id, {
+    id: id,
+    titel: "De Generaal Projecten",
+    tekst: "Schilderwerk en afwerking, met oog voor detail.",
+    url: "https://www.generaalprojecten.nl",
+    actief: true,
+    vertoond: 0,
+    geklikt: 0,
+    aangemaakt: new Date().toISOString()
+  });
+  wcAdsBewaar();
+  console.log("Worldchat: eerste advertentie aangemaakt.");
+}
+wcAdsEerste();
+
+/* Een willekeurige actieve advertentie. Publiek, want de gast moet hem zien
+   zonder in te loggen. */
+app.get("/api/worldchat/reclame", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const actief = [];
+  for(const a of wcAds.values()){ if(a && a.actief) actief.push(a); }
+  if(!actief.length) return res.json({ ok: true, ad: null });
+  const a = actief[Math.floor(Math.random() * actief.length)];
+  a.vertoond = Math.max(0, Number(a.vertoond || 0)) + 1;
+  wcAdsBewaar();
+  res.json({ ok: true, ad: { id: a.id, titel: a.titel, tekst: a.tekst } });
+});
+
+/* De klik loopt via de server, zodat hij geteld wordt, en gaat daarna door
+   naar de website van de adverteerder. */
+app.get("/api/worldchat/reclame/klik", (req, res) => {
+  const id = String((req.query && req.query.id) || "").trim();
+  const a = wcAds.get(id);
+  if(!a || !a.url) return res.redirect(302, WORLDCHAT_URL || "https://formforge.nl/");
+  a.geklikt = Math.max(0, Number(a.geklikt || 0)) + 1;
+  wcAdsBewaar();
+  res.redirect(302, a.url);
+});
+
+/* ---- beheer ---- */
+app.get("/api/worldchat/admin/reclame", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if(!wcBeheerOk(req)) return jsonError(res, 403, "Geen toegang");
+  const lijst = Array.from(wcAds.values()).sort((x, y) => String(y.aangemaakt).localeCompare(String(x.aangemaakt)));
+  res.json({ ok: true, advertenties: lijst });
+});
+
+app.post("/api/worldchat/admin/reclame", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if(!wcBeheerOk(req)) return jsonError(res, 403, "Geen toegang");
+  const actie = String((req.body && req.body.actie) || "").trim();
+  const id = String((req.body && req.body.id) || "").trim();
+
+  if(actie === "nieuw"){
+    const titel = String((req.body && req.body.titel) || "").trim().slice(0, 60);
+    const tekst = String((req.body && req.body.tekst) || "").trim().slice(0, 140);
+    const url = String((req.body && req.body.url) || "").trim().slice(0, 300);
+    if(!titel || !url) return jsonError(res, 400, "Titel en webadres zijn nodig.");
+    if(!/^https?:\/\//i.test(url)) return jsonError(res, 400, "Het webadres moet met http:// of https:// beginnen.");
+    const nieuwId = "ad_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    wcAds.set(nieuwId, { id: nieuwId, titel, tekst, url, actief: true, vertoond: 0, geklikt: 0, aangemaakt: new Date().toISOString() });
+    wcAdsBewaar();
+    return res.json({ ok: true, id: nieuwId });
+  }
+
+  const a = wcAds.get(id);
+  if(!a) return jsonError(res, 404, "Advertentie niet gevonden");
+
+  if(actie === "aanuit"){ a.actief = !a.actief; wcAdsBewaar(); return res.json({ ok: true, actief: a.actief }); }
+  if(actie === "wissen"){ wcAds.delete(id); wcAdsBewaar(); return res.json({ ok: true }); }
+  if(actie === "nulstellen"){ a.vertoond = 0; a.geklikt = 0; wcAdsBewaar(); return res.json({ ok: true }); }
+  return jsonError(res, 400, "Onbekende actie");
 });
 
 app.post("/api/worldchat/pincode", async (req, res) => {
