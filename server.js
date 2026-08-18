@@ -6044,6 +6044,7 @@ const WC_UI = {
   unlimitedKnop: "Unlimited subscription",
   ofAbo: "or",
   reclame: "Advertisement",
+  tellerTekst: "%s people are already chatting along",
   thuisIos: "Tap the share button at the bottom of your screen, then choose Add to Home Screen. The chat then opens like an app and you go straight back into this room.",
   thuisAndroid: "Open the menu with the three dots and choose Add to home screen, or Install app. The chat then opens like an app and you go straight back into this room.",
   abo: "Buy credits",
@@ -6086,7 +6087,7 @@ const WC_UI = {
 /* De vertaalde interface per taal. Eigen bestand op de schijf, los van de
    gidscache, zodat een fout hier nooit de stadsgids raakt. */
 const WC_UI_FILE = path.join(DATA_DIR, "worldchat_ui.json");
-const WC_UI_VERSIE = 9;      /* ophogen dwingt alle talen opnieuw te vertalen */
+const WC_UI_VERSIE = 10;      /* ophogen dwingt alle talen opnieuw te vertalen */
 const wcUiKlaar = new Map();
 
 function wcUiLaad(){
@@ -6143,7 +6144,7 @@ async function wcUiVertaal(lang){
         "'then' = a step separator between two parts of a form, 'invited' = a participant who joined through an invitation,",
         "'Free' = costs nothing, 'Back' = go one screen back, 'Sound on' and 'Sound off' = a toggle for the notification sound.",
         "Use the same polite register throughout, the one a chat app would use with a guest.",
-        "Keep the product name Worldchat United unchanged. No markdown, no code fences, only the JSON object."
+        "Keep placeholders like %s exactly as they are. Keep the product name Worldchat United unchanged. No markdown, no code fences, only the JSON object."
       ].join(" ")
     },
     { role: "user", content: JSON.stringify(WC_UI) }
@@ -6268,7 +6269,7 @@ app.post("/api/worldchat/kamers", (req, res) => {
   if(!email) return res.status(403).json({ error: "E-mailadres of pincode klopt niet." });
   /* Saldo erbij, zodat de klant ook buiten een kamer ziet wat hij nog heeft.
      -1 betekent Unlimited, dus onbeperkt vertalen. */
-  res.json({ ok: true, kamers: wcKamersVan(email), credits: wcSaldoVan(email), unlimitedPrijs: WORLDCHAT_UNLIMITED_PRIJS });
+  res.json({ ok: true, kamers: wcKamersVan(email), credits: wcSaldoVan(email), unlimitedPrijs: WORLDCHAT_UNLIMITED_PRIJS, meedoeners: wcMeedoeners(), perMinuut: WORLDCHAT_TELLER_PER_MINUUT });
 });
 
 app.post("/api/worldchat/kamers/opslaan", (req, res) => {
@@ -6853,6 +6854,35 @@ app.post("/api/worldchat/admin/reclame", (req, res) => {
   if(actie === "nulstellen"){ a.vertoond = 0; a.geklikt = 0; wcAdsBewaar(); return res.json({ ok: true }); }
   return jsonError(res, 400, "Onbekende actie");
 });
+
+/* ==========================================================================
+   WORLDCHAT: DE MEEDOETELLER
+   --------------------------------------------------------------------------
+   Een getal dat oploopt met de tijd. Het wordt HIER berekend en niet in de
+   browser, zodat elk toestel op elk moment hetzelfde getal ziet. Zou elke
+   telefoon zelf tellen, dan liepen ze uiteen en valt het meteen op.
+
+   Instellingen (Render Environment Variables, allemaal optioneel):
+     WORLDCHAT_TELLER_START       beginwaarde (standaard 129767)
+     WORLDCHAT_TELLER_PER_MINUUT  hoeveel erbij per minuut (standaard 3)
+     WORLDCHAT_TELLER_VANAF       datum waarop de teller op de beginwaarde
+                                  stond, bijvoorbeeld 2026-08-18T00:00:00Z
+     WORLDCHAT_TELLER_AAN         0 = helemaal uit, dan toont de app niets
+   ========================================================================== */
+
+const WORLDCHAT_TELLER_AAN = String(process.env.WORLDCHAT_TELLER_AAN || "1") !== "0";
+const WORLDCHAT_TELLER_START = Math.max(0, Number(process.env.WORLDCHAT_TELLER_START || 129767));
+const WORLDCHAT_TELLER_PER_MINUUT = Math.max(0, Number(process.env.WORLDCHAT_TELLER_PER_MINUUT || 3));
+const WORLDCHAT_TELLER_VANAF = (function(){
+  const t = Date.parse(String(process.env.WORLDCHAT_TELLER_VANAF || "2026-08-18T00:00:00Z"));
+  return isFinite(t) ? t : Date.parse("2026-08-18T00:00:00Z");
+})();
+
+function wcMeedoeners(){
+  if(!WORLDCHAT_TELLER_AAN) return 0;
+  const minuten = Math.max(0, Math.floor((Date.now() - WORLDCHAT_TELLER_VANAF) / 60000));
+  return WORLDCHAT_TELLER_START + minuten * WORLDCHAT_TELLER_PER_MINUUT;
+}
 
 app.post("/api/worldchat/pincode", async (req, res) => {
   res.set("Cache-Control", "no-store");
