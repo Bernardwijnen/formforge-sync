@@ -110,6 +110,13 @@ const STRIPE_CREDITS_1500_PRICE_ID = process.env.STRIPE_CREDITS_1500_PRICE_ID ||
    factuurprogramma. Worldchat heeft eigen pakketten met eigen prijzen; die
    staan hieronder onder wc1000, wc5000 en wc15000. Ze delen wel dezelfde
    creditpot per e-mailadres. */
+/* De bedragen staan hier alleen om ze op de knoppen te tonen. Wat er echt
+   afgerekend wordt bepaalt Stripe; wijzig je daar de prijs, pas dan ook deze
+   regels aan, anders staat er iets anders op de knop dan op de rekening. */
+const WORLDCHAT_PRIJS_1000 = String(process.env.WORLDCHAT_PRIJS_1000 || "9,95").trim();
+const WORLDCHAT_PRIJS_5000 = String(process.env.WORLDCHAT_PRIJS_5000 || "14,95").trim();
+const WORLDCHAT_PRIJS_15000 = String(process.env.WORLDCHAT_PRIJS_15000 || "34,95").trim();
+
 const WORLDCHAT_CREDITS_1000_PRICE_ID = String(process.env.WORLDCHAT_CREDITS_1000_PRICE_ID || "price_1U5kar5s8MDSsy0eFOhWiVbl").trim();
 const WORLDCHAT_CREDITS_5000_PRICE_ID = String(process.env.WORLDCHAT_CREDITS_5000_PRICE_ID || "price_1U5kcb5s8MDSsy0eXReLMRZV").trim();
 const WORLDCHAT_CREDITS_15000_PRICE_ID = String(process.env.WORLDCHAT_CREDITS_15000_PRICE_ID || "price_1U5kdg5s8MDSsy0eOKDhw0Jv").trim();
@@ -118,9 +125,9 @@ const CREDIT_PACKAGES = {
   "100": { credits: 100, priceId: STRIPE_CREDITS_100_PRICE_ID, label: "FormForge ECHO 100 AI credits" },
   "500": { credits: 500, priceId: STRIPE_CREDITS_500_PRICE_ID, label: "FormForge ECHO 500 AI credits" },
   "1500": { credits: 1500, priceId: STRIPE_CREDITS_1500_PRICE_ID, label: "FormForge ECHO 1500 AI credits" },
-  "wc1000":  { credits: 1000,  priceId: WORLDCHAT_CREDITS_1000_PRICE_ID,  label: "Worldchat United 1.000 credits" },
-  "wc5000":  { credits: 5000,  priceId: WORLDCHAT_CREDITS_5000_PRICE_ID,  label: "Worldchat United 5.000 credits" },
-  "wc15000": { credits: 15000, priceId: WORLDCHAT_CREDITS_15000_PRICE_ID, label: "Worldchat United 15.000 credits" }
+  "wc1000":  { credits: 1000,  priceId: WORLDCHAT_CREDITS_1000_PRICE_ID,  label: "Worldchat United 1.000 credits",  prijs: WORLDCHAT_PRIJS_1000 },
+  "wc5000":  { credits: 5000,  priceId: WORLDCHAT_CREDITS_5000_PRICE_ID,  label: "Worldchat United 5.000 credits",  prijs: WORLDCHAT_PRIJS_5000 },
+  "wc15000": { credits: 15000, priceId: WORLDCHAT_CREDITS_15000_PRICE_ID, label: "Worldchat United 15.000 credits", prijs: WORLDCHAT_PRIJS_15000 }
 };
 
 // HTML-escape voor gebruik in e-mailtemplates (ondernemer/hotel).
@@ -6055,6 +6062,8 @@ const WC_UI = {
   unlimitedKnop: "Unlimited subscription",
   ofAbo: "or",
   reclame: "Advertisement",
+  perDuizend: "per 1,000",
+  meestGekozen: "most chosen",
   tellerTekst: "%s people are already chatting along",
   uitKamer: "Leave",
   kamerUitVraag: "Leave the room %s? It disappears from your list. With the invitation link you can come back any time.",
@@ -6100,7 +6109,7 @@ const WC_UI = {
 /* De vertaalde interface per taal. Eigen bestand op de schijf, los van de
    gidscache, zodat een fout hier nooit de stadsgids raakt. */
 const WC_UI_FILE = path.join(DATA_DIR, "worldchat_ui.json");
-const WC_UI_VERSIE = 11;      /* ophogen dwingt alle talen opnieuw te vertalen */
+const WC_UI_VERSIE = 12;      /* ophogen dwingt alle talen opnieuw te vertalen */
 const wcUiKlaar = new Map();
 
 function wcUiLaad(){
@@ -6282,7 +6291,19 @@ app.post("/api/worldchat/kamers", (req, res) => {
   if(!email) return res.status(403).json({ error: "E-mailadres of pincode klopt niet." });
   /* Saldo erbij, zodat de klant ook buiten een kamer ziet wat hij nog heeft.
      -1 betekent Unlimited, dus onbeperkt vertalen. */
-  res.json({ ok: true, kamers: wcKamersVan(email), credits: wcSaldoVan(email), unlimitedPrijs: WORLDCHAT_UNLIMITED_PRIJS, meedoeners: wcMeedoeners(), perMinuut: WORLDCHAT_TELLER_PER_MINUUT });
+  res.json({
+    ok: true,
+    kamers: wcKamersVan(email),
+    credits: wcSaldoVan(email),
+    unlimitedPrijs: WORLDCHAT_UNLIMITED_PRIJS,
+    meedoeners: wcMeedoeners(),
+    perMinuut: WORLDCHAT_TELLER_PER_MINUUT,
+    pakketten: ["wc1000", "wc5000", "wc15000"].map((k) => ({
+      sleutel: k,
+      credits: CREDIT_PACKAGES[k].credits,
+      prijs: CREDIT_PACKAGES[k].prijs
+    }))
+  });
 });
 
 app.post("/api/worldchat/kamers/opslaan", (req, res) => {
