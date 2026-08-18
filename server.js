@@ -106,10 +106,21 @@ const STRIPE_CREDITS_100_PRICE_ID = process.env.STRIPE_CREDITS_100_PRICE_ID || "
 const STRIPE_CREDITS_500_PRICE_ID = process.env.STRIPE_CREDITS_500_PRICE_ID || "price_1TaHxD5s8MDSsy0eVrOvmYPM";
 const STRIPE_CREDITS_1500_PRICE_ID = process.env.STRIPE_CREDITS_1500_PRICE_ID || "price_1TaHz15s8MDSsy0eMKRMDbxN";
 
+/* De pakketten 100, 500 en 1500 horen bij de AI van het offerte- en
+   factuurprogramma. Worldchat heeft eigen pakketten met eigen prijzen; die
+   staan hieronder onder wc1000, wc5000 en wc15000. Ze delen wel dezelfde
+   creditpot per e-mailadres. */
+const WORLDCHAT_CREDITS_1000_PRICE_ID = String(process.env.WORLDCHAT_CREDITS_1000_PRICE_ID || "price_1U5kar5s8MDSsy0eFOhWiVbl").trim();
+const WORLDCHAT_CREDITS_5000_PRICE_ID = String(process.env.WORLDCHAT_CREDITS_5000_PRICE_ID || "price_1U5kcb5s8MDSsy0eXReLMRZV").trim();
+const WORLDCHAT_CREDITS_15000_PRICE_ID = String(process.env.WORLDCHAT_CREDITS_15000_PRICE_ID || "price_1U5kdg5s8MDSsy0eOKDhw0Jv").trim();
+
 const CREDIT_PACKAGES = {
   "100": { credits: 100, priceId: STRIPE_CREDITS_100_PRICE_ID, label: "FormForge ECHO 100 AI credits" },
   "500": { credits: 500, priceId: STRIPE_CREDITS_500_PRICE_ID, label: "FormForge ECHO 500 AI credits" },
-  "1500": { credits: 1500, priceId: STRIPE_CREDITS_1500_PRICE_ID, label: "FormForge ECHO 1500 AI credits" }
+  "1500": { credits: 1500, priceId: STRIPE_CREDITS_1500_PRICE_ID, label: "FormForge ECHO 1500 AI credits" },
+  "wc1000":  { credits: 1000,  priceId: WORLDCHAT_CREDITS_1000_PRICE_ID,  label: "Worldchat United 1.000 credits" },
+  "wc5000":  { credits: 5000,  priceId: WORLDCHAT_CREDITS_5000_PRICE_ID,  label: "Worldchat United 5.000 credits" },
+  "wc15000": { credits: 15000, priceId: WORLDCHAT_CREDITS_15000_PRICE_ID, label: "Worldchat United 15.000 credits" }
 };
 
 // HTML-escape voor gebruik in e-mailtemplates (ondernemer/hotel).
