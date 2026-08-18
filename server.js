@@ -6277,11 +6277,19 @@ function wcKamersVan(email){
   return schoon.map((k) => {
     const t = k.reconnect ? reconnectTokens.get(k.reconnect) : null;
     const room = rooms.get(k.code);
+    /* Wanneer kwam het laatste bericht binnen? Daarmee kan de app een stipje
+       zetten bij kamers waar iets nieuws is, zodat niemand alle kamers hoeft
+       open te klikken om dat te ontdekken. */
+    let laatsteBericht = 0;
+    if(room && room.messages && room.messages.length){
+      laatsteBericht = Number(room.messages[room.messages.length - 1].ts || 0);
+    }
     return {
       code: k.code,
       reconnect: k.reconnect,
       kamerNaam: (room && room.naam) ? room.naam : (k.kamerNaam || ""),
       isHost: t ? !!t.isHost : !!k.isHost,
+      laatsteBericht: laatsteBericht,
       ts: k.ts || 0
     };
   });
