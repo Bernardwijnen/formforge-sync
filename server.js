@@ -6022,6 +6022,12 @@ const WC_UI = {
   thuisKnop: "Add to home screen",
   thuisKop: "Keep this chat at hand",
   thuisOk: "Got it",
+  inlogKop: "Log in",
+  inlogKnop: "Log in",
+  inlogUit: "Your rooms are kept with your e-mail address, so you find them back on any phone. The pin code arrives by mail; you never make one up yourself.",
+  uitloggen: "Log out",
+  pinNodig: "Fill in the pin code from the e-mail.",
+  inlogGestuurd: "Check your mail. Your pin code is on its way.",
   thuisIos: "Tap the share button at the bottom of your screen, then choose Add to Home Screen. The chat then opens like an app and you go straight back into this room.",
   thuisAndroid: "Open the menu with the three dots and choose Add to home screen, or Install app. The chat then opens like an app and you go straight back into this room.",
   abo: "Buy credits",
@@ -6064,7 +6070,7 @@ const WC_UI = {
 /* De vertaalde interface per taal. Eigen bestand op de schijf, los van de
    gidscache, zodat een fout hier nooit de stadsgids raakt. */
 const WC_UI_FILE = path.join(DATA_DIR, "worldchat_ui.json");
-const WC_UI_VERSIE = 4;      /* ophogen dwingt alle talen opnieuw te vertalen */
+const WC_UI_VERSIE = 5;      /* ophogen dwingt alle talen opnieuw te vertalen */
 const wcUiKlaar = new Map();
 
 function wcUiLaad(){
@@ -6167,6 +6173,99 @@ app.get("/api/worldchat/ui", async (req, res) => {
     console.error("Worldchat interfaceteksten mislukt (" + lang + "):", (e && e.message) || e);
     return res.json({ ok: true, lang: "en", teksten: WC_UI, terugval: true });
   }
+});
+
+/* ==========================================================================
+   WORLDCHAT: DE KAMERS VAN EEN GEBRUIKER, OP DE SERVER
+   --------------------------------------------------------------------------
+   De kamerlijst stond eerst alleen in de browser. Dat gaat mis zodra iemand de
+   app op zijn beginscherm zet: op een iPhone krijgt zo'n app een eigen opslag,
+   los van Safari, dus de kamers uit Safari bestaan daar niet. Ook een nieuwe
+   telefoon of het wissen van sitegegevens kostte je al je kamers.
+
+   Daarom horen ze bij het account. Iedereen logt in met zijn e-mailadres en de
+   pincode die hij per mail krijgt, of hij nu gratis chat of credits heeft.
+   ========================================================================== */
+
+const WC_KAMERS_FILE = path.join(DATA_DIR, "worldchat_kamers.json");
+const wcKamers = new Map();          /* e-mailadres -> [{ code, reconnect, kamerNaam, isHost, ts }] */
+
+function wcKamersLaad(){
+  try{
+    if(!fs.existsSync(WC_KAMERS_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(WC_KAMERS_FILE, "utf8") || "{}");
+    Object.keys(data || {}).forEach((k) => { if(Array.isArray(data[k])) wcKamers.set(k, data[k]); });
+    console.log("Worldchat kamerlijsten geladen: " + wcKamers.size + " accounts");
+  }catch(e){
+    try{ rescueCorruptStore(WC_KAMERS_FILE, e); }catch(e2){}
+  }
+}
+function wcKamersBewaar(){
+  try{
+    const uit = {};
+    for(const [k, v] of wcKamers.entries()) uit[k] = v;
+    safeWriteFileSync(WC_KAMERS_FILE, JSON.stringify(uit));
+  }catch(e){
+    console.error("Worldchat kamerlijsten opslaan mislukt:", (e && e.message) || e);
+  }
+}
+wcKamersLaad();
+
+/* Klopt het e-mailadres met de pincode? Geeft het genormaliseerde adres terug,
+   of null. Werkt voor iedereen: gratis, credits en Unlimited. */
+function wcInlogOk(req){
+  const email = normalizePremiumKey(req.body && req.body.email);
+  const pin = String((req.body && req.body.pin) || "").trim();
+  if(!email || !pin) return null;
+  const acc = getPremiumAccount("formforge:" + email) || getPremiumAccount(email);
+  if(!acc) return null;
+  if(String(acc.premiumPin || "") !== pin) return null;
+  return email;
+}
+
+/* Kamers die niet meer bestaan vallen er vanzelf uit. */
+function wcKamersVan(email){
+  const lijst = wcKamers.get(email) || [];
+  const schoon = lijst.filter((k) => k && k.code && rooms.has(k.code));
+  if(schoon.length !== lijst.length){ wcKamers.set(email, schoon); wcKamersBewaar(); }
+  return schoon;
+}
+
+app.post("/api/worldchat/kamers", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const email = wcInlogOk(req);
+  if(!email) return res.status(403).json({ error: "E-mailadres of pincode klopt niet." });
+  res.json({ ok: true, kamers: wcKamersVan(email) });
+});
+
+app.post("/api/worldchat/kamers/opslaan", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const email = wcInlogOk(req);
+  if(!email) return res.status(403).json({ error: "E-mailadres of pincode klopt niet." });
+  const code = String((req.body && req.body.code) || "").trim();
+  const reconnect = String((req.body && req.body.reconnect) || "").trim();
+  if(!code || !reconnect) return jsonError(res, 400, "Kamercode of sleutel ontbreekt.");
+  const lijst = (wcKamers.get(email) || []).filter((k) => k && k.code !== code);
+  lijst.unshift({
+    code: code,
+    reconnect: reconnect,
+    kamerNaam: String((req.body && req.body.kamerNaam) || "").slice(0, 60),
+    isHost: !!(req.body && req.body.isHost),
+    ts: Date.now()
+  });
+  wcKamers.set(email, lijst.slice(0, 60));
+  wcKamersBewaar();
+  res.json({ ok: true, kamers: wcKamersVan(email) });
+});
+
+app.post("/api/worldchat/kamers/wissen", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const email = wcInlogOk(req);
+  if(!email) return res.status(403).json({ error: "E-mailadres of pincode klopt niet." });
+  const code = String((req.body && req.body.code) || "").trim();
+  wcKamers.set(email, (wcKamers.get(email) || []).filter((k) => k && k.code !== code));
+  wcKamersBewaar();
+  res.json({ ok: true, kamers: wcKamersVan(email) });
 });
 
 app.post("/api/worldchat/pincode", async (req, res) => {
