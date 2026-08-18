@@ -6045,6 +6045,8 @@ const WC_UI = {
   ofAbo: "or",
   reclame: "Advertisement",
   tellerTekst: "%s people are already chatting along",
+  uitKamer: "Leave",
+  kamerUitVraag: "Leave the room %s? It disappears from your list. With the invitation link you can come back any time.",
   thuisIos: "Tap the share button at the bottom of your screen, then choose Add to Home Screen. The chat then opens like an app and you go straight back into this room.",
   thuisAndroid: "Open the menu with the three dots and choose Add to home screen, or Install app. The chat then opens like an app and you go straight back into this room.",
   abo: "Buy credits",
@@ -6087,7 +6089,7 @@ const WC_UI = {
 /* De vertaalde interface per taal. Eigen bestand op de schijf, los van de
    gidscache, zodat een fout hier nooit de stadsgids raakt. */
 const WC_UI_FILE = path.join(DATA_DIR, "worldchat_ui.json");
-const WC_UI_VERSIE = 10;      /* ophogen dwingt alle talen opnieuw te vertalen */
+const WC_UI_VERSIE = 11;      /* ophogen dwingt alle talen opnieuw te vertalen */
 const wcUiKlaar = new Map();
 
 function wcUiLaad(){
