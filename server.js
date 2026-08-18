@@ -6239,7 +6239,22 @@ function wcKamersVan(email){
   const lijst = wcKamers.get(email) || [];
   const schoon = lijst.filter((k) => k && k.code && rooms.has(k.code));
   if(schoon.length !== lijst.length){ wcKamers.set(email, schoon); wcKamersBewaar(); }
-  return schoon;
+  /* Of iemand de host is, halen we uit zijn terugkeersleutel en niet uit wat er
+     ooit bij het opslaan is meegegeven. Die sleutel geeft de server zelf uit,
+     dus oude of onvolledige regels in de lijst worden zo vanzelf rechtgezet.
+     De kamernaam pakken we ook vers uit de kamer, voor het geval de host hem
+     intussen heeft hernoemd. */
+  return schoon.map((k) => {
+    const t = k.reconnect ? reconnectTokens.get(k.reconnect) : null;
+    const room = rooms.get(k.code);
+    return {
+      code: k.code,
+      reconnect: k.reconnect,
+      kamerNaam: (room && room.naam) ? room.naam : (k.kamerNaam || ""),
+      isHost: t ? !!t.isHost : !!k.isHost,
+      ts: k.ts || 0
+    };
+  });
 }
 
 app.post("/api/worldchat/kamers", (req, res) => {
