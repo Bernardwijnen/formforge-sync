@@ -6280,6 +6280,201 @@ app.post("/api/worldchat/kamers/wissen", (req, res) => {
   res.json({ ok: true, kamers: wcKamersVan(email) });
 });
 
+/* ==========================================================================
+   WORLDCHAT: BEHEER
+   --------------------------------------------------------------------------
+   Een eenvoudig scherm waarin je alle aangemelde adressen ziet, met hun pakket,
+   saldo en aantal kamers, en waarmee je iemand met een klik kunt verwijderen.
+   De server levert dit scherm zelf uit, dus je hoeft er geen pagina voor aan
+   te maken op je website. Adres:
+
+     https://formforge-sync-1.onrender.com/worldchat-beheer
+
+   Toegang met je beheerwachtwoord. Eigenaar-adressen kunnen niet verwijderd
+   worden; die zitten in de code en zouden bij de eerstvolgende opstart toch
+   weer terugkomen.
+   ========================================================================== */
+
+function wcBeheerOk(req){
+  const wachtwoord = String((req.query && req.query.adminPass) || (req.body && req.body.adminPass) || "").trim();
+  if(!wachtwoord) return false;
+  try{ if(adminOk(req)) return true; }catch(e){}
+  try{ if(guesttalkAuthOk(wachtwoord)) return true; }catch(e){}
+  return false;
+}
+
+/* Alles wat we van een account weten, in een nette regel. */
+function wcBeheerLijst(){
+  const uit = [];
+  for(const [sleutel, a] of premiumAccounts.entries()){
+    if(!a) continue;
+    const email = String(a.email || sleutel).replace(/^formforge:/, "");
+    const plan = normalizeAiPlan(a.plan || "");
+    uit.push({
+      sleutel: sleutel,
+      email: email,
+      eigenaar: isOwnerPremiumEmail(email),
+      plan: plan,
+      pakket: String(a.planLabel || plan || ""),
+      actief: !!a.active,
+      credits: plan === "pro" ? -1 : Math.max(0, Math.floor(Number(a.creditsRemaining || 0))),
+      gekocht: Math.max(0, Math.floor(Number(a.creditsTotal || 0))),
+      kamers: (wcKamers.get(normalizePremiumKey(email)) || []).length,
+      bron: String(a.source || ""),
+      abonnement: String(a.subscriptionStatus || ""),
+      aangemaakt: String(a.createdAt || a.starterCreditsGrantedAt || ""),
+      bijgewerkt: String(a.updatedAt || "")
+    });
+  }
+  uit.sort((x, y) => String(y.bijgewerkt).localeCompare(String(x.bijgewerkt)));
+  return uit;
+}
+
+app.get("/api/worldchat/admin/accounts", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if(!wcBeheerOk(req)) return jsonError(res, 403, "Geen toegang");
+  const lijst = wcBeheerLijst();
+  res.json({
+    ok: true,
+    aantal: lijst.length,
+    metCredits: lijst.filter(a => a.plan === "credits" && a.credits > 0).length,
+    onbeperkt: lijst.filter(a => a.plan === "pro").length,
+    accounts: lijst
+  });
+});
+
+app.post("/api/worldchat/admin/verwijder", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if(!wcBeheerOk(req)) return jsonError(res, 403, "Geen toegang");
+  const email = normalizePremiumKey(req.body && req.body.email);
+  if(!email) return jsonError(res, 400, "E-mailadres ontbreekt");
+  if(isOwnerPremiumEmail(email)) return jsonError(res, 400, "Dit is een eigenaar-account en kan niet verwijderd worden.");
+
+  let weg = 0;
+  for(const sleutel of Array.from(premiumAccounts.keys())){
+    const kaal = String(sleutel).replace(/^formforge:/, "").replace(/^echo:/, "");
+    if(kaal === email){ premiumAccounts.delete(sleutel); weg++; }
+  }
+  if(weg) savePremiumAccounts();
+
+  const hadKamers = (wcKamers.get(email) || []).length;
+  if(wcKamers.has(email)){ wcKamers.delete(email); wcKamersBewaar(); }
+
+  console.log("Worldchat beheer: account verwijderd (" + weg + " sleutels, " + hadKamers + " kamers)");
+  res.json({ ok: true, verwijderd: weg, kamers: hadKamers });
+});
+
+/* Het beheerscherm zelf. Puur tekst en knoppen, geen opmaakbestanden nodig. */
+app.get("/worldchat-beheer", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.set("Content-Type", "text/html; charset=utf-8");
+  res.send(`<!DOCTYPE html>
+<html lang="nl"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Worldchat beheer</title>
+<style>
+ *{box-sizing:border-box}
+ body{margin:0;background:#eef1f6;color:#12203a;font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+ header{background:#1e2d4f;color:#fff;padding:16px 20px;display:flex;align-items:center;gap:12px}
+ header b{font-family:Georgia,serif;letter-spacing:.05em}
+ main{max-width:1000px;margin:0 auto;padding:20px}
+ .balk{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+ input,button{font:inherit}
+ input{padding:10px 12px;border:1px solid #dbe1ec;border-radius:9px;min-width:220px}
+ button{padding:10px 16px;border:0;border-radius:9px;background:#1e2d4f;color:#fff;font-weight:600;cursor:pointer}
+ button.weg{background:#b42318;padding:7px 12px;font-size:13px}
+ .kaart{background:#fff;border:1px solid #dbe1ec;border-radius:12px;padding:14px 16px;margin-bottom:14px}
+ table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #dbe1ec;border-radius:12px;overflow:hidden}
+ th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #eef1f6;font-size:14px}
+ th{background:#f6f8fb;font-size:12.5px;text-transform:uppercase;letter-spacing:.04em;color:#6b7a95}
+ tr:last-child td{border-bottom:0}
+ .kroon{color:#c9a24b;font-weight:600}
+ .melding{padding:10px 13px;border-radius:9px;margin-bottom:14px;display:none}
+ .melding.aan{display:block}
+ .fout{background:#fef3f2;border:1px solid #fecdc9;color:#b42318}
+ .goed{background:#f0fdf4;border:1px solid #bbf7d0;color:#067647}
+</style></head><body>
+<header><b>Worldchat United</b> <span style="opacity:.7;font-size:13px">beheer</span></header>
+<main>
+  <div class="melding" id="melding"></div>
+  <div class="kaart">
+    <div class="balk">
+      <input id="pass" type="password" placeholder="Beheerwachtwoord" autocomplete="current-password">
+      <input id="zoek" placeholder="Zoek op e-mailadres">
+      <button id="laad">Ophalen</button>
+    </div>
+    <div id="samenvatting" style="font-size:13.5px;color:#6b7a95"></div>
+  </div>
+  <table id="tabel"><thead><tr>
+    <th>E-mailadres</th><th>Pakket</th><th>Credits</th><th>Kamers</th><th>Bijgewerkt</th><th></th>
+  </tr></thead><tbody id="rijen"></tbody></table>
+</main>
+<script>
+var alles = [];
+function $(id){ return document.getElementById(id); }
+function zegt(tekst, goed){
+  var m = $("melding");
+  m.className = "melding aan " + (goed ? "goed" : "fout");
+  m.textContent = tekst;
+}
+function esc(t){ var d = document.createElement("div"); d.textContent = String(t == null ? "" : t); return d.innerHTML; }
+function datum(t){ if(!t) return ""; try{ return new Date(t).toLocaleString("nl-NL"); }catch(e){ return t; } }
+
+async function laden(){
+  var pass = $("pass").value.trim();
+  if(!pass) return zegt("Vul je beheerwachtwoord in.");
+  try{
+    var r = await fetch("/api/worldchat/admin/accounts?adminPass=" + encodeURIComponent(pass));
+    var d = await r.json();
+    if(!r.ok) throw new Error(d.error || "Ophalen mislukt");
+    alles = d.accounts || [];
+    try{ sessionStorage.setItem("wcpass", pass); }catch(e){}
+    $("samenvatting").textContent = d.aantal + " accounts, waarvan " + d.metCredits + " met credits en " + d.onbeperkt + " onbeperkt.";
+    $("melding").className = "melding";
+    tekenen();
+  }catch(e){ zegt(e.message); }
+}
+
+function tekenen(){
+  var zoek = $("zoek").value.trim().toLowerCase();
+  var lijst = alles.filter(function(a){ return !zoek || a.email.toLowerCase().indexOf(zoek) >= 0; });
+  $("rijen").innerHTML = lijst.map(function(a){
+    return "<tr>" +
+      "<td>" + esc(a.email) + (a.eigenaar ? ' <span class="kroon">eigenaar</span>' : "") + "</td>" +
+      "<td>" + esc(a.pakket || a.plan || "-") + (a.actief ? "" : " (niet actief)") + "</td>" +
+      "<td>" + (a.credits === -1 ? "onbeperkt" : esc(a.credits) + (a.gekocht ? " van " + esc(a.gekocht) : "")) + "</td>" +
+      "<td>" + esc(a.kamers) + "</td>" +
+      "<td>" + esc(datum(a.bijgewerkt)) + "</td>" +
+      "<td>" + (a.eigenaar ? "" : '<button class="weg" data-weg="' + esc(a.email) + '">Verwijderen</button>') + "</td>" +
+      "</tr>";
+  }).join("");
+  Array.prototype.forEach.call(document.querySelectorAll("[data-weg]"), function(b){
+    b.onclick = function(){ verwijderen(b.getAttribute("data-weg")); };
+  });
+}
+
+async function verwijderen(email){
+  if(!confirm("Account " + email + " verwijderen? Zijn kamerlijst en pincode gaan mee. Dit kan niet ongedaan worden gemaakt.")) return;
+  try{
+    var r = await fetch("/api/worldchat/admin/verwijder", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ adminPass: $("pass").value.trim(), email: email })
+    });
+    var d = await r.json();
+    if(!r.ok) throw new Error(d.error || "Verwijderen mislukt");
+    zegt(email + " is verwijderd.", true);
+    laden();
+  }catch(e){ zegt(e.message); }
+}
+
+$("laad").onclick = laden;
+$("zoek").oninput = tekenen;
+$("pass").onkeydown = function(e){ if(e.key === "Enter") laden(); };
+try{ var p = sessionStorage.getItem("wcpass"); if(p){ $("pass").value = p; laden(); } }catch(e){}
+</script>
+</body></html>`);
+});
+
 app.post("/api/worldchat/pincode", async (req, res) => {
   res.set("Cache-Control", "no-store");
   try{
