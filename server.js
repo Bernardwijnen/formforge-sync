@@ -6058,6 +6058,8 @@ const WC_UI = {
   uitloggen: "Log out",
   pinNodig: "Fill in the pin code from the e-mail.",
   inlogGestuurd: "Check your mail. Your pin code is on its way.",
+  bewaarVraag: "Want to find this room again later?",
+  bewaarJa: "Save",
   kamerWegVraag: "Delete the room %s? It closes for everyone and the messages are gone. This cannot be undone.",
   unlimitedKnop: "Unlimited subscription",
   ofAbo: "or",
@@ -6109,7 +6111,7 @@ const WC_UI = {
 /* De vertaalde interface per taal. Eigen bestand op de schijf, los van de
    gidscache, zodat een fout hier nooit de stadsgids raakt. */
 const WC_UI_FILE = path.join(DATA_DIR, "worldchat_ui.json");
-const WC_UI_VERSIE = 12;      /* ophogen dwingt alle talen opnieuw te vertalen */
+const WC_UI_VERSIE = 13;      /* ophogen dwingt alle talen opnieuw te vertalen */
 const wcUiKlaar = new Map();
 
 function wcUiLaad(){
@@ -6789,17 +6791,35 @@ function wcAdsEerste(){
 }
 wcAdsEerste();
 
-/* Een willekeurige actieve advertentie. Publiek, want de gast moet hem zien
-   zonder in te loggen. */
+/* De volgende advertentie uit de rij. Ze komen om de beurt aan bod in plaats
+   van willekeurig, zodat elke adverteerder ongeveer evenveel vertoningen
+   krijgt. Dat is ook wat je een klant kunt beloven.
+
+   De app vraagt hier elke paar minuten om een nieuwe; hoe lang eentje blijft
+   staan bepaalt WORLDCHAT_RECLAME_SECONDEN (standaard 300, dus vijf minuten).
+   Publiek bereikbaar, want een gast hoeft niet ingelogd te zijn. */
+const WORLDCHAT_RECLAME_SECONDEN = Math.max(15, Number(process.env.WORLDCHAT_RECLAME_SECONDEN || 300));
+let wcAdBeurt = 0;
+
 app.get("/api/worldchat/reclame", (req, res) => {
   res.set("Cache-Control", "no-store");
   const actief = [];
   for(const a of wcAds.values()){ if(a && a.actief) actief.push(a); }
-  if(!actief.length) return res.json({ ok: true, ad: null });
-  const a = actief[Math.floor(Math.random() * actief.length)];
+  if(!actief.length) return res.json({ ok: true, ad: null, seconden: WORLDCHAT_RECLAME_SECONDEN });
+
+  /* Op volgorde van aanmaken, zodat de rij voorspelbaar is. */
+  actief.sort((x, y) => String(x.aangemaakt).localeCompare(String(y.aangemaakt)));
+  const a = actief[wcAdBeurt % actief.length];
+  wcAdBeurt = (wcAdBeurt + 1) % 1000000;
+
   a.vertoond = Math.max(0, Number(a.vertoond || 0)) + 1;
   wcAdsBewaar();
-  res.json({ ok: true, ad: { id: a.id, titel: a.titel, tekst: a.tekst, logo: a.logo ? ("/api/worldchat/reclame/logo/" + a.id) : "" } });
+  res.json({
+    ok: true,
+    seconden: WORLDCHAT_RECLAME_SECONDEN,
+    aantal: actief.length,
+    ad: { id: a.id, titel: a.titel, tekst: a.tekst, logo: a.logo ? ("/api/worldchat/reclame/logo/" + a.id) : "" }
+  });
 });
 
 /* De klik loopt via de server, zodat hij geteld wordt, en gaat daarna door
