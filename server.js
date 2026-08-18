@@ -6235,7 +6235,9 @@ app.post("/api/worldchat/kamers", (req, res) => {
   res.set("Cache-Control", "no-store");
   const email = wcInlogOk(req);
   if(!email) return res.status(403).json({ error: "E-mailadres of pincode klopt niet." });
-  res.json({ ok: true, kamers: wcKamersVan(email) });
+  /* Saldo erbij, zodat de klant ook buiten een kamer ziet wat hij nog heeft.
+     -1 betekent Unlimited, dus onbeperkt vertalen. */
+  res.json({ ok: true, kamers: wcKamersVan(email), credits: wcSaldo("formforge:" + email) });
 });
 
 app.post("/api/worldchat/kamers/opslaan", (req, res) => {
