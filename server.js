@@ -6854,7 +6854,21 @@ app.get("/api/worldchat/reclame/logo/:id", (req, res) => {
 /* ---- beheer ---- */
 
 /* Een logo uploaden bij een bestaande advertentie. */
-app.post("/api/worldchat/admin/reclame-logo", wcLogoUpload.single("logo"), (req, res) => {
+/* Multer eerst apart draaien. Gaat het mis (bestand te groot, verkeerd veld),
+   dan gooit multer een fout die zonder deze wikkel bij de algemene
+   foutafhandelaar belandt en een 500 oplevert. Een te groot logo is geen
+   serverfout maar een verkeerd verzoek, dus dat hoort een 4xx te zijn. */
+function wcLogoOntvang(req, res, next){
+  wcLogoUpload.single("logo")(req, res, (err) => {
+    if(!err) return next();
+    const code = String((err && err.code) || "");
+    if(code === "LIMIT_FILE_SIZE") return jsonError(res, 413, "Het logo is te groot. Maximaal 1,5 MB.");
+    if(code === "LIMIT_UNEXPECTED_FILE") return jsonError(res, 400, "Onverwacht bestandsveld. Verstuur de afbeelding in het veld \"logo\".");
+    return jsonError(res, 400, "De afbeelding kon niet worden gelezen.", (err && err.message) ? err.message : String(err));
+  });
+}
+
+app.post("/api/worldchat/admin/reclame-logo", wcLogoOntvang, (req, res) => {
   res.set("Cache-Control", "no-store");
   if(!wcBeheerOk(req)) return jsonError(res, 403, "Geen toegang");
   const a = wcAds.get(String((req.body && req.body.id) || "").trim());
@@ -12927,6 +12941,14 @@ app.post("/api/zzp/plaats-nu", express.json({ limit: "50kb" }), async (req, res)
     }
     bericht.fout = uitkomst.fouten.join(" | ");
     zzpMarkDirty();
+    /* Nog geen kanaal gekoppeld is een ontbrekende instelling, geen storing.
+       Als 502 telde elke poging mee als serverfout en ging er een
+       waarschuwing naar de wachter. 409 zegt: de server werkt, maar de
+       voorwaarde klopt nog niet. */
+    const kanalen = account.koppeling || {};
+    if(!kanalen.igUserId && !kanalen.pageId){
+      return res.status(409).json({ ok: false, error: "Er is nog geen Instagram- of Facebookkanaal gekoppeld." });
+    }
     return res.status(502).json({ ok: false, error: bericht.fout || "Plaatsen mislukt" });
   }catch(err){
     return res.status(500).json({ ok: false, error: err.message || "Plaatsen mislukt" });
@@ -14191,7 +14213,10 @@ async function wdSamenvatting(ruweTekst){
           "Je bent de wachter van een Node.js/Express server (Salve, een meertalige hotelgids met chat, Guesttalk-vertaler, PDF Studio en een ondernemersportaal).",
           "Je krijgt het volledige dagrapport. Schrijf er een korte samenvatting bij in het Nederlands voor de eigenaar, die geen ontwikkelaar is.",
           "Regels: gewone taal, geen jargon zonder uitleg. Begin met of alles goed gaat of niet.",
-          "Zet daarna wat er echt aandacht nodig heeft, wat vanzelf is opgelost, en wat er opvalt aan het gebruik en de klanten.",
+          "Zet daarna wat er echt aandacht nodig heeft en wat vanzelf is opgelost.",
+          "Gebruikscijfers (gidsopeningen, chats, logins, verbruikte minuten, aantallen hotels en ondernemers) mag je noemen, maar puur als cijfer.",
+          "Trek daar GEEN conclusies uit over betrokkenheid van gebruikers en geef GEEN advies over promotie of marketing:",
+          "de server ziet geen verschil tussen echte gasten en eigen testverkeer, dus zulke conclusies zijn niet te onderbouwen.",
           "Benoem een mogelijke oorzaak altijd als vermoeden, nooit als vaststaand feit.",
           "Geef bij een terugkerende fout een voorstel voor wat er onderzocht kan worden, en zeg erbij dat dit met de hand gecontroleerd moet worden.",
           "Verzin geen bestandsnamen, regelnummers, functienamen of cijfers die niet in het rapport staan.",
