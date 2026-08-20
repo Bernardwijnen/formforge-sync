@@ -14300,7 +14300,7 @@ function wdRapportKlok(){
       year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23"
     }).formatToParts(new Date());
     const deel = {};
-    for(const p of nl.parts) deel[p.type] = p.value;
+    for(const p of nl) deel[p.type] = p.value;
     const dag = deel.year + "-" + deel.month + "-" + deel.day;
     const uur = Number(deel.hour) % 24;
     if(uur === WACHTER_RAPPORT_UUR && wdLaatsteRapportDag !== dag){
