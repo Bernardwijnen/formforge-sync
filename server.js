@@ -6217,6 +6217,133 @@ app.get("/api/worldchat/ui", async (req, res) => {
 });
 
 /* ==========================================================================
+   SALVE STARTPAGINA: DE TEKSTEN IN ELKE TAAL
+   --------------------------------------------------------------------------
+   De startpagina op formforge.nl/salve had een vaste tabel met vijf talen
+   (en, nl, de, fr, es). Alle andere talen waren met een regel als
+   HOMEUI.pl = HOMEUI.en aan het Engels gekoppeld. Koos een bezoeker Pools of
+   Russisch, dan kreeg hij dus gewoon Engels te zien.
+
+   Daarom staat de Engelse brontekst nu hier. De pagina vraagt een taal op,
+   die wordt een keer vertaald en meteen op de schijf bewaard. Elke volgende
+   bezoeker in die taal krijgt hem uit de opslag: geen wachttijd en geen
+   kosten bij OpenAI. Dezelfde aanpak als /api/worldchat/ui hierboven.
+
+   Pas je een tekst hieronder aan, hoog dan SALVE_HOME_UI_VERSIE op. Dan
+   wordt elke taal bij de eerstvolgende aanvraag opnieuw vertaald.
+   ========================================================================== */
+
+const SALVE_HOME_UI_VERSIE = 1;
+const SALVE_HOME_UI = {title:"The free, multilingual city guide for tourists",lead:"Hotel guests scan a QR code in their room and instantly discover the best places in town in their own language &ndash; with directions. Salve connects hotels, local businesses and tourists in one place.",login:"Log in to your portal",signup:"Sign up",note:"Logging in is for hotels and businesses already taking part. Not yet joined? Sign up.",c1h:"For tourists",c1p:"Open the guide via the QR code in your hotel. Pick your language and discover restaurants, sights, shops and tips &ndash; all translated, with directions. Completely free.",c2h:"For hotels",c2p:"Join for free with an unlimited plan. Your guests get their own welcome with your logo and see only your hotel &ndash; no competition. A ready-made poster with QR code in the room is all it takes.",c2l:"Register your hotel &rsaquo;",c3h:"For businesses",c3p:"Be listed for free and get seen by tourists looking for a place like yours. Want to stand out? Get featured in the spotlight with a subscription and your own offer.",c3l:"Register your business &rsaquo;",howh:"How it works",s1:"<b>Hotels and businesses sign up.</b> You appear in your city's guide.",s2:"<b>The guest scans the QR code in the room.</b> The guide opens in their own language.",s3:"<b>The tourist finds your place</b> &ndash; with description, photos and directions.",citiesh:"View your city's guide",citieslead:"Choose your city to view the guide exactly as guests see it. You can look around and find your business.",cityph:"Choose your city&hellip;",citygo:"View guide",footnote:"Questions? Email "};
+
+const SALVE_HOME_UI_FILE = path.join(DATA_DIR, "salve_home_ui.json");
+const salveHomeUiKlaar = new Map();   /* taalcode -> { sleutel: vertaalde tekst } */
+
+function salveHomeUiLaad(){
+  try{
+    if(!fs.existsSync(SALVE_HOME_UI_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(SALVE_HOME_UI_FILE, "utf8") || "{}");
+    if(!data || data.versie !== SALVE_HOME_UI_VERSIE) return;   /* oude versie: opnieuw vertalen */
+    Object.keys(data.talen || {}).forEach((k) => salveHomeUiKlaar.set(k, data.talen[k]));
+    console.log("Salve starttekst geladen: " + salveHomeUiKlaar.size + " talen");
+  }catch(e){
+    console.error("Salve starttekst laden mislukt:", (e && e.message) || e);
+  }
+}
+function salveHomeUiBewaar(){
+  try{
+    const talen = {};
+    for(const [k, v] of salveHomeUiKlaar.entries()) talen[k] = v;
+    safeWriteFileSync(SALVE_HOME_UI_FILE, JSON.stringify({ versie: SALVE_HOME_UI_VERSIE, talen: talen }));
+  }catch(e){
+    console.error("Salve starttekst opslaan mislukt:", (e && e.message) || e);
+  }
+}
+salveHomeUiLaad();
+
+/* Deze teksten bevatten opmaak: <b>-tags en entiteiten als &ndash; en
+   &hellip;. De pagina zet ze met innerHTML op het scherm, dus een vertaling
+   die de tags weglaat of er losse tekens van maakt, verpest de opmaak.
+   Naast de gewone controle tellen we daarom of de tags kloppen. */
+function salveHomeUiBruikbaar(bron, vertaald){
+  if(!wcUiBruikbaar(bron, vertaald)) return false;
+  const b = String(bron);
+  const v = String(vertaald);
+  const tel = (s, naald) => s.split(naald).length - 1;
+  if(tel(v, "<b>") !== tel(b, "<b>")) return false;
+  if(tel(v, "</b>") !== tel(b, "</b>")) return false;
+  if(tel(v, "<") !== tel(b, "<")) return false;
+  return true;
+}
+
+/* Alles in een aanroep, als JSON. Zo ziet het model dat het om de teksten
+   van een website gaat en niet om losse zinnen zonder verband. */
+async function salveHomeUiVertaal(lang){
+  const taalnaam = langName(lang);
+  const antwoord = await callOpenAI([
+    {
+      role: "system",
+      content: [
+        "You translate the texts of the home page of Salve, a free multilingual city guide for tourists.",
+        "You receive a JSON object with headings, short paragraphs, button texts and link texts of that page.",
+        "Return ONE JSON object with exactly the same keys, where every value is the translation into " + taalnaam + ".",
+        "Keep every translation about as long as the original. Headings stay headings, buttons stay short.",
+        "Keep any HTML exactly as it is: <b> and </b> must stay in the same place around the same part of the sentence.",
+        "Keep HTML entities such as &ndash; &rsaquo; and &hellip; exactly as they are written, do not replace them by characters.",
+        "Never add explanations, examples, prices, addresses or any content that is not in the source.",
+        "Keep the product name Salve unchanged. Keep the email address info@formforge.nl unchanged if present.",
+        "The value of footnote is a sentence that ends just before an email address, so it must keep its trailing space.",
+        "Use the polite register a website would use with a visitor. No markdown, no code fences, only the JSON object."
+      ].join(" ")
+    },
+    { role: "user", content: JSON.stringify(SALVE_HOME_UI) }
+  ], 0.1, OPENAI_GUIDE_MODEL);
+
+  const ruw = extractJsonObjectFromText(antwoord) || {};
+  const uit = {};
+  let goed = 0;
+  for(const k of Object.keys(SALVE_HOME_UI)){
+    if(salveHomeUiBruikbaar(SALVE_HOME_UI[k], ruw[k])){ uit[k] = String(ruw[k]); goed++; }
+    else { uit[k] = SALVE_HOME_UI[k]; }
+  }
+  /* Kwam er nauwelijks iets bruikbaars uit, dan bewaren we niets. Liever de
+     volgende keer opnieuw proberen dan een half Engelse pagina vastleggen. */
+  if(goed < Object.keys(SALVE_HOME_UI).length * 0.7) return null;
+  return uit;
+}
+
+app.get("/api/salve/home-ui", async (req, res) => {
+  res.set("Cache-Control", "public, max-age=86400");
+  const lang = String((req.query && req.query.lang) || "").trim().toLowerCase();
+  if(!lang || !LANG_NAMES[lang]) return jsonError(res, 400, "Onbekende taal");
+  if(lang === "en") return res.json({ ok: true, lang: lang, versie: SALVE_HOME_UI_VERSIE, teksten: SALVE_HOME_UI });
+
+  /* Met &vernieuw=1 en het beheerwachtwoord kun je een taal opnieuw laten
+     vertalen, bijvoorbeeld als een vertaling niet bevalt. */
+  const vernieuw = String((req.query && req.query.vernieuw) || "") === "1" && adminOk(req);
+  if(vernieuw) salveHomeUiKlaar.delete(lang);
+
+  if(salveHomeUiKlaar.has(lang)){
+    return res.json({ ok: true, lang: lang, versie: SALVE_HOME_UI_VERSIE, teksten: salveHomeUiKlaar.get(lang), uitCache: true });
+  }
+
+  if(rateLimited("salvehomeui", clientIp(req), 60, 60 * 60 * 1000)){
+    return res.status(429).json({ error: "Te veel verzoeken" });
+  }
+
+  try{
+    const uit = await salveHomeUiVertaal(lang);
+    if(!uit) return res.json({ ok: true, lang: "en", versie: SALVE_HOME_UI_VERSIE, teksten: SALVE_HOME_UI, terugval: true });
+    salveHomeUiKlaar.set(lang, uit);
+    salveHomeUiBewaar();
+    return res.json({ ok: true, lang: lang, versie: SALVE_HOME_UI_VERSIE, teksten: uit });
+  }catch(e){
+    console.error("Salve starttekst mislukt (" + lang + "):", (e && e.message) || e);
+    return res.json({ ok: true, lang: "en", versie: SALVE_HOME_UI_VERSIE, teksten: SALVE_HOME_UI, terugval: true });
+  }
+});
+
+/* ==========================================================================
    WORLDCHAT: DE KAMERS VAN EEN GEBRUIKER, OP DE SERVER
    --------------------------------------------------------------------------
    De kamerlijst stond eerst alleen in de browser. Dat gaat mis zodra iemand de
