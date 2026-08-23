@@ -5656,7 +5656,17 @@ app.post("/api/opzeggen/lijst", opzegBeheer);
 const ROOM_TTL_MS = 15 * 1000;
 const ROOM_MEDIA_TTL_MS = 60 * 1000; // foto's/video's/bestanden blijven 1 minuut zichtbaar
 const ROOM_IDLE_MS = 1000 * 60 * 30; // lege/stille kamers na 30 min opruimen
-const ROOM_DAILY_TRANSLATION_LIMIT = 100; // max ECHTE vertalingen per kamer per dag (cache-treffers tellen niet mee)
+/* Vroeger stond hier een harde rem van 100 vertalingen per kamer per dag. Die
+   was er toen alles gratis en onbeperkt was en iemand met een enkele kamer de
+   OpenAI-rekening kon laten oplopen.
+
+   Nu betaalt de klant per vertaling: zijn de credits op, dan stopt het vertalen
+   vanzelf. Die dagrem werkte dus alleen nog tegen de klant zelf; met vier talen
+   in een kamer zat hij na 33 berichten stil terwijl hij duizenden credits had.
+
+   Standaard staat hij daarom uit (0 = geen grens). Wil je hem ooit toch, zet dan
+   ROOM_DAILY_TRANSLATION_LIMIT in Render op een aantal. */
+const ROOM_DAILY_TRANSLATION_LIMIT = Math.max(0, Number(process.env.ROOM_DAILY_TRANSLATION_LIMIT || 0));
 const rooms = new Map(); // code -> { code, createdAt, lastActive, members:Map(id->member), messages:[] }
 
 // ===== KAMERS BEWAREN OP SCHIJF (overleeft serverherstart) =====
@@ -6064,6 +6074,11 @@ const WC_UI = {
   unlimitedKnop: "Unlimited subscription",
   ofAbo: "or",
   reclame: "Advertisement",
+  permanent: "Keep permanently",
+  alAccount: "Log in to my account",
+  alAccountUit: "Log in first and this room lands in your app on every device.",
+  maakAccount: "Create an account",
+  maakAccountUit: "Fill in your e-mail address and we will send you a pin code. Then this room is yours on every device.",
   perDuizend: "per 1,000",
   meestGekozen: "most chosen",
   tellerTekst: "%s people are already chatting along",
@@ -6111,7 +6126,7 @@ const WC_UI = {
 /* De vertaalde interface per taal. Eigen bestand op de schijf, los van de
    gidscache, zodat een fout hier nooit de stadsgids raakt. */
 const WC_UI_FILE = path.join(DATA_DIR, "worldchat_ui.json");
-const WC_UI_VERSIE = 13;      /* ophogen dwingt alle talen opnieuw te vertalen */
+const WC_UI_VERSIE = 16;      /* ophogen dwingt alle talen opnieuw te vertalen */
 const wcUiKlaar = new Map();
 
 function wcUiLaad(){
@@ -6213,133 +6228,6 @@ app.get("/api/worldchat/ui", async (req, res) => {
   }catch(e){
     console.error("Worldchat interfaceteksten mislukt (" + lang + "):", (e && e.message) || e);
     return res.json({ ok: true, lang: "en", teksten: WC_UI, terugval: true });
-  }
-});
-
-/* ==========================================================================
-   SALVE STARTPAGINA: DE TEKSTEN IN ELKE TAAL
-   --------------------------------------------------------------------------
-   De startpagina op formforge.nl/salve had een vaste tabel met vijf talen
-   (en, nl, de, fr, es). Alle andere talen waren met een regel als
-   HOMEUI.pl = HOMEUI.en aan het Engels gekoppeld. Koos een bezoeker Pools of
-   Russisch, dan kreeg hij dus gewoon Engels te zien.
-
-   Daarom staat de Engelse brontekst nu hier. De pagina vraagt een taal op,
-   die wordt een keer vertaald en meteen op de schijf bewaard. Elke volgende
-   bezoeker in die taal krijgt hem uit de opslag: geen wachttijd en geen
-   kosten bij OpenAI. Dezelfde aanpak als /api/worldchat/ui hierboven.
-
-   Pas je een tekst hieronder aan, hoog dan SALVE_HOME_UI_VERSIE op. Dan
-   wordt elke taal bij de eerstvolgende aanvraag opnieuw vertaald.
-   ========================================================================== */
-
-const SALVE_HOME_UI_VERSIE = 1;
-const SALVE_HOME_UI = {title:"The free, multilingual city guide for tourists",lead:"Hotel guests scan a QR code in their room and instantly discover the best places in town in their own language &ndash; with directions. Salve connects hotels, local businesses and tourists in one place.",login:"Log in to your portal",signup:"Sign up",note:"Logging in is for hotels and businesses already taking part. Not yet joined? Sign up.",c1h:"For tourists",c1p:"Open the guide via the QR code in your hotel. Pick your language and discover restaurants, sights, shops and tips &ndash; all translated, with directions. Completely free.",c2h:"For hotels",c2p:"Join for free with an unlimited plan. Your guests get their own welcome with your logo and see only your hotel &ndash; no competition. A ready-made poster with QR code in the room is all it takes.",c2l:"Register your hotel &rsaquo;",c3h:"For businesses",c3p:"Be listed for free and get seen by tourists looking for a place like yours. Want to stand out? Get featured in the spotlight with a subscription and your own offer.",c3l:"Register your business &rsaquo;",howh:"How it works",s1:"<b>Hotels and businesses sign up.</b> You appear in your city's guide.",s2:"<b>The guest scans the QR code in the room.</b> The guide opens in their own language.",s3:"<b>The tourist finds your place</b> &ndash; with description, photos and directions.",citiesh:"View your city's guide",citieslead:"Choose your city to view the guide exactly as guests see it. You can look around and find your business.",cityph:"Choose your city&hellip;",citygo:"View guide",footnote:"Questions? Email "};
-
-const SALVE_HOME_UI_FILE = path.join(DATA_DIR, "salve_home_ui.json");
-const salveHomeUiKlaar = new Map();   /* taalcode -> { sleutel: vertaalde tekst } */
-
-function salveHomeUiLaad(){
-  try{
-    if(!fs.existsSync(SALVE_HOME_UI_FILE)) return;
-    const data = JSON.parse(fs.readFileSync(SALVE_HOME_UI_FILE, "utf8") || "{}");
-    if(!data || data.versie !== SALVE_HOME_UI_VERSIE) return;   /* oude versie: opnieuw vertalen */
-    Object.keys(data.talen || {}).forEach((k) => salveHomeUiKlaar.set(k, data.talen[k]));
-    console.log("Salve starttekst geladen: " + salveHomeUiKlaar.size + " talen");
-  }catch(e){
-    console.error("Salve starttekst laden mislukt:", (e && e.message) || e);
-  }
-}
-function salveHomeUiBewaar(){
-  try{
-    const talen = {};
-    for(const [k, v] of salveHomeUiKlaar.entries()) talen[k] = v;
-    safeWriteFileSync(SALVE_HOME_UI_FILE, JSON.stringify({ versie: SALVE_HOME_UI_VERSIE, talen: talen }));
-  }catch(e){
-    console.error("Salve starttekst opslaan mislukt:", (e && e.message) || e);
-  }
-}
-salveHomeUiLaad();
-
-/* Deze teksten bevatten opmaak: <b>-tags en entiteiten als &ndash; en
-   &hellip;. De pagina zet ze met innerHTML op het scherm, dus een vertaling
-   die de tags weglaat of er losse tekens van maakt, verpest de opmaak.
-   Naast de gewone controle tellen we daarom of de tags kloppen. */
-function salveHomeUiBruikbaar(bron, vertaald){
-  if(!wcUiBruikbaar(bron, vertaald)) return false;
-  const b = String(bron);
-  const v = String(vertaald);
-  const tel = (s, naald) => s.split(naald).length - 1;
-  if(tel(v, "<b>") !== tel(b, "<b>")) return false;
-  if(tel(v, "</b>") !== tel(b, "</b>")) return false;
-  if(tel(v, "<") !== tel(b, "<")) return false;
-  return true;
-}
-
-/* Alles in een aanroep, als JSON. Zo ziet het model dat het om de teksten
-   van een website gaat en niet om losse zinnen zonder verband. */
-async function salveHomeUiVertaal(lang){
-  const taalnaam = langName(lang);
-  const antwoord = await callOpenAI([
-    {
-      role: "system",
-      content: [
-        "You translate the texts of the home page of Salve, a free multilingual city guide for tourists.",
-        "You receive a JSON object with headings, short paragraphs, button texts and link texts of that page.",
-        "Return ONE JSON object with exactly the same keys, where every value is the translation into " + taalnaam + ".",
-        "Keep every translation about as long as the original. Headings stay headings, buttons stay short.",
-        "Keep any HTML exactly as it is: <b> and </b> must stay in the same place around the same part of the sentence.",
-        "Keep HTML entities such as &ndash; &rsaquo; and &hellip; exactly as they are written, do not replace them by characters.",
-        "Never add explanations, examples, prices, addresses or any content that is not in the source.",
-        "Keep the product name Salve unchanged. Keep the email address info@formforge.nl unchanged if present.",
-        "The value of footnote is a sentence that ends just before an email address, so it must keep its trailing space.",
-        "Use the polite register a website would use with a visitor. No markdown, no code fences, only the JSON object."
-      ].join(" ")
-    },
-    { role: "user", content: JSON.stringify(SALVE_HOME_UI) }
-  ], 0.1, OPENAI_GUIDE_MODEL);
-
-  const ruw = extractJsonObjectFromText(antwoord) || {};
-  const uit = {};
-  let goed = 0;
-  for(const k of Object.keys(SALVE_HOME_UI)){
-    if(salveHomeUiBruikbaar(SALVE_HOME_UI[k], ruw[k])){ uit[k] = String(ruw[k]); goed++; }
-    else { uit[k] = SALVE_HOME_UI[k]; }
-  }
-  /* Kwam er nauwelijks iets bruikbaars uit, dan bewaren we niets. Liever de
-     volgende keer opnieuw proberen dan een half Engelse pagina vastleggen. */
-  if(goed < Object.keys(SALVE_HOME_UI).length * 0.7) return null;
-  return uit;
-}
-
-app.get("/api/salve/home-ui", async (req, res) => {
-  res.set("Cache-Control", "public, max-age=86400");
-  const lang = String((req.query && req.query.lang) || "").trim().toLowerCase();
-  if(!lang || !LANG_NAMES[lang]) return jsonError(res, 400, "Onbekende taal");
-  if(lang === "en") return res.json({ ok: true, lang: lang, versie: SALVE_HOME_UI_VERSIE, teksten: SALVE_HOME_UI });
-
-  /* Met &vernieuw=1 en het beheerwachtwoord kun je een taal opnieuw laten
-     vertalen, bijvoorbeeld als een vertaling niet bevalt. */
-  const vernieuw = String((req.query && req.query.vernieuw) || "") === "1" && adminOk(req);
-  if(vernieuw) salveHomeUiKlaar.delete(lang);
-
-  if(salveHomeUiKlaar.has(lang)){
-    return res.json({ ok: true, lang: lang, versie: SALVE_HOME_UI_VERSIE, teksten: salveHomeUiKlaar.get(lang), uitCache: true });
-  }
-
-  if(rateLimited("salvehomeui", clientIp(req), 60, 60 * 60 * 1000)){
-    return res.status(429).json({ error: "Te veel verzoeken" });
-  }
-
-  try{
-    const uit = await salveHomeUiVertaal(lang);
-    if(!uit) return res.json({ ok: true, lang: "en", versie: SALVE_HOME_UI_VERSIE, teksten: SALVE_HOME_UI, terugval: true });
-    salveHomeUiKlaar.set(lang, uit);
-    salveHomeUiBewaar();
-    return res.json({ ok: true, lang: lang, versie: SALVE_HOME_UI_VERSIE, teksten: uit });
-  }catch(e){
-    console.error("Salve starttekst mislukt (" + lang + "):", (e && e.message) || e);
-    return res.json({ ok: true, lang: "en", versie: SALVE_HOME_UI_VERSIE, teksten: SALVE_HOME_UI, terugval: true });
   }
 });
 
@@ -6981,21 +6869,7 @@ app.get("/api/worldchat/reclame/logo/:id", (req, res) => {
 /* ---- beheer ---- */
 
 /* Een logo uploaden bij een bestaande advertentie. */
-/* Multer eerst apart draaien. Gaat het mis (bestand te groot, verkeerd veld),
-   dan gooit multer een fout die zonder deze wikkel bij de algemene
-   foutafhandelaar belandt en een 500 oplevert. Een te groot logo is geen
-   serverfout maar een verkeerd verzoek, dus dat hoort een 4xx te zijn. */
-function wcLogoOntvang(req, res, next){
-  wcLogoUpload.single("logo")(req, res, (err) => {
-    if(!err) return next();
-    const code = String((err && err.code) || "");
-    if(code === "LIMIT_FILE_SIZE") return jsonError(res, 413, "Het logo is te groot. Maximaal 1,5 MB.");
-    if(code === "LIMIT_UNEXPECTED_FILE") return jsonError(res, 400, "Onverwacht bestandsveld. Verstuur de afbeelding in het veld \"logo\".");
-    return jsonError(res, 400, "De afbeelding kon niet worden gelezen.", (err && err.message) ? err.message : String(err));
-  });
-}
-
-app.post("/api/worldchat/admin/reclame-logo", wcLogoOntvang, (req, res) => {
+app.post("/api/worldchat/admin/reclame-logo", wcLogoUpload.single("logo"), (req, res) => {
   res.set("Cache-Control", "no-store");
   if(!wcBeheerOk(req)) return jsonError(res, 403, "Geen toegang");
   const a = wcAds.get(String((req.body && req.body.id) || "").trim());
@@ -7163,6 +7037,9 @@ function roomTranslationsLeft(room){
     room.translationDay = today;
     room.translationsToday = 0;
   }
+  /* 0 betekent: geen dagrem. We geven dan een groot getal terug zodat alle
+     bestaande controles gewoon blijven werken. */
+  if(!ROOM_DAILY_TRANSLATION_LIMIT) return 1000000;
   return Math.max(0, ROOM_DAILY_TRANSLATION_LIMIT - room.translationsToday);
 }
 
@@ -10952,6 +10829,10 @@ function pruneBans(room){
    met een betaalde kamer, waar de host zelf een bewaartijd kiest. */
 const WORLDCHAT_GRATIS_REGELS = Math.max(1, Number(process.env.WORLDCHAT_GRATIS_REGELS || 1));
 
+/* Hoe lang berichten in een GRATIS kamer blijven staan. Standaard 24 uur, net
+   als de langste keuze in een betaalde kamer. */
+const WORLDCHAT_GRATIS_BEWAAR_MS = Math.max(60, Number(process.env.WORLDCHAT_GRATIS_BEWAAR_SEC || 86400)) * 1000;
+
 /* Hoeveel gratis kamers mag iemand tegelijk open hebben staan? Met credits of
    een abonnement is er geen grens: elke vertaalde regel wordt dan betaald.
      WORLDCHAT_GRATIS_MAX_KAMERS   standaard 3
@@ -10974,13 +10855,12 @@ function wcGratisKamersVan(ip){
 }
 
 function pruneRoom(room){
-  /* Gratis kamer: geen geschiedenis. Alleen het laatste bericht blijft staan,
-     dus een regel verdwijnt zodra er een nieuwe wordt verstuurd. */
-  if(room.freeMode){
-    if(room.messages.length > WORLDCHAT_GRATIS_REGELS){
-      room.messages = room.messages.slice(-WORLDCHAT_GRATIS_REGELS);
-    }
-    return;
+  /* Gratis kamers bewaren hun berichten 24 uur, net als de langste keuze in een
+     betaalde kamer. Eerder bleef hier alleen de laatste regel staan; dat werd
+     als kapot ervaren zodra er meer dan twee mensen meepraatten. Het verschil
+     tussen gratis en betaald zit nu in het vertalen, niet in de bewaartijd. */
+  if(room.freeMode && !room.msgTtlMs){
+    room.msgTtlMs = WORLDCHAT_GRATIS_BEWAAR_MS;
   }
   // Als de host een bewaartijd heeft ingesteld (msgTtlMs > 0): verwijder berichten
   // die ouder zijn dan die tijd. Media telt vanaf het moment van ophalen (firstSeenAt),
@@ -11250,10 +11130,19 @@ app.post("/api/room/create", (req, res) => {
   const memberId = "m_" + Date.now() + "_" + Math.random().toString(36).slice(2,8);
   // Bewaartijd voor berichten: 0 = permanent, anders milliseconden tot verdwijnen.
   let msgTtlMs = 0;
+  /* Een gratis kamer krijgt vast 24 uur; daar valt niets te kiezen. */
+  if(wantFree) msgTtlMs = WORLDCHAT_GRATIS_BEWAAR_MS;
   const rawTtl = req.body && req.body.msgTtlSec;
-  if(rawTtl !== undefined && rawTtl !== null && rawTtl !== ""){
+  if(!wantFree && rawTtl !== undefined && rawTtl !== null && rawTtl !== ""){
     const sec = parseInt(rawTtl, 10);
-    if(!isNaN(sec) && sec > 0){ msgTtlMs = Math.min(sec, 30*24*60*60) * 1000; } // max 30 dagen
+    if(!isNaN(sec) && sec > 0){
+      msgTtlMs = Math.min(sec, 30*24*60*60) * 1000; // max 30 dagen
+    }else if(sec === 0){
+      /* Permanent bewaren. Alleen voor Unlimited: bij credits zou een kamer
+         eindeloos blijven groeien op een tegoed dat opraakt. Heeft de klant
+         geen Unlimited, dan valt hij terug op 24 uur. */
+      msgTtlMs = (wcSaldo(gate.accountKey) === -1) ? 0 : (24 * 60 * 60 * 1000);
+    }
   }
   /* De host mag zijn kamer een naam geven, bijvoorbeeld "Receptie" of
      "Familie". Laat hij het leeg, dan blijft de kamercode de aanduiding. */
@@ -11681,6 +11570,29 @@ app.get("/api/room/media/:code/:id", (req, res) => {
    zijn terugkeersleutel; daar staat in of hij de host was. Zo werkt het ook als
    hij op dat moment niet in de kamer zit, bijvoorbeeld vanuit zijn overzicht.
    De kamer verdwijnt daarmee voor iedereen. */
+/* Jezelf uit een kamer halen zonder dat je er op dat moment in zit. Je bewijst
+   met je terugkeersleutel wie je bent. Nodig voor "Weggaan" in het overzicht:
+   anders blijf je meldingen krijgen uit een kamer die je net hebt weggehaald. */
+app.post("/api/room/afmelden", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const rcToken = String(req.body && req.body.reconnect ? req.body.reconnect : "").trim();
+  const r = rcToken ? reconnectTokens.get(rcToken) : null;
+  if(!r) return res.json({ ok: true, alWeg: true });
+  const room = rooms.get(r.code);
+  if(room){
+    const naam = String(r.name || "").trim().toLowerCase();
+    for(const [mid, mem] of Array.from(room.members.entries())){
+      if(String(mem.name || "").trim().toLowerCase() === naam && !!mem.isHost === !!r.isHost){
+        room.members.delete(mid);
+        removeRoomPush(r.code, mid);
+      }
+    }
+  }
+  reconnectTokens.delete(rcToken);
+  try{ saveReconnect(); }catch(e){}
+  res.json({ ok: true });
+});
+
 app.post("/api/room/close", (req, res) => {
   const rcToken = String(req.body && req.body.reconnect ? req.body.reconnect : "").trim();
   const r = rcToken ? reconnectTokens.get(rcToken) : null;
@@ -13068,14 +12980,6 @@ app.post("/api/zzp/plaats-nu", express.json({ limit: "50kb" }), async (req, res)
     }
     bericht.fout = uitkomst.fouten.join(" | ");
     zzpMarkDirty();
-    /* Nog geen kanaal gekoppeld is een ontbrekende instelling, geen storing.
-       Als 502 telde elke poging mee als serverfout en ging er een
-       waarschuwing naar de wachter. 409 zegt: de server werkt, maar de
-       voorwaarde klopt nog niet. */
-    const kanalen = account.koppeling || {};
-    if(!kanalen.igUserId && !kanalen.pageId){
-      return res.status(409).json({ ok: false, error: "Er is nog geen Instagram- of Facebookkanaal gekoppeld." });
-    }
     return res.status(502).json({ ok: false, error: bericht.fout || "Plaatsen mislukt" });
   }catch(err){
     return res.status(500).json({ ok: false, error: err.message || "Plaatsen mislukt" });
@@ -14340,10 +14244,7 @@ async function wdSamenvatting(ruweTekst){
           "Je bent de wachter van een Node.js/Express server (Salve, een meertalige hotelgids met chat, Guesttalk-vertaler, PDF Studio en een ondernemersportaal).",
           "Je krijgt het volledige dagrapport. Schrijf er een korte samenvatting bij in het Nederlands voor de eigenaar, die geen ontwikkelaar is.",
           "Regels: gewone taal, geen jargon zonder uitleg. Begin met of alles goed gaat of niet.",
-          "Zet daarna wat er echt aandacht nodig heeft en wat vanzelf is opgelost.",
-          "Gebruikscijfers (gidsopeningen, chats, logins, verbruikte minuten, aantallen hotels en ondernemers) mag je noemen, maar puur als cijfer.",
-          "Trek daar GEEN conclusies uit over betrokkenheid van gebruikers en geef GEEN advies over promotie of marketing:",
-          "de server ziet geen verschil tussen echte gasten en eigen testverkeer, dus zulke conclusies zijn niet te onderbouwen.",
+          "Zet daarna wat er echt aandacht nodig heeft, wat vanzelf is opgelost, en wat er opvalt aan het gebruik en de klanten.",
           "Benoem een mogelijke oorzaak altijd als vermoeden, nooit als vaststaand feit.",
           "Geef bij een terugkerende fout een voorstel voor wat er onderzocht kan worden, en zeg erbij dat dit met de hand gecontroleerd moet worden.",
           "Verzin geen bestandsnamen, regelnummers, functienamen of cijfers die niet in het rapport staan.",
@@ -14452,7 +14353,7 @@ function wdRapportKlok(){
       year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23"
     }).formatToParts(new Date());
     const deel = {};
-    for(const p of nl) deel[p.type] = p.value;
+    for(const p of nl.parts) deel[p.type] = p.value;
     const dag = deel.year + "-" + deel.month + "-" + deel.day;
     const uur = Number(deel.hour) % 24;
     if(uur === WACHTER_RAPPORT_UUR && wdLaatsteRapportDag !== dag){
