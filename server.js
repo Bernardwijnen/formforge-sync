@@ -59,6 +59,30 @@ app.use("/icons", express.static(path.join(__dirname, "icons"), {
   dotfiles: "ignore"
 }));
 
+/* De bestanden van DeepFilterNet3, de ruisonderdrukking van Guesttalk.
+
+   Ze kwamen eerst van een CDN van een ander bedrijf. Dat werkte, maar als dat
+   adres ooit offline gaat, valt de ruisonderdrukking bij al onze klanten stil.
+   Daarom serveren we ze nu zelf uit.
+
+   Verwachte indeling in de map dfn van deze repo:
+     dfn/v2/pkg/df_bg.wasm
+     dfn/v2/models/DeepFilterNet3_onnx.tar.gz
+
+   De pagina draait op formforge.nl en haalt ze hiervandaan, dus de
+   toestemmingskop moet mee. Het cors() hierboven regelt dat al; voor de
+   zekerheid zetten we hem hier ook expliciet. */
+app.use("/dfn", express.static(path.join(__dirname, "dfn"), {
+  maxAge: "365d",
+  fallthrough: true,
+  index: false,
+  dotfiles: "ignore",
+  setHeaders: (res, bestandspad) => {
+    res.set("Access-Control-Allow-Origin", "*");
+    if(bestandspad.endsWith(".wasm")) res.type("application/wasm");
+  }
+}));
+
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 // Apart (sterker) model voor de stadsgids-vertalingen. gpt-4o vertaalt veel
