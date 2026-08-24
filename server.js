@@ -14352,16 +14352,29 @@ function wdRapportKlok(){
       timeZone: "Europe/Amsterdam",
       year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23"
     }).formatToParts(new Date());
+    /* formatToParts geeft een ARRAY terug, niet een object met .parts erin.
+       Daar liep het op stuk: elke minuut een fout die door de lege catch werd
+       opgeslokt, dus het rapport ging nooit vanzelf de deur uit. */
     const deel = {};
-    for(const p of nl.parts) deel[p.type] = p.value;
+    for(const p of nl) deel[p.type] = p.value;
     const dag = deel.year + "-" + deel.month + "-" + deel.day;
     const uur = Number(deel.hour) % 24;
-    if(uur === WACHTER_RAPPORT_UUR && wdLaatsteRapportDag !== dag){
+
+    /* Het uur mag ook gemist worden, bijvoorbeeld door een herstart of doordat
+       de server even zwaar belast was. Is het later op de dag en ging het
+       rapport nog niet, dan gaat het alsnog. */
+    const opTijd = (uur === WACHTER_RAPPORT_UUR);
+    const gemist = (uur > WACHTER_RAPPORT_UUR);
+    if((opTijd || gemist) && wdLaatsteRapportDag !== dag){
       wdLaatsteRapportDag = dag;
       wdBewaarNu();
+      wdConsoleLog("Dagrapport wordt verstuurd" + (gemist ? " (het uur was al voorbij)" : "") + ".");
       wdDagrapport(false).catch(() => {});
     }
-  }catch(e){}
+  }catch(e){
+    /* Niet meer stil wegkijken: als hier iets misgaat, wil je dat zien. */
+    wdConsoleLog("Rapportklok gaf een fout: " + ((e && e.message) || e));
+  }
 }
 
 /* ---------------- beheerroutes ---------------- */
