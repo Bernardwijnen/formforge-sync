@@ -6797,7 +6797,10 @@ async function blokkeren(email){
   if(opheffen){
     if(!confirm("Blokkade van " + email + " opheffen? Hij kan daarna weer inloggen en kamers openen.")) return;
   }else{
-    reden = prompt("Waarom blokkeer je " + email + "?\n\nDit wordt vastgelegd. Zijn kamers gaan meteen dicht voor iedereen die erin zit.", "");
+    /* LET OP: deze pagina staat in de server als een groot tekstblok. Een \n
+       zou daar een ECHT regeleinde worden en het script in de browser breken.
+       Daarom hier dubbel geschreven, zodat de browser een \n te zien krijgt. */
+    reden = prompt("Waarom blokkeer je " + email + "?\\n\\nDit wordt vastgelegd. Zijn kamers gaan meteen dicht voor iedereen die erin zit.", "");
     if(reden === null) return;
   }
   try{
