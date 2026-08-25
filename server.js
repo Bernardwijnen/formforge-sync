@@ -6643,6 +6643,27 @@ app.post("/api/worldchat/admin/verwijder", (req, res) => {
 });
 
 /* Het beheerscherm zelf. Puur tekst en knoppen, geen opmaakbestanden nodig. */
+/* Het app-bestand voor het beheerscherm. Hiermee krijgt hij op je beginscherm
+   een eigen kroontje en naam in plaats van een schermafbeelding, en opent hij
+   zonder adresbalk zoals een gewone app. */
+app.get("/worldchat-beheer/app.webmanifest", (req, res) => {
+  res.set("Content-Type", "application/manifest+json; charset=utf-8");
+  res.set("Cache-Control", "no-store");
+  res.json({
+    name: "Worldchat beheer",
+    short_name: "WC beheer",
+    start_url: "/worldchat-beheer",
+    scope: "/worldchat-beheer",
+    display: "standalone",
+    background_color: "#eef1f6",
+    theme_color: "#1e2d4f",
+    icons: [
+      { src: "/icons/worldchat-icon-192.png", sizes: "192x192", type: "image/png" },
+      { src: "/icons/worldchat-icon-512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" }
+    ]
+  });
+});
+
 app.get("/worldchat-beheer", (req, res) => {
   res.set("Cache-Control", "no-store");
   res.set("Content-Type", "text/html; charset=utf-8");
@@ -6654,6 +6675,8 @@ app.get("/worldchat-beheer", (req, res) => {
 <link rel="apple-touch-icon" sizes="180x180" href="/icons/worldchat-icon-180.png">
 <link rel="apple-touch-icon" href="/icons/worldchat-icon-180.png">
 <link rel="icon" type="image/png" sizes="32x32" href="/icons/worldchat-icon-32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/icons/worldchat-icon-192.png">
+<link rel="manifest" href="/worldchat-beheer/app.webmanifest">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="WC beheer">
@@ -6743,6 +6766,7 @@ async function laden(){
     if(!r.ok) throw new Error(d.error || "Ophalen mislukt");
     alles = d.accounts || [];
     try{ sessionStorage.setItem("wcpass", pass); }catch(e){}
+    tijdVerversen();
     /* Ook de blokkadelijst en de drukte van dit moment ophalen. */
     var extra = {};
     try{
@@ -6922,7 +6946,51 @@ $("adNieuw").onclick = async function(){
 $("laad").onclick = function(){ laden(); adsLaden(); };
 $("zoek").oninput = tekenen;
 $("pass").onkeydown = function(e){ if(e.key === "Enter") laden(); };
-try{ var p = sessionStorage.getItem("wcpass"); if(p){ $("pass").value = p; laden(); adsLaden(); } }catch(e){}
+/* Vergrendeling.
+
+   Dit scherm kan accounts blokkeren en verwijderen, en staat straks als app op
+   een telefoon. Daarom vullen we het wachtwoord niet meer vanzelf in en laden
+   we niets vanzelf; wie de app opent krijgt een leeg veld.
+
+   Binnen tien minuten na je laatste handeling blijft hij wel open, zodat je
+   tussendoor van app kunt wisselen zonder steeds opnieuw te typen. */
+var WACHT_MS = 10 * 60 * 1000;
+
+function nogGeldig(){
+  try{
+    var t = Number(sessionStorage.getItem("wctijd") || 0);
+    return t > 0 && (Date.now() - t) < WACHT_MS;
+  }catch(e){ return false; }
+}
+function tijdVerversen(){
+  try{ sessionStorage.setItem("wctijd", String(Date.now())); }catch(e){}
+}
+function opSlot(){
+  try{ sessionStorage.removeItem("wcpass"); sessionStorage.removeItem("wctijd"); }catch(e){}
+  $("pass").value = "";
+  $("rijen").innerHTML = "";
+  $("samenvatting").textContent = "";
+  alles = [];
+  var m = $("melding");
+  m.className = "melding";
+  $("pass").focus();
+}
+
+/* Weg uit beeld: de klok loopt door. Terug in beeld: te lang weg, dan op slot. */
+document.addEventListener("visibilitychange", function(){
+  if(document.visibilityState === "visible" && !nogGeldig()) opSlot();
+});
+
+/* Elke handeling schuift de vergrendeling weer op. */
+["click", "keydown"].forEach(function(soort){
+  document.addEventListener(soort, function(){ if(nogGeldig()) tijdVerversen(); }, { passive: true });
+});
+
+try{
+  var p = sessionStorage.getItem("wcpass");
+  if(p && nogGeldig()){ $("pass").value = p; laden(); adsLaden(); }
+  else opSlot();
+}catch(e){}
 </script>
 </body></html>`);
 });
