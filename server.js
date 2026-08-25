@@ -6099,6 +6099,8 @@ const WC_UI = {
   ofAbo: "or",
   reclame: "Advertisement",
   permanent: "Keep permanently",
+  melden: "Report this room",
+  meldenUit: "Something here that should not be? Report it to us. We do not keep messages, so we cannot read along; we depend on your report. Add a screenshot if you can.",
   alAccount: "Log in to my account",
   alAccountUit: "Log in first and this room lands in your app on every device.",
   maakAccount: "Create an account",
@@ -6150,7 +6152,7 @@ const WC_UI = {
 /* De vertaalde interface per taal. Eigen bestand op de schijf, los van de
    gidscache, zodat een fout hier nooit de stadsgids raakt. */
 const WC_UI_FILE = path.join(DATA_DIR, "worldchat_ui.json");
-const WC_UI_VERSIE = 16;      /* ophogen dwingt alle talen opnieuw te vertalen */
+const WC_UI_VERSIE = 17;      /* ophogen dwingt alle talen opnieuw te vertalen */
 const wcUiKlaar = new Map();
 
 function wcUiLaad(){
@@ -6268,6 +6270,38 @@ app.get("/api/worldchat/ui", async (req, res) => {
    ========================================================================== */
 
 const WC_KAMERS_FILE = path.join(DATA_DIR, "worldchat_kamers.json");
+
+/* ----------------------------------------------------------------------------
+   GEBLOKKEERDE ACCOUNTS
+
+   Een account verwijderen is niet genoeg: dezelfde persoon maakt binnen een
+   minuut een nieuw account met hetzelfde e-mailadres. Deze lijst houdt dat
+   tegen. Nodig als iemand de dienst misbruikt en zeker als politie of justitie
+   aanklopt: dan moet je kunnen laten zien dat je hebt ingegrepen.
+---------------------------------------------------------------------------- */
+const WC_BLOK_FILE = path.join(DATA_DIR, "worldchat_geblokkeerd.json");
+const wcBlok = new Map();            /* e-mailadres -> { reden, sinds } */
+
+function wcBlokLaad(){
+  try{
+    if(!fs.existsSync(WC_BLOK_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(WC_BLOK_FILE, "utf8") || "{}");
+    for(const k of Object.keys(data)) wcBlok.set(k, data[k]);
+    console.log("Worldchat: " + wcBlok.size + " geblokkeerde account(s) geladen.");
+  }catch(e){ console.log("Worldchat: blokkadelijst laden mislukt: " + e.message); }
+}
+function wcBlokBewaar(){
+  try{
+    const uit = {};
+    for(const [k, v] of wcBlok.entries()) uit[k] = v;
+    fs.writeFileSync(WC_BLOK_FILE, JSON.stringify(uit, null, 2));
+  }catch(e){ console.log("Worldchat: blokkadelijst bewaren mislukt: " + e.message); }
+}
+function wcGeblokkeerd(email){
+  const k = normalizePremiumKey(email);
+  return !!(k && wcBlok.has(k));
+}
+wcBlokLaad();
 const wcKamers = new Map();          /* e-mailadres -> [{ code, reconnect, kamerNaam, isHost, ts }] */
 
 function wcKamersLaad(){
@@ -6338,6 +6372,9 @@ app.post("/api/worldchat/kamers", (req, res) => {
   res.set("Cache-Control", "no-store");
   const email = wcInlogOk(req);
   if(!email) return res.status(403).json({ error: "E-mailadres of pincode klopt niet." });
+  if(wcGeblokkeerd(email)){
+    return res.status(403).json({ error: "Dit account is geblokkeerd. Neem contact op via info@formforge.nl." });
+  }
   /* Saldo erbij, zodat de klant ook buiten een kamer ziet wat hij nog heeft.
      -1 betekent Unlimited, dus onbeperkt vertalen. */
   res.json({
@@ -6446,6 +6483,142 @@ app.get("/api/worldchat/admin/accounts", (req, res) => {
     onbeperkt: lijst.filter(a => a.plan === "pro").length,
     accounts: lijst
   });
+});
+
+/* Wie is er geblokkeerd, en hoe druk is het nu? */
+/* ----------------------------------------------------------------------------
+   MELDPUNT
+
+   Iemand die in een kamer iets ziet dat niet door de beugel kan, moet dat met
+   een paar tikken kunnen doorgeven, met bewijs erbij. Het e-mailadres staat
+   alleen hier op de server; de melder krijgt het nooit te zien.
+
+   Wij bewaren geen berichten, dus die bijlage is vaak het enige bewijs dat er
+   uberhaupt is. Daarom mag hij groot zijn.
+---------------------------------------------------------------------------- */
+const WC_MELD_MAIL = process.env.WORLDCHAT_MELD_MAIL || "bernardwijnen@gmail.com";
+const wcMeldUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024, files: 1 }
+});
+const wcMeldTeller = new Map();     /* toestel -> [tijdstippen] */
+
+app.post("/api/worldchat/melding", wcMeldUpload.single("bijlage"), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try{
+    const tekst = String((req.body && req.body.tekst) || "").trim().slice(0, 4000);
+    const code  = String((req.body && req.body.code) || "").trim().slice(0, 20);
+    const naam  = String((req.body && req.body.kamerNaam) || "").trim().slice(0, 120);
+    const melder = String((req.body && req.body.melder) || "").trim().slice(0, 160);
+
+    if(tekst.length < 5 && !req.file){
+      return res.status(400).json({ error: "Schrijf even kort wat er aan de hand is." });
+    }
+
+    /* Een simpele rem tegen misbruik van het meldpunt zelf: vijf per uur per
+       toestel. Anders wordt dit het volgende gat. */
+    const wie = String((req.body && req.body.toestel) || req.ip || "onbekend");
+    const nu = Date.now();
+    const eerder = (wcMeldTeller.get(wie) || []).filter(t => nu - t < 60 * 60 * 1000);
+    if(eerder.length >= 5){
+      return res.status(429).json({ error: "Je hebt net al gemeld. Probeer het over een uur opnieuw." });
+    }
+    eerder.push(nu);
+    wcMeldTeller.set(wie, eerder);
+
+    const regels = [
+      "Nieuwe melding vanuit Worldchat United.",
+      "",
+      "Kamer: " + (naam ? naam + " (#" + code + ")" : (code ? "#" + code : "onbekend")),
+      "Tijdstip: " + new Date().toISOString(),
+      "Melder: " + (melder || "niet ingevuld"),
+      "Bijlage: " + (req.file ? (req.file.originalname || "bestand") + " (" + Math.round(req.file.size / 1024) + " kB)" : "geen"),
+      "",
+      "Wat de melder schrijft:",
+      tekst || "(niets ingevuld)",
+      "",
+      "Ingrijpen kan via /worldchat-beheer: daar staat de blokkeerknop per account."
+    ];
+
+    const bijlagen = req.file ? [{
+      filename: String(req.file.originalname || "bijlage").slice(0, 120),
+      content: req.file.buffer.toString("base64")
+    }] : [];
+
+    await sendResendEmail({
+      to: WC_MELD_MAIL,
+      subject: "Melding Worldchat kamer " + (code || "onbekend"),
+      text: regels.join("\n"),
+      attachments: bijlagen
+    });
+
+    console.log("Worldchat: melding ontvangen voor kamer " + (code || "onbekend") + (req.file ? " met bijlage" : ""));
+    res.json({ ok: true });
+  }catch(e){
+    console.log("Worldchat: melding versturen mislukt: " + e.message);
+    res.status(500).json({ error: "Versturen mislukt. Probeer het zo nog eens." });
+  }
+});
+
+app.get("/api/worldchat/admin/blokkades", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if(!wcBeheerOk(req)) return jsonError(res, 403, "Geen toegang");
+
+  const lijst = [];
+  for(const [mail, v] of wcBlok.entries()){
+    lijst.push({ email: mail, reden: String((v && v.reden) || ""), sinds: String((v && v.sinds) || "") });
+  }
+  lijst.sort((a, b) => String(b.sinds).localeCompare(String(a.sinds)));
+
+  /* Hoeveel kamers draaien er nu, en hoeveel mensen zitten erin? */
+  let kamersNu = 0, mensenNu = 0;
+  for(const r of rooms.values()){
+    if(!r) continue;
+    kamersNu++;
+    mensenNu += r.members ? r.members.size : 0;
+  }
+  res.json({ ok: true, geblokkeerd: lijst, kamersNu: kamersNu, mensenNu: mensenNu });
+});
+
+/* Blokkeren: het account gaat op slot, zijn kamers gaan dicht voor iedereen die
+   erin zit, en zijn terugkeersleutels vervallen. Zonder dat laatste blijft hij
+   gewoon in zijn kamers zitten. */
+app.post("/api/worldchat/admin/blokkeer", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if(!wcBeheerOk(req)) return jsonError(res, 403, "Geen toegang");
+  const email = normalizePremiumKey(req.body && req.body.email);
+  if(!email) return jsonError(res, 400, "E-mailadres ontbreekt");
+  if(isOwnerPremiumEmail(email)) return jsonError(res, 400, "Dit is een eigenaar-account.");
+
+  const aan = !(req.body && req.body.opheffen);
+  if(!aan){
+    wcBlok.delete(email);
+    wcBlokBewaar();
+    console.log("Worldchat beheer: blokkade opgeheven voor " + email);
+    return res.json({ ok: true, geblokkeerd: false });
+  }
+
+  wcBlok.set(email, {
+    reden: String((req.body && req.body.reden) || "").slice(0, 300),
+    sinds: new Date().toISOString()
+  });
+  wcBlokBewaar();
+
+  /* Zijn kamers sluiten. */
+  let dicht = 0;
+  const mijn = wcKamers.get(email) || [];
+  for(const k of mijn){
+    if(!k || !k.code) continue;
+    const room = rooms.get(k.code);
+    if(room){ rooms.delete(k.code); dicht++; }
+    if(k.reconnect) reconnectTokens.delete(k.reconnect);
+  }
+  wcKamers.delete(email);
+  wcKamersBewaar();
+  try{ saveRooms(); saveReconnect(); }catch(e){}
+
+  console.log("Worldchat beheer: " + email + " geblokkeerd, " + dicht + " kamer(s) gesloten.");
+  res.json({ ok: true, geblokkeerd: true, kamersGesloten: dicht });
 });
 
 app.post("/api/worldchat/admin/verwijder", (req, res) => {
@@ -6570,28 +6743,74 @@ async function laden(){
     if(!r.ok) throw new Error(d.error || "Ophalen mislukt");
     alles = d.accounts || [];
     try{ sessionStorage.setItem("wcpass", pass); }catch(e){}
-    $("samenvatting").textContent = d.aantal + " accounts, waarvan " + d.metCredits + " met credits en " + d.onbeperkt + " onbeperkt.";
+    /* Ook de blokkadelijst en de drukte van dit moment ophalen. */
+    var extra = {};
+    try{
+      var rb = await fetch("/api/worldchat/admin/blokkades?adminPass=" + encodeURIComponent(pass));
+      extra = await rb.json();
+    }catch(e){}
+    geblokkeerd = {};
+    (extra.geblokkeerd || []).forEach(function(b){ geblokkeerd[b.email] = b; });
+
+    $("samenvatting").textContent =
+      d.aantal + " accounts, waarvan " + d.metCredits + " met credits en " + d.onbeperkt + " onbeperkt. " +
+      "Nu open: " + (extra.kamersNu || 0) + " kamers met " + (extra.mensenNu || 0) + " deelnemers. " +
+      (extra.geblokkeerd || []).length + " geblokkeerd.";
     $("melding").className = "melding";
     tekenen();
   }catch(e){ zegt(e.message); }
 }
 
+var geblokkeerd = {};
 function tekenen(){
   var zoek = $("zoek").value.trim().toLowerCase();
   var lijst = alles.filter(function(a){ return !zoek || a.email.toLowerCase().indexOf(zoek) >= 0; });
   $("rijen").innerHTML = lijst.map(function(a){
     return "<tr>" +
-      "<td>" + esc(a.email) + (a.eigenaar ? ' <span class="kroon">eigenaar</span>' : "") + "</td>" +
+      "<td>" + esc(a.email) +
+        (a.eigenaar ? ' <span class="kroon">eigenaar</span>' : "") +
+        (geblokkeerd[a.email] ? ' <span class="kroon" style="background:#b3261e;color:#fff">geblokkeerd</span>' : "") +
+      "</td>" +
       "<td>" + esc(a.pakket || a.plan || "-") + (a.actief ? "" : " (niet actief)") + "</td>" +
       "<td>" + (a.credits === -1 ? "onbeperkt" : esc(a.credits) + (a.gekocht ? " van " + esc(a.gekocht) : "")) + "</td>" +
       "<td>" + esc(a.kamers) + "</td>" +
       "<td>" + esc(datum(a.bijgewerkt)) + "</td>" +
-      "<td>" + (a.eigenaar ? "" : '<button class="weg" data-weg="' + esc(a.email) + '">Verwijderen</button>') + "</td>" +
+      "<td>" + (a.eigenaar ? "" :
+          '<button data-blok="' + esc(a.email) + '">' + (geblokkeerd[a.email] ? "Deblokkeren" : "Blokkeren") + "</button> " +
+          '<button class="weg" data-weg="' + esc(a.email) + '">Verwijderen</button>') + "</td>" +
       "</tr>";
   }).join("");
   Array.prototype.forEach.call(document.querySelectorAll("[data-weg]"), function(b){
     b.onclick = function(){ verwijderen(b.getAttribute("data-weg")); };
   });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-blok]"), function(b){
+    b.onclick = function(){ blokkeren(b.getAttribute("data-blok")); };
+  });
+}
+
+/* Blokkeren sluit meteen zijn kamers en zet zijn account op slot. Verwijderen
+   alleen is niet genoeg: dan maakt hij een minuut later een nieuw account met
+   hetzelfde adres. */
+async function blokkeren(email){
+  var opheffen = !!geblokkeerd[email];
+  var reden = "";
+  if(opheffen){
+    if(!confirm("Blokkade van " + email + " opheffen? Hij kan daarna weer inloggen en kamers openen.")) return;
+  }else{
+    reden = prompt("Waarom blokkeer je " + email + "?\n\nDit wordt vastgelegd. Zijn kamers gaan meteen dicht voor iedereen die erin zit.", "");
+    if(reden === null) return;
+  }
+  try{
+    var r = await fetch("/api/worldchat/admin/blokkeer", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ adminPass: $("pass").value.trim(), email: email, reden: reden, opheffen: opheffen })
+    });
+    var d = await r.json();
+    if(!r.ok) throw new Error(d.error || "Mislukt");
+    zegt(opheffen ? "Blokkade opgeheven." :
+      ("Geblokkeerd. " + (d.kamersGesloten || 0) + " kamer(s) gesloten."), true);
+    laden();
+  }catch(e){ zegt(e.message); }
 }
 
 async function verwijderen(email){
@@ -11121,6 +11340,14 @@ app.post("/api/room/create", (req, res) => {
   const wantFree = !!(req.body && (req.body.freeRoom === true || req.body.freeRoom === "true"));
 
   let gate = { ok:true, accountKey:"", email:"", plan:"", saldo:-1 };
+
+  /* Geblokkeerd? Dan ook geen gratis kamer meer. Anders is een blokkade een
+     lege huls: de gratis kant is juist waar misbruik zit. */
+  const blokMail = (req.body && (req.body.email || req.body.mail)) || "";
+  if(blokMail && wcGeblokkeerd(blokMail)){
+    return res.status(403).json({ error: "Dit account is geblokkeerd. Neem contact op via info@formforge.nl." });
+  }
+
   if(!wantFree){
     /* Vertaalkamer: Unlimited of credits met saldo. */
     gate = requireChatTegoed(req);
