@@ -66,8 +66,10 @@ app.use("/icons", express.static(path.join(__dirname, "icons"), {
    Daarom serveren we ze nu zelf uit.
 
    Verwachte indeling in de map dfn van deze repo:
-     dfn/v2/pkg/df_bg.wasm
-     dfn/v2/models/DeepFilterNet3_onnx.tar.gz
+     dfn/v3/pkg/df_bg.wasm
+     dfn/v3/models/DeepFilterNet3_onnx.tar.gz
+   (Het pakket zoekt in v3, niet in v2. Deze regels stonden nog op v2 en
+    dat klopte niet met wat er in de repo staat.)
 
    De pagina draait op formforge.nl en haalt ze hiervandaan, dus de
    toestemmingskop moet mee. Het cors() hierboven regelt dat al; voor de
@@ -81,6 +83,23 @@ app.use("/dfn", express.static(path.join(__dirname, "dfn"), {
     res.set("Access-Control-Allow-Origin", "*");
     if(bestandspad.endsWith(".wasm")) res.type("application/wasm");
   }
+}));
+
+/* De bestanden van YAMNet, de geluidsherkenning van Guesttalk. Die bepaalt in
+   de browser of er echt een stem spreekt voordat er iets vertaald wordt.
+
+   Verwachte indeling in de map yamnet van deze repo:
+     yamnet/model.json
+     yamnet/group1-shard1of4.bin  (en 2, 3, 4)
+
+   Let op: die vier .bin-bestanden zijn binair. Uploaden via GitHub mag,
+   maar NOOIT bewerken of hernoemen via het potloodje: dan worden ze leeg. */
+app.use("/yamnet", express.static(path.join(__dirname, "yamnet"), {
+  maxAge: "365d",
+  fallthrough: true,
+  index: false,
+  dotfiles: "ignore",
+  setHeaders: (res) => { res.set("Access-Control-Allow-Origin", "*"); }
 }));
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
