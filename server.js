@@ -2161,61 +2161,10 @@ async function mintRealtimeToken(req, res){
       return res.status(402).json({ error: "Bundel op", limitReached: true, limitMinutes: guesttalkLimitMinutes(rec), minutesUsed: Math.round(rec.secondsUsed / 60) });
     }
 
-    /* ---- De tolkopdracht MEEGEVEN BIJ HET AANMAKEN van de sessie ----
-       Tot nu toe werd de sessie kaal aangemaakt en stuurde de browser daarna
-       een session.update met de tolkopdracht. Kwam die om welke reden dan ook
-       niet aan of werd hij genegeerd, dan draaide de dienst als algemene
-       assistent: die begroet de gast, beschrijft wat hij ziet en voert
-       gesprekken. Precies wat een tolk nooit mag doen.
-
-       Door de opdracht hier mee te geven staat hij er vanaf de eerste
-       seconde in. De browser stuurt zijn session.update daarna nog steeds,
-       als tweede kans, maar het hangt er niet meer van af.
-
-       Extra voordeel: de opdracht staat nu op de server en is niet meer
-       vanaf een toestel te wijzigen. */
-    const gastTaal = String(src.langName || src.lang || "English").trim().slice(0, 40) || "English";
-    const tolkOpdracht =
-      "You are a strict two-way live interpreter. There are exactly two languages in this conversation: Dutch and " + gastTaal + ". " +
-      "Your ONLY task is to translate each spoken utterance into the OTHER language and speak that translation out loud. " +
-      "1) If the person speaks " + gastTaal + ", you MUST reply ONLY in Dutch. " +
-      "2) If the person speaks Dutch, you MUST reply ONLY in " + gastTaal + ". " +
-      "3) Never reply in the same language that was just spoken. Never echo the input. " +
-      "4) Output only the translation itself. Do not answer questions, do not react, do not greet, " +
-      "do not offer help, do not describe anything you perceive. " +
-      "5) Keep names, numbers, dates and meaning exact. Translate the meaning, not word by word. " +
-      "Use the polite form of address that fits a business setting. " +
-      "6) If the audio is unclear, empty or not speech, stay completely silent. " +
-      "7) NEVER speak as yourself. You are forbidden to apologise, to say that you did not understand, " +
-      "to ask for repetition, or to comment on the audio. Sentences like 'How can I assist you today' are forbidden. " +
-      "8) If the input is laughter, coughing, throat clearing or anything that is not language, produce NO output at all.";
-
-    const sessieOpzet = {
-      type: "realtime",
-      model: OPENAI_REALTIME_MODEL,
-      instructions: tolkOpdracht,
-      output_modalities: ["audio"],
-      audio: {
-        input: {
-          transcription: { model: "gpt-4o-transcribe" },
-          turn_detection: {
-            type: "server_vad",
-            threshold: 0.65,
-            prefix_padding_ms: 300,
-            silence_duration_ms: 800,
-            /* De kern: de dienst maakt NOOIT uit zichzelf een antwoord. */
-            create_response: false,
-            interrupt_response: true
-          }
-        },
-        output: { voice: OPENAI_REALTIME_VOICE }
-      }
-    };
-
     const r = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
       method: "POST",
       headers: { "Authorization": "Bearer " + OPENAI_API_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ session: sessieOpzet })
+      body: JSON.stringify({ session: { type: "realtime", model: OPENAI_REALTIME_MODEL, audio: { output: { voice: OPENAI_REALTIME_VOICE } } } })
     });
     const data = await r.json().catch(() => ({}));
     if(!r.ok){
