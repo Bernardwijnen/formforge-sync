@@ -1,5 +1,5 @@
 {
-  "versie": "2026-09-20d",
+  "versie": "2026-09-20e",
   "bron": "Startlijst, opgesteld door Claude. Niet medisch getoetst.",
   "talen_gecontroleerd": [],
   "categorieen": [
@@ -1123,7 +1123,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "horen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "horen"
+      ],
+      "woordaantal": 4
     },
     {
       "id": "contact-wij-ambulance",
@@ -1305,7 +1313,19 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "ambulance",
+        "komen",
+        "helpen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "ambulance",
+        "helpen",
+        "komen"
+      ],
+      "woordaantal": 9
     },
     {
       "id": "contact-wij-ziekenhuis",
@@ -1487,7 +1507,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "ziekenhuis",
+        "veilig"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "veilig",
+        "ziekenhuis"
+      ],
+      "woordaantal": 8
     },
     {
       "id": "contact-ogen-open",
@@ -1669,7 +1699,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "ogen",
+        "opendoen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "ogen",
+        "opendoen"
+      ],
+      "woordaantal": 5
     },
     {
       "id": "contact-knijp-hand",
@@ -1851,7 +1891,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "hand",
+        "knijpen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "hand",
+        "knijpen"
+      ],
+      "woordaantal": 6
     },
     {
       "id": "contact-rustig",
@@ -2033,7 +2083,19 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "blijf",
+        "rustig",
+        "helpen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "blijf",
+        "helpen",
+        "rustig"
+      ],
+      "woordaantal": 5
     },
     {
       "id": "contact-taal",
@@ -2215,7 +2277,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "taal",
+        "spreekt"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "spreekt",
+        "taal"
+      ],
+      "woordaantal": 4
     },
     {
       "id": "contact-tolk",
@@ -2397,7 +2469,22 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "gebruiken",
+        "vertaalapparaat",
+        "spreekt",
+        "kort"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "duidelijk",
+        "gebruiken",
+        "kort",
+        "spreekt",
+        "vertaalapparaat"
+      ],
+      "woordaantal": 9
     },
     {
       "id": "persoon-naam",
@@ -2579,7 +2666,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "naam"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "naam"
+      ],
+      "woordaantal": 4
     },
     {
       "id": "persoon-geboortedatum",
@@ -2761,7 +2856,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "geboortedatum"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "geboortedatum"
+      ],
+      "woordaantal": 4
     },
     {
       "id": "persoon-leeftijd",
@@ -2943,7 +3046,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "oud"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "oud"
+      ],
+      "woordaantal": 4
     },
     {
       "id": "persoon-adres",
@@ -3125,7 +3236,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "woont"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "woont"
+      ],
+      "woordaantal": 3
     },
     {
       "id": "persoon-identiteitsbewijs",
@@ -3307,7 +3426,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "identiteitsbewijs"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "identiteitsbewijs"
+      ],
+      "woordaantal": 6
     },
     {
       "id": "persoon-verzekering",
@@ -3489,7 +3616,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "zorgverzekering"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "zorgverzekering"
+      ],
+      "woordaantal": 4
     },
     {
       "id": "persoon-huisarts",
@@ -3671,7 +3806,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "huisarts"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "huisarts"
+      ],
+      "woordaantal": 4
     },
     {
       "id": "persoon-contactpersoon",
@@ -3853,7 +3996,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "iemand",
+        "bellen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "bellen",
+        "iemand"
+      ],
+      "woordaantal": 9
     },
     {
       "id": "persoon-telefoonnummer",
@@ -4035,7 +4188,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "telefoonnummer"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "telefoonnummer"
+      ],
+      "woordaantal": 4
     },
     {
       "id": "persoon-alleen",
@@ -4217,7 +4378,14 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "hier",
+        "alleen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [],
+      "woordaantal": 4
     },
     {
       "id": "gebeurd-wat",
@@ -4399,7 +4567,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "gebeurd"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "gebeurd"
+      ],
+      "woordaantal": 4
     },
     {
       "id": "gebeurd-wanneer",
@@ -4581,7 +4757,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "begonnen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "begonnen"
+      ],
+      "woordaantal": 4
     },
     {
       "id": "gebeurd-gevallen",
@@ -4763,7 +4947,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "gevallen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "gevallen"
+      ],
+      "woordaantal": 3
     },
     {
       "id": "gebeurd-hoogte",
@@ -4945,7 +5137,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "hoogte",
+        "gevallen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "gevallen",
+        "hoogte"
+      ],
+      "woordaantal": 6
     },
     {
       "id": "gebeurd-aangereden",
@@ -5127,7 +5329,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "aangereden"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "aangereden"
+      ],
+      "woordaantal": 3
     },
     {
       "id": "gebeurd-bewusteloos",
@@ -5309,7 +5519,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "bewusteloos",
+        "geweest"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "bewusteloos",
+        "geweest"
+      ],
+      "woordaantal": 4
     },
     {
       "id": "gebeurd-hoofd-gestoten",
@@ -5491,7 +5711,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "hoofd",
+        "gestoten"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "gestoten",
+        "hoofd"
+      ],
+      "woordaantal": 5
     },
     {
       "id": "gebeurd-eerder-gehad",
@@ -5673,7 +5903,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "eerder"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "eerder"
+      ],
+      "woordaantal": 5
     },
     {
       "id": "gebeurd-plotseling",
@@ -5855,7 +6093,19 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "kwam",
+        "plotseling",
+        "geleidelijk"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "geleidelijk",
+        "kwam",
+        "plotseling"
+      ],
+      "woordaantal": 5
     },
     {
       "id": "gebeurd-iets-ingenomen",
@@ -6037,7 +6287,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "iets",
+        "ingenomen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "iets",
+        "ingenomen"
+      ],
+      "woordaantal": 4
     },
     {
       "id": "gebeurd-wat-ingenomen",
@@ -6219,7 +6479,18 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "wat",
+        "ingenomen",
+        "hoeveel"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "hoeveel",
+        "ingenomen"
+      ],
+      "woordaantal": 6
     },
     {
       "id": "pijn-heeft-u",
@@ -6401,7 +6672,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "pijn"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "pijn"
+      ],
+      "woordaantal": 3
     },
     {
       "id": "pijn-waar",
@@ -6583,7 +6862,16 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "waar",
+        "pijn"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "pijn"
+      ],
+      "woordaantal": 4
     },
     {
       "id": "pijn-aanwijzen",
@@ -6765,7 +7053,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "aanwijzen",
+        "pijn"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "aanwijzen",
+        "pijn"
+      ],
+      "woordaantal": 7
     },
     {
       "id": "pijn-schaal",
@@ -6947,7 +7245,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "pijn",
+        "10"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "erg",
+        "pijn"
+      ],
+      "woordaantal": 9
     },
     {
       "id": "pijn-soort",
@@ -7129,7 +7437,20 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "pijn",
+        "scherp",
+        "drukkend"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "brandend",
+        "drukkend",
+        "pijn",
+        "scherp"
+      ],
+      "woordaantal": 7
     },
     {
       "id": "pijn-uitstralen",
@@ -7311,7 +7632,21 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "straalt",
+        "arm",
+        "kaak"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "arm",
+        "kaak",
+        "pijn",
+        "rug",
+        "straalt"
+      ],
+      "woordaantal": 10
     },
     {
       "id": "pijn-bewegen",
@@ -7493,7 +7828,19 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "pijn",
+        "erger",
+        "beweegt"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "beweegt",
+        "erger",
+        "pijn"
+      ],
+      "woordaantal": 7
     },
     {
       "id": "pijn-ademen",
@@ -7675,7 +8022,19 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "pijn",
+        "erger",
+        "ademhaalt"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "ademhaalt",
+        "erger",
+        "pijn"
+      ],
+      "woordaantal": 7
     },
     {
       "id": "pijn-drukken",
@@ -7857,7 +8216,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "pijn",
+        "druk"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "druk",
+        "pijn"
+      ],
+      "woordaantal": 7
     },
     {
       "id": "pijn-hoelang",
@@ -8039,7 +8408,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "hoelang",
+        "pijn"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "hoelang",
+        "pijn"
+      ],
+      "woordaantal": 6
     },
     {
       "id": "pijn-constant",
@@ -8221,7 +8600,20 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "pijn",
+        "aanvallen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "aanvallen",
+        "hele",
+        "komt",
+        "pijn",
+        "tijd"
+      ],
+      "woordaantal": 12
     },
     {
       "id": "klacht-borst",
@@ -8403,7 +8795,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "pijn",
+        "borst"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "borst",
+        "pijn"
+      ],
+      "woordaantal": 6
     },
     {
       "id": "klacht-ademhalen",
@@ -8585,7 +8987,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "moeite",
+        "ademhalen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "ademhalen",
+        "moeite"
+      ],
+      "woordaantal": 5
     },
     {
       "id": "klacht-benauwd",
@@ -8767,7 +9179,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "benauwd"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "benauwd"
+      ],
+      "woordaantal": 3
     },
     {
       "id": "klacht-duizelig",
@@ -8949,7 +9369,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "duizelig"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "duizelig"
+      ],
+      "woordaantal": 3
     },
     {
       "id": "klacht-misselijk",
@@ -9131,7 +9559,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "misselijk"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "misselijk"
+      ],
+      "woordaantal": 3
     },
     {
       "id": "klacht-overgegeven",
@@ -9313,7 +9749,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "overgegeven"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "overgegeven"
+      ],
+      "woordaantal": 3
     },
     {
       "id": "klacht-koorts",
@@ -9495,7 +9939,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "koorts"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "koorts"
+      ],
+      "woordaantal": 3
     },
     {
       "id": "klacht-bloed",
@@ -9677,7 +10129,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "bloed",
+        "verloren"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "bloed",
+        "verloren"
+      ],
+      "woordaantal": 4
     },
     {
       "id": "klacht-tintelingen",
@@ -9859,7 +10321,21 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "voelt",
+        "tintelingen",
+        "doof",
+        "gevoel"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "doof",
+        "gevoel",
+        "tintelingen",
+        "voelt"
+      ],
+      "woordaantal": 7
     },
     {
       "id": "klacht-armen-benen",
@@ -10041,7 +10517,19 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "armen",
+        "benen",
+        "bewegen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "armen",
+        "benen",
+        "bewegen"
+      ],
+      "woordaantal": 7
     },
     {
       "id": "klacht-zien",
@@ -10223,7 +10711,19 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "ziet",
+        "wazig",
+        "dubbel"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "dubbel",
+        "wazig",
+        "ziet"
+      ],
+      "woordaantal": 5
     },
     {
       "id": "klacht-spreken",
@@ -10405,7 +10905,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "moeite",
+        "praten"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "moeite",
+        "praten"
+      ],
+      "woordaantal": 5
     },
     {
       "id": "klacht-hoofdpijn",
@@ -10587,7 +11097,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "hoofdpijn"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "hoofdpijn"
+      ],
+      "woordaantal": 3
     },
     {
       "id": "klacht-plassen",
@@ -10769,7 +11287,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "plassen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "plassen"
+      ],
+      "woordaantal": 3
     },
     {
       "id": "klacht-zwanger",
@@ -10951,7 +11477,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "zwanger"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "zwanger"
+      ],
+      "woordaantal": 3
     },
     {
       "id": "klacht-hoeveel-weken",
@@ -11133,7 +11667,19 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "hoeveel",
+        "weken",
+        "zwanger"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "hoeveel",
+        "weken",
+        "zwanger"
+      ],
+      "woordaantal": 5
     },
     {
       "id": "historie-medicijnen",
@@ -11315,7 +11861,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "gebruikt",
+        "medicijnen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "gebruikt",
+        "medicijnen"
+      ],
+      "woordaantal": 3
     },
     {
       "id": "historie-welke-medicijnen",
@@ -11497,7 +12053,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "welke",
+        "medicijnen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "gebruikt",
+        "medicijnen"
+      ],
+      "woordaantal": 4
     },
     {
       "id": "historie-medicijnen-bij",
@@ -11679,7 +12245,16 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "medicijnen",
+        "bij"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "medicijnen"
+      ],
+      "woordaantal": 6
     },
     {
       "id": "historie-bloedverdunners",
@@ -11861,7 +12436,16 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "bloedverdunners"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "bloedverdunners",
+        "gebruikt"
+      ],
+      "woordaantal": 3
     },
     {
       "id": "historie-allergie-medicijnen",
@@ -12043,7 +12627,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "allergisch",
+        "medicijnen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "allergisch",
+        "medicijnen"
+      ],
+      "woordaantal": 5
     },
     {
       "id": "historie-allergie-anders",
@@ -12225,7 +12819,18 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "allergisch",
+        "anders"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "allergisch",
+        "anders",
+        "ergens"
+      ],
+      "woordaantal": 6
     },
     {
       "id": "historie-hart",
@@ -12407,7 +13012,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "hartklachten"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "hartklachten"
+      ],
+      "woordaantal": 3
     },
     {
       "id": "historie-suikerziekte",
@@ -12589,7 +13202,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "suikerziekte"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "suikerziekte"
+      ],
+      "woordaantal": 3
     },
     {
       "id": "historie-epilepsie",
@@ -12771,7 +13392,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "epilepsie"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "epilepsie"
+      ],
+      "woordaantal": 3
     },
     {
       "id": "historie-astma",
@@ -12953,7 +13582,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "astma",
+        "copd"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "astma",
+        "copd"
+      ],
+      "woordaantal": 5
     },
     {
       "id": "historie-onder-behandeling",
@@ -13135,7 +13774,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "behandeling",
+        "arts"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "arts",
+        "behandeling"
+      ],
+      "woordaantal": 7
     },
     {
       "id": "historie-geopereerd",
@@ -13317,7 +13966,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "eerder",
+        "geopereerd"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "eerder",
+        "geopereerd"
+      ],
+      "woordaantal": 4
     },
     {
       "id": "historie-laatst-gegeten",
@@ -13499,7 +14158,19 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "laatst",
+        "gegeten",
+        "gedronken"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "gedronken",
+        "gegeten",
+        "laatst"
+      ],
+      "woordaantal": 9
     },
     {
       "id": "historie-alcohol",
@@ -13681,7 +14352,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "alcohol",
+        "gedronken"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "alcohol",
+        "gedronken"
+      ],
+      "woordaantal": 4
     },
     {
       "id": "historie-drugs",
@@ -13863,7 +14544,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "drugs",
+        "gebruikt"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "drugs",
+        "gebruikt"
+      ],
+      "woordaantal": 4
     },
     {
       "id": "handeling-onderzoeken",
@@ -14045,7 +14736,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "onderzoeken"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "onderzoeken"
+      ],
+      "woordaantal": 5
     },
     {
       "id": "handeling-bloeddruk",
@@ -14227,7 +14926,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "bloeddruk",
+        "meten"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "bloeddruk",
+        "meten"
+      ],
+      "woordaantal": 5
     },
     {
       "id": "handeling-bloed-prikken",
@@ -14409,7 +15118,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "bloed",
+        "afnemen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "afnemen",
+        "bloed"
+      ],
+      "woordaantal": 6
     },
     {
       "id": "handeling-infuus",
@@ -14591,7 +15310,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "infuus",
+        "inbrengen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "inbrengen",
+        "infuus"
+      ],
+      "woordaantal": 5
     },
     {
       "id": "handeling-pijnstilling",
@@ -14773,7 +15502,19 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "geef",
+        "iets",
+        "pijn"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "geef",
+        "iets",
+        "pijn"
+      ],
+      "woordaantal": 7
     },
     {
       "id": "handeling-zuurstof",
@@ -14955,7 +15696,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "geef",
+        "zuurstof"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "geef",
+        "zuurstof"
+      ],
+      "woordaantal": 4
     },
     {
       "id": "handeling-kleding",
@@ -15137,7 +15888,19 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "kleding",
+        "losmaken",
+        "onderzoeken"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "kleding",
+        "losmaken",
+        "onderzoeken"
+      ],
+      "woordaantal": 9
     },
     {
       "id": "handeling-stil-liggen",
@@ -15319,7 +16082,19 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "blijft",
+        "stil",
+        "liggen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "blijft",
+        "liggen",
+        "stil"
+      ],
+      "woordaantal": 5
     },
     {
       "id": "handeling-hoofd-niet-bewegen",
@@ -15501,7 +16276,19 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "beweeg",
+        "hoofd",
+        "niet"
+      ],
+      "ontkenning": true,
+      "kernwoorden": [
+        "beweeg",
+        "hoofd",
+        "niet"
+      ],
+      "woordaantal": 4
     },
     {
       "id": "handeling-diep-ademhalen",
@@ -15683,7 +16470,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "diep",
+        "ademhalen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "ademhalen",
+        "diep"
+      ],
+      "woordaantal": 4
     },
     {
       "id": "handeling-pijn-doen",
@@ -15865,7 +16662,18 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "kan",
+        "even",
+        "pijn",
+        "doen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "pijn"
+      ],
+      "woordaantal": 5
     },
     {
       "id": "handeling-brancard",
@@ -16047,7 +16855,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "brancard",
+        "tillen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "brancard",
+        "tillen"
+      ],
+      "woordaantal": 7
     },
     {
       "id": "handeling-ziekenhuis",
@@ -16229,7 +17047,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "brengen",
+        "ziekenhuis"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "brengen",
+        "ziekenhuis"
+      ],
+      "woordaantal": 6
     },
     {
       "id": "handeling-wachten",
@@ -16411,7 +17239,19 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "wachten",
+        "komen",
+        "terug"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "komen",
+        "terug",
+        "wachten"
+      ],
+      "woordaantal": 11
     },
     {
       "id": "toestemming-behandeling",
@@ -16593,7 +17433,19 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "geeft",
+        "toestemming",
+        "behandeling"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "behandeling",
+        "geeft",
+        "toestemming"
+      ],
+      "woordaantal": 6
     },
     {
       "id": "toestemming-begrepen",
@@ -16775,7 +17627,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "begrepen",
+        "uitgelegd"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "begrepen",
+        "uitgelegd"
+      ],
+      "woordaantal": 7
     },
     {
       "id": "toestemming-familie",
@@ -16957,7 +17819,17 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "familie",
+        "informeren"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "familie",
+        "informeren"
+      ],
+      "woordaantal": 5
     },
     {
       "id": "toestemming-vragen",
@@ -17139,7 +18011,15 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "vragen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "vragen"
+      ],
+      "woordaantal": 4
     },
     {
       "id": "toestemming-herhalen",
@@ -17321,7 +18201,158 @@
           "door": "AI",
           "op": "2026-09-20"
         }
-      }
+      },
+      "trefwoorden": [
+        "keer",
+        "uitleggen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "keer",
+        "uitleggen"
+      ],
+      "woordaantal": 7
     }
+  ],
+  "stopwoorden": [
+    "aan",
+    "af",
+    "al",
+    "alleen",
+    "als",
+    "alsjeblieft",
+    "alstublieft",
+    "ben",
+    "bent",
+    "bij",
+    "daar",
+    "dan",
+    "dat",
+    "de",
+    "deden",
+    "deed",
+    "deze",
+    "die",
+    "dit",
+    "doe",
+    "doen",
+    "doet",
+    "door",
+    "dus",
+    "een",
+    "eens",
+    "en",
+    "er",
+    "even",
+    "ga",
+    "gaan",
+    "gaat",
+    "gedaan",
+    "gehad",
+    "geworden",
+    "ging",
+    "gingen",
+    "haar",
+    "had",
+    "hadden",
+    "heb",
+    "hebben",
+    "hebt",
+    "heeft",
+    "hem",
+    "het",
+    "hier",
+    "hij",
+    "hoe",
+    "hun",
+    "ik",
+    "in",
+    "is",
+    "je",
+    "jij",
+    "jou",
+    "jouw",
+    "kan",
+    "kon",
+    "konden",
+    "kun",
+    "kunnen",
+    "kunt",
+    "laat",
+    "laten",
+    "liet",
+    "lieten",
+    "maar",
+    "mag",
+    "men",
+    "met",
+    "mij",
+    "mijn",
+    "mocht",
+    "mochten",
+    "moest",
+    "moesten",
+    "moet",
+    "moeten",
+    "mogen",
+    "na",
+    "naar",
+    "nog",
+    "of",
+    "om",
+    "onder",
+    "ons",
+    "onze",
+    "ook",
+    "op",
+    "over",
+    "sinds",
+    "te",
+    "tegen",
+    "ten",
+    "ter",
+    "toe",
+    "toen",
+    "tot",
+    "tussen",
+    "u",
+    "uit",
+    "uw",
+    "van",
+    "vanaf",
+    "voor",
+    "waar",
+    "waarom",
+    "wanneer",
+    "want",
+    "waren",
+    "was",
+    "wat",
+    "we",
+    "weer",
+    "wel",
+    "welk",
+    "welke",
+    "werd",
+    "wie",
+    "wij",
+    "wil",
+    "wilde",
+    "wilden",
+    "willen",
+    "wilt",
+    "worden",
+    "wordt",
+    "zal",
+    "ze",
+    "zelf",
+    "zich",
+    "zij",
+    "zijn",
+    "zonder",
+    "zou",
+    "zouden",
+    "zullen",
+    "zult"
   ]
 }
