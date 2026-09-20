@@ -14681,7 +14681,8 @@ app.post("/api/tolk/vertaal", async (req, res) => {
       "Keep names, numbers, dates, times and amounts exactly as given. " +
       "Translate the meaning in natural word order for " + naar + ", not word by word. " +
       "Address the listener in the polite form normal in a business setting in " + naar + ". " +
-      "If the text is not a meaningful sentence, reply with exactly: SKIP";
+      "Greetings, single words, names and short fragments ARE meaningful: translate them. " +
+      "Only if the text contains no language at all, reply with exactly: SKIP";
 
     const vertaling = await callOpenAI(
       [ { role:"system", content: systeem },
@@ -14690,13 +14691,19 @@ app.post("/api/tolk/vertaal", async (req, res) => {
     );
 
     const schoon = String(vertaling || "").trim();
-    if(!schoon || schoon.toUpperCase() === "SKIP"){
-      return res.json({ ok:true, vertaling:null, reden:"geen zinnige zin" });
+    if(!schoon){
+      console.warn("Tolkvertaling: leeg antwoord van het model.");
+      return res.json({ ok:true, vertaling:null, reden:"leeg antwoord" });
+    }
+    if(schoon.toUpperCase() === "SKIP"){
+      console.warn("Tolkvertaling: model gaf SKIP op: " + zin);
+      return res.json({ ok:true, vertaling:null, reden:"SKIP" });
     }
     return res.json({ ok:true, vertaling: schoon, van, naar });
   }catch(err){
-    console.warn("Tolkvertaling mislukt:", err.message || String(err));
-    return res.status(502).json({ ok:false, error:"vertaling mislukt" });
+    const melding = err && err.message ? String(err.message) : String(err);
+    console.warn("Tolkvertaling mislukt:", melding);
+    return res.status(502).json({ ok:false, error:"vertaling mislukt", reden: melding.slice(0, 200) });
   }
 });
 
