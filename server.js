@@ -318,6 +318,70 @@ if(zorgZinnen){
               (zorgZinnen.versie || "onbekend") + ".");
 }
 
+/* ---------- Zoeken in de zorgzinnen ----------
+   Er wordt niet op de hele zin vergeleken maar op trefwoorden, zodat
+   "heeft u pijn op de borst" en "heb jij pijn op de borst" allebei bij
+   dezelfde zin uitkomen. Elke zin heeft in het bestand een lijstje
+   trefwoorden staan; die moeten ALLEMAAL in het gesprokene voorkomen.
+
+   Drie grendels voorkomen een verkeerde treffer:
+     1) ontkenning: zit er "niet" of "geen" in het gesprokene en niet in de
+        bronzin (of andersom), dan geen treffer
+     2) extra inhoud: zegt de spreker woorden die niet in de bronzin staan,
+        dan zou die inhoud wegvallen; bij meer dan een woord geen treffer
+     3) gelijkspel: passen er twee zinnen even goed, dan geen treffer
+
+   Geen treffer is geen fout. Dan gaat de zin gewoon naar OpenAI, precies
+   zoals nu. Liever een keer betalen dan de verkeerde vraag stellen. */
+const ZORG_STOP = new Set((zorgZinnen && zorgZinnen.stopwoorden) || []);
+
+function zorgNormaliseer(tekst){
+  return String(tekst || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function zorgZoek(zin, taal){
+  if(!zorgZinnen || !Array.isArray(zorgZinnen.zinnen)) return null;
+  const woorden = zorgNormaliseer(zin).split(" ").filter(Boolean);
+  if(!woorden.length) return null;
+  const set = new Set(woorden);
+
+  const ontkenning = set.has("niet") || set.has("geen");
+  const kern = woorden.filter(w => !ZORG_STOP.has(w) && w.length > 2);
+
+  let beste = null, besteScore = -1e9, gelijk = 0;
+
+  for(const z of zorgZinnen.zinnen){
+    const tw = z.trefwoorden || [];
+    if(!tw.length) continue;
+    if(!tw.every(w => set.has(w))) continue;
+    if(!!z.ontkenning !== ontkenning) continue;
+
+    const eigen = new Set(z.kernwoorden || []);
+    const extra = kern.filter(w => !eigen.has(w)).length;
+    if(extra > 1) continue;
+
+    const lengteVerschil = Math.abs((z.woordaantal || 0) - woorden.length);
+    const score = tw.length * 100 - extra * 10 - lengteVerschil;
+
+    if(score > besteScore){ beste = z; besteScore = score; gelijk = 1; }
+    else if(score === besteScore){ gelijk++; }
+  }
+
+  if(!beste || gelijk > 1) return null;
+
+  const v = beste.vertalingen && beste.vertalingen[taal];
+  if(!v || !v.tekst) return null;
+  return { id: beste.id, nl: beste.nl, tekst: v.tekst, status: v.status || "onbekend",
+           antwoord: beste.antwoord || "vrij" };
+}
+
+
 const PREMIUM_STORE_FILE = path.join(DATA_DIR, "echo_premium_accounts.json");
 const premiumAccounts = new Map();
 
@@ -14559,6 +14623,56 @@ process.on("SIGINT", () => flushAllStoresAndExit("SIGINT"));
 /* ---------------- foutafhandeling van routes ----------------
    Deze middleware heeft VIER parameters. Daaraan herkent Express hem als
    foutafhandelaar. Hij moet onder alle routes staan. */
+/* ---------- Endpoints voor de zorgzinnen ----------
+   Staan bewust hier, onderaan, zodat ze dezelfde middleware krijgen als alle
+   andere routes: express.json, cors en de foutafhandeling hieronder. */
+/* De zoeker als endpoint, zodat de tolk hem kan raadplegen voordat er een
+   vertaling bij OpenAI wordt opgevraagd. Geen treffer levert gewoon
+   gevonden:false op; de aanroeper valt dan terug op zijn eigen pad. */
+app.post("/api/zorg/zoek", (req, res) => {
+  try{
+    const zin = String((req.body && req.body.zin) || "").slice(0, 600);
+    const taal = String((req.body && req.body.taal) || "").trim().toLowerCase();
+    if(!zin || !taal){
+      return res.status(400).json({ gevonden: false, error: "zin en taal zijn verplicht" });
+    }
+    const treffer = zorgZoek(zin, taal);
+    if(!treffer) return res.json({ gevonden: false });
+    return res.json({ gevonden: true, ...treffer });
+  }catch(err){
+    console.warn("Zorgzinnen zoeken mislukt:", err.message || String(err));
+    return res.json({ gevonden: false });
+  }
+});
+
+/* De hele lijst in een taal, voor een scherm waarop personeel een zin kiest. */
+app.get("/api/zorg/zinnen", (req, res) => {
+  try{
+    if(!zorgZinnen) return res.json({ versie: null, categorieen: [], zinnen: [] });
+    const taal = String(req.query.taal || "").trim().toLowerCase();
+    const zinnen = zorgZinnen.zinnen.map(z => {
+      const v = (z.vertalingen && z.vertalingen[taal]) || null;
+      return {
+        id: z.id,
+        categorie: z.categorie,
+        nl: z.nl,
+        antwoord: z.antwoord,
+        vertaling: v ? v.tekst : null,
+        status: v ? (v.status || "onbekend") : "ontbreekt"
+      };
+    });
+    return res.json({
+      versie: zorgZinnen.versie || null,
+      categorieen: zorgZinnen.categorieen || [],
+      antwoorden: zorgZinnen.antwoorden || {},
+      zinnen
+    });
+  }catch(err){
+    console.warn("Zorgzinnen lijst mislukt:", err.message || String(err));
+    return res.json({ versie: null, categorieen: [], zinnen: [] });
+  }
+});
+
 app.use((err, req, res, next) => {
   try{
     res._wdAlGemeld = true;
