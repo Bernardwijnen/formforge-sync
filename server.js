@@ -14692,13 +14692,20 @@ app.get("/api/politie/zinnen", (req, res) => {
         id: z.id, categorie: z.categorie, nl: z.nl, antwoord: z.antwoord,
         juridisch: z.juridisch === true,
         vertaling: v ? v.tekst : null,
-        status: v ? (v.status || "onbekend") : "ontbreekt"
+        status: v ? (v.status || "onbekend") : "ontbreekt",
+        /* Meesturen zodat de tolk in de browser zelf kan zoeken zonder bij
+           elke beurt het netwerk op te moeten. */
+        trefwoorden: z.trefwoorden || [],
+        kernwoorden: z.kernwoorden || [],
+        ontkenning: z.ontkenning === true,
+        woordaantal: z.woordaantal || 0
       };
     });
     return res.json({
       versie: politieZinnen.versie || null,
       categorieen: politieZinnen.categorieen || [],
       antwoorden: politieZinnen.antwoorden || {},
+      stopwoorden: politieZinnen.stopwoorden || [],
       zinnen
     });
   }catch(err){
@@ -14720,13 +14727,18 @@ app.get("/api/zorg/zinnen", (req, res) => {
         nl: z.nl,
         antwoord: z.antwoord,
         vertaling: v ? v.tekst : null,
-        status: v ? (v.status || "onbekend") : "ontbreekt"
+        status: v ? (v.status || "onbekend") : "ontbreekt",
+        trefwoorden: z.trefwoorden || [],
+        kernwoorden: z.kernwoorden || [],
+        ontkenning: z.ontkenning === true,
+        woordaantal: z.woordaantal || 0
       };
     });
     return res.json({
       versie: zorgZinnen.versie || null,
       categorieen: zorgZinnen.categorieen || [],
       antwoorden: zorgZinnen.antwoorden || {},
+      stopwoorden: zorgZinnen.stopwoorden || [],
       zinnen
     });
   }catch(err){
