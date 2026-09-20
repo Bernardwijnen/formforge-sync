@@ -261,6 +261,63 @@ try{
   console.warn("Foto-map kon niet worden aangemaakt:", err.message || String(err));
 }
 
+/* De zorgzinnen: vaste vragen en mededelingen voor ambulance- en
+   ziekenhuispersoneel, vooraf vertaald. Staan in de repo onder startdata/ en
+   worden bij het opstarten een keer naar de blijvende schijf gekopieerd.
+
+   Staat het bestand daar al, dan blijft het staan. Anders zou een nieuwe deploy
+   nagekeken vertalingen overschrijven met de ongecontroleerde versie uit de
+   repo. Bijwerken doe je door het bestand op de schijf te verwijderen, of door
+   de versie op te hogen in startdata en ZORG_ZINNEN_OVERSCHRIJVEN op true te
+   zetten via de environment variables.
+
+   Dit blok kan niets kapotmaken: gaat er iets mis, dan komt er een regel in de
+   log en draait de rest van de server gewoon door. */
+const ZORG_ZINNEN_FILE = path.join(DATA_DIR, "zorg_zinnen.json");
+const ZORG_ZINNEN_BRON = path.join(__dirname, "startdata", "zorg_zinnen.json");
+const ZORG_ZINNEN_OVERSCHRIJVEN =
+  String(process.env.ZORG_ZINNEN_OVERSCHRIJVEN || "").toLowerCase() === "true";
+
+try{
+  const bestaat = fs.existsSync(ZORG_ZINNEN_FILE);
+  if(!bestaat || ZORG_ZINNEN_OVERSCHRIJVEN){
+    if(fs.existsSync(ZORG_ZINNEN_BRON)){
+      fs.copyFileSync(ZORG_ZINNEN_BRON, ZORG_ZINNEN_FILE);
+      console.log(bestaat
+        ? "Zorgzinnen overschreven vanuit startdata."
+        : "Zorgzinnen naar de schijf gekopieerd.");
+    }else if(!bestaat){
+      console.warn("startdata/zorg_zinnen.json ontbreekt; zorgzinnen niet geplaatst.");
+    }
+  }
+}catch(err){
+  console.warn("Zorgzinnen konden niet naar de schijf:", err.message || String(err));
+}
+
+/* De lijst inlezen zodat hij niet bij elke aanvraag van de schijf hoeft te
+   komen. Lukt het niet, dan blijft hij leeg en merkt de rest van de server er
+   niets van. */
+let zorgZinnen = null;
+
+function laadZorgZinnen(){
+  try{
+    if(!fs.existsSync(ZORG_ZINNEN_FILE)) return null;
+    const raw = fs.readFileSync(ZORG_ZINNEN_FILE, "utf8");
+    const data = JSON.parse(raw || "null");
+    if(!data || !Array.isArray(data.zinnen)) return null;
+    return data;
+  }catch(err){
+    console.warn("Zorgzinnen konden niet gelezen worden:", err.message || String(err));
+    return null;
+  }
+}
+
+zorgZinnen = laadZorgZinnen();
+if(zorgZinnen){
+  console.log("Zorgzinnen geladen: " + zorgZinnen.zinnen.length + " zinnen, versie " +
+              (zorgZinnen.versie || "onbekend") + ".");
+}
+
 const PREMIUM_STORE_FILE = path.join(DATA_DIR, "echo_premium_accounts.json");
 const premiumAccounts = new Map();
 
