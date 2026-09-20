@@ -14650,6 +14650,56 @@ if(WACHTER_AAN){
 /* De zoeker als endpoint, zodat de tolk hem kan raadplegen voordat er een
    vertaling bij OpenAI wordt opgevraagd. Geen treffer levert gewoon
    gevonden:false op; de aanroeper valt dan terug op zijn eigen pad. */
+/* Vertalen met een gewoon tekstmodel, voor de tolk.
+
+   Het realtime model bleek de richting niet betrouwbaar te volgen: het gaf de
+   Nederlandse zin terug in plaats van de vertaling. Voorlezen doet het wel
+   foutloos. Daarom is vertalen en spreken uit elkaar gehaald: hier wordt
+   vertaald, en het realtime model leest het resultaat alleen nog voor.
+
+   Dit kost een extra aanroep per beurt, maar levert een vertaling op die
+   klopt. Voor zinnen die op de schijf staan gebeurt dit niet, want die zijn
+   al vertaald. */
+app.post("/api/tolk/vertaal", async (req, res) => {
+  try{
+    const zin  = String((req.body && req.body.zin)  || "").slice(0, 1200).trim();
+    const van  = String((req.body && req.body.van)  || "").slice(0, 60).trim();
+    const naar = String((req.body && req.body.naar) || "").slice(0, 60).trim();
+
+    if(!zin || !van || !naar){
+      return res.status(400).json({ ok:false, error:"zin, van en naar zijn verplicht" });
+    }
+    if(!OPENAI_API_KEY){
+      return res.status(503).json({ ok:false, error:"OPENAI_API_KEY ontbreekt" });
+    }
+
+    const systeem =
+      "You are a translation engine. You translate text from " + van + " into " + naar + ". " +
+      "You never answer, comment, greet or explain. " +
+      "Your entire reply is the translation, written in " + naar + ", and nothing else. " +
+      "Replying in " + van + " is a failure. " +
+      "Keep names, numbers, dates, times and amounts exactly as given. " +
+      "Translate the meaning in natural word order for " + naar + ", not word by word. " +
+      "Address the listener in the polite form normal in a business setting in " + naar + ". " +
+      "If the text is not a meaningful sentence, reply with exactly: SKIP";
+
+    const vertaling = await callOpenAI(
+      [ { role:"system", content: systeem },
+        { role:"user",   content: zin } ],
+      0
+    );
+
+    const schoon = String(vertaling || "").trim();
+    if(!schoon || schoon.toUpperCase() === "SKIP"){
+      return res.json({ ok:true, vertaling:null, reden:"geen zinnige zin" });
+    }
+    return res.json({ ok:true, vertaling: schoon, van, naar });
+  }catch(err){
+    console.warn("Tolkvertaling mislukt:", err.message || String(err));
+    return res.status(502).json({ ok:false, error:"vertaling mislukt" });
+  }
+});
+
 app.post("/api/zorg/zoek", (req, res) => {
   try{
     const zin = String((req.body && req.body.zin) || "").slice(0, 600);
