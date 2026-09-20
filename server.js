@@ -108,6 +108,9 @@ const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 // natuurlijker dan gpt-4o-mini, vooral naar talen als Thai, Hindi, Arabisch en
 // Vietnamees. Instelbaar via Render Environment Variable OPENAI_GUIDE_MODEL.
 const OPENAI_GUIDE_MODEL = process.env.OPENAI_GUIDE_MODEL || "gpt-4o";
+/* Het model dat de tolk gebruikt om te vertalen. Standaard hetzelfde als het
+   gidsmodel, want vertaalkwaliteit weegt hier zwaarder dan de prijs. */
+const TOLK_MODEL = process.env.TOLK_MODEL || OPENAI_GUIDE_MODEL || OPENAI_MODEL;
 // Apart model voor de korte gast<->hotel chatberichten. Standaard hetzelfde
 // model als de gids, dus zonder deze variabele verandert er niets. Zet
 // OPENAI_CHAT_MODEL op gpt-4o-mini om op de chat te besparen; de gidsteksten
@@ -1541,11 +1544,18 @@ async function callOpenAI(messages, temperature, modelOverride){
       "Authorization": "Bearer " + OPENAI_API_KEY,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({
-      model: modelOverride || OPENAI_MODEL,
-      messages,
-      temperature: typeof temperature === "number" ? temperature : 0.2
-    })
+    body: JSON.stringify(
+      /* temperature === "geen" laat de instelling helemaal weg. Sommige
+         modellen accepteren alleen hun eigen standaardwaarde en geven anders
+         een fout; dan kan de aanroeper het nog een keer zo proberen. */
+      temperature === "geen"
+        ? { model: modelOverride || OPENAI_MODEL, messages }
+        : {
+            model: modelOverride || OPENAI_MODEL,
+            messages,
+            temperature: typeof temperature === "number" ? temperature : 0.2
+          }
+    )
   });
 
   const data = await response.json().catch(() => ({}));
@@ -14650,6 +14660,103 @@ if(WACHTER_AAN){
 /* De zoeker als endpoint, zodat de tolk hem kan raadplegen voordat er een
    vertaling bij OpenAI wordt opgevraagd. Geen treffer levert gewoon
    gevonden:false op; de aanroeper valt dan terug op zijn eigen pad. */
+/* ---------- Groeiende vertaaldatabase van de tolk ----------
+   Elke zin die de tolk laat vertalen wordt hier bewaard, met de vertaling.
+   Komt dezelfde zin nog eens langs, dan gaat hij niet opnieuw naar OpenAI.
+   Zo bouwt de lijst zich vanzelf op met wat er in de praktijk gezegd wordt.
+
+   LET OP: hier komen echte gesprekken in te staan. Bij een hotelbalie is dat
+   onschuldig, bij de ambulance en de politie staat er in wat patienten en
+   verdachten hebben gezegd. Zet TOLK_CACHE_AAN op false als dat niet mag.
+
+   De sleutel is genormaliseerd: hoofdletters, leestekens en accenten tellen
+   niet mee, zodat "Heeft u pijn?" en "heeft u pijn" dezelfde regel zijn. */
+const TOLK_CACHE_AAN = String(process.env.TOLK_CACHE_AAN || "true").toLowerCase() !== "false";
+const TOLK_CACHE_FILE = path.join(DATA_DIR, "tolk_cache.json");
+const TOLK_CACHE_MAX = Number(process.env.TOLK_CACHE_MAX || 20000);
+
+const tolkCache = new Map();
+let tolkCacheVuil = false;
+
+function tolkNormaliseer(tekst){
+  return String(tekst || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    /* Alle combinatietekens weg, niet alleen de Latijnse. Anders werd de
+       hamza in het Arabisch een spatie en brak een woord in tweeen. */
+    .replace(/\p{M}/gu, "")
+    .replace(/[^\p{L}\p{N} ]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tolkSleutel(van, naar, zin){
+  return van + "|" + naar + "|" + tolkNormaliseer(zin);
+}
+
+function laadTolkCache(){
+  try{
+    if(!fs.existsSync(TOLK_CACHE_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(TOLK_CACHE_FILE, "utf8") || "{}");
+    for(const k of Object.keys(data)) tolkCache.set(k, data[k]);
+    console.log("Tolkcache geladen: " + tolkCache.size + " zinnen.");
+  }catch(err){
+    console.warn("Tolkcache kon niet gelezen worden:", err.message || String(err));
+  }
+}
+
+function bewaarTolkCache(){
+  if(!tolkCacheVuil) return;
+  try{
+    const data = {};
+    for(const [k, v] of tolkCache.entries()) data[k] = v;
+    safeWriteFileSync(TOLK_CACHE_FILE, JSON.stringify(data));
+    tolkCacheVuil = false;
+  }catch(err){
+    console.warn("Tolkcache opslaan mislukt:", err.message || String(err));
+  }
+}
+
+function tolkCacheZoek(van, naar, zin){
+  if(!TOLK_CACHE_AAN) return null;
+  const hit = tolkCache.get(tolkSleutel(van, naar, zin));
+  if(!hit || !hit.vertaling) return null;
+  hit.aantal = (hit.aantal || 1) + 1;
+  hit.laatst = Date.now();
+  tolkCacheVuil = true;
+  return hit.vertaling;
+}
+
+function tolkCacheZet(van, naar, zin, vertaling, model){
+  if(!TOLK_CACHE_AAN) return;
+  const k = tolkSleutel(van, naar, zin);
+  const nu = Date.now();
+  const bestond = tolkCache.get(k);
+  tolkCache.set(k, {
+    bron: String(zin).slice(0, 600),
+    vertaling: String(vertaling).slice(0, 1200),
+    van, naar,
+    model: model || "",
+    aantal: bestond ? (bestond.aantal || 1) + 1 : 1,
+    eerst: bestond && bestond.eerst ? bestond.eerst : nu,
+    laatst: nu
+  });
+  tolkCacheVuil = true;
+
+  /* Te vol? Gooi weg wat het langst niet gebruikt is. Zinnen die vaak
+     terugkomen zijn juist het waardevolst en blijven zo staan. */
+  if(tolkCache.size > TOLK_CACHE_MAX){
+    const opOud = [...tolkCache.entries()].sort((a, b) => (a[1].laatst || 0) - (b[1].laatst || 0));
+    const weg = tolkCache.size - TOLK_CACHE_MAX;
+    for(let i = 0; i < weg; i++) tolkCache.delete(opOud[i][0]);
+  }
+}
+
+laadTolkCache();
+/* Elke twee minuten wegschrijven als er iets veranderd is. Niet bij elke zin,
+   want dan schrijf je de schijf stuk tijdens een druk gesprek. */
+setInterval(bewaarTolkCache, 2 * 60 * 1000);
+
 /* Vertalen met een gewoon tekstmodel, voor de tolk.
 
    Het realtime model bleek de richting niet betrouwbaar te volgen: het gaf de
@@ -14684,11 +14791,34 @@ app.post("/api/tolk/vertaal", async (req, res) => {
       "Greetings, single words, names and short fragments ARE meaningful: translate them. " +
       "Only if the text contains no language at all, reply with exactly: SKIP";
 
-    const vertaling = await callOpenAI(
-      [ { role:"system", content: systeem },
-        { role:"user",   content: zin } ],
-      0
-    );
+    /* Staat deze zin al in de database? Dan hoeft hij niet opnieuw vertaald
+       te worden. Dit is de besparing waar het om begonnen was. */
+    const uitCache = tolkCacheZoek(van, naar, zin);
+    if(uitCache){
+      return res.json({ ok:true, vertaling: uitCache, van, naar, bron:"database" });
+    }
+
+    /* Welk model vertaalt. Standaard het gidsmodel en niet OPENAI_MODEL:
+       dat laatste staat op de mini-versie, en die is bij talen als Thai,
+       Hindi of Arabisch merkbaar zwakker. Te overrulen met TOLK_MODEL. */
+    const model = TOLK_MODEL;
+    const berichten = [ { role:"system", content: systeem },
+                        { role:"user",   content: zin } ];
+
+    let vertaling;
+    try{
+      vertaling = await callOpenAI(berichten, 0, model);
+    }catch(err1){
+      /* Sommige modellen accepteren alleen de standaardtemperatuur en geven
+         anders een fout. Dan nog een keer, zonder die instelling. */
+      const m = String((err1 && err1.message) || err1);
+      if(/temperature/i.test(m)){
+        console.warn("Tolkvertaling: model wil geen temperature, opnieuw zonder. (" + m + ")");
+        vertaling = await callOpenAI(berichten, "geen", model);
+      }else{
+        throw err1;
+      }
+    }
 
     const schoon = String(vertaling || "").trim();
     if(!schoon){
@@ -14699,11 +14829,44 @@ app.post("/api/tolk/vertaal", async (req, res) => {
       console.warn("Tolkvertaling: model gaf SKIP op: " + zin);
       return res.json({ ok:true, vertaling:null, reden:"SKIP" });
     }
-    return res.json({ ok:true, vertaling: schoon, van, naar });
+    tolkCacheZet(van, naar, zin, schoon, model);
+    return res.json({ ok:true, vertaling: schoon, van, naar, bron:"model" });
   }catch(err){
     const melding = err && err.message ? String(err.message) : String(err);
     console.warn("Tolkvertaling mislukt:", melding);
     return res.status(502).json({ ok:false, error:"vertaling mislukt", reden: melding.slice(0, 200) });
+  }
+});
+
+/* De database inzien. Zonder parameters alleen de tellingen; met ?lijst=1 ook
+   de zinnen zelf, zodat je kunt zien wat er in de praktijk gezegd wordt en de
+   goede zinnen kunt overnemen in zorg_zinnen of politie_zinnen. */
+app.get("/api/tolk/database", (req, res) => {
+  try{
+    const alles = [...tolkCache.values()];
+    const perRichting = {};
+    for(const v of alles){
+      const r = (v.van || "?") + " naar " + (v.naar || "?");
+      perRichting[r] = (perRichting[r] || 0) + 1;
+    }
+    const antwoord = {
+      aan: TOLK_CACHE_AAN,
+      zinnen: alles.length,
+      maximum: TOLK_CACHE_MAX,
+      per_richting: perRichting,
+      vaakst: alles.slice().sort((a,b)=>(b.aantal||0)-(a.aantal||0)).slice(0, 20)
+              .map(v => ({ bron:v.bron, vertaling:v.vertaling, van:v.van, naar:v.naar, aantal:v.aantal }))
+    };
+    if(String(req.query.lijst || "") === "1"){
+      antwoord.alles = alles.map(v => ({
+        bron:v.bron, vertaling:v.vertaling, van:v.van, naar:v.naar,
+        aantal:v.aantal, eerst:v.eerst, laatst:v.laatst
+      }));
+    }
+    return res.json(antwoord);
+  }catch(err){
+    console.warn("Tolkdatabase tonen mislukt:", err.message || String(err));
+    return res.status(500).json({ error:"kon de database niet tonen" });
   }
 });
 
@@ -14825,6 +14988,7 @@ function flushAllStoresAndExit(signal){
   try{ saveHotelChats(); }catch(e){}
   try{ saveRooms(); }catch(e){}
   try{ saveCityCache(); }catch(e){}
+  try{ bewaarTolkCache(); }catch(e){}
   try{ saveGuideTransCacheNow(); }catch(e){}
   try{ saveGuesttalkUsageNow(); }catch(e){}
   try{ saveDMNow(); }catch(e){}
