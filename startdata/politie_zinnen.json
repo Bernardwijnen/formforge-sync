@@ -1,0 +1,4785 @@
+{
+  "versie": "politie-2026-09-20b",
+  "bron": "Startlijst, opgesteld door Claude. Niet juridisch getoetst.",
+  "talen_gecontroleerd": [],
+  "categorieen": [
+    {
+      "id": "aanspreken",
+      "nl": "Aanspreken en eerste contact"
+    },
+    {
+      "id": "identiteit",
+      "nl": "Identiteit en documenten"
+    },
+    {
+      "id": "verkeer",
+      "nl": "Verkeerscontrole"
+    },
+    {
+      "id": "uitleg",
+      "nl": "Uitleg en mededeling"
+    },
+    {
+      "id": "aanhouding",
+      "nl": "Aanhouding en rechten"
+    },
+    {
+      "id": "fouilleren",
+      "nl": "Fouilleren en doorzoeken"
+    },
+    {
+      "id": "nood",
+      "nl": "Noodsituatie en slachtoffer"
+    },
+    {
+      "id": "zorg",
+      "nl": "Kwetsbaar persoon"
+    },
+    {
+      "id": "getuigen",
+      "nl": "Getuigen en omstanders"
+    }
+  ],
+  "stopwoorden": [
+    "aan",
+    "af",
+    "al",
+    "alleen",
+    "als",
+    "alsjeblieft",
+    "alstublieft",
+    "ben",
+    "bent",
+    "bij",
+    "daar",
+    "dan",
+    "dat",
+    "de",
+    "deden",
+    "deed",
+    "deze",
+    "die",
+    "dit",
+    "doe",
+    "doen",
+    "doet",
+    "door",
+    "dus",
+    "een",
+    "eens",
+    "en",
+    "er",
+    "even",
+    "ga",
+    "gaan",
+    "gaat",
+    "gedaan",
+    "gehad",
+    "geworden",
+    "ging",
+    "gingen",
+    "haar",
+    "had",
+    "hadden",
+    "heb",
+    "hebben",
+    "hebt",
+    "heeft",
+    "hem",
+    "het",
+    "hier",
+    "hij",
+    "hoe",
+    "hun",
+    "ik",
+    "in",
+    "is",
+    "je",
+    "jij",
+    "jou",
+    "jouw",
+    "kan",
+    "kon",
+    "konden",
+    "kun",
+    "kunnen",
+    "kunt",
+    "laat",
+    "laten",
+    "liet",
+    "lieten",
+    "maar",
+    "mag",
+    "men",
+    "met",
+    "mij",
+    "mijn",
+    "mocht",
+    "mochten",
+    "moest",
+    "moesten",
+    "moet",
+    "moeten",
+    "mogen",
+    "na",
+    "naar",
+    "nog",
+    "of",
+    "om",
+    "onder",
+    "ons",
+    "onze",
+    "ook",
+    "op",
+    "over",
+    "sinds",
+    "te",
+    "tegen",
+    "ten",
+    "ter",
+    "toe",
+    "toen",
+    "tot",
+    "tussen",
+    "u",
+    "uit",
+    "uw",
+    "van",
+    "vanaf",
+    "voor",
+    "waar",
+    "waarom",
+    "wanneer",
+    "want",
+    "waren",
+    "was",
+    "wat",
+    "we",
+    "weer",
+    "wel",
+    "welk",
+    "welke",
+    "werd",
+    "wie",
+    "wij",
+    "wil",
+    "wilde",
+    "wilden",
+    "willen",
+    "wilt",
+    "worden",
+    "wordt",
+    "zal",
+    "ze",
+    "zelf",
+    "zich",
+    "zij",
+    "zijn",
+    "zonder",
+    "zou",
+    "zouden",
+    "zullen",
+    "zult"
+  ],
+  "antwoorden": {
+    "ja_nee": [
+      {
+        "id": "ja",
+        "nl": "Ja",
+        "vertalingen": {
+          "en": {
+            "tekst": "Yes",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          },
+          "de": {
+            "tekst": "Ja",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          },
+          "pl": {
+            "tekst": "Tak",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          },
+          "tr": {
+            "tekst": "Evet",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          },
+          "ar": {
+            "tekst": "نعم",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          }
+        }
+      },
+      {
+        "id": "nee",
+        "nl": "Nee",
+        "vertalingen": {
+          "en": {
+            "tekst": "No",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          },
+          "de": {
+            "tekst": "Nein",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          },
+          "pl": {
+            "tekst": "Nie",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          },
+          "tr": {
+            "tekst": "Hayır",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          },
+          "ar": {
+            "tekst": "لا",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          }
+        }
+      }
+    ],
+    "ja_nee_weet": [
+      {
+        "id": "ja",
+        "nl": "Ja",
+        "vertalingen": {
+          "en": {
+            "tekst": "Yes",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          },
+          "de": {
+            "tekst": "Ja",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          },
+          "pl": {
+            "tekst": "Tak",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          },
+          "tr": {
+            "tekst": "Evet",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          },
+          "ar": {
+            "tekst": "نعم",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          }
+        }
+      },
+      {
+        "id": "nee",
+        "nl": "Nee",
+        "vertalingen": {
+          "en": {
+            "tekst": "No",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          },
+          "de": {
+            "tekst": "Nein",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          },
+          "pl": {
+            "tekst": "Nie",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          },
+          "tr": {
+            "tekst": "Hayır",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          },
+          "ar": {
+            "tekst": "لا",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          }
+        }
+      },
+      {
+        "id": "weet",
+        "nl": "Weet ik niet",
+        "vertalingen": {
+          "en": {
+            "tekst": "I don't know",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          },
+          "de": {
+            "tekst": "Ich weiß nicht",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          },
+          "pl": {
+            "tekst": "Nie wiem",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          },
+          "tr": {
+            "tekst": "Bilmiyorum",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          },
+          "ar": {
+            "tekst": "لا أعرف",
+            "status": "ongecontroleerd",
+            "door": "AI",
+            "op": "2026-09-20"
+          }
+        }
+      }
+    ]
+  },
+  "zinnen": [
+    {
+      "id": "aanspr-politie",
+      "categorie": "aanspreken",
+      "nl": "Politie. Blijft u alstublieft staan.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Police. Please stop where you are.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Polizei. Bitte bleiben Sie stehen.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Policja. Proszę się zatrzymać.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Polis. Lütfen durun.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "الشرطة. من فضلك توقف.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "politie",
+        "blijft",
+        "staan"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "blijft",
+        "politie",
+        "staan"
+      ],
+      "woordaantal": 5
+    },
+    {
+      "id": "aanspr-agent",
+      "categorie": "aanspreken",
+      "nl": "Ik ben politieagent.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "I am a police officer.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Ich bin Polizeibeamter.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Jestem funkcjonariuszem policji.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Ben polis memuruyum.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "أنا ضابط شرطة.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "politieagent"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "politieagent"
+      ],
+      "woordaantal": 3
+    },
+    {
+      "id": "aanspr-nederlands",
+      "categorie": "aanspreken",
+      "nl": "Spreekt u Nederlands?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Do you speak Dutch?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Sprechen Sie Niederländisch?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy mówi pan/pani po niderlandzku?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Hollandaca biliyor musunuz?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل تتحدث الهولندية؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "spreekt",
+        "nederlands"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "nederlands",
+        "spreekt"
+      ],
+      "woordaantal": 3
+    },
+    {
+      "id": "aanspr-taal",
+      "categorie": "aanspreken",
+      "nl": "Welke taal spreekt u?",
+      "antwoord": "vrij",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "What language do you speak?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Welche Sprache sprechen Sie?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Jakim językiem pan/pani mówi?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Hangi dili konuşuyorsunuz?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "ما هي اللغة التي تتحدثها؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "taal",
+        "spreekt"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "spreekt",
+        "taal"
+      ],
+      "woordaantal": 4
+    },
+    {
+      "id": "aanspr-tolkapparaat",
+      "categorie": "aanspreken",
+      "nl": "Wij gebruiken een vertaalapparaat. Spreekt u kort en duidelijk.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "We are using a translation device. Please speak briefly and clearly.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Wir benutzen ein Übersetzungsgerät. Bitte sprechen Sie kurz und deutlich.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Używamy urządzenia tłumaczącego. Proszę mówić krótko i wyraźnie.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Bir çeviri cihazı kullanıyoruz. Lütfen kısa ve net konuşun.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "نستخدم جهاز ترجمة. من فضلك تحدث بإيجاز ووضوح.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "gebruiken",
+        "vertaalapparaat",
+        "spreekt",
+        "kort"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "duidelijk",
+        "gebruiken",
+        "kort",
+        "spreekt",
+        "vertaalapparaat"
+      ],
+      "woordaantal": 9
+    },
+    {
+      "id": "aanspr-begrijpt",
+      "categorie": "aanspreken",
+      "nl": "Begrijpt u mij?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Do you understand me?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Verstehen Sie mich?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy rozumie mnie pan/pani?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Beni anlıyor musunuz?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل تفهمني؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "begrijpt"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "begrijpt"
+      ],
+      "woordaantal": 3
+    },
+    {
+      "id": "aanspr-rustig",
+      "categorie": "aanspreken",
+      "nl": "Blijft u rustig.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Please stay calm.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Bitte bleiben Sie ruhig.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Proszę zachować spokój.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Lütfen sakin olun.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "من فضلك ابق هادئًا.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "blijft",
+        "rustig"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "blijft",
+        "rustig"
+      ],
+      "woordaantal": 3
+    },
+    {
+      "id": "aanspr-handen",
+      "categorie": "aanspreken",
+      "nl": "Haalt u uw handen uit uw zakken.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Please take your hands out of your pockets.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Nehmen Sie bitte die Hände aus den Taschen.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Proszę wyjąć ręce z kieszeni.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Lütfen ellerinizi ceplerinizden çıkarın.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "من فضلك أخرج يديك من جيبك.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "haalt",
+        "handen",
+        "zakken"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "haalt",
+        "handen",
+        "zakken"
+      ],
+      "woordaantal": 7
+    },
+    {
+      "id": "aanspr-aankijken",
+      "categorie": "aanspreken",
+      "nl": "Kijkt u mij aan.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Please look at me.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Sehen Sie mich bitte an.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Proszę na mnie spojrzeć.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Lütfen bana bakın.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "من فضلك انظر إليّ.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "kijkt"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "kijkt"
+      ],
+      "woordaantal": 4
+    },
+    {
+      "id": "aanspr-gewond",
+      "categorie": "aanspreken",
+      "nl": "Bent u gewond?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Are you injured?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Sind Sie verletzt?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy jest pan/pani ranny/ranna?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Yaralı mısınız?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل أنت مصاب؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "gewond"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "gewond"
+      ],
+      "woordaantal": 3
+    },
+    {
+      "id": "ident-tonen",
+      "categorie": "identiteit",
+      "nl": "Mag ik uw identiteitsbewijs zien?",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "May I see your identity document?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Darf ich Ihren Ausweis sehen?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy mogę zobaczyć pana/pani dokument tożsamości?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Kimlik belgenizi görebilir miyim?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل يمكنني رؤية وثيقة هويتك؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "identiteitsbewijs",
+        "zien"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "identiteitsbewijs",
+        "zien"
+      ],
+      "woordaantal": 5
+    },
+    {
+      "id": "ident-bij-zich",
+      "categorie": "identiteit",
+      "nl": "Heeft u een identiteitsbewijs bij u?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Do you have an identity document with you?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Haben Sie einen Ausweis dabei?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy ma pan/pani przy sobie dokument tożsamości?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Yanınızda kimlik belgeniz var mı?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل تحمل معك وثيقة هوية؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "identiteitsbewijs",
+        "bij"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "identiteitsbewijs"
+      ],
+      "woordaantal": 6
+    },
+    {
+      "id": "ident-naam",
+      "categorie": "identiteit",
+      "nl": "Wat is uw naam?",
+      "antwoord": "vrij",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "What is your name?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Wie heißen Sie?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Jak się pan/pani nazywa?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Adınız nedir?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "ما اسمك؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "naam"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "naam"
+      ],
+      "woordaantal": 4
+    },
+    {
+      "id": "ident-geboortedatum",
+      "categorie": "identiteit",
+      "nl": "Wat is uw geboortedatum?",
+      "antwoord": "datum",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "What is your date of birth?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Wann sind Sie geboren?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Jaka jest pana/pani data urodzenia?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Doğum tarihiniz nedir?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "ما هو تاريخ ميلادك؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "geboortedatum"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "geboortedatum"
+      ],
+      "woordaantal": 4
+    },
+    {
+      "id": "ident-adres",
+      "categorie": "identiteit",
+      "nl": "Waar woont u?",
+      "antwoord": "vrij",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Where do you live?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Wo wohnen Sie?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Gdzie pan/pani mieszka?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Nerede oturuyorsunuz?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "أين تسكن؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "woont"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "woont"
+      ],
+      "woordaantal": 3
+    },
+    {
+      "id": "ident-vast-adres",
+      "categorie": "identiteit",
+      "nl": "Heeft u een vast adres?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Do you have a permanent address?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Haben Sie einen festen Wohnsitz?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy ma pan/pani stały adres?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Sabit bir adresiniz var mı?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل لديك عنوان ثابت؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "vast",
+        "adres"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "adres",
+        "vast"
+      ],
+      "woordaantal": 5
+    },
+    {
+      "id": "ident-telefoon",
+      "categorie": "identiteit",
+      "nl": "Wat is uw telefoonnummer?",
+      "antwoord": "vrij",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "What is your phone number?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Wie lautet Ihre Telefonnummer?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Jaki jest pana/pani numer telefonu?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Telefon numaranız nedir?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "ما هو رقم هاتفك؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "telefoonnummer"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "telefoonnummer"
+      ],
+      "woordaantal": 4
+    },
+    {
+      "id": "ident-verblijf",
+      "categorie": "identiteit",
+      "nl": "Heeft u een verblijfsvergunning?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Do you have a residence permit?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Haben Sie eine Aufenthaltserlaubnis?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy ma pan/pani zezwolenie na pobyt?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Oturma izniniz var mı?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل لديك تصريح إقامة؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "verblijfsvergunning"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "verblijfsvergunning"
+      ],
+      "woordaantal": 4
+    },
+    {
+      "id": "ident-land",
+      "categorie": "identiteit",
+      "nl": "Uit welk land komt u?",
+      "antwoord": "vrij",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Which country are you from?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Aus welchem Land kommen Sie?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Z jakiego kraju pan/pani pochodzi?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Hangi ülkeden geliyorsunuz?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "من أي بلد أنت؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "land",
+        "komt"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "komt",
+        "land"
+      ],
+      "woordaantal": 5
+    },
+    {
+      "id": "ident-hoelang-hier",
+      "categorie": "identiteit",
+      "nl": "Hoelang bent u al in Nederland?",
+      "antwoord": "vrij",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "How long have you been in the Netherlands?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Wie lange sind Sie schon in den Niederlanden?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Jak długo przebywa pan/pani w Holandii?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Ne zamandır Hollanda'dasınız?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "منذ متى وأنت في هولندا؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "hoelang",
+        "nederland"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "hoelang",
+        "nederland"
+      ],
+      "woordaantal": 6
+    },
+    {
+      "id": "ident-juist",
+      "categorie": "identiteit",
+      "nl": "Zijn deze gegevens juist?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Are these details correct?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Sind diese Angaben richtig?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy te dane są prawidłowe?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Bu bilgiler doğru mu?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل هذه المعلومات صحيحة؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "gegevens",
+        "juist"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "gegevens",
+        "juist"
+      ],
+      "woordaantal": 4
+    },
+    {
+      "id": "verkeer-motor-uit",
+      "categorie": "verkeer",
+      "nl": "Zet u de motor uit.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Please switch off the engine.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Bitte schalten Sie den Motor aus.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Proszę wyłączyć silnik.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Lütfen motoru kapatın.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "من فضلك أطفئ المحرك.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "zet",
+        "motor"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "motor",
+        "zet"
+      ],
+      "woordaantal": 5
+    },
+    {
+      "id": "verkeer-raam-open",
+      "categorie": "verkeer",
+      "nl": "Doet u uw raam open.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Please open your window.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Bitte öffnen Sie das Fenster.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Proszę otworzyć okno.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Lütfen camınızı açın.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "من فضلك افتح النافذة.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "raam",
+        "open"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "open",
+        "raam"
+      ],
+      "woordaantal": 5
+    },
+    {
+      "id": "verkeer-blijf-zitten",
+      "categorie": "verkeer",
+      "nl": "Blijft u in de auto zitten.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Please stay in the car.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Bitte bleiben Sie im Auto sitzen.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Proszę pozostać w samochodzie.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Lütfen arabada kalın.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "من فضلك ابق في السيارة.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "blijft",
+        "auto",
+        "zitten"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "auto",
+        "blijft",
+        "zitten"
+      ],
+      "woordaantal": 6
+    },
+    {
+      "id": "verkeer-uitstappen",
+      "categorie": "verkeer",
+      "nl": "Stapt u alstublieft uit.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Please step out of the car.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Bitte steigen Sie aus.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Proszę wysiąść z samochodu.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Lütfen araçtan inin.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "من فضلك انزل من السيارة.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "stapt"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "stapt"
+      ],
+      "woordaantal": 4
+    },
+    {
+      "id": "verkeer-rijbewijs",
+      "categorie": "verkeer",
+      "nl": "Mag ik uw rijbewijs zien?",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "May I see your driving licence?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Darf ich Ihren Führerschein sehen?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy mogę zobaczyć prawo jazdy?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Ehliyetinizi görebilir miyim?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل يمكنني رؤية رخصة القيادة؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "rijbewijs",
+        "zien"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "rijbewijs",
+        "zien"
+      ],
+      "woordaantal": 5
+    },
+    {
+      "id": "verkeer-kenteken",
+      "categorie": "verkeer",
+      "nl": "Mag ik het kentekenbewijs zien?",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "May I see the vehicle registration document?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Darf ich die Fahrzeugpapiere sehen?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy mogę zobaczyć dowód rejestracyjny?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Ruhsatı görebilir miyim?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل يمكنني رؤية رخصة تسجيل المركبة؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "kentekenbewijs",
+        "zien"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "kentekenbewijs",
+        "zien"
+      ],
+      "woordaantal": 5
+    },
+    {
+      "id": "verkeer-uw-auto",
+      "categorie": "verkeer",
+      "nl": "Is dit uw auto?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Is this your car?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Ist das Ihr Auto?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy to pana/pani samochód?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Bu araç sizin mi?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل هذه سيارتك؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "dit",
+        "auto"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "auto"
+      ],
+      "woordaantal": 4
+    },
+    {
+      "id": "verkeer-van-wie",
+      "categorie": "verkeer",
+      "nl": "Van wie is deze auto?",
+      "antwoord": "vrij",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Whose car is this?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Wem gehört dieses Auto?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Do kogo należy ten samochód?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Bu araç kime ait?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "لمن هذه السيارة؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "wie",
+        "auto"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "auto"
+      ],
+      "woordaantal": 5
+    },
+    {
+      "id": "verkeer-weet-snelheid",
+      "categorie": "verkeer",
+      "nl": "Weet u hoe hard u reed?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Do you know how fast you were driving?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Wissen Sie, wie schnell Sie gefahren sind?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy wie pan/pani, jak szybko pan/pani jechał/jechała?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Ne kadar hızlı gittiğinizi biliyor musunuz?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل تعرف بأي سرعة كنت تقود؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "weet",
+        "hard",
+        "reed"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "hard",
+        "reed",
+        "weet"
+      ],
+      "woordaantal": 6
+    },
+    {
+      "id": "verkeer-te-hard",
+      "categorie": "verkeer",
+      "nl": "U reed te hard.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "You were driving too fast.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Sie sind zu schnell gefahren.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Jechał/jechała pan/pani za szybko.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Hız sınırını aştınız.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "كنت تقود بسرعة زائدة.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "reed",
+        "hard"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "hard",
+        "reed"
+      ],
+      "woordaantal": 4
+    },
+    {
+      "id": "verkeer-maximum",
+      "categorie": "verkeer",
+      "nl": "Hier geldt een maximumsnelheid.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "There is a speed limit here.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Hier gilt eine Geschwindigkeitsbegrenzung.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Tutaj obowiązuje ograniczenie prędkości.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Burada bir hız sınırı var.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هناك حد أقصى للسرعة هنا.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "geldt",
+        "maximumsnelheid"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "geldt",
+        "maximumsnelheid"
+      ],
+      "woordaantal": 4
+    },
+    {
+      "id": "verkeer-alcohol",
+      "categorie": "verkeer",
+      "nl": "Heeft u alcohol gedronken?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Have you been drinking alcohol?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Haben Sie Alkohol getrunken?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy pił/piła pan/pani alkohol?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Alkol aldınız mı?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل تناولت كحولًا؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "alcohol",
+        "gedronken"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "alcohol",
+        "gedronken"
+      ],
+      "woordaantal": 4
+    },
+    {
+      "id": "verkeer-blazen",
+      "categorie": "verkeer",
+      "nl": "Wilt u in dit apparaat blazen?",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Please blow into this device.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Bitte pusten Sie in dieses Gerät.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Proszę dmuchnąć w to urządzenie.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Lütfen bu cihaza üfleyin.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "من فضلك انفخ في هذا الجهاز.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "apparaat",
+        "blazen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "apparaat",
+        "blazen"
+      ],
+      "woordaantal": 6
+    },
+    {
+      "id": "verkeer-boete",
+      "categorie": "verkeer",
+      "nl": "U krijgt hiervoor een boete.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "You will receive a fine for this.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Dafür bekommen Sie ein Bußgeld.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Otrzyma pan/pani za to mandat.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Bunun için ceza alacaksınız.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "ستتلقى غرامة على ذلك.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "krijgt",
+        "hiervoor",
+        "boete"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "boete",
+        "hiervoor",
+        "krijgt"
+      ],
+      "woordaantal": 5
+    },
+    {
+      "id": "uitleg-waarom",
+      "categorie": "uitleg",
+      "nl": "Ik leg u uit waarom ik u aanspreek.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "I will explain why I am speaking to you.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Ich erkläre Ihnen, warum ich Sie anspreche.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Wyjaśnię, dlaczego pana/panią zatrzymuję.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Sizinle neden konuştuğumu açıklayacağım.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "سأشرح لك سبب إيقافي لك.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "leg",
+        "aanspreek"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "aanspreek",
+        "leg"
+      ],
+      "woordaantal": 8
+    },
+    {
+      "id": "uitleg-controle",
+      "categorie": "uitleg",
+      "nl": "Dit is een controle.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "This is a routine check.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Das ist eine Kontrolle.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "To jest kontrola.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Bu bir kontroldür.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هذه عملية تفتيش روتينية.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "controle"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "controle"
+      ],
+      "woordaantal": 4
+    },
+    {
+      "id": "uitleg-geen-verdenking",
+      "categorie": "uitleg",
+      "nl": "U bent nergens van verdacht.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "You are not suspected of anything.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Sie stehen unter keinem Verdacht.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Nie jest pan/pani o nic podejrzewany/podejrzewana.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Hakkınızda herhangi bir şüphe yok.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "أنت غير مشتبه به في أي شيء.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "nergens",
+        "verdacht"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "nergens",
+        "verdacht"
+      ],
+      "woordaantal": 5
+    },
+    {
+      "id": "uitleg-verdachte",
+      "categorie": "uitleg",
+      "nl": "U bent verdachte in deze zaak.",
+      "antwoord": "geen",
+      "juridisch": true,
+      "vertalingen": {
+        "en": {
+          "tekst": "You are a suspect in this case.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Sie sind in diesem Fall beschuldigt.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Jest pan/pani podejrzanym/podejrzaną w tej sprawie.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Bu olayda şüpheli konumundasınız.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "أنت مشتبه به في هذه القضية.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "verdachte",
+        "zaak"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "verdachte",
+        "zaak"
+      ],
+      "woordaantal": 6
+    },
+    {
+      "id": "uitleg-vragen",
+      "categorie": "uitleg",
+      "nl": "Ik moet u een aantal vragen stellen.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "I need to ask you a number of questions.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Ich muss Ihnen einige Fragen stellen.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Muszę zadać panu/pani kilka pytań.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Size birkaç soru sormam gerekiyor.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "عليّ أن أطرح عليك بعض الأسئلة.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "aantal",
+        "vragen",
+        "stellen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "aantal",
+        "stellen",
+        "vragen"
+      ],
+      "woordaantal": 7
+    },
+    {
+      "id": "uitleg-eigen-verhaal",
+      "categorie": "uitleg",
+      "nl": "U mag straks zelf uw kant van het verhaal vertellen.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "You will get the chance to tell your side of the story.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Sie bekommen später Gelegenheit, Ihre Sicht zu schildern.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Będzie pan/pani mógł/mogła przedstawić swoją wersję.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Daha sonra kendi anlatımınızı yapabileceksiniz.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "ستتاح لك فرصة لرواية وجهة نظرك.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "straks",
+        "kant",
+        "verhaal",
+        "vertellen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "kant",
+        "straks",
+        "verhaal",
+        "vertellen"
+      ],
+      "woordaantal": 10
+    },
+    {
+      "id": "uitleg-opgenomen",
+      "categorie": "uitleg",
+      "nl": "Dit gesprek wordt opgenomen.",
+      "antwoord": "geen",
+      "juridisch": true,
+      "vertalingen": {
+        "en": {
+          "tekst": "This conversation is being recorded.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Dieses Gespräch wird aufgezeichnet.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Ta rozmowa jest nagrywana.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Bu görüşme kaydediliyor.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "يتم تسجيل هذه المحادثة.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "gesprek",
+        "opgenomen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "gesprek",
+        "opgenomen"
+      ],
+      "woordaantal": 4
+    },
+    {
+      "id": "uitleg-begrepen",
+      "categorie": "uitleg",
+      "nl": "Heeft u begrepen wat ik zeg?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Do you understand what I am saying?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Haben Sie verstanden, was ich sage?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy rozumie pan/pani, co mówię?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Söylediklerimi anladınız mı?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل فهمت ما أقوله؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "begrepen",
+        "zeg"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "begrepen",
+        "zeg"
+      ],
+      "woordaantal": 6
+    },
+    {
+      "id": "aanh-aangehouden",
+      "categorie": "aanhouding",
+      "nl": "U bent aangehouden.",
+      "antwoord": "geen",
+      "juridisch": true,
+      "vertalingen": {
+        "en": {
+          "tekst": "You are under arrest.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Sie sind festgenommen.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Jest pan/pani zatrzymany/zatrzymana.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Gözaltına alındınız.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "أنت موقوف.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "aangehouden"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "aangehouden"
+      ],
+      "woordaantal": 3
+    },
+    {
+      "id": "aanh-verdenking",
+      "categorie": "aanhouding",
+      "nl": "U wordt verdacht van een strafbaar feit.",
+      "antwoord": "geen",
+      "juridisch": true,
+      "vertalingen": {
+        "en": {
+          "tekst": "You are suspected of a criminal offence.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Sie werden einer Straftat verdächtigt.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Jest pan/pani podejrzany/podejrzana o popełnienie przestępstwa.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Bir suç işlediğinizden şüpheleniliyor.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "أنت مشتبه بارتكابك جريمة.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "verdacht",
+        "strafbaar",
+        "feit"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "feit",
+        "strafbaar",
+        "verdacht"
+      ],
+      "woordaantal": 7
+    },
+    {
+      "id": "aanh-zwijgrecht",
+      "categorie": "aanhouding",
+      "nl": "U bent niet verplicht te antwoorden.",
+      "antwoord": "geen",
+      "juridisch": true,
+      "vertalingen": {
+        "en": {
+          "tekst": "You are not obliged to answer.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Sie sind nicht verpflichtet auszusagen.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Nie ma pan/pani obowiązku odpowiadać.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Cevap vermek zorunda değilsiniz.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "لست ملزمًا بالإجابة.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "niet",
+        "verplicht",
+        "antwoorden"
+      ],
+      "ontkenning": true,
+      "kernwoorden": [
+        "antwoorden",
+        "niet",
+        "verplicht"
+      ],
+      "woordaantal": 6
+    },
+    {
+      "id": "aanh-advocaat-recht",
+      "categorie": "aanhouding",
+      "nl": "U heeft recht op een advocaat.",
+      "antwoord": "geen",
+      "juridisch": true,
+      "vertalingen": {
+        "en": {
+          "tekst": "You have the right to a lawyer.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Sie haben das Recht auf einen Anwalt.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Ma pan/pani prawo do adwokata.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Avukat hakkınız var.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "لك الحق في محام.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "recht",
+        "advocaat"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "advocaat",
+        "recht"
+      ],
+      "woordaantal": 6
+    },
+    {
+      "id": "aanh-tolk-recht",
+      "categorie": "aanhouding",
+      "nl": "U heeft recht op een tolk.",
+      "antwoord": "geen",
+      "juridisch": true,
+      "vertalingen": {
+        "en": {
+          "tekst": "You have the right to an interpreter.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Sie haben das Recht auf einen Dolmetscher.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Ma pan/pani prawo do tłumacza.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Tercüman hakkınız var.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "لك الحق في مترجم.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "recht",
+        "tolk"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "recht",
+        "tolk"
+      ],
+      "woordaantal": 6
+    },
+    {
+      "id": "aanh-advocaat-bellen",
+      "categorie": "aanhouding",
+      "nl": "Wilt u dat wij een advocaat bellen?",
+      "antwoord": "ja_nee",
+      "juridisch": true,
+      "vertalingen": {
+        "en": {
+          "tekst": "Do you want us to call a lawyer?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Möchten Sie, dass wir einen Anwalt anrufen?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy chce pan/pani, żebyśmy zadzwonili po adwokata?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Bir avukat aramamızı ister misiniz?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل تريد منا الاتصال بمحام؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "advocaat",
+        "bellen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "advocaat",
+        "bellen"
+      ],
+      "woordaantal": 7
+    },
+    {
+      "id": "aanh-iemand-waarschuwen",
+      "categorie": "aanhouding",
+      "nl": "Wilt u dat wij iemand waarschuwen?",
+      "antwoord": "ja_nee",
+      "juridisch": true,
+      "vertalingen": {
+        "en": {
+          "tekst": "Do you want us to notify someone?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Möchten Sie, dass wir jemanden benachrichtigen?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy chce pan/pani, żebyśmy kogoś powiadomili?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Birine haber vermemizi ister misiniz?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل تريد منا إبلاغ شخص ما؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "iemand",
+        "waarschuwen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "iemand",
+        "waarschuwen"
+      ],
+      "woordaantal": 6
+    },
+    {
+      "id": "aanh-wie-bellen",
+      "categorie": "aanhouding",
+      "nl": "Wie mogen wij voor u bellen?",
+      "antwoord": "vrij",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Who may we call for you?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Wen dürfen wir für Sie anrufen?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Do kogo mamy zadzwonić?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Sizin için kimi arayabiliriz?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "بمن يمكننا الاتصال من أجلك؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "wie",
+        "bellen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "bellen"
+      ],
+      "woordaantal": 6
+    },
+    {
+      "id": "aanh-bureau",
+      "categorie": "aanhouding",
+      "nl": "Wij brengen u naar het bureau.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "We are taking you to the police station.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Wir bringen Sie zur Wache.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Zabieramy pana/panią na komisariat.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Sizi karakola götürüyoruz.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "سننقلك إلى مركز الشرطة.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "brengen",
+        "bureau"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "brengen",
+        "bureau"
+      ],
+      "woordaantal": 6
+    },
+    {
+      "id": "aanh-verzet",
+      "categorie": "aanhouding",
+      "nl": "Verzet u zich niet.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Do not resist.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Leisten Sie keinen Widerstand.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Proszę nie stawiać oporu.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Lütfen direnmeyin.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "لا تقاوم.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "verzet",
+        "niet"
+      ],
+      "ontkenning": true,
+      "kernwoorden": [
+        "niet",
+        "verzet"
+      ],
+      "woordaantal": 4
+    },
+    {
+      "id": "aanh-handboeien",
+      "categorie": "aanhouding",
+      "nl": "Ik doe u nu handboeien om.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "I am going to put handcuffs on you now.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Ich lege Ihnen jetzt Handschellen an.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Zakładam panu/pani kajdanki.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Şimdi size kelepçe takacağım.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "سأضع لك الأصفاد الآن.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "handboeien"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "handboeien"
+      ],
+      "woordaantal": 6
+    },
+    {
+      "id": "aanh-veiligheid",
+      "categorie": "aanhouding",
+      "nl": "Dit is voor uw veiligheid en die van ons.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "This is for your safety and ours.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Das dient Ihrer und unserer Sicherheit.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "To dla pana/pani i naszego bezpieczeństwa.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Bu, sizin ve bizim güvenliğimiz içindir.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هذا من أجل سلامتك وسلامتنا.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "veiligheid"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "veiligheid"
+      ],
+      "woordaantal": 9
+    },
+    {
+      "id": "fouil-onderzoeken",
+      "categorie": "fouilleren",
+      "nl": "Ik ga u onderzoeken aan uw kleding.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "I am going to search your clothing.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Ich werde Ihre Kleidung durchsuchen.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Przeszukam pana/pani odzież.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Üzerinizi arayacağım.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "سأفتش ملابسك.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "onderzoeken",
+        "kleding"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "kleding",
+        "onderzoeken"
+      ],
+      "woordaantal": 7
+    },
+    {
+      "id": "fouil-scherp",
+      "categorie": "fouilleren",
+      "nl": "Heeft u scherpe voorwerpen bij u?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Do you have any sharp objects on you?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Haben Sie spitze Gegenstände bei sich?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy ma pan/pani przy sobie ostre przedmioty?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Üzerinizde keskin bir cisim var mı?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل تحمل أدوات حادة؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "scherpe",
+        "voorwerpen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "scherpe",
+        "voorwerpen"
+      ],
+      "woordaantal": 6
+    },
+    {
+      "id": "fouil-wapen",
+      "categorie": "fouilleren",
+      "nl": "Heeft u een wapen bij u?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Do you have a weapon on you?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Haben Sie eine Waffe bei sich?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy ma pan/pani przy sobie broń?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Üzerinizde silah var mı?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل تحمل سلاحًا؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "wapen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "wapen"
+      ],
+      "woordaantal": 6
+    },
+    {
+      "id": "fouil-drugs",
+      "categorie": "fouilleren",
+      "nl": "Heeft u drugs bij u?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Do you have drugs on you?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Haben Sie Drogen bei sich?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy ma pan/pani przy sobie narkotyki?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Üzerinizde uyuşturucu var mı?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل تحمل مخدرات؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "drugs",
+        "bij"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "drugs"
+      ],
+      "woordaantal": 5
+    },
+    {
+      "id": "fouil-naalden",
+      "categorie": "fouilleren",
+      "nl": "Heeft u naalden bij u waaraan ik mij kan prikken?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Do you have needles on you that I could prick myself on?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Haben Sie Nadeln bei sich, an denen ich mich stechen könnte?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy ma pan/pani igły, o które mógłbym się ukłuć?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Üzerinizde batabileceğim iğne var mı?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل تحمل إبرًا قد أصاب بوخزها؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "naalden",
+        "waaraan",
+        "prikken"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "naalden",
+        "prikken",
+        "waaraan"
+      ],
+      "woordaantal": 10
+    },
+    {
+      "id": "fouil-jas-open",
+      "categorie": "fouilleren",
+      "nl": "Maakt u uw jas open.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Please open your jacket.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Bitte öffnen Sie Ihre Jacke.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Proszę rozpiąć kurtkę.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Lütfen ceketinizi açın.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "من فضلك افتح سترتك.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "maakt",
+        "jas",
+        "open"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "jas",
+        "maakt",
+        "open"
+      ],
+      "woordaantal": 5
+    },
+    {
+      "id": "fouil-zakken-leeg",
+      "categorie": "fouilleren",
+      "nl": "Legt u alles uit uw zakken hier neer.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Please put everything from your pockets down here.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Legen Sie bitte alles aus Ihren Taschen hier hin.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Proszę wyłożyć tutaj wszystko z kieszeni.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Lütfen ceplerinizdeki her şeyi buraya koyun.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "من فضلك ضع كل ما في جيوبك هنا.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "legt",
+        "alles",
+        "zakken",
+        "neer"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "alles",
+        "legt",
+        "neer",
+        "zakken"
+      ],
+      "woordaantal": 8
+    },
+    {
+      "id": "fouil-tas",
+      "categorie": "fouilleren",
+      "nl": "Mag ik in uw tas kijken?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "May I look in your bag?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Darf ich in Ihre Tasche schauen?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy mogę zajrzeć do pana/pani torby?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Çantanıza bakabilir miyim?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل يمكنني النظر في حقيبتك؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "tas",
+        "kijken"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "kijken",
+        "tas"
+      ],
+      "woordaantal": 6
+    },
+    {
+      "id": "fouil-inbeslag",
+      "categorie": "fouilleren",
+      "nl": "Wij nemen dit in beslag.",
+      "antwoord": "geen",
+      "juridisch": true,
+      "vertalingen": {
+        "en": {
+          "tekst": "We are seizing this.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Das stellen wir sicher.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Zabezpieczamy to.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Buna el koyuyoruz.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "نحن نصادر هذا.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "nemen",
+        "beslag"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "beslag",
+        "nemen"
+      ],
+      "woordaantal": 5
+    },
+    {
+      "id": "nood-gevaar",
+      "categorie": "nood",
+      "nl": "Bent u in gevaar?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Are you in danger?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Sind Sie in Gefahr?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy jest pan/pani w niebezpieczeństwie?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Tehlikede misiniz?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل أنت في خطر؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "gevaar"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "gevaar"
+      ],
+      "woordaantal": 4
+    },
+    {
+      "id": "nood-pijn-gedaan",
+      "categorie": "nood",
+      "nl": "Heeft iemand u pijn gedaan?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Has someone hurt you?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Hat Ihnen jemand wehgetan?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy ktoś pana/panią skrzywdził?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Biri size zarar verdi mi?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل آذاك أحد؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "iemand",
+        "pijn"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "iemand",
+        "pijn"
+      ],
+      "woordaantal": 5
+    },
+    {
+      "id": "nood-dader-dichtbij",
+      "categorie": "nood",
+      "nl": "Is die persoon nu in de buurt?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Is that person nearby now?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Ist diese Person jetzt in der Nähe?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy ta osoba jest teraz w pobliżu?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "O kişi şu anda yakınlarda mı?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل ذلك الشخص قريب الآن؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "persoon",
+        "buurt"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "buurt",
+        "persoon"
+      ],
+      "woordaantal": 7
+    },
+    {
+      "id": "nood-ambulance",
+      "categorie": "nood",
+      "nl": "Wilt u dat wij een ambulance bellen?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Do you want us to call an ambulance?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Möchten Sie, dass wir einen Rettungswagen rufen?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy chce pan/pani, żebyśmy wezwali karetkę?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Ambulans çağırmamızı ister misiniz?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل تريد منا استدعاء سيارة إسعاف؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "ambulance",
+        "bellen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "ambulance",
+        "bellen"
+      ],
+      "woordaantal": 7
+    },
+    {
+      "id": "nood-aangifte",
+      "categorie": "nood",
+      "nl": "Wilt u aangifte doen?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Do you want to file a report?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Möchten Sie Anzeige erstatten?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy chce pan/pani złożyć zawiadomienie?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Şikayetçi olmak ister misiniz?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل تريد تقديم بلاغ؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "aangifte"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "aangifte"
+      ],
+      "woordaantal": 4
+    },
+    {
+      "id": "nood-veilig",
+      "categorie": "nood",
+      "nl": "U bent hier veilig.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "You are safe here.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Hier sind Sie sicher.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Tutaj jest pan/pani bezpieczny/bezpieczna.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Burada güvendesiniz.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "أنت آمن هنا.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "veilig"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "veilig"
+      ],
+      "woordaantal": 4
+    },
+    {
+      "id": "nood-geen-schuld",
+      "categorie": "nood",
+      "nl": "Wat er gebeurd is, is niet uw schuld.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "What happened is not your fault.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Was passiert ist, ist nicht Ihre Schuld.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "To, co się stało, nie jest pana/pani winą.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Olanlar sizin suçunuz değil.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "ما حدث ليس ذنبك.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "gebeurd",
+        "niet",
+        "schuld"
+      ],
+      "ontkenning": true,
+      "kernwoorden": [
+        "gebeurd",
+        "niet",
+        "schuld"
+      ],
+      "woordaantal": 8
+    },
+    {
+      "id": "nood-tijd",
+      "categorie": "nood",
+      "nl": "Neemt u rustig de tijd.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Take your time.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Lassen Sie sich Zeit.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Proszę się nie spieszyć.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Acele etmeyin, zaman ayırın.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "خذ وقتك.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "neemt",
+        "tijd"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "neemt",
+        "rustig",
+        "tijd"
+      ],
+      "woordaantal": 5
+    },
+    {
+      "id": "nood-vrouw-collega",
+      "categorie": "nood",
+      "nl": "Wilt u liever met een vrouwelijke collega praten?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Would you prefer to speak to a female officer?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Möchten Sie lieber mit einer Kollegin sprechen?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy woli pan/pani rozmawiać z funkcjonariuszką?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Bir kadın meslektaşımla konuşmayı tercih eder misiniz?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل تفضل التحدث مع زميلة؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "liever",
+        "vrouwelijke",
+        "collega",
+        "praten"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "collega",
+        "liever",
+        "praten",
+        "vrouwelijke"
+      ],
+      "woordaantal": 8
+    },
+    {
+      "id": "nood-alleen",
+      "categorie": "nood",
+      "nl": "Bent u alleen of is er iemand bij u?",
+      "antwoord": "vrij",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Are you alone, or is someone with you?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Sind Sie allein, oder ist jemand bei Ihnen?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Jest pan/pani sam/sama, czy ktoś panu/pani towarzyszy?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Yalnız mısınız, yanınızda biri var mı?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل أنت بمفردك أم يرافقك أحد؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "alleen",
+        "iemand"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "iemand"
+      ],
+      "woordaantal": 9
+    },
+    {
+      "id": "zorg-slaapplek",
+      "categorie": "zorg",
+      "nl": "Heeft u vannacht een slaapplek?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Do you have somewhere to sleep tonight?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Haben Sie heute Nacht einen Schlafplatz?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy ma pan/pani gdzie dziś przenocować?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Bu gece kalacak yeriniz var mı?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل لديك مكان تنام فيه الليلة؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "vannacht",
+        "slaapplek"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "slaapplek",
+        "vannacht"
+      ],
+      "woordaantal": 5
+    },
+    {
+      "id": "zorg-onderdak",
+      "categorie": "zorg",
+      "nl": "Wilt u hulp bij onderdak?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Would you like help finding shelter?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Möchten Sie Hilfe bei einer Unterkunft?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy chce pan/pani pomocy w znalezieniu schronienia?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Barınma konusunda yardım ister misiniz?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل تريد مساعدة في إيجاد مأوى؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "hulp",
+        "onderdak"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "hulp",
+        "onderdak"
+      ],
+      "woordaantal": 5
+    },
+    {
+      "id": "zorg-gegeten",
+      "categorie": "zorg",
+      "nl": "Heeft u vandaag gegeten?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Have you eaten today?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Haben Sie heute gegessen?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy jadł/jadła pan/pani dzisiaj?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Bugün bir şey yediniz mi?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل أكلت اليوم؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "vandaag",
+        "gegeten"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "gegeten",
+        "vandaag"
+      ],
+      "woordaantal": 4
+    },
+    {
+      "id": "zorg-medicijnen",
+      "categorie": "zorg",
+      "nl": "Heeft u medicijnen nodig?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Do you need any medication?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Brauchen Sie Medikamente?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy potrzebuje pan/pani leków?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "İlaca ihtiyacınız var mı?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل تحتاج إلى أدوية؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "medicijnen",
+        "nodig"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "medicijnen",
+        "nodig"
+      ],
+      "woordaantal": 4
+    },
+    {
+      "id": "zorg-arts",
+      "categorie": "zorg",
+      "nl": "Bent u onder behandeling van een arts?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Are you under a doctor's care?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Sind Sie in ärztlicher Behandlung?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy jest pan/pani pod opieką lekarza?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Bir doktor tedavisi görüyor musunuz?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل تتلقى علاجًا لدى طبيب؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "behandeling",
+        "arts"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "arts",
+        "behandeling"
+      ],
+      "woordaantal": 7
+    },
+    {
+      "id": "zorg-middelen",
+      "categorie": "zorg",
+      "nl": "Gebruikt u alcohol of drugs?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Do you use alcohol or drugs?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Konsumieren Sie Alkohol oder Drogen?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy używa pan/pani alkoholu lub narkotyków?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Alkol veya uyuşturucu kullanıyor musunuz?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل تتعاطى الكحول أو المخدرات؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "alcohol",
+        "drugs"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "alcohol",
+        "drugs",
+        "gebruikt"
+      ],
+      "woordaantal": 5
+    },
+    {
+      "id": "zorg-hulpverlening",
+      "categorie": "zorg",
+      "nl": "Wij kunnen u in contact brengen met hulpverlening.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "We can put you in touch with support services.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Wir können Ihnen Kontakt zu Hilfsangeboten vermitteln.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Możemy skontaktować pana/panią z pomocą społeczną.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Sizi sosyal yardım kuruluşlarıyla görüştürebiliriz.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "يمكننا توصيلك بجهات الدعم الاجتماعي.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "contact",
+        "brengen",
+        "hulpverlening"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "brengen",
+        "contact",
+        "hulpverlening"
+      ],
+      "woordaantal": 8
+    },
+    {
+      "id": "zorg-niet-bang",
+      "categorie": "zorg",
+      "nl": "U hoeft niet bang voor ons te zijn.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "You do not need to be afraid of us.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Sie brauchen keine Angst vor uns zu haben.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Nie musi się pan/pani nas bać.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Bizden korkmanıza gerek yok.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "لا داعي للخوف منا.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "hoeft",
+        "niet",
+        "bang"
+      ],
+      "ontkenning": true,
+      "kernwoorden": [
+        "bang",
+        "hoeft",
+        "niet"
+      ],
+      "woordaantal": 8
+    },
+    {
+      "id": "zorg-iemand-bellen",
+      "categorie": "zorg",
+      "nl": "Wilt u dat wij iemand voor u bellen?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Do you want us to call someone for you?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Möchten Sie, dass wir jemanden für Sie anrufen?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy chce pan/pani, żebyśmy do kogoś zadzwonili?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Sizin için birini aramamızı ister misiniz?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل تريد منا الاتصال بشخص من أجلك؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "iemand",
+        "bellen"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "bellen",
+        "iemand"
+      ],
+      "woordaantal": 8
+    },
+    {
+      "id": "getuige-gezien",
+      "categorie": "getuigen",
+      "nl": "Heeft u gezien wat er gebeurd is?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Did you see what happened?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Haben Sie gesehen, was passiert ist?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy widział/widziała pan/pani, co się stało?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Ne olduğunu gördünüz mü?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل رأيت ما حدث؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "gezien",
+        "gebeurd"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "gebeurd",
+        "gezien"
+      ],
+      "woordaantal": 7
+    },
+    {
+      "id": "getuige-beschrijven",
+      "categorie": "getuigen",
+      "nl": "Kunt u beschrijven wat u zag?",
+      "antwoord": "vrij",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Can you describe what you saw?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Können Sie beschreiben, was Sie gesehen haben?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy może pan/pani opisać, co pan/pani widział/widziała?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Gördüklerinizi anlatabilir misiniz?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل يمكنك وصف ما رأيته؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "beschrijven",
+        "zag"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "beschrijven",
+        "zag"
+      ],
+      "woordaantal": 6
+    },
+    {
+      "id": "getuige-hoeveel",
+      "categorie": "getuigen",
+      "nl": "Hoeveel personen waren erbij?",
+      "antwoord": "getal",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "How many people were involved?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Wie viele Personen waren beteiligt?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Ile osób brało w tym udział?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Kaç kişi vardı?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "كم عدد الأشخاص الذين كانوا متورطين؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "hoeveel",
+        "personen",
+        "erbij"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "erbij",
+        "hoeveel",
+        "personen"
+      ],
+      "woordaantal": 4
+    },
+    {
+      "id": "getuige-richting",
+      "categorie": "getuigen",
+      "nl": "Welke kant gingen zij op?",
+      "antwoord": "vrij",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Which way did they go?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "In welche Richtung sind sie gegangen?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "W którą stronę poszli?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Hangi yöne gittiler?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "في أي اتجاه ذهبوا؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "kant"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "kant"
+      ],
+      "woordaantal": 5
+    },
+    {
+      "id": "getuige-gegevens",
+      "categorie": "getuigen",
+      "nl": "Mag ik uw gegevens noteren als getuige?",
+      "antwoord": "ja_nee",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "May I take your details as a witness?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Darf ich Ihre Daten als Zeuge aufnehmen?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Czy mogę spisać pana/pani dane jako świadka?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Tanık olarak bilgilerinizi alabilir miyim?",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "هل يمكنني تسجيل بياناتك كشاهد؟",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "gegevens",
+        "noteren",
+        "getuige"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "gegevens",
+        "getuige",
+        "noteren"
+      ],
+      "woordaantal": 7
+    },
+    {
+      "id": "getuige-achteruit",
+      "categorie": "getuigen",
+      "nl": "Wilt u alstublieft achteruit gaan.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Please step back.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Bitte treten Sie zurück.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Proszę się cofnąć.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "Lütfen geri çekilin.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "من فضلك تراجع إلى الوراء.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "achteruit"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "achteruit"
+      ],
+      "woordaantal": 5
+    },
+    {
+      "id": "getuige-dank",
+      "categorie": "getuigen",
+      "nl": "Dank u voor uw medewerking.",
+      "antwoord": "geen",
+      "juridisch": false,
+      "vertalingen": {
+        "en": {
+          "tekst": "Thank you for your cooperation.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "de": {
+          "tekst": "Danke für Ihre Mitarbeit.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "pl": {
+          "tekst": "Dziękuję za współpracę.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "tr": {
+          "tekst": "İşbirliğiniz için teşekkür ederiz.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        },
+        "ar": {
+          "tekst": "شكرًا لتعاونك.",
+          "status": "ongecontroleerd",
+          "door": "AI",
+          "op": "2026-09-20"
+        }
+      },
+      "trefwoorden": [
+        "dank",
+        "medewerking"
+      ],
+      "ontkenning": false,
+      "kernwoorden": [
+        "dank",
+        "medewerking"
+      ],
+      "woordaantal": 5
+    }
+  ]
+}
