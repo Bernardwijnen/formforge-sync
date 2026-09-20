@@ -318,6 +318,49 @@ if(zorgZinnen){
               (zorgZinnen.versie || "onbekend") + ".");
 }
 
+/* De politiezinnen, op dezelfde manier: uit de repo naar de blijvende schijf,
+   en daarna een keer inlezen. Zelfde environment variable om te overschrijven,
+   zodat je beide lijsten in een keer kunt bijwerken. */
+const POLITIE_ZINNEN_FILE = path.join(DATA_DIR, "politie_zinnen.json");
+const POLITIE_ZINNEN_BRON = path.join(__dirname, "startdata", "politie_zinnen.json");
+
+try{
+  const bestaat = fs.existsSync(POLITIE_ZINNEN_FILE);
+  if(!bestaat || ZORG_ZINNEN_OVERSCHRIJVEN){
+    if(fs.existsSync(POLITIE_ZINNEN_BRON)){
+      fs.copyFileSync(POLITIE_ZINNEN_BRON, POLITIE_ZINNEN_FILE);
+      console.log(bestaat
+        ? "Politiezinnen overschreven vanuit startdata."
+        : "Politiezinnen naar de schijf gekopieerd.");
+    }else if(!bestaat){
+      console.warn("startdata/politie_zinnen.json ontbreekt; politiezinnen niet geplaatst.");
+    }
+  }
+}catch(err){
+  console.warn("Politiezinnen konden niet naar de schijf:", err.message || String(err));
+}
+
+let politieZinnen = null;
+
+function laadPolitieZinnen(){
+  try{
+    if(!fs.existsSync(POLITIE_ZINNEN_FILE)) return null;
+    const raw = fs.readFileSync(POLITIE_ZINNEN_FILE, "utf8");
+    const data = JSON.parse(raw || "null");
+    if(!data || !Array.isArray(data.zinnen)) return null;
+    return data;
+  }catch(err){
+    console.warn("Politiezinnen konden niet gelezen worden:", err.message || String(err));
+    return null;
+  }
+}
+
+politieZinnen = laadPolitieZinnen();
+if(politieZinnen){
+  console.log("Politiezinnen geladen: " + politieZinnen.zinnen.length + " zinnen, versie " +
+              (politieZinnen.versie || "onbekend") + ".");
+}
+
 /* ---------- Zoeken in de zorgzinnen ----------
    Er wordt niet op de hele zin vergeleken maar op trefwoorden, zodat
    "heeft u pijn op de borst" en "heb jij pijn op de borst" allebei bij
@@ -334,6 +377,7 @@ if(zorgZinnen){
    Geen treffer is geen fout. Dan gaat de zin gewoon naar OpenAI, precies
    zoals nu. Liever een keer betalen dan de verkeerde vraag stellen. */
 const ZORG_STOP = new Set((zorgZinnen && zorgZinnen.stopwoorden) || []);
+const POLITIE_STOP = new Set((politieZinnen && politieZinnen.stopwoorden) || []);
 
 function zorgNormaliseer(tekst){
   return String(tekst || "")
@@ -345,18 +389,20 @@ function zorgNormaliseer(tekst){
     .trim();
 }
 
-function zorgZoek(zin, taal){
-  if(!zorgZinnen || !Array.isArray(zorgZinnen.zinnen)) return null;
+/* Een zoeker voor beide lijsten. zorgZoek en politieZoek hieronder geven hem
+   alleen het juiste boek en de bijbehorende stopwoorden mee. */
+function zinnenZoek(boek, stop, zin, taal){
+  if(!boek || !Array.isArray(boek.zinnen)) return null;
   const woorden = zorgNormaliseer(zin).split(" ").filter(Boolean);
   if(!woorden.length) return null;
   const set = new Set(woorden);
 
   const ontkenning = set.has("niet") || set.has("geen");
-  const kern = woorden.filter(w => !ZORG_STOP.has(w) && w.length > 2);
+  const kern = woorden.filter(w => !stop.has(w) && w.length > 2);
 
   let beste = null, besteScore = -1e9, gelijk = 0;
 
-  for(const z of zorgZinnen.zinnen){
+  for(const z of boek.zinnen){
     const tw = z.trefwoorden || [];
     if(!tw.length) continue;
     if(!tw.every(w => set.has(w))) continue;
@@ -378,7 +424,16 @@ function zorgZoek(zin, taal){
   const v = beste.vertalingen && beste.vertalingen[taal];
   if(!v || !v.tekst) return null;
   return { id: beste.id, nl: beste.nl, tekst: v.tekst, status: v.status || "onbekend",
-           antwoord: beste.antwoord || "vrij" };
+           antwoord: beste.antwoord || "vrij",
+           juridisch: beste.juridisch === true };
+}
+
+function zorgZoek(zin, taal){
+  return zinnenZoek(zorgZinnen, ZORG_STOP, zin, taal);
+}
+
+function politieZoek(zin, taal){
+  return zinnenZoek(politieZinnen, POLITIE_STOP, zin, taal);
 }
 
 
@@ -14642,6 +14697,47 @@ app.post("/api/zorg/zoek", (req, res) => {
   }catch(err){
     console.warn("Zorgzinnen zoeken mislukt:", err.message || String(err));
     return res.json({ gevonden: false });
+  }
+});
+
+app.post("/api/politie/zoek", (req, res) => {
+  try{
+    const zin = String((req.body && req.body.zin) || "").slice(0, 600);
+    const taal = String((req.body && req.body.taal) || "").trim().toLowerCase();
+    if(!zin || !taal){
+      return res.status(400).json({ gevonden: false, error: "zin en taal zijn verplicht" });
+    }
+    const treffer = politieZoek(zin, taal);
+    if(!treffer) return res.json({ gevonden: false });
+    return res.json({ gevonden: true, ...treffer });
+  }catch(err){
+    console.warn("Politiezinnen zoeken mislukt:", err.message || String(err));
+    return res.json({ gevonden: false });
+  }
+});
+
+app.get("/api/politie/zinnen", (req, res) => {
+  try{
+    if(!politieZinnen) return res.json({ versie: null, categorieen: [], zinnen: [] });
+    const taal = String(req.query.taal || "").trim().toLowerCase();
+    const zinnen = politieZinnen.zinnen.map(z => {
+      const v = (z.vertalingen && z.vertalingen[taal]) || null;
+      return {
+        id: z.id, categorie: z.categorie, nl: z.nl, antwoord: z.antwoord,
+        juridisch: z.juridisch === true,
+        vertaling: v ? v.tekst : null,
+        status: v ? (v.status || "onbekend") : "ontbreekt"
+      };
+    });
+    return res.json({
+      versie: politieZinnen.versie || null,
+      categorieen: politieZinnen.categorieen || [],
+      antwoorden: politieZinnen.antwoorden || {},
+      zinnen
+    });
+  }catch(err){
+    console.warn("Politiezinnen lijst mislukt:", err.message || String(err));
+    return res.json({ versie: null, categorieen: [], zinnen: [] });
   }
 });
 
