@@ -14642,45 +14642,11 @@ if(WACHTER_AAN){
 /* ======================= EINDE WACHTER ======================= */
 
 
-app.use((req, res) => {
-  res.status(404).json({ error: "Route niet gevonden", path: req.path });
-});
-
-
-
-
-
-
-// ==== Nette afsluiting: bij een herstart of deploy (SIGTERM van Render) ====
-// eerst alle data naar de disk schrijven, zodat uitgestelde saves en verse
-// wijzigingen nooit verloren gaan.
-let _shuttingDown = false;
-function flushAllStoresAndExit(signal){
-  if(_shuttingDown) return;
-  _shuttingDown = true;
-  console.log("Signaal " + signal + " ontvangen: alle data wordt weggeschreven voor het afsluiten...");
-  try{ saveMerchants(false); }catch(e){}
-  try{ saveHotelChats(); }catch(e){}
-  try{ saveRooms(); }catch(e){}
-  try{ saveCityCache(); }catch(e){}
-  try{ saveGuideTransCacheNow(); }catch(e){}
-  try{ saveGuesttalkUsageNow(); }catch(e){}
-  try{ saveDMNow(); }catch(e){}
-  try{ saveDirectChats(); }catch(e){}
-  try{ wdBewaarNu(); }catch(e){}
-  console.log("Alle data is weggeschreven. Server sluit af.");
-  process.exit(0);
-}
-process.on("SIGTERM", () => flushAllStoresAndExit("SIGTERM"));
-process.on("SIGINT", () => flushAllStoresAndExit("SIGINT"));
-
-
-/* ---------------- foutafhandeling van routes ----------------
-   Deze middleware heeft VIER parameters. Daaraan herkent Express hem als
-   foutafhandelaar. Hij moet onder alle routes staan. */
 /* ---------- Endpoints voor de zorgzinnen ----------
-   Staan bewust hier, onderaan, zodat ze dezelfde middleware krijgen als alle
-   andere routes: express.json, cors en de foutafhandeling hieronder. */
+   Staan bewust hier: laat genoeg om dezelfde middleware te krijgen als alle
+   andere routes (express.json, cors), maar VOOR het 404-vangnet hieronder.
+   Staat een route na dat vangnet, dan antwoordt het vangnet als eerste en
+   krijg je "Route niet gevonden" terwijl de route wel bestaat. */
 /* De zoeker als endpoint, zodat de tolk hem kan raadplegen voordat er een
    vertaling bij OpenAI wordt opgevraagd. Geen treffer levert gewoon
    gevonden:false op; de aanroeper valt dan terug op zijn eigen pad. */
@@ -14768,6 +14734,43 @@ app.get("/api/zorg/zinnen", (req, res) => {
     return res.json({ versie: null, categorieen: [], zinnen: [] });
   }
 });
+
+app.use((req, res) => {
+  res.status(404).json({ error: "Route niet gevonden", path: req.path });
+});
+
+
+
+
+
+
+// ==== Nette afsluiting: bij een herstart of deploy (SIGTERM van Render) ====
+// eerst alle data naar de disk schrijven, zodat uitgestelde saves en verse
+// wijzigingen nooit verloren gaan.
+let _shuttingDown = false;
+function flushAllStoresAndExit(signal){
+  if(_shuttingDown) return;
+  _shuttingDown = true;
+  console.log("Signaal " + signal + " ontvangen: alle data wordt weggeschreven voor het afsluiten...");
+  try{ saveMerchants(false); }catch(e){}
+  try{ saveHotelChats(); }catch(e){}
+  try{ saveRooms(); }catch(e){}
+  try{ saveCityCache(); }catch(e){}
+  try{ saveGuideTransCacheNow(); }catch(e){}
+  try{ saveGuesttalkUsageNow(); }catch(e){}
+  try{ saveDMNow(); }catch(e){}
+  try{ saveDirectChats(); }catch(e){}
+  try{ wdBewaarNu(); }catch(e){}
+  console.log("Alle data is weggeschreven. Server sluit af.");
+  process.exit(0);
+}
+process.on("SIGTERM", () => flushAllStoresAndExit("SIGTERM"));
+process.on("SIGINT", () => flushAllStoresAndExit("SIGINT"));
+
+
+/* ---------------- foutafhandeling van routes ----------------
+   Deze middleware heeft VIER parameters. Daaraan herkent Express hem als
+   foutafhandelaar. Hij moet onder alle routes staan. */
 
 app.use((err, req, res, next) => {
   try{
