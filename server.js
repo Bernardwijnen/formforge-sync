@@ -14757,6 +14757,17 @@ laadTolkCache();
    want dan schrijf je de schijf stuk tijdens een druk gesprek. */
 setInterval(bewaarTolkCache, 2 * 60 * 1000);
 
+/* Een JSON-antwoord van het model uitlezen. Modellen zetten er soms
+   codeblokken omheen of een zin ervoor; die halen we weg. */
+function tolkLeesJson(tekst){
+  const s = String(tekst || "").trim()
+    .replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+  const begin = s.indexOf("{");
+  const eind = s.lastIndexOf("}");
+  if(begin < 0 || eind <= begin) return null;
+  try{ return JSON.parse(s.slice(begin, eind + 1)); }catch(e){ return null; }
+}
+
 /* Vertalen met een gewoon tekstmodel, voor de tolk.
 
    Het realtime model bleek de richting niet betrouwbaar te volgen: het gaf de
@@ -14770,18 +14781,50 @@ setInterval(bewaarTolkCache, 2 * 60 * 1000);
 app.post("/api/tolk/vertaal", async (req, res) => {
   try{
     const zin  = String((req.body && req.body.zin)  || "").slice(0, 1200).trim();
-    const van  = String((req.body && req.body.van)  || "").slice(0, 60).trim();
-    const naar = String((req.body && req.body.naar) || "").slice(0, 60).trim();
+    let   van  = String((req.body && req.body.van)  || "").slice(0, 60).trim();
+    let   naar = String((req.body && req.body.naar) || "").slice(0, 60).trim();
 
-    if(!zin || !van || !naar){
-      return res.status(400).json({ ok:false, error:"zin, van en naar zijn verplicht" });
+    /* Automatisch: de app geeft de twee talen van het gesprek mee, en het
+       model bepaalt welke het is. De app deed dat eerst zelf met een lijstje
+       Nederlandse woorden, maar daar zaten woorden in die ook Engels of Duits
+       zijn ("want", "even", "met", "hier"). "I want a doctor" gold dan als
+       Nederlands en werd niet naar het Nederlands vertaald. */
+    const talen = Array.isArray(req.body && req.body.talen)
+      ? req.body.talen.map(x => String(x || "").slice(0, 60).trim()).filter(Boolean).slice(0, 2)
+      : [];
+    const automatisch = talen.length === 2 && (!van || !naar);
+
+    if(!zin || (!automatisch && (!van || !naar))){
+      return res.status(400).json({ ok:false, error:"zin, en van+naar of twee talen, zijn verplicht" });
     }
     if(!OPENAI_API_KEY){
       return res.status(503).json({ ok:false, error:"OPENAI_API_KEY ontbreekt" });
     }
 
-    const systeem =
-      "You are a translation engine. You translate text from " + van + " into " + naar + ". " +
+    /* Een zin is maar in een van de twee talen, dus hooguit een van beide
+       richtingen staat in de database. */
+    if(automatisch){
+      const a = talen[0], b = talen[1];
+      const uitA = tolkCacheZoek(a, b, zin);
+      if(uitA) return res.json({ ok:true, vertaling: uitA, van:a, naar:b, bron:"database" });
+      const uitB = tolkCacheZoek(b, a, zin);
+      if(uitB) return res.json({ ok:true, vertaling: uitB, van:b, naar:a, bron:"database" });
+    }
+
+    const systeem = automatisch
+      ? ("You are a translation engine for a conversation between " + talen[0] + " and " + talen[1] + ". " +
+         "Step 1: decide which of these two languages the text is written in. " +
+         "Step 2: translate it into the OTHER of the two languages. " +
+         "Reply with JSON only, no other text, in exactly this form: " +
+         "{\"source\": \"<" + talen[0] + " or " + talen[1] + ">\", \"translation\": \"<the translation>\"} " +
+         "The translation must be written in the other language, never in the source language. " +
+         "Never answer, comment, greet or explain inside the translation. " +
+         "Keep names, numbers, dates, times and amounts exactly as given. " +
+         "Translate the meaning in natural word order, not word by word. " +
+         "Address the listener in the polite form normal in a business setting in the target language. " +
+         "Greetings, single words, names and short fragments ARE meaningful: translate them. " +
+         "Only if the text contains no language at all, set translation to SKIP.")
+      : "You are a translation engine. You translate text from " + van + " into " + naar + ". " +
       "You never answer, comment, greet or explain. " +
       "Your entire reply is the translation, written in " + naar + ", and nothing else. " +
       "Replying in " + van + " is a failure. " +
@@ -14793,9 +14836,11 @@ app.post("/api/tolk/vertaal", async (req, res) => {
 
     /* Staat deze zin al in de database? Dan hoeft hij niet opnieuw vertaald
        te worden. Dit is de besparing waar het om begonnen was. */
-    const uitCache = tolkCacheZoek(van, naar, zin);
-    if(uitCache){
-      return res.json({ ok:true, vertaling: uitCache, van, naar, bron:"database" });
+    if(!automatisch){
+      const uitCache = tolkCacheZoek(van, naar, zin);
+      if(uitCache){
+        return res.json({ ok:true, vertaling: uitCache, van, naar, bron:"database" });
+      }
     }
 
     /* Welk model vertaalt. Standaard het gidsmodel en niet OPENAI_MODEL:
@@ -14820,7 +14865,23 @@ app.post("/api/tolk/vertaal", async (req, res) => {
       }
     }
 
-    const schoon = String(vertaling || "").trim();
+    let schoon = String(vertaling || "").trim();
+
+    /* Automatisch: de richting komt uit het antwoord van het model. */
+    if(automatisch){
+      const j = tolkLeesJson(schoon);
+      const bronTaal = j && typeof j.source === "string" ? j.source.trim() : "";
+      const tekst    = j && typeof j.translation === "string" ? j.translation.trim() : "";
+      const gevonden = talen.find(x => x.toLowerCase() === bronTaal.toLowerCase());
+      if(!j || !gevonden){
+        console.warn("Tolkvertaling: onleesbaar antwoord van het model: " + schoon.slice(0, 200));
+        return res.json({ ok:true, vertaling:null, reden:"onleesbaar antwoord" });
+      }
+      van  = gevonden;
+      naar = talen.find(x => x !== gevonden) || "";
+      schoon = tekst;
+    }
+
     if(!schoon){
       console.warn("Tolkvertaling: leeg antwoord van het model.");
       return res.json({ ok:true, vertaling:null, reden:"leeg antwoord" });
