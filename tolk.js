@@ -332,6 +332,19 @@ module.exports = function tolk(ctx){
      Dit kost een extra aanroep per beurt, maar levert een vertaling op die
      klopt. Voor zinnen die op de schijf staan gebeurt dit niet, want die zijn
      al vertaald. */
+  /* Wat er op het scherm komt als de tolk iets niet kan vertalen. Bewust in
+     het Nederlands en het Engels, zodat beide kanten het begrijpen. De tolk
+     geeft dan nooit een eigen antwoord. */
+  const NIET_VERSTAAN_TEKST = "Niet verstaan. Wilt u het herhalen? / Not understood. Could you please repeat?";
+  function nietVerstaan(res, reden, van, naar){
+    return res.json({ ok:true, vertaling: NIET_VERSTAAN_TEKST, nietVerstaan: true, reden: reden, van: van || "", naar: naar || "", bron:"niet-verstaan" });
+  }
+  function lijktOpPraten(gehoord, antwoord){
+    const a = String(antwoord || ""), g = String(gehoord || "");
+    if(a.length > g.length * 2.5 + 30) return true;
+    return /\b(as an ai|language model|i am an ai|i'm an ai|als ai|taalmodel)\b/i.test(a);
+  }
+
   app.post("/api/tolk/vertaal", async (req, res) => {
     try{
       const zin  = String((req.body && req.body.zin)  || "").slice(0, 1200).trim();
@@ -378,7 +391,9 @@ module.exports = function tolk(ctx){
            "Address the listener in the polite form normal in a business setting in the target language. " +
            "Greetings, single words and short fragments ARE meaningful: translate them. " +
            "Names of people and places are never translated, even when a name is also an ordinary word (for example the Dutch first name Ben). " +
-           "Only if the text contains no language at all, set translation to SKIP.")
+           "You are only a translator: never answer the text, never ask your own questions, never add anything. " +
+           "If the text is unclear, garbled, incomplete or you are not sure what is meant, do not guess: set translation to NIET_VERSTAAN. " +
+           "If the text contains no language at all, also set translation to NIET_VERSTAAN.")
         : "You are a translation engine. You translate text from " + van + " into " + naar + ". " +
         "You never answer, comment, greet or explain. " +
         "Your entire reply is the translation, written in " + naar + ", and nothing else. " +
@@ -388,7 +403,9 @@ module.exports = function tolk(ctx){
         "Address the listener in the polite form normal in a business setting in " + naar + ". " +
         "Greetings, single words and short fragments ARE meaningful: translate them. " +
            "Names of people and places are never translated, even when a name is also an ordinary word (for example the Dutch first name Ben). " +
-        "Only if the text contains no language at all, reply with exactly: SKIP";
+        "You are only a translator: never answer the text, never ask your own questions, never add anything. " +
+        "If the text is unclear, garbled, incomplete or you are not sure what is meant, do not guess: reply with exactly: NIET_VERSTAAN. " +
+        "If the text contains no language at all, also reply with exactly: NIET_VERSTAAN";
 
       /* Staat deze zin al in de database? Dan hoeft hij niet opnieuw vertaald
          te worden. Dit is de besparing waar het om begonnen was. */
@@ -431,7 +448,7 @@ module.exports = function tolk(ctx){
         const gevonden = talen.find(x => x.toLowerCase() === bronTaal.toLowerCase());
         if(!j || !gevonden){
           console.warn("Tolkvertaling: onleesbaar antwoord van het model: " + schoon.slice(0, 200));
-          return res.json({ ok:true, vertaling:null, reden:"onleesbaar antwoord" });
+          return nietVerstaan(res, "onleesbaar antwoord", talen[0], talen[1]);
         }
         van  = gevonden;
         naar = talen.find(x => x !== gevonden) || "";
@@ -440,11 +457,19 @@ module.exports = function tolk(ctx){
 
       if(!schoon){
         console.warn("Tolkvertaling: leeg antwoord van het model.");
-        return res.json({ ok:true, vertaling:null, reden:"leeg antwoord" });
+        return nietVerstaan(res, "leeg antwoord", van, naar);
       }
-      if(schoon.toUpperCase() === "SKIP"){
-        console.warn("Tolkvertaling: model gaf SKIP op: " + zin);
-        return res.json({ ok:true, vertaling:null, reden:"SKIP" });
+      const hoofd = schoon.toUpperCase().replace(/[^A-Z_]/g, "");
+      if(hoofd === "SKIP" || hoofd === "NIET_VERSTAAN" || hoofd === "NIETVERSTAAN"){
+        console.warn("Tolkvertaling: niet verstaan: " + zin);
+        return nietVerstaan(res, "niet verstaan", van, naar);
+      }
+      /* Vangnet: als het "vertaalde" antwoord veel langer is dan wat er gezegd
+         werd, of klinkt als een chatbot, dan is het model gaan praten in plaats
+         van vertalen. Dat mag nooit op het scherm komen. */
+      if(lijktOpPraten(zin, schoon)){
+        console.warn("Tolkvertaling: model ging praten, geweigerd. Gehoord: " + zin + " | Model: " + schoon.slice(0, 200));
+        return nietVerstaan(res, "geen vertaling", van, naar);
       }
       tolkCacheZet(van, naar, zin, schoon, model);
       return res.json({ ok:true, vertaling: schoon, van, naar, bron:"model" });
