@@ -141,6 +141,16 @@ module.exports = function tolk(ctx){
 
   /* Een zoeker voor beide lijsten. zorgZoek en politieZoek hieronder geven hem
      alleen het juiste boek en de bijbehorende stopwoorden mee. */
+  const IK_WOORDEN = new Set(["ik", "mijn", "mij", "me", "wij", "we", "ons", "onze"]);
+  const U_WOORDEN  = new Set(["u", "uw", "jij", "je", "jou", "jouw", "jullie"]);
+  function zelfdePersoon(woorden, nl){
+    const vast = zorgNormaliseer(nl || "").split(" ").filter(Boolean);
+    const heeft = (lijst, set) => lijst.some(w => set.has(w));
+    if(heeft(woorden, IK_WOORDEN) && !heeft(vast, IK_WOORDEN)) return false;
+    if(heeft(woorden, U_WOORDEN)  && !heeft(vast, U_WOORDEN))  return false;
+    return true;
+  }
+
   function zinnenZoek(boek, stop, zin, taal){
     if(!boek || !Array.isArray(boek.zinnen)) return null;
     const woorden = zorgNormaliseer(zin).split(" ").filter(Boolean);
@@ -157,6 +167,11 @@ module.exports = function tolk(ctx){
       if(!tw.length) continue;
       if(!tw.every(w => set.has(w))) continue;
       if(!!z.ontkenning !== ontkenning) continue;
+
+      /* Wie spreekt over wie? "Mijn naam is ..." is een mededeling over de
+         spreker zelf, "Wat is uw naam?" een vraag aan de ander. Die mogen nooit
+         op elkaar lijken, ook al staan "mijn" en "uw" in de stopwoorden. */
+      if(!zelfdePersoon(woorden, z.nl)) continue;
 
       const eigen = new Set(z.kernwoorden || []);
       const extra = kern.filter(w => !eigen.has(w)).length;
@@ -225,8 +240,12 @@ module.exports = function tolk(ctx){
       .trim();
   }
 
+  /* Versie van de vertaalregels. Na een verbetering van de vertaalopdracht
+     wordt dit nummer opgehoogd, zodat oude (mogelijk foute) vertalingen uit
+     de database niet meer worden gebruikt. */
+  const TOLK_REGELS_VERSIE = "2";
   function tolkSleutel(van, naar, zin){
-    return van + "|" + naar + "|" + tolkNormaliseer(zin);
+    return "v" + TOLK_REGELS_VERSIE + "|" + van + "|" + naar + "|" + tolkNormaliseer(zin);
   }
 
   function laadTolkCache(){
@@ -357,7 +376,8 @@ module.exports = function tolk(ctx){
            "Keep names, numbers, dates, times and amounts exactly as given. " +
            "Translate the meaning in natural word order, not word by word. " +
            "Address the listener in the polite form normal in a business setting in the target language. " +
-           "Greetings, single words, names and short fragments ARE meaningful: translate them. " +
+           "Greetings, single words and short fragments ARE meaningful: translate them. " +
+           "Names of people and places are never translated, even when a name is also an ordinary word (for example the Dutch first name Ben). " +
            "Only if the text contains no language at all, set translation to SKIP.")
         : "You are a translation engine. You translate text from " + van + " into " + naar + ". " +
         "You never answer, comment, greet or explain. " +
@@ -366,7 +386,8 @@ module.exports = function tolk(ctx){
         "Keep names, numbers, dates, times and amounts exactly as given. " +
         "Translate the meaning in natural word order for " + naar + ", not word by word. " +
         "Address the listener in the polite form normal in a business setting in " + naar + ". " +
-        "Greetings, single words, names and short fragments ARE meaningful: translate them. " +
+        "Greetings, single words and short fragments ARE meaningful: translate them. " +
+           "Names of people and places are never translated, even when a name is also an ordinary word (for example the Dutch first name Ben). " +
         "Only if the text contains no language at all, reply with exactly: SKIP";
 
       /* Staat deze zin al in de database? Dan hoeft hij niet opnieuw vertaald
