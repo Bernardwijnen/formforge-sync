@@ -336,12 +336,81 @@ function stijl_grote_foto() {
 function stijl_pagina($html) {
     $s = stijl();
     $css = stijl_css($s);
-    if ($css === '') return $html;
+    $kiezer = file_exists(DATA_DIR . '/demo-aan.txt');
+    if ($css === '' && !$kiezer) return $html;
+    if ($kiezer) {
+        // Voorbeeldsite: de stijl staat in een eigen blok, zodat de stijlkiezer hem kan wisselen
+        $alle = alle_stijlen();
+        $f = $alle[$s]['fonts'] ?? '';
+        $css = '<link id="ff-fonts" rel="stylesheet" href="' . ($f !== '' ? 'https://fonts.googleapis.com/css2?' . h($f) . '&display=swap' : 'data:text/css,') . '" />' . "\n"
+             . '<style id="ff-stijl">' . "\n" . ($alle[$s]['css'] ?? '') . "\n</style>\n";
+    }
     $pos = strpos($html, '</head>');
     if ($pos !== false) { $html = substr($html, 0, $pos) . $css . substr($html, $pos); }
     $pos = strpos($html, '<body>');
-    if ($pos !== false) { $html = substr($html, 0, $pos) . '<body class="t-' . $s . '">' . substr($html, $pos + 6); }
+    if ($pos !== false) { $html = substr($html, 0, $pos) . '<body class="t-' . $s . '">' . ($kiezer ? stijl_kiezer($s) : '') . substr($html, $pos + 6); }
     return $html;
+}
+/* Stijlkiezer voor de voorbeeldsite (alleen met data/demo-aan.txt).
+   Bezoekers zien de hele site in elke stijl; hun keuze blijft bewaard
+   terwijl ze door de pagina's klikken. Er verandert niets op de server. */
+function stijl_kiezer($huidig) {
+    $data = [];
+    foreach (alle_stijlen() as $k => $v) {
+        $data[$k] = ['naam' => $v['naam'], 'fonts' => $v['fonts'], 'css' => $v['css'], 'foto' => !empty($v['grote_foto'])];
+    }
+    $foto = hero_foto(load_pages());
+    $json = json_encode(['stijlen' => $data, 'standaard' => $huidig, 'foto' => $foto], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    return <<<HTML
+<style>
+.ffk{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9999;display:flex;align-items:center;gap:6px;max-width:calc(100vw - 24px);padding:7px;border-radius:999px;background:rgba(17,24,39,.94);color:#fff;font:600 14px/1 'Segoe UI',Arial,sans-serif;letter-spacing:0;box-shadow:0 14px 40px -12px rgba(0,0,0,.55);backdrop-filter:blur(8px);}
+.ffk span{padding:0 8px 0 10px;white-space:nowrap;opacity:.8;font-weight:500;}
+.ffk .ffk-k{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;}
+.ffk .ffk-k::-webkit-scrollbar{display:none;}
+.ffk button{all:unset;cursor:pointer;white-space:nowrap;padding:10px 14px;border-radius:999px;color:#fff;font:600 14px/1 'Segoe UI',Arial,sans-serif;}
+.ffk button:hover{background:rgba(255,255,255,.14);}
+.ffk button.aan{background:#fff;color:#111827;}
+.ffk button:focus-visible{outline:2px solid #fff;outline-offset:2px;}
+body{padding-bottom:84px;}
+@media (max-width:640px){.ffk{left:12px;right:12px;transform:none;max-width:none;border-radius:18px;flex-direction:column;align-items:stretch;gap:4px;bottom:10px;}.ffk span{padding:6px 10px 2px;text-align:center;}.ffk .ffk-k{flex-wrap:wrap;justify-content:center;overflow:visible;}.ffk button{padding:9px 12px;font-size:13px;}body{padding-bottom:150px;}}
+</style>
+<div class="ffk" role="group" aria-label="Kies een stijl"><span>Bekijk deze website in een andere stijl:</span><div class="ffk-k"></div></div>
+<script>
+(function(){
+  var D = $json;
+  var sleutel = 'ff-voorbeeld-stijl', gekozen = null;
+  try { gekozen = localStorage.getItem(sleutel); } catch (e) {}
+  var balk = document.querySelector('.ffk .ffk-k');
+  function zet(k, bewaar) {
+    var s = D.stijlen[k]; if (!s) return;
+    document.getElementById('ff-stijl').textContent = s.css;
+    document.getElementById('ff-fonts').href = s.fonts ? 'https://fonts.googleapis.com/css2?' + s.fonts + '&display=swap' : 'data:text/css,';
+    document.body.className = 't-' + k;
+    var hero = document.querySelector('.hero');
+    if (hero) {
+      if (s.foto && D.foto) { hero.classList.add('has-photo'); hero.style.backgroundImage = "url('" + D.foto + "')"; }
+      else { hero.classList.remove('has-photo'); hero.style.backgroundImage = ''; }
+    }
+    var knoppen = balk.querySelectorAll('button');
+    for (var i = 0; i < knoppen.length; i++) {
+      var aan = knoppen[i].getAttribute('data-k') === k;
+      knoppen[i].className = aan ? 'aan' : '';
+      knoppen[i].setAttribute('aria-pressed', aan ? 'true' : 'false');
+    }
+    if (bewaar) { try { localStorage.setItem(sleutel, k); } catch (e) {} }
+  }
+  Object.keys(D.stijlen).forEach(function(k){
+    var b = document.createElement('button');
+    b.type = 'button'; b.setAttribute('data-k', k); b.textContent = D.stijlen[k].naam;
+    b.onclick = function(){ zet(k, true); };
+    balk.appendChild(b);
+  });
+  var start = (gekozen && D.stijlen[gekozen]) ? gekozen : D.standaard;
+  zet(start, false);
+  if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', function(){ zet(start, false); }); }
+})();
+</script>
+HTML;
 }
 /* Eerste projectfoto, voor de grote foto in de stijl Etalage */
 function hero_foto($pages) {
