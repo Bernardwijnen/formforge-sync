@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>Website in voorbereiding</title>
+<style>
+  body { margin:0; min-height:100vh; display:grid; place-items:center; background:#0b1f3a; color:#fff; font-family:'Segoe UI',Arial,sans-serif; text-align:center; padding:24px; box-sizing:border-box; }
+  h1 { font-size:clamp(28px,5vw,44px); margin:0 0 12px; }
+  p { margin:0; color:rgba(255,255,255,.75); font-size:18px; }
+</style>
+</head>
+<body>
+  <div>
+    <h1>Deze website wordt ingericht.</h1>
+    <p>Binnenkort vindt u hier meer informatie.</p>
+  </div>
+</body>
+</html>
