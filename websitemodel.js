@@ -35,6 +35,9 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
   const MODEL_DIR = path.join(__dirname, "websitemodel1");
   const MODEL_FILES = ["admin.php", "contact.php", "index.html"];
   const MAX_POGINGEN = 8;
+  const SERVER_URL = String(process.env.WEBSITE_SERVER_URL || "https://formforge-sync-1.onrender.com").trim();
+  const RESPIJT_DAGEN = Number(process.env.WEBSITE_RESPIJT_DAGEN || 14);
+  const STRIPE_CHECK_UUR = 6;
 
   let ftp = null;
   try{ ftp = require("basic-ftp"); }
@@ -239,6 +242,10 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
       await client.ensureDir("data");
       await client.uploadFrom(Readable.from([Buffer.from("Require all denied\n")]), ".htaccess");
       await client.uploadFrom(Readable.from([Buffer.from(JSON.stringify({ hash, aangemaakt: new Date().toISOString() }))]), "setup-code.json");
+      // Licentiesleutel: hiermee vraagt de site later of het abonnement nog loopt.
+      const licentie = rec.licentie || crypto.randomBytes(24).toString("hex");
+      rec.licentie = licentie;
+      await client.uploadFrom(Readable.from([Buffer.from(JSON.stringify({ key: licentie, server: SERVER_URL }))]), "licentie.json");
       client.close();
 
       rec.status = "geinstalleerd";
@@ -280,6 +287,112 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
       rec.laatsteFout = stap + ": " + m.slice(0, 200);
       save();
       res.status(400).json({ error: uitleg, pogingenOver: Math.max(0, MAX_POGINGEN - rec.pogingen) });
+    }
+  });
+
+
+  /* ===========================================================
+     Licentie: loopt het abonnement nog?
+     De site vraagt dit hooguit een paar keer per dag. Wij kijken bij
+     Stripe naar de status van het abonnement. Is het niet meer actief
+     (niet betaald of opgezegd), dan krijgt de klant RESPIJT_DAGEN dagen.
+     Daarna antwoorden we actief:false en gaat de site offline.
+     =========================================================== */
+  function cleanKey(k){
+    const v = String(k || "").trim();
+    return /^[a-f0-9]{48}$/.test(v) ? v : "";
+  }
+  function findByKey(key){
+    for(const id of Object.keys(orders)){
+      if(orders[id] && orders[id].licentie === key) return orders[id];
+    }
+    return null;
+  }
+  const GOED = ["active", "trialing"];
+  async function vernieuwStatus(rec, forceer){
+    const nu = Date.now();
+    const laatst = rec.stripeCheck ? Date.parse(rec.stripeCheck) : 0;
+    if(!forceer && laatst && nu - laatst < STRIPE_CHECK_UUR * 3600 * 1000) return;
+    if(forceer && laatst && nu - laatst < 60 * 1000) return; // hooguit 1x per minuut
+    if(!rec.subscriptionId){ rec.stripeCheck = new Date().toISOString(); return; }
+    try{
+      const sub = await callStripeGet("/subscriptions/" + encodeURIComponent(rec.subscriptionId));
+      rec.stripeStatus = String(sub.status || "");
+      if(GOED.includes(rec.stripeStatus)){ rec.probleemSinds = ""; }
+      else if(!rec.probleemSinds){ rec.probleemSinds = new Date().toISOString(); }
+      rec.stripeCheck = new Date().toISOString();
+      save();
+    }catch(e){
+      // Stripe niet bereikbaar: niets veranderen, de vorige status blijft gelden.
+      console.error("Websitemodel: Stripe-status ophalen mislukt:", (e && e.message) || e);
+    }
+  }
+  function licentieAntwoord(rec){
+    if(rec.handmatig === "uit") return { actief: false, reden: "handmatig" };
+    if(rec.handmatig === "aan" || !rec.probleemSinds) return { actief: true };
+    const offlineOp = new Date(Date.parse(rec.probleemSinds) + RESPIJT_DAGEN * 86400 * 1000);
+    if(Date.now() < offlineOp.getTime()){
+      return { actief: true, waarschuwing: true, offlineOp: offlineOp.toISOString() };
+    }
+    return { actief: false, reden: "betaling", sinds: offlineOp.toISOString() };
+  }
+
+  app.get("/api/website/licentie", async (req, res) => {
+    const key = cleanKey(req.query.key);
+    if(!key) return res.status(400).json({ error: "Onbekende sleutel." });
+    const rec = findByKey(key);
+    if(!rec) return res.status(404).json({ error: "Onbekende sleutel." });
+    await vernieuwStatus(rec, String(req.query.vers || "") === "1");
+    rec.laatstGezien = new Date().toISOString();
+    res.json(licentieAntwoord(rec));
+  });
+
+  /* Klant wil betalen of zijn betaalgegevens aanpassen: Stripe-klantportaal */
+  app.get("/api/website/betalen", async (req, res) => {
+    const key = cleanKey(req.query.key);
+    const rec = key ? findByKey(key) : null;
+    const terug = rec ? "https://" + rec.domein + "/admin.php" : "https://formforge.nl/eigen-website/";
+    if(!rec || !rec.customerId){
+      return res.redirect(303, "https://formforge.nl/eigen-website/stappenplan/#problemen");
+    }
+    try{
+      const portal = await callStripe("/billing_portal/sessions", { customer: rec.customerId, return_url: terug });
+      return res.redirect(303, portal.url);
+    }catch(e){
+      console.error("Websitemodel: klantportaal openen mislukt:", (e && e.message) || e);
+      res.status(200).type("html").send('<!DOCTYPE html><html lang="nl"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Betaling regelen</title><body style="font-family:Arial,sans-serif;max-width:560px;margin:60px auto;padding:0 20px;line-height:1.6"><h1>Betaling regelen</h1><p>Dit lukt nu niet automatisch. Mail ons via <a href="mailto:' + esc(NOTIFY_EMAIL) + '">' + esc(NOTIFY_EMAIL) + '</a> met je domeinnaam (' + esc(rec.domein) + '), dan regelen we het samen.</p><p><a href="' + esc(terug) + '">Terug naar je beheerpagina</a></p></body></html>');
+    }
+  });
+
+  /* ===========================================================
+     Wachtwoord vergeten: de site vraagt ons de mail te sturen,
+     zodat die betrouwbaar aankomt (via Resend, vanaf info@formforge.nl).
+     =========================================================== */
+  const resetTeller = new Map();
+  app.post("/api/website/reset-mail", async (req, res) => {
+    const b = req.body || {};
+    const key = cleanKey(b.key);
+    const rec = key ? findByKey(key) : null;
+    if(!rec) return res.status(404).json({ error: "Onbekende sleutel." });
+    const naar = cleanEmail(b.email);
+    const link = String(b.link || "");
+    const verwacht = new RegExp("^https?://(www\\.)?" + rec.domein.replace(/[.]/g, "\\.") + "/admin\\.php\\?reset=[A-Za-z0-9]{20,80}$");
+    if(!naar || !verwacht.test(link)) return res.status(400).json({ error: "Ongeldige aanvraag." });
+    const nu = Date.now();
+    const lijst = (resetTeller.get(key) || []).filter(t => nu - t < 3600 * 1000);
+    if(lijst.length >= 5) return res.status(429).json({ error: "Te vaak geprobeerd. Probeer het over een uur opnieuw." });
+    lijst.push(nu); resetTeller.set(key, lijst);
+    try{
+      await sendResendEmail({
+        to: naar,
+        subject: "Nieuw wachtwoord voor je website " + rec.domein,
+        text: "Je hebt gevraagd om een nieuw wachtwoord voor de beheerpagina van " + rec.domein + ".\r\n\r\nKlik op deze link om een nieuw wachtwoord te kiezen:\r\n" + link + "\r\n\r\nDe link werkt 1 uur. Heb je dit niet zelf gevraagd? Dan kun je deze mail negeren; er verandert niets.\r\n\r\nFormForge",
+        html: "<p>Je hebt gevraagd om een nieuw wachtwoord voor de beheerpagina van <strong>" + esc(rec.domein) + "</strong>.</p><p><a href=\"" + esc(link) + "\" style=\"display:inline-block;background:#111;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold\">Nieuw wachtwoord kiezen</a></p><p>De link werkt 1 uur. Heb je dit niet zelf gevraagd? Dan kun je deze mail negeren; er verandert niets.</p><p>FormForge</p>"
+      });
+      res.json({ ok: true });
+    }catch(e){
+      console.error("Websitemodel: resetmail mislukt:", (e && e.message) || e);
+      res.status(500).json({ error: "Mail versturen mislukt." });
     }
   });
 
