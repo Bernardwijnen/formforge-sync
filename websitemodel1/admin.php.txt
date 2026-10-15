@@ -63,6 +63,7 @@ function default_settings() {
         'kleur_accent'     => '#1d4ed8',
         'chat_url'         => '',
         'logo'             => '',
+        'stijl'            => 'stoer',
         'diensten'         => [
             ['key' => 'd1', 'slug' => 'dienst-1', 'naam' => 'Dienst 1', 'kort' => 'Korte omschrijving van deze dienst.', 'tekst' => "Vertel hier uitgebreid over deze dienst.\n\nEen lege regel begint een nieuwe alinea."],
             ['key' => 'd2', 'slug' => 'dienst-2', 'naam' => 'Dienst 2', 'kort' => 'Korte omschrijving van deze dienst.', 'tekst' => 'Vertel hier uitgebreid over deze dienst.'],
@@ -131,6 +132,151 @@ function logo_url() {
 function chat_url() {
     $c = st('chat_url');
     return preg_match('#^https://#i', $c) ? $c : '';
+}
+/* ===========================================================
+   Stijlen (uitstraling van de hele website)
+   De klant kiest in Instellingen > Uiterlijk. Inhoud blijft gelijk.
+   =========================================================== */
+$STIJLEN = [
+    'stoer'     => ['naam' => 'Stoer', 'tekst' => 'Donker, grote kop en een fel accent. Past bij vakmensen en aannemers.'],
+    'licht'     => ['naam' => 'Licht en strak', 'tekst' => 'Veel wit, rustig en verzorgd. Past bij kappers, praktijken en adviseurs.'],
+    'warm'      => ['naam' => 'Warm en ambachtelijk', 'tekst' => 'Zachte creme kleuren, een klassieke letter en ronde vormen. Past bij bakkers, cateraars en B&B\'s.'],
+    'etalage'   => ['naam' => 'Etalage', 'tekst' => 'Een grote foto over de hele breedte en groot fotowerk. Past bij hoveniers, fotografen en interieurbouwers.'],
+    'kleurrijk' => ['naam' => 'Kleurrijk', 'tekst' => 'Vrolijk, rond en vol kleur. Past bij kinderopvang, sportscholen en evenementen.'],
+];
+function stijl() {
+    global $STIJLEN;
+    $s = st('stijl');
+    return isset($STIJLEN[$s]) ? $s : 'stoer';
+}
+function stijl_css($s) {
+    $fonts = [
+        'licht'     => 'family=Inter:wght@400;500;600;700',
+        'warm'      => 'family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Nunito+Sans:wght@400;600;700',
+        'etalage'   => 'family=Archivo:wght@400;500;600;700;800',
+        'kleurrijk' => 'family=Baloo+2:wght@600;700;800&family=Nunito:wght@400;600;700',
+    ];
+    $css = [];
+    $css['licht'] = <<<'CSS'
+body{font-family:'Inter','Segoe UI',Arial,sans-serif;}
+h1,h2,h3{font-weight:600;letter-spacing:-.025em;}
+.top{background:rgba(255,255,255,.94);color:var(--navy);border-bottom:1px solid var(--line);backdrop-filter:blur(8px);}
+.menu a{color:var(--navy);} .menu a:hover{background:var(--sky);color:var(--navy);}
+.hero,.crumb,.shero,.chero,.phero,.thx{background:#fff;color:var(--navy);}
+.hero{border-bottom:1px solid var(--line);} .hero::after{display:none;}
+.hero h1{font-weight:600;}
+.eyebrow,.shero .eyebrow{color:var(--blue);}
+.hero .lead,.crumb p,.shero p,.chero p,.phero p,.thx p{color:var(--muted);}
+.thx p a{color:var(--blue);}
+.btn.quiet{color:var(--navy);box-shadow:inset 0 0 0 1.5px var(--line);} .btn.quiet:hover{box-shadow:inset 0 0 0 1.5px var(--navy);}
+.btn,.menu a.cta{border-radius:8px;}
+.hero .emblem img{filter:none;}
+.servicebar{background:var(--sky);color:var(--navy);}
+.service,.card{border-radius:10px;} .service .num{background:var(--sky);color:var(--blue);}
+.crumb .backlink{color:var(--muted);} .crumb .backlink:hover{background:var(--sky);color:var(--navy);}
+.filters a{color:var(--navy);box-shadow:inset 0 0 0 1.5px var(--line);} .filters a:hover{color:var(--navy);box-shadow:inset 0 0 0 1.5px var(--navy);} .filters a.on{background:var(--navy);color:#fff;}
+.ptags a{color:var(--navy);background:var(--sky);} .ptags a:hover{background:var(--line);}
+.section.sky,.sec.sky{background:#fafafa;} .folder.a .tab,.folder.a .body{background:var(--navy);} .folder.a{color:#fff;}
+.band{background:var(--sky);color:var(--navy);} .band p{color:var(--muted);}
+.band .btn.white{background:var(--blue);color:#fff;} .band .btn.outline{color:var(--navy);box-shadow:inset 0 0 0 1.5px var(--navy);}
+.foot{background:#fafafa;color:var(--muted);border-top:1px solid var(--line);} .nap{border-bottom-color:var(--line);} .nap strong{color:var(--navy);} .foot a:hover{color:var(--navy);} .legal .login{color:var(--muted);}
+CSS;
+    $css['warm'] = <<<'CSS'
+:root{--cream:#faf5ec;--cream-2:#f2e9da;--brown:#6b5d4f;--sand:#e4d7c2;}
+body{font-family:'Nunito Sans','Segoe UI',Arial,sans-serif;background:var(--cream);}
+h1,h2,h3{font-family:'Fraunces',Georgia,serif;font-weight:600;letter-spacing:-.01em;}
+.top{background:var(--cream);color:var(--navy);border-bottom:1px solid var(--sand);}
+.menu a{color:var(--navy);} .menu a:hover{background:var(--cream-2);color:var(--navy);}
+.btn,.menu a.cta{border-radius:999px;}
+.hero{background:var(--cream);color:var(--navy);} .hero::after{border-color:var(--blue);opacity:.1;}
+.hero .lead{color:var(--brown);} .eyebrow,.shero .eyebrow{color:var(--blue);}
+.btn.quiet{color:var(--navy);box-shadow:inset 0 0 0 1.5px var(--sand);} .btn.quiet:hover{box-shadow:inset 0 0 0 1.5px var(--navy);}
+.hero .emblem img{filter:drop-shadow(0 18px 30px rgba(90,60,30,.18));}
+.servicebar{background:var(--navy);color:#fff;}
+.section{background:var(--cream);} .section.sky,.sec.sky{background:var(--cream-2);}
+.service,.card{background:#fffdf8;border-color:var(--sand);border-radius:22px;}
+.service .num{border-radius:50%;background:var(--blue);}
+.folder .tab{border-radius:18px 18px 0 0;} .folder .body{border-radius:0 26px 26px 26px;} .photo-sheet,.photo-sheet img{border-radius:16px;}
+.crumb,.shero,.chero,.phero,.thx{background:var(--cream-2);color:var(--navy);}
+.crumb p,.shero p,.chero p,.phero p,.thx p{color:var(--brown);} .thx p a{color:var(--blue);}
+.crumb .backlink{color:var(--brown);} .crumb .backlink:hover{background:var(--sand);color:var(--navy);}
+.filters a{color:var(--navy);box-shadow:inset 0 0 0 1.5px var(--sand);} .filters a:hover{color:var(--navy);box-shadow:inset 0 0 0 1.5px var(--navy);} .filters a.on{background:var(--navy);color:#fff;}
+.ptags a{background:#fffdf8;color:var(--navy);}
+.cwrap{background:var(--cream-2);} .cform,.cside{border-radius:24px;} .cform{border-color:var(--sand);}
+.others a{border-color:var(--sand);background:#fffdf8;}
+.gallery .ph{border-radius:20px;}
+.chatfab{border-radius:999px;}
+CSS;
+    $css['etalage'] = <<<'CSS'
+body{font-family:'Archivo','Segoe UI',Arial,sans-serif;}
+h1,h2,h3{font-weight:800;letter-spacing:-.025em;}
+.btn,.menu a.cta{border-radius:4px;}
+.hero::after{display:none;}
+.hero.has-photo{background-color:#000;background-size:cover;background-position:center;min-height:min(88vh,780px);display:flex;align-items:flex-end;padding-top:140px;}
+.hero.has-photo::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.82) 0%,rgba(0,0,0,.6) 45%,rgba(0,0,0,.2) 100%),linear-gradient(180deg,rgba(0,0,0,0) 40%,rgba(0,0,0,.6) 100%);}
+.hero.has-photo .wrap{grid-template-columns:1fr;width:100%;}
+.hero.has-photo .emblem{display:none;}
+.hero.has-photo .lead{color:rgba(255,255,255,.88);}
+.hero h1{font-size:clamp(44px,7.6vw,96px);max-width:16ch;}
+.service{border-radius:4px;} .service .num{border-radius:4px;}
+.folder{padding-top:0;} .folder .tab{display:none;}
+.folder .body{border-radius:6px;min-height:560px;background:#000 !important;}
+.folder .body::before{content:"";position:absolute;inset:0;z-index:1;background:linear-gradient(180deg,rgba(0,0,0,0) 35%,rgba(0,0,0,.85) 100%);}
+.folder .photo-sheet{inset:0;top:0;left:0;right:0;height:auto;transform:none;border-radius:0;padding:0;box-shadow:none;}
+.folder .photo-sheet img{border-radius:0;transition:transform .5s ease;}
+.folder:hover .photo-sheet{transform:none;} .folder:hover .photo-sheet img{transform:scale(1.04);}
+.folder .photo-sheet.empty{background:var(--navy);}
+.folder .front{z-index:2;} .folder .desc{color:rgba(255,255,255,.85);}
+.cards{grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:30px;}
+.card{border:0;border-radius:0;background:transparent;}
+.card:hover{transform:none;} .card .img{aspect-ratio:3/2;border-radius:4px;}
+.card .img img{transition:transform .5s ease;} .card:hover .img img{transform:scale(1.04);}
+.card .txt{padding:16px 2px 0;}
+.section.sky,.sec.sky{background:#fff;}
+.gallery{columns:2 420px;column-gap:22px;} .gallery .ph{border-radius:4px;}
+@media (max-width:520px){.cards{grid-template-columns:1fr;}}
+CSS;
+    $css['kleurrijk'] = <<<'CSS'
+body{font-family:'Nunito','Segoe UI',Arial,sans-serif;}
+h1,h2,h3{font-family:'Baloo 2','Nunito',sans-serif;font-weight:800;letter-spacing:0;line-height:1.02;}
+.btn,.menu a.cta{border-radius:999px;}
+.hero,.crumb,.shero,.chero,.phero,.thx{background:var(--blue);}
+.hero::after{border-color:#fff;opacity:.16;}
+.eyebrow,.shero .eyebrow{color:rgba(255,255,255,.9);} .eyebrow::before,.shero .eyebrow::before{background:#fff;}
+.hero .lead,.crumb p,.shero p,.chero p,.phero p,.thx p{color:rgba(255,255,255,.9);}
+.hero .btn.primary,.shero .btn.primary,.thx .btn.primary{background:#fff;color:var(--navy);}
+.crumb h1 .count{background:var(--navy);}
+.servicebar{background:var(--navy);}
+.service{border:0;border-radius:28px;box-shadow:0 14px 34px -22px rgba(0,0,0,.45);}
+.service .num{border-radius:50%;}
+.service:nth-child(4n+1) .num{background:var(--blue);} .service:nth-child(4n+2) .num{background:#f59e0b;} .service:nth-child(4n+3) .num{background:#10b981;} .service:nth-child(4n) .num{background:#8b5cf6;}
+.card{border:0;border-radius:26px;box-shadow:0 14px 34px -22px rgba(0,0,0,.45);}
+.card .img{border-radius:26px 26px 0 0;}
+.folder .tab{border-radius:22px 22px 0 0;} .folder .body{border-radius:0 30px 30px 30px;} .photo-sheet,.photo-sheet img{border-radius:20px;}
+.band{background:var(--navy);}
+.cform,.cside{border-radius:28px;} .others a{border-radius:999px;}
+.gallery .ph{border-radius:24px;}
+.filters a.on{color:var(--blue);}
+CSS;
+    if (!isset($css[$s])) return '';
+    $link = '<link href="https://fonts.googleapis.com/css2?' . $fonts[$s] . '&display=swap" rel="stylesheet" />';
+    return $link . "\n<style>\n/* stijl: " . $s . " */\n" . $css[$s] . "\n</style>\n";
+}
+/* Zet de gekozen stijl in een gemaakte pagina */
+function stijl_pagina($html) {
+    $s = stijl();
+    if ($s === 'stoer') return $html;
+    $pos = strpos($html, '</head>');
+    if ($pos !== false) { $html = substr($html, 0, $pos) . stijl_css($s) . substr($html, $pos); }
+    $pos = strpos($html, '<body>');
+    if ($pos !== false) { $html = substr($html, 0, $pos) . '<body class="t-' . $s . '">' . substr($html, $pos + 6); }
+    return $html;
+}
+/* Eerste projectfoto, voor de grote foto in de stijl Etalage */
+function hero_foto($pages) {
+    list($featured, $projects) = site_lists($pages);
+    foreach (array_merge($featured, $projects) as $p) { if (!empty($p['photo'])) return $p['photo']; }
+    return '';
 }
 function paragraphs($text) {
     $out = [];
@@ -615,7 +761,9 @@ CSS;
     $out .= site_header();
 
     $logo = logo_url();
-    $out .= '<main id="home" class="view"><section class="hero"><div class="wrap' . ($logo === '' ? ' solo' : '') . '"><div>';
+    $foto = stijl() === 'etalage' ? hero_foto($pages) : '';
+    $heroAttr = $foto !== '' ? ' class="hero has-photo" style="background-image:url(\'' . h($foto) . '\')"' : ' class="hero"';
+    $out .= '<main id="home" class="view"><section' . $heroAttr . '><div class="wrap' . ($logo === '' ? ' solo' : '') . '"><div>';
     if (st('eyebrow') !== '') $out .= '<div class="eyebrow">' . h(st('eyebrow')) . '</div>';
     $out .= '<h1>' . h(st('hero_titel')) . '</h1>';
     if (st('hero_tekst') !== '') $out .= '<p class="lead">' . h(st('hero_tekst')) . '</p>';
@@ -1075,10 +1223,10 @@ function write_page_files($p) {
     if (!is_dir($dir)) { mkdir($dir, 0755, true); }
     if (trim($p['code'] ?? '') !== '') {
         file_put_contents($dir . '/app.html', $p['code']);
-        file_put_contents($dir . '/index.html', render_code_page($p));
+        file_put_contents($dir . '/index.html', stijl_pagina(render_code_page($p)));
     } else {
         @unlink($dir . '/app.html');
-        file_put_contents($dir . '/index.html', render_project_page($p));
+        file_put_contents($dir . '/index.html', stijl_pagina(render_project_page($p)));
     }
 }
 
@@ -1093,7 +1241,7 @@ function write_service_pages($pages) {
         if (in_array($s['slug'], $projectSlugs, true) || in_array($s['slug'], $RESERVED, true)) continue;
         $dir = ROOT . '/' . $s['slug'];
         if (!is_dir($dir)) { mkdir($dir, 0755, true); }
-        file_put_contents($dir . '/index.html', render_service_page($k, $pages), LOCK_EX);
+        file_put_contents($dir . '/index.html', stijl_pagina(render_service_page($k, $pages)), LOCK_EX);
         $now[] = $s['slug'];
     }
     // Oude dienstpagina's opruimen (alleen mappen die de admin zelf maakte en waar alleen index.html in staat)
@@ -1109,7 +1257,7 @@ function write_contact_pages() {
     foreach (['contact' => render_contact_page(), 'bedankt' => render_thanks_page()] as $slug => $html) {
         $dir = ROOT . '/' . $slug;
         if (!is_dir($dir)) { mkdir($dir, 0755, true); }
-        file_put_contents($dir . '/index.html', $html, LOCK_EX);
+        file_put_contents($dir . '/index.html', stijl_pagina($html), LOCK_EX);
     }
 }
 function write_seo_files($pages) {
@@ -1133,7 +1281,7 @@ function write_seo_files($pages) {
 function rebuild_site($pages) {
     list($featured, $projects) = site_lists($pages);
     file_put_contents(SITE_FILE, json_encode(['featured' => $featured, 'projects' => $projects, 'generated' => date('c')], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), LOCK_EX);
-    file_put_contents(ROOT . '/index.html', render_home($pages), LOCK_EX);
+    file_put_contents(ROOT . '/index.html', stijl_pagina(render_home($pages)), LOCK_EX);
     write_service_pages($pages);
     write_contact_pages();
     write_seo_files($pages);
@@ -1360,6 +1508,7 @@ if ($logged_in && isset($_POST['action'])) {
         $new['chat_url'] = preg_match('#^https://\S+$#i', $chat) ? $chat : '';
         $new['kleur_donker'] = valid_color($_POST['kleur_donker'] ?? '', '#0b1f3a');
         $new['kleur_accent'] = valid_color($_POST['kleur_accent'] ?? '', '#1d4ed8');
+        $new['stijl'] = isset($STIJLEN[$_POST['stijl'] ?? '']) ? $_POST['stijl'] : 'stoer';
 
         $msgs = [];
         if ($mail !== '' && $new['email'] === '') { $msgs[] = 'Het e-mailadres klopt niet en is leeggelaten.'; }
@@ -1531,6 +1680,12 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
   .aanvraag .acontact{display:flex;gap:16px;flex-wrap:wrap;margin:8px 0;}
   .aanvraag .acontact a{color:#8fb3ff;font-weight:600;text-decoration:none;}
   .aanvraag .abericht{line-height:1.55;}
+  .stijlen{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;}
+  .stijl{display:flex !important;gap:10px;align-items:flex-start;background:#0c121c;border:1px solid var(--line);border-radius:12px;padding:12px 14px;cursor:pointer;font-weight:400 !important;margin:0 !important;}
+  .stijl:hover{border-color:#8fb3ff;}
+  .stijl input{margin-top:4px;accent-color:#2f6bff;}
+  .stijl strong{display:block;font-size:15px;}
+  .stijl small{display:block;color:var(--mut);font-size:13px;line-height:1.45;margin-top:2px;}
   .demobar{background:#f5c400;color:#111;font-weight:600;font-size:14.5px;}
   .demobar .wrap{padding-top:10px;padding-bottom:10px;}
   .demobar a{color:#111;margin-left:8px;}
@@ -1679,6 +1834,15 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
               <?php endif; ?>
               <input type="file" id="logo" name="logo" accept="image/png,image/jpeg,image/webp,image/gif" />
               <div class="hint">Liefst een png met transparante achtergrond, in een lichte kleur (het logo staat op de donkere kleur). Ook gebruikt als icoontje in het browsertabblad.</div>
+            </div>
+            <div class="field">
+              <label>Stijl van de website</label>
+              <div class="stijlen">
+                <?php foreach ($STIJLEN as $sk => $sv): ?>
+                  <label class="stijl"><input type="radio" name="stijl" value="<?= h($sk) ?>" <?= stijl() === $sk ? 'checked' : '' ?> /><span><strong><?= h($sv['naam']) ?></strong><small><?= h($sv['tekst']) ?></small></span></label>
+                <?php endforeach; ?>
+              </div>
+              <div class="hint">Je teksten, diensten en projecten blijven hetzelfde; alleen de uitstraling verandert. Je kunt altijd wisselen. Bij Licht en strak staat je logo op wit, bij Etalage komt de foto van je nieuwste project groot bovenaan.</div>
             </div>
             <div class="colors">
               <div class="field"><input type="color" id="kd" name="kleur_donker" value="<?= h(valid_color(st('kleur_donker'), '#0b1f3a')) ?>" /><label for="kd">Donkere hoofdkleur</label></div>
