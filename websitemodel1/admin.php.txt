@@ -1218,15 +1218,24 @@ HTML;
     return $out;
 }
 
+/* Schrijft een pagina als index.php met bovenaan de licentiepoort.
+   Staat er geen licentie.php (oude installatie), dan doet de poort niets. */
+function schrijf_pagina($dir, $html) {
+    $pad = (rtrim($dir, '/') === ROOT) ? '__DIR__' : 'dirname(__DIR__)';
+    $kop = '<?php $ffp = ' . $pad . " . '/licentie.php'; if (is_file(\$ffp)) { require \$ffp; } ?>";
+    file_put_contents($dir . '/index.php', $kop . $html, LOCK_EX);
+    @unlink($dir . '/index.html');
+}
+
 function write_page_files($p) {
     $dir = ROOT . '/' . $p['slug'];
     if (!is_dir($dir)) { mkdir($dir, 0755, true); }
     if (trim($p['code'] ?? '') !== '') {
         file_put_contents($dir . '/app.html', $p['code']);
-        file_put_contents($dir . '/index.html', stijl_pagina(render_code_page($p)));
+        schrijf_pagina($dir, stijl_pagina(render_code_page($p)));
     } else {
         @unlink($dir . '/app.html');
-        file_put_contents($dir . '/index.html', stijl_pagina(render_project_page($p)));
+        schrijf_pagina($dir, stijl_pagina(render_project_page($p)));
     }
 }
 
@@ -1241,7 +1250,7 @@ function write_service_pages($pages) {
         if (in_array($s['slug'], $projectSlugs, true) || in_array($s['slug'], $RESERVED, true)) continue;
         $dir = ROOT . '/' . $s['slug'];
         if (!is_dir($dir)) { mkdir($dir, 0755, true); }
-        file_put_contents($dir . '/index.html', stijl_pagina(render_service_page($k, $pages)), LOCK_EX);
+        schrijf_pagina($dir, stijl_pagina(render_service_page($k, $pages)));
         $now[] = $s['slug'];
     }
     // Oude dienstpagina's opruimen (alleen mappen die de admin zelf maakte en waar alleen index.html in staat)
@@ -1249,7 +1258,8 @@ function write_service_pages($pages) {
         if (in_array($old, $now, true) || in_array($old, $projectSlugs, true) || in_array($old, $RESERVED, true)) continue;
         if (!preg_match('/^[a-z0-9-]+$/', $old)) continue;
         $dir = ROOT . '/' . $old;
-        if (is_dir($dir) && array_values(array_diff(scandir($dir), ['.', '..'])) === ['index.html']) { rrmdir($dir); }
+        $inhoud = is_dir($dir) ? array_values(array_diff(scandir($dir), ['.', '..'])) : [];
+        if ($inhoud === ['index.html'] || $inhoud === ['index.php']) { rrmdir($dir); }
     }
     write_json(GENERATED_FILE, $now);
 }
@@ -1257,7 +1267,7 @@ function write_contact_pages() {
     foreach (['contact' => render_contact_page(), 'bedankt' => render_thanks_page()] as $slug => $html) {
         $dir = ROOT . '/' . $slug;
         if (!is_dir($dir)) { mkdir($dir, 0755, true); }
-        file_put_contents($dir . '/index.html', stijl_pagina($html), LOCK_EX);
+        schrijf_pagina($dir, stijl_pagina($html));
     }
 }
 function write_seo_files($pages) {
@@ -1281,7 +1291,7 @@ function write_seo_files($pages) {
 function rebuild_site($pages) {
     list($featured, $projects) = site_lists($pages);
     file_put_contents(SITE_FILE, json_encode(['featured' => $featured, 'projects' => $projects, 'generated' => date('c')], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), LOCK_EX);
-    file_put_contents(ROOT . '/index.html', stijl_pagina(render_home($pages)), LOCK_EX);
+    schrijf_pagina(ROOT, stijl_pagina(render_home($pages)));
     write_service_pages($pages);
     write_contact_pages();
     write_seo_files($pages);
@@ -1291,6 +1301,137 @@ function rebuild_everything($pages) {
     rebuild_site($pages);
 }
 
+/* ===========================================================
+   Licentiepoort (licentie.php)
+   De admin schrijft dit bestand zelf. Elke pagina laadt het.
+   Het vraagt hooguit eens per 6 uur aan de FormForge-server of
+   het abonnement nog loopt. Is de server niet bereikbaar, dan
+   blijft de laatst bekende status gelden (bij twijfel: open).
+   =========================================================== */
+define('POORT_VERSIE', '1');
+function poort_code() {
+    return <<<'PHP'
+<?php
+/* FormForge licentiepoort, versie 1. Niet aanpassen: de admin schrijft dit bestand opnieuw. */
+if (!function_exists('ff_licentie_status')) {
+    function ff_http_get($url, $timeout) {
+        if (function_exists('curl_init')) {
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => $timeout, CURLOPT_CONNECTTIMEOUT => $timeout, CURLOPT_FOLLOWLOCATION => false]);
+            $b = curl_exec($ch); $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE); curl_close($ch);
+            return ($b !== false && $code >= 200 && $code < 300) ? $b : null;
+        }
+        $ctx = stream_context_create(['http' => ['timeout' => $timeout, 'ignore_errors' => false]]);
+        $b = @file_get_contents($url, false, $ctx);
+        return $b === false ? null : $b;
+    }
+    function ff_licentie_status($vers = false) {
+        $dir = __DIR__ . '/data';
+        $lic = @json_decode((string)@file_get_contents($dir . '/licentie.json'), true);
+        if (!is_array($lic) || empty($lic['key']) || !preg_match('/^[a-f0-9]{48}$/', $lic['key'])) return ['actief' => true, 'geen' => true];
+        $cf = $dir . '/licentie-status.json';
+        $c = @json_decode((string)@file_get_contents($cf), true);
+        if (!is_array($c)) $c = [];
+        $nu = time();
+        if (!$vers && isset($c['actief']) && $nu - (int)($c['checked'] ?? 0) < 6 * 3600) return $c;
+        if (!$vers && isset($c['actief']) && $nu - (int)($c['tried'] ?? 0) < 900) return $c;
+        $server = (isset($lic['server']) && preg_match('#^https://[a-z0-9.\-]+$#i', $lic['server'])) ? $lic['server'] : 'https://formforge-sync-1.onrender.com';
+        $body = ff_http_get($server . '/api/website/licentie?key=' . rawurlencode($lic['key']) . ($vers ? '&vers=1' : ''), 6);
+        $d = $body !== null ? json_decode($body, true) : null;
+        if (is_array($d) && isset($d['actief'])) {
+            $c = ['actief' => (bool)$d['actief'], 'waarschuwing' => !empty($d['waarschuwing']), 'offlineOp' => (string)($d['offlineOp'] ?? ''), 'reden' => (string)($d['reden'] ?? ''), 'checked' => $nu];
+        } elseif (!isset($c['actief'])) {
+            $c['actief'] = true;
+        }
+        $c['tried'] = $nu;
+        @file_put_contents($cf, json_encode($c), LOCK_EX);
+        return $c;
+    }
+}
+if (!defined('FF_GEEN_POORT')) {
+    $ffst = ff_licentie_status(false);
+    if (empty($ffst['actief'])) {
+        http_response_code(503);
+        header('Retry-After: 86400');
+        header('Content-Type: text/html; charset=UTF-8');
+        echo '<!DOCTYPE html><html lang="nl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Tijdelijk niet beschikbaar</title></head>'
+           . '<body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#111827;color:#fff;font-family:Segoe UI,Arial,sans-serif;text-align:center;padding:24px">'
+           . '<div><h1 style="font-size:32px;margin:0 0 10px">Deze website is tijdelijk niet beschikbaar.</h1><p style="margin:0;color:rgba(255,255,255,.75);font-size:18px">Probeer het later nog eens.</p></div></body></html>';
+        exit;
+    }
+}
+PHP;
+}
+function schrijf_poort() {
+    $code = poort_code();
+    $f = ROOT . '/licentie.php';
+    if (!is_file($f) || md5_file($f) !== md5($code)) { @file_put_contents($f, $code, LOCK_EX); }
+}
+function licentie_key() {
+    $l = read_json(DATA_DIR . '/licentie.json', []);
+    return (isset($l['key']) && preg_match('/^[a-f0-9]{48}$/', $l['key'])) ? $l['key'] : '';
+}
+function licentie_server() {
+    $l = read_json(DATA_DIR . '/licentie.json', []);
+    return (isset($l['server']) && preg_match('#^https://[a-z0-9.\-]+$#i', $l['server'])) ? $l['server'] : 'https://formforge-sync-1.onrender.com';
+}
+function betaal_link() {
+    return licentie_server() . '/api/website/betalen?key=' . rawurlencode(licentie_key());
+}
+function nl_datum($iso) {
+    $t = strtotime((string)$iso);
+    if (!$t) return '';
+    $m = ['januari','februari','maart','april','mei','juni','juli','augustus','september','oktober','november','december'];
+    return date('j', $t) . ' ' . $m[(int)date('n', $t) - 1] . ' ' . date('Y', $t);
+}
+
+/* Abonnement niet betaald: site offline, beheerpagina dicht */
+function toon_geblokkeerd() {
+    http_response_code(503);
+    $betaal = h(betaal_link());
+    $naam = h(st('naam'));
+    echo <<<HTML
+<!DOCTYPE html><html lang="nl"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><meta name="robots" content="noindex" /><title>Website offline</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0f1622;color:#eef2f8;font-family:'Segoe UI',Arial,sans-serif;padding:24px;box-sizing:border-box;}
+.k{max-width:540px;background:#18212f;border:1px solid #2b384c;border-radius:16px;padding:30px;}
+h1{margin:0 0 10px;font-size:26px;} p{margin:0 0 14px;color:#c6d0de;line-height:1.6;}
+.r{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px;}
+a.b{display:inline-block;background:#2f6bff;color:#fff;text-decoration:none;font-weight:600;padding:11px 18px;border-radius:10px;}
+a.g{background:transparent;border:1px solid #2b384c;}</style></head>
+<body><div class="k"><h1>Je website staat offline</h1>
+<p>Het abonnement voor de website van <strong>{$naam}</strong> is niet betaald. Daarom is de website voor bezoekers uitgezet en kun je je beheerpagina niet gebruiken.</p>
+<p>Al je teksten, projecten en foto's zijn bewaard. Zodra de betaling rond is, staat alles weer online.</p>
+<div class="r"><a class="b" href="{$betaal}">Betaling regelen</a><a class="b g" href="admin.php?controleer=1">Ik heb betaald, controleer opnieuw</a></div>
+<p style="margin-top:20px;font-size:14px">Vragen? Mail <a href="mailto:info@formforge.nl" style="color:#8fb3ff">info@formforge.nl</a>.</p></div></body></html>
+HTML;
+}
+/* ===========================================================
+   Wachtwoord vergeten
+   =========================================================== */
+define('RESET_FILE', DATA_DIR . '/reset.json');
+function reset_geldig($token) {
+    if (!preg_match('/^[a-f0-9]{40}$/', (string)$token)) return false;
+    $r = read_json(RESET_FILE, []);
+    return !empty($r['hash']) && (int)($r['exp'] ?? 0) > time() && hash_equals($r['hash'], hash('sha256', $token));
+}
+function stuur_resetmail($naar, $link) {
+    // Eerst via de FormForge-server (komt betrouwbaarder aan), anders via de eigen server.
+    $key = licentie_key();
+    if ($key !== '' && function_exists('curl_init')) {
+        $ch = curl_init(licentie_server() . '/api/website/reset-mail');
+        curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 12, CURLOPT_POST => true,
+            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+            CURLOPT_POSTFIELDS => json_encode(['key' => $key, 'email' => $naar, 'link' => $link])]);
+        curl_exec($ch); $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE); curl_close($ch);
+        if ($code >= 200 && $code < 300) return true;
+    }
+    $host = preg_replace('/:\d+$/', '', preg_replace('/^www\./', '', strtolower((string)($_SERVER['HTTP_HOST'] ?? ''))));
+    $van = preg_match('/^[a-z0-9.-]+\.[a-z]{2,}$/', $host) ? 'noreply@' . $host : $naar;
+    $enc = function($x) { return '=?UTF-8?B?' . base64_encode($x) . '?='; };
+    $tekst = "Je hebt gevraagd om een nieuw wachtwoord voor de beheerpagina van " . st('naam') . ".\r\n\r\nKlik op deze link om een nieuw wachtwoord te kiezen:\r\n" . $link . "\r\n\r\nDe link werkt 1 uur. Heb je dit niet zelf gevraagd? Dan kun je deze mail negeren.\r\n";
+    $headers = 'From: ' . $enc(st('naam')) . ' <' . $van . ">\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: 8bit\r\n";
+    return @mail($naar, $enc('Nieuw wachtwoord voor je website'), $tekst, $headers, '-f' . $van);
+}
 /* ===========================================================
    Inloggen
    =========================================================== */
@@ -1315,6 +1456,14 @@ function login_failed() {
 $config = load_config();
 $error = '';
 $notice = '';
+
+schrijf_poort();
+define('FF_GEEN_POORT', 1);
+if (is_file(ROOT . '/licentie.php')) { require_once ROOT . '/licentie.php'; }
+$LIC = function_exists('ff_licentie_status') ? ff_licentie_status(isset($_GET['controleer'])) : ['actief' => true];
+if ($config && empty($LIC['actief'])) {
+    toon_geblokkeerd(); exit;
+}
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && empty($_POST) && (int)($_SERVER['CONTENT_LENGTH'] ?? 0) > 0) {
     $error = "Er is niets opgeslagen: de foto's waren samen te groot voor de server (maximaal " . ini_get('post_max_size') . " per keer). Voeg minder foto's tegelijk toe.";
@@ -1369,6 +1518,46 @@ if ($config && ($_POST['action'] ?? '') === 'login') {
         $error = 'E-mailadres of wachtwoord klopt niet.';
     }
 }
+/* Wachtwoord vergeten: link aanvragen */
+if ($config && ($_POST['action'] ?? '') === 'vergeten') {
+    usleep(400000);
+    if (login_blocked()) {
+        $error = 'Te vaak geprobeerd. Wacht een kwartier en probeer het opnieuw.';
+    } else {
+        login_failed(); // telt mee in de limiet, ook als het adres klopt
+        $mail = strtolower(trim($_POST['email'] ?? ''));
+        if ($mail !== '' && hash_equals(strtolower($config['email'] ?? ''), $mail)) {
+            $token = bin2hex(random_bytes(20));
+            write_json(RESET_FILE, ['hash' => hash('sha256', $token), 'exp' => time() + 3600]);
+            stuur_resetmail($config['email'], site_url() . '/admin.php?reset=' . $token);
+        }
+        $_SESSION['ff_notice'] = 'Als dit het e-mailadres van deze beheerpagina is, hebben we een mail gestuurd met een link om een nieuw wachtwoord te kiezen. Kijk ook in je map met ongewenste mail. De link werkt 1 uur.';
+        header('Location: admin.php'); exit;
+    }
+}
+/* Wachtwoord vergeten: nieuw wachtwoord opslaan */
+if ($config && ($_POST['action'] ?? '') === 'reset') {
+    $token = (string)($_POST['token'] ?? '');
+    $pw = $_POST['password'] ?? ''; $pw2 = $_POST['password2'] ?? '';
+    if (!reset_geldig($token)) { $error = 'Deze link is verlopen of al gebruikt. Vraag een nieuwe aan.'; }
+    elseif (strlen($pw) < 10) { $error = 'Kies een wachtwoord van minimaal 10 tekens.'; $_GET['reset'] = $token; }
+    elseif ($pw !== $pw2) { $error = 'De twee wachtwoorden zijn niet gelijk.'; $_GET['reset'] = $token; }
+    else {
+        $config['password_hash'] = password_hash($pw, PASSWORD_DEFAULT);
+        save_config($config);
+        @unlink(RESET_FILE);
+        @unlink(LOGIN_LIMIT_FILE);
+        session_regenerate_id(true);
+        $_SESSION['ff_admin'] = true;
+        unset($_SESSION['ff_demo']);
+        $_SESSION['ff_notice'] = 'Je nieuwe wachtwoord is opgeslagen. Je bent ingelogd.';
+        header('Location: admin.php'); exit;
+    }
+}
+$resetToken = ($config && isset($_GET['reset']) && reset_geldig($_GET['reset'])) ? (string)$_GET['reset'] : '';
+$resetFout = $config && isset($_GET['reset']) && $resetToken === '';
+$toonVergeten = $config && isset($_GET['vergeten']);
+
 if (isset($_GET['logout'])) {
     $_SESSION = [];
     session_destroy();
@@ -1708,16 +1897,43 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
       <button class="btn" type="submit">Opslaan en beginnen</button>
     </form>
   </main>
+<?php elseif (!$logged_in && $resetToken !== ''): ?>
+  <main class="wrap login">
+    <h1>Nieuw wachtwoord kiezen</h1>
+    <p class="sub"><?= h(st('naam')) ?></p>
+    <?php if ($error): ?><div class="err"><?= h($error) ?></div><?php endif; ?>
+    <form class="formcard" method="post" action="admin.php">
+      <input type="hidden" name="action" value="reset" />
+      <input type="hidden" name="token" value="<?= h($resetToken) ?>" />
+      <div class="field"><label for="npw">Nieuw wachtwoord (minimaal 10 tekens)</label><input type="password" id="npw" name="password" autocomplete="new-password" required minlength="10" autofocus /></div>
+      <div class="field"><label for="npw2">Herhaal nieuw wachtwoord</label><input type="password" id="npw2" name="password2" autocomplete="new-password" required minlength="10" /></div>
+      <button class="btn" type="submit">Opslaan en inloggen</button>
+    </form>
+  </main>
+<?php elseif (!$logged_in && $toonVergeten): ?>
+  <main class="wrap login">
+    <h1>Wachtwoord vergeten</h1>
+    <p class="sub">Vul het e-mailadres in waarmee je inlogt. Je krijgt een mail met een link om een nieuw wachtwoord te kiezen.</p>
+    <?php if ($error): ?><div class="err"><?= h($error) ?></div><?php endif; ?>
+    <form class="formcard" method="post" action="admin.php?vergeten=1">
+      <input type="hidden" name="action" value="vergeten" />
+      <div class="field"><label for="vem">E-mailadres</label><input type="email" id="vem" name="email" autocomplete="username" autofocus required /></div>
+      <div class="row"><button class="btn" type="submit">Stuur mij een link</button><a class="btn ghost" href="admin.php">Terug naar inloggen</a></div>
+    </form>
+  </main>
 <?php elseif (!$logged_in): ?>
   <main class="wrap login">
     <h1>Inloggen</h1>
     <p class="sub"><?= h(st('naam')) ?></p>
+    <?php if ($resetFout): ?><div class="err">Deze link is verlopen of al gebruikt. Vraag hieronder via "Wachtwoord vergeten?" een nieuwe aan.</div><?php endif; ?>
+    <?php if ($notice): ?><div class="ok"><?= h($notice) ?></div><?php endif; ?>
     <?php if ($error): ?><div class="err"><?= h($error) ?></div><?php endif; ?>
     <form class="formcard" method="post">
       <input type="hidden" name="action" value="login" />
       <div class="field"><label for="em">E-mailadres</label><input type="email" id="em" name="email" autocomplete="username" autofocus required value="<?= h($_POST['email'] ?? '') ?>" /></div>
       <div class="field"><label for="pw">Wachtwoord</label><input type="password" id="pw" name="password" autocomplete="current-password" required /></div>
       <button class="btn" type="submit">Inloggen</button>
+      <p class="hint" style="margin-top:14px"><a href="admin.php?vergeten=1">Wachtwoord vergeten?</a></p>
     </form>
     <?php if ($demoEnabled): ?>
       <div class="formcard" style="text-align:center">
@@ -1739,6 +1955,9 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
       </div>
     </div>
   </header>
+  <?php if (!$is_demo && !empty($LIC['waarschuwing'])): ?>
+  <div class="demobar" style="background:#ff9b9b"><div class="wrap">Je laatste betaling voor deze website is niet gelukt. Regel het vóór <?= h(nl_datum($LIC['offlineOp'] ?? '')) ?>, anders gaat je website offline. <a href="<?= h(betaal_link()) ?>">Betaling regelen</a></div></div>
+  <?php endif; ?>
   <?php if ($is_demo): ?>
   <div class="demobar"><div class="wrap">Demo: je kijkt mee in een voorbeeld-admin. Opslaan, wijzigen en verwijderen staan uit. <a href="admin.php?logout=1">Demo afsluiten</a></div></div>
   <?php endif; ?>
