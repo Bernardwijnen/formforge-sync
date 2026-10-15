@@ -1199,7 +1199,7 @@ if (!$config && ($_POST['action'] ?? '') === 'setup') {
         rebuild_everything(load_pages());
         session_regenerate_id(true);
         $_SESSION['ff_admin'] = true;
-        $_SESSION['ff_notice'] = 'Gelukt. Vul nu de instellingen in: bedrijfsnaam, contactgegevens en diensten.';
+        $_SESSION['ff_notice'] = 'Gelukt. Vul nu de instellingen in: bedrijfsnaam, contactgegevens en diensten. Later inloggen? Klik helemaal onderaan je website op Inloggen, of ga naar ' . site_url() . '/admin.php.';
         header('Location: admin.php?instellingen=1'); exit;
     }
 }
