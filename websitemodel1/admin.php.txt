@@ -1214,6 +1214,7 @@ if ($config && ($_POST['action'] ?? '') === 'login') {
         if ($okMail && $okPw) {
             session_regenerate_id(true);
             $_SESSION['ff_admin'] = true;
+            unset($_SESSION['ff_demo']);
             header('Location: admin.php'); exit;
         }
         login_failed();
@@ -1225,7 +1226,26 @@ if (isset($_GET['logout'])) {
     session_destroy();
     header('Location: admin.php'); exit;
 }
-$logged_in = $config && !empty($_SESSION['ff_admin']);
+
+/* Demo-modus: staat er een bestand data/demo-aan.txt, dan kan iedereen de admin
+   bekijken via admin.php?demo=1. Opslaan, wijzigen en verwijderen staan dan uit,
+   en aanvragen en inloggegevens worden niet getoond. */
+define('DEMO_FILE', DATA_DIR . '/demo-aan.txt');
+$demoEnabled = $config && file_exists(DEMO_FILE);
+if ($demoEnabled && isset($_GET['demo']) && empty($_SESSION['ff_admin'])) {
+    session_regenerate_id(true);
+    $_SESSION['ff_demo'] = true;
+    header('Location: admin.php'); exit;
+}
+$is_demo = $demoEnabled && !empty($_SESSION['ff_demo']) && empty($_SESSION['ff_admin']);
+if ($is_demo && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') {
+    $_SESSION['ff_notice'] = 'Dit is de demo. Opslaan, wijzigen en verwijderen staan uit. Met je eigen website kan dat natuurlijk wel.';
+    $back = 'admin.php';
+    $ref = (string)($_SERVER['HTTP_REFERER'] ?? '');
+    if (preg_match('#/admin\.php(\?[a-z0-9=&_.\-]*)?$#i', $ref, $m)) { $back = 'admin.php' . ($m[1] ?? ''); }
+    header('Location: ' . $back); exit;
+}
+$logged_in = $config && (!empty($_SESSION['ff_admin']) || $is_demo);
 
 /* ===========================================================
    Acties
@@ -1511,6 +1531,9 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
   .aanvraag .acontact{display:flex;gap:16px;flex-wrap:wrap;margin:8px 0;}
   .aanvraag .acontact a{color:#8fb3ff;font-weight:600;text-decoration:none;}
   .aanvraag .abericht{line-height:1.55;}
+  .demobar{background:#f5c400;color:#111;font-weight:600;font-size:14.5px;}
+  .demobar .wrap{padding-top:10px;padding-bottom:10px;}
+  .demobar a{color:#111;margin-left:8px;}
 </style>
 </head>
 <body>
@@ -1541,6 +1564,12 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
       <div class="field"><label for="pw">Wachtwoord</label><input type="password" id="pw" name="password" autocomplete="current-password" required /></div>
       <button class="btn" type="submit">Inloggen</button>
     </form>
+    <?php if ($demoEnabled): ?>
+      <div class="formcard" style="text-align:center">
+        <p class="sub" style="margin:0 0 12px">Wil je alleen rondkijken? Bekijk de admin zonder in te loggen. Je kunt dan niets wijzigen.</p>
+        <a class="btn ghost" href="admin.php?demo=1">Bekijk de demo</a>
+      </div>
+    <?php endif; ?>
   </main>
 <?php else: ?>
   <header class="bar">
@@ -1555,12 +1584,19 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
       </div>
     </div>
   </header>
+  <?php if ($is_demo): ?>
+  <div class="demobar"><div class="wrap">Demo: je kijkt mee in een voorbeeld-admin. Opslaan, wijzigen en verwijderen staan uit. <a href="admin.php?logout=1">Demo afsluiten</a></div></div>
+  <?php endif; ?>
   <main>
     <div class="wrap">
       <?php if ($error): ?><div class="err"><?= h($error) ?></div><?php endif; ?>
       <?php if ($notice): ?><div class="ok"><?= h($notice) ?></div><?php endif; ?>
 
-      <?php if ($showAccount): ?>
+      <?php if ($showAccount && $is_demo): ?>
+        <h1>Inloggegevens</h1>
+        <p class="sub">Hier wijzig je met je eigen website het e-mailadres en wachtwoord waarmee je inlogt. In de demo is dit scherm verborgen.</p>
+
+      <?php elseif ($showAccount): ?>
         <h1>Inloggegevens</h1>
         <p class="sub">Wijzig het e-mailadres en/of het wachtwoord waarmee je inlogt.</p>
         <form class="formcard" method="post">
@@ -1782,6 +1818,14 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
           <?php endforeach; ?>
         </div>
 
+        <?php if ($is_demo): ?>
+        <div class="toolbar" style="margin-top:44px;">
+          <div>
+            <h1>Aanvragen</h1>
+            <p class="sub" style="margin:0;">Hier zie je met je eigen website alle berichten uit het contactformulier, met naam, telefoon en e-mail. Ze worden ook naar je mail gestuurd. In de demo zijn ze verborgen.</p>
+          </div>
+        </div>
+        <?php else: ?>
         <?php $aanvragen = load_aanvragen(); ?>
         <div class="toolbar" style="margin-top:44px;">
           <div>
@@ -1805,6 +1849,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
               </div>
             <?php endforeach; ?>
           </div>
+        <?php endif; ?>
         <?php endif; ?>
       <?php endif; ?>
     </div>
