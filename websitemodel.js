@@ -396,6 +396,34 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
     }
   });
 
-  console.log("Websitemodel geladen. Prijs ingesteld: " + (PRICE_ID ? "ja" : "nee") + ", FTP-pakket: " + (ftp ? "ja" : "nee"));
+  /* ===========================================================
+     Stijlen: de lijst die elke beheerpagina ophaalt.
+     Staat in websitemodel1/stijlen.json. Voeg je daar een stijl aan
+     toe, dan zien alle klanten hem vanzelf (binnen ongeveer 12 uur).
+     =========================================================== */
+  const STIJLEN_FILE = path.join(MODEL_DIR, "stijlen.json");
+  let stijlenCache = null, stijlenTijd = 0;
+  function leesStijlen(){
+    if(stijlenCache && Date.now() - stijlenTijd < 5 * 60 * 1000) return stijlenCache;
+    try{
+      const d = JSON.parse(fs.readFileSync(STIJLEN_FILE, "utf8"));
+      const uit = {};
+      for(const [k, v] of Object.entries((d && d.stijlen) || {})){
+        if(!/^[a-z][a-z0-9-]{1,30}$/.test(k) || !v || !String(v.naam || "").trim()) continue;
+        uit[k] = { naam: String(v.naam), tekst: String(v.tekst || ""), fonts: String(v.fonts || ""), css: String(v.css || ""), grote_foto: !!v.grote_foto };
+      }
+      stijlenCache = uit; stijlenTijd = Date.now();
+    }catch(e){
+      console.error("Websitemodel: stijlen.json lezen mislukt:", (e && e.message) || e);
+      if(!stijlenCache) stijlenCache = {};
+    }
+    return stijlenCache;
+  }
+  app.get("/api/website/stijlen", (req, res) => {
+    res.set("Cache-Control", "public, max-age=300");
+    res.json({ stijlen: leesStijlen() });
+  });
+
+  console.log("Websitemodel geladen. Prijs ingesteld: " + (PRICE_ID ? "ja" : "nee") + ", FTP-pakket: " + (ftp ? "ja" : "nee") + ", stijlen: " + Object.keys(leesStijlen()).length);
   return {};
 };
