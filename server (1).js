@@ -1,0 +1,14653 @@
+const express = require("express");
+const cors = require("cors");
+const multer = require("multer");
+const fs = require("fs");
+const path = require("path");
+const crypto = require("crypto");
+
+const upload = multer({
+  dest: path.join(__dirname, "uploads")
+});
+
+// Aparte multer voor kamer-media: in GEHEUGEN (vluchtig, verdwijnt vanzelf),
+// met een groottelimiet zodat de server niet volloopt.
+const ROOM_MEDIA_MAX_BYTES = 25 * 1024 * 1024; // 25 MB
+const roomMediaUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: ROOM_MEDIA_MAX_BYTES }
+});
+
+let webpush = null;
+try{
+  webpush = require("web-push");
+}catch(err){
+  console.warn("web-push niet geladen. Pushmeldingen blijven uitgeschakeld.");
+}
+
+const app = express();
+const PORT = process.env.PORT || 10000;
+
+app.use(cors({ origin: true }));
+
+/* ---- WACHTER: verzoekmeter ----------------------------------------------
+   Deze middleware moet BOVEN alle routes staan, want alleen dan ziet hij
+   elk verzoek. Hij meet alleen de duur en de statuscode en verandert niets
+   aan het verzoek zelf. De verwerking gebeurt in het WACHTER-blok verderop
+   (vlak boven app.listen). ------------------------------------------------ */
+app.use((req, res, next) => {
+  const _wdStart = Date.now();
+  res.on("finish", () => {
+    try{ wdVerzoekKlaar(req, res, Date.now() - _wdStart); }catch(e){}
+  });
+  next();
+});
+
+/* ---- Vaste bestanden (iconen, logo's, PDF's) ----
+   Alles wat in de map "icons" naast server.js staat, wordt hier uitgeserveerd
+   op /icons/<bestandsnaam>. Zo kun je een afbeelding gewoon via GitHub
+   uploaden en is hij meteen live, zonder FTP en zonder WebReus.
+
+   Bijvoorbeeld: icons/guesttalk-icon-180.png wordt
+   https://formforge-sync-1.onrender.com/icons/guesttalk-icon-180.png
+
+   Alleen lezen, alleen die ene map, en een jaar cache omdat een icoon toch
+   niet verandert (verander je hem wel, geef het bestand dan een nieuwe naam). */
+app.use("/icons", express.static(path.join(__dirname, "icons"), {
+  maxAge: "365d",
+  fallthrough: true,
+  index: false,
+  dotfiles: "ignore"
+}));
+
+/* De bestanden van DeepFilterNet3, de ruisonderdrukking van Guesttalk.
+
+   Ze kwamen eerst van een CDN van een ander bedrijf. Dat werkte, maar als dat
+   adres ooit offline gaat, valt de ruisonderdrukking bij al onze klanten stil.
+   Daarom serveren we ze nu zelf uit.
+
+   Verwachte indeling in de map dfn van deze repo:
+     dfn/v3/pkg/df_bg.wasm
+     dfn/v3/models/DeepFilterNet3_onnx.tar.gz
+   (Het pakket zoekt in v3, niet in v2. Deze regels stonden nog op v2 en
+    dat klopte niet met wat er in de repo staat.)
+
+   De pagina draait op formforge.nl en haalt ze hiervandaan, dus de
+   toestemmingskop moet mee. Het cors() hierboven regelt dat al; voor de
+   zekerheid zetten we hem hier ook expliciet. */
+app.use("/dfn", express.static(path.join(__dirname, "dfn"), {
+  maxAge: "365d",
+  fallthrough: true,
+  index: false,
+  dotfiles: "ignore",
+  setHeaders: (res, bestandspad) => {
+    res.set("Access-Control-Allow-Origin", "*");
+    if(bestandspad.endsWith(".wasm")) res.type("application/wasm");
+  }
+}));
+
+/* De bestanden van YAMNet, de geluidsherkenning van Guesttalk. Die bepaalt in
+   de browser of er echt een stem spreekt voordat er iets vertaald wordt.
+
+   Verwachte indeling in de map yamnet van deze repo:
+     yamnet/model.json
+     yamnet/group1-shard1of4.bin  (en 2, 3, 4)
+
+   Let op: die vier .bin-bestanden zijn binair. Uploaden via GitHub mag,
+   maar NOOIT bewerken of hernoemen via het potloodje: dan worden ze leeg. */
+app.use("/yamnet", express.static(path.join(__dirname, "yamnet"), {
+  maxAge: "365d",
+  fallthrough: true,
+  index: false,
+  dotfiles: "ignore",
+  setHeaders: (res) => { res.set("Access-Control-Allow-Origin", "*"); }
+}));
+
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+// Apart (sterker) model voor de stadsgids-vertalingen. gpt-4o vertaalt veel
+// natuurlijker dan gpt-4o-mini, vooral naar talen als Thai, Hindi, Arabisch en
+// Vietnamees. Instelbaar via Render Environment Variable OPENAI_GUIDE_MODEL.
+const OPENAI_GUIDE_MODEL = process.env.OPENAI_GUIDE_MODEL || "gpt-4o";
+/* Het model dat de tolk gebruikt om te vertalen. Standaard hetzelfde als het
+   gidsmodel, want vertaalkwaliteit weegt hier zwaarder dan de prijs. */
+const TOLK_MODEL = process.env.TOLK_MODEL || OPENAI_GUIDE_MODEL || OPENAI_MODEL;
+// Apart model voor de korte gast<->hotel chatberichten. Standaard hetzelfde
+// model als de gids, dus zonder deze variabele verandert er niets. Zet
+// OPENAI_CHAT_MODEL op gpt-4o-mini om op de chat te besparen; de gidsteksten
+// (die jaren blijven staan) blijven dan gewoon op het sterke model.
+const OPENAI_CHAT_MODEL = process.env.OPENAI_CHAT_MODEL || OPENAI_GUIDE_MODEL;
+
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || "";
+const STRIPE_DEFAULT_PRICE_ID = process.env.STRIPE_PRICE_ID || "";
+const STRIPE_SUCCESS_URL = process.env.STRIPE_SUCCESS_URL || "https://formforge.nl/e-c-h-o-connect/?paid=1";
+const STRIPE_CANCEL_URL = process.env.STRIPE_CANCEL_URL || "https://formforge.nl/e-c-h-o-connect/?canceled=1";
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
+
+const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
+const FROM_EMAIL = process.env.FROM_EMAIL || "info@formforge.nl";
+
+let stripeClient = null;
+try{
+  if(STRIPE_SECRET_KEY){
+    stripeClient = require("stripe")(STRIPE_SECRET_KEY);
+  }
+}catch(err){
+  console.warn("stripe package niet geladen. Stripe webhook verificatie blijft beperkt.");
+}
+
+const ECHO_STARTER_FREE_CREDITS = Number(process.env.ECHO_STARTER_FREE_CREDITS || 10);
+const FORMFORGE_FREE_DAILY_LIMIT = Number(process.env.FORMFORGE_FREE_DAILY_LIMIT || 1);
+const STARTER_FREE_CREDITS = FORMFORGE_FREE_DAILY_LIMIT;
+const UNLIMITED_FAIR_USE_CREDITS = Number(process.env.FORMFORGE_PRO_DAILY_LIMIT || process.env.ECHO_UNLIMITED_FAIR_USE_CREDITS || 999999);
+
+const FORMFORGE_AI_PLUS_DAILY_LIMIT = Number(process.env.FORMFORGE_AI_PLUS_DAILY_LIMIT || 25);
+const FORMFORGE_AI_PRO_DAILY_LIMIT = Number(process.env.FORMFORGE_AI_PRO_DAILY_LIMIT || 999999);
+
+const STRIPE_FORMFORGE_AI_PLUS_PRICE_ID = process.env.STRIPE_FORMFORGE_AI_PLUS_PRICE_ID || "price_1TcRWw5s8MDSsy0eIJ0cB63N";
+const STRIPE_FORMFORGE_AI_PRO_PRICE_ID = process.env.STRIPE_FORMFORGE_AI_PRO_PRICE_ID || "price_1TcRZk5s8MDSsy0ehhdgwvs2";
+const STRIPE_UNLIMITED_PRICE_ID = process.env.STRIPE_UNLIMITED_PRICE_ID || "price_1TaI0q5s8MDSsy0eL2NZqIpD";
+const STRIPE_MERCHANT_PRICE_ID = process.env.STRIPE_MERCHANT_PRICE_ID || "price_1TixHV5s8MDSsy0eVXyFZsz1";
+
+const STRIPE_CREDITS_100_PRICE_ID = process.env.STRIPE_CREDITS_100_PRICE_ID || "price_1TaHrD5s8MDSsy0eV1krtPFL";
+const STRIPE_CREDITS_500_PRICE_ID = process.env.STRIPE_CREDITS_500_PRICE_ID || "price_1TaHxD5s8MDSsy0eVrOvmYPM";
+const STRIPE_CREDITS_1500_PRICE_ID = process.env.STRIPE_CREDITS_1500_PRICE_ID || "price_1TaHz15s8MDSsy0eMKRMDbxN";
+
+/* De pakketten 100, 500 en 1500 horen bij de AI van het offerte- en
+   factuurprogramma. Worldchat heeft eigen pakketten met eigen prijzen; die
+   staan hieronder onder wc1000, wc5000 en wc15000. Ze delen wel dezelfde
+   creditpot per e-mailadres. */
+/* De bedragen staan hier alleen om ze op de knoppen te tonen. Wat er echt
+   afgerekend wordt bepaalt Stripe; wijzig je daar de prijs, pas dan ook deze
+   regels aan, anders staat er iets anders op de knop dan op de rekening. */
+const WORLDCHAT_PRIJS_1000 = String(process.env.WORLDCHAT_PRIJS_1000 || "9,95").trim();
+const WORLDCHAT_PRIJS_5000 = String(process.env.WORLDCHAT_PRIJS_5000 || "14,95").trim();
+const WORLDCHAT_PRIJS_15000 = String(process.env.WORLDCHAT_PRIJS_15000 || "34,95").trim();
+
+const WORLDCHAT_CREDITS_1000_PRICE_ID = String(process.env.WORLDCHAT_CREDITS_1000_PRICE_ID || "price_1U5kar5s8MDSsy0eFOhWiVbl").trim();
+const WORLDCHAT_CREDITS_5000_PRICE_ID = String(process.env.WORLDCHAT_CREDITS_5000_PRICE_ID || "price_1U5kcb5s8MDSsy0eXReLMRZV").trim();
+const WORLDCHAT_CREDITS_15000_PRICE_ID = String(process.env.WORLDCHAT_CREDITS_15000_PRICE_ID || "price_1U5kdg5s8MDSsy0eOKDhw0Jv").trim();
+
+const CREDIT_PACKAGES = {
+  "100": { credits: 100, priceId: STRIPE_CREDITS_100_PRICE_ID, label: "FormForge ECHO 100 AI credits" },
+  "500": { credits: 500, priceId: STRIPE_CREDITS_500_PRICE_ID, label: "FormForge ECHO 500 AI credits" },
+  "1500": { credits: 1500, priceId: STRIPE_CREDITS_1500_PRICE_ID, label: "FormForge ECHO 1500 AI credits" },
+  "wc1000":  { credits: 1000,  priceId: WORLDCHAT_CREDITS_1000_PRICE_ID,  label: "Worldchat United 1.000 credits",  prijs: WORLDCHAT_PRIJS_1000 },
+  "wc5000":  { credits: 5000,  priceId: WORLDCHAT_CREDITS_5000_PRICE_ID,  label: "Worldchat United 5.000 credits",  prijs: WORLDCHAT_PRIJS_5000 },
+  "wc15000": { credits: 15000, priceId: WORLDCHAT_CREDITS_15000_PRICE_ID, label: "Worldchat United 15.000 credits", prijs: WORLDCHAT_PRIJS_15000 }
+};
+
+// HTML-escape voor gebruik in e-mailtemplates (ondernemer/hotel).
+// Voorkomt dat een naam met &, <, > of quotes de HTML breekt.
+function escapeHtml(value){
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function getCreditPackageByPriceId(priceId){
+  const safePriceId = String(priceId || "").trim();
+  return Object.values(CREDIT_PACKAGES).find((pkg) => pkg.priceId === safePriceId) || null;
+}
+
+function currentPremiumDay(){
+  return new Date().toISOString().slice(0, 10);
+}
+
+function normalizeAiPlan(value){
+  const plan = String(value || "").trim().toLowerCase();
+  if(plan === "ai_plus" || plan === "plus" || plan === "formforge_ai_plus") return "plus";
+  if(plan === "ai_pro" || plan === "pro" || plan === "unlimited" || plan === "formforge_ai_pro") return "pro";
+  if(plan === "credits" || plan === "credit" || plan === "losse_credits" || plan === "credit_pack") return "credits";
+  if(plan === "starter" || plan === "free" || plan === "gratis") return "starter";
+  return plan || "starter";
+}
+
+function getAiPlanByPriceId(priceId){
+  const id = String(priceId || "").trim();
+  if(id && id === STRIPE_FORMFORGE_AI_PLUS_PRICE_ID) return "plus";
+  if(id && id === STRIPE_FORMFORGE_AI_PRO_PRICE_ID) return "pro";
+  if(id && id === STRIPE_UNLIMITED_PRICE_ID) return "pro";
+  if(getCreditPackageByPriceId(id)) return "credits";
+  return "";
+}
+
+function getAiPlanDailyLimit(plan){
+  const normalized = normalizeAiPlan(plan);
+  if(normalized === "plus") return FORMFORGE_AI_PLUS_DAILY_LIMIT;
+  if(normalized === "pro") return FORMFORGE_AI_PRO_DAILY_LIMIT;
+  return FORMFORGE_FREE_DAILY_LIMIT;
+}
+
+function getAiPlanLabel(plan){
+  const normalized = normalizeAiPlan(plan);
+  if(normalized === "plus") return "FormForge AI Plus";
+  if(normalized === "pro") return "FormForge AI Pro";
+  if(normalized === "credits") return "Losse AI credits";
+  return "Gratis";
+}
+
+function getDailyUsage(account){
+  const day = currentPremiumDay();
+  const savedDay = String(account && account.aiUsageDate ? account.aiUsageDate : "");
+  const used = savedDay === day ? Number(account && account.aiUsedToday ? account.aiUsedToday : 0) : 0;
+  const plan = normalizeAiPlan(account && account.plan ? account.plan : "starter");
+
+  if(plan === "credits"){
+    const creditRemaining = Math.max(0, Math.floor(Number(account && account.creditsRemaining ? account.creditsRemaining : 0)));
+    const creditTotal = Math.max(creditRemaining, Math.floor(Number(account && account.creditsTotal ? account.creditsTotal : creditRemaining)));
+    return { day, used, limit: creditTotal, remaining: creditRemaining };
+  }
+
+  const limit = getAiPlanDailyLimit(plan);
+  const remaining = plan === "pro" ? limit : Math.max(0, limit - used);
+  return { day, used, limit, remaining };
+}
+
+const DATA_DIR = process.env.ECHO_DATA_DIR || "/opt/render/project/src/data";
+
+try{
+  if(!fs.existsSync(DATA_DIR)){
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+}catch(err){
+  console.warn("Data map kon niet worden aangemaakt:", err.message || String(err));
+}
+
+// Map voor ondernemer-foto's op de blijvende schijf (Render Disk)
+const PHOTOS_DIR = path.join(DATA_DIR, "fotos");
+try{
+  if(!fs.existsSync(PHOTOS_DIR)) fs.mkdirSync(PHOTOS_DIR, { recursive: true });
+}catch(err){
+  console.warn("Foto-map kon niet worden aangemaakt:", err.message || String(err));
+}
+
+/* De zorgzinnen, politiezinnen en de tolk staan in tolk.js (ingeladen onderaan, voor het 404-vangnet). */
+
+
+const PREMIUM_STORE_FILE = path.join(DATA_DIR, "echo_premium_accounts.json");
+const premiumAccounts = new Map();
+
+function currentPremiumMonth(){
+  return new Date().toISOString().slice(0, 7);
+}
+
+function loadPremiumAccounts(){
+  try{
+    if(!fs.existsSync(PREMIUM_STORE_FILE)) return;
+    const raw = fs.readFileSync(PREMIUM_STORE_FILE, "utf8");
+    const data = JSON.parse(raw || "{}");
+    Object.keys(data || {}).forEach((key) => {
+      if(key && data[key]){
+        premiumAccounts.set(key, data[key]);
+      }
+    });
+  }catch(err){
+    console.warn("Premium accounts konden niet worden geladen:", err.message || String(err));
+  }
+}
+
+function savePremiumAccounts(){
+  try{
+    const data = {};
+    for(const [key, value] of premiumAccounts.entries()){
+      data[key] = value;
+    }
+    safeWriteFileSync(PREMIUM_STORE_FILE, JSON.stringify(data, null, 2));
+  }catch(err){
+    console.warn("Premium accounts konden niet worden opgeslagen:", err.message || String(err));
+  }
+}
+
+function normalizePremiumKey(value){
+  return String(value || "").trim().toLowerCase();
+}
+
+function normalizeAppSource(value){
+  const source = String(value || "").trim().toLowerCase();
+  if(source === "echo" || source === "translator" || source === "vertaler" || source === "echo_live" || source === "echo-live") return "echo";
+  if(source === "formforge" || source === "offerte" || source === "offertes" || source === "factuur" || source === "facturen" || source === "quote" || source === "invoice") return "formforge";
+  return "formforge";
+}
+
+function detectAppSourceFromReq(req){
+  const body = req && req.body ? req.body : {};
+  const query = req && req.query ? req.query : {};
+  const direct = body.source || body.appSource || body.app || body.product || body.module || query.source || query.appSource || query.app || query.product || query.module || "";
+  if(direct) return normalizeAppSource(direct);
+  const ref = String((req && req.headers && (req.headers.referer || req.headers.referrer)) || "").toLowerCase();
+  if(ref.includes("offerte") || ref.includes("factuur") || ref.includes("invoice") || ref.includes("quote")) return "formforge";
+  if(ref.includes("translator") || ref.includes("vertaler") || ref.includes("echo")) return "echo";
+  return "formforge";
+}
+
+function buildPremiumAccountKey(email, source){
+  const safeEmail = normalizePremiumKey(email);
+  if(!safeEmail) return "";
+  if(isOwnerPremiumEmail(safeEmail)) return safeEmail;
+  return normalizeAppSource(source) + ":" + safeEmail;
+}
+
+const OWNER_PREMIUM_EMAIL = "info@generaalprojecten.nl";
+const OWNER_PREMIUM_PIN = "654321";
+
+// Vaste Unlimited-eigenaaradressen (altijd actief, voor eigen gebruik/testen).
+// Hardcoded naast eventuele extra adressen uit een Render-instelling.
+const OWNER_PREMIUM_EMAILS_FIXED = [
+  "info@generaalprojecten.nl",
+  "bernardwijnen@gmail.com"
+].map(e => normalizePremiumKey(e)).filter(Boolean);
+
+const EXTRA_OWNER_EMAILS = String(process.env.OWNER_PREMIUM_EMAILS || "")
+  .split(",")
+  .map(e => normalizePremiumKey(e))
+  .filter(Boolean);
+
+const ALL_OWNER_EMAILS = Array.from(new Set([...OWNER_PREMIUM_EMAILS_FIXED, ...EXTRA_OWNER_EMAILS]));
+
+function isOwnerPremiumEmail(value){
+  const v = normalizePremiumKey(value);
+  if(!v) return false;
+  return ALL_OWNER_EMAILS.includes(v);
+}
+
+/* Een account van hetzelfde e-mailadres kan onder meerdere sleutels in de
+   opslag staan:
+     - de kale e-mail          (zo schrijven de Stripe-webhook, confirm-session
+                                en link-subscription weg)
+     - "formforge:" + e-mail   (zo schrijft de offerte/factuur-app weg)
+     - "echo:" + e-mail        (zo schrijft de vertaler-app weg)
+   Wie maar een van die sleutels bijwerkt, krijgt een account dat op de ene
+   plek opgezegd is en op de andere plek gewoon doorloopt. Onderstaande twee
+   hulpjes voorkomen dat. */
+function premiumAccountKeys(value){
+  const bare = normalizePremiumKey(value);
+  if(!bare) return [];
+  if(isOwnerPremiumEmail(bare)) return [bare];
+  return [bare, "formforge:" + bare, "echo:" + bare];
+}
+/* Alleen de sleutels die echt bestaan. Maakt zelf nooit een account aan. */
+function existingPremiumAccountKeys(value){
+  return premiumAccountKeys(value).filter(k => premiumAccounts.has(k));
+}
+
+function buildOwnerPremiumAccount(email){
+  const ownerEmail = normalizePremiumKey(email) || OWNER_PREMIUM_EMAIL;
+  return {
+    active: true,
+    email: ownerEmail,
+    key: ownerEmail,
+    plan: "pro",
+    planLabel: "FormForge AI Pro",
+    premiumPin: OWNER_PREMIUM_PIN,
+    subscriptionStatus: "active",
+    source: "owner",
+    reason: "owner-account-always-active",
+    aiUsageDate: currentPremiumDay(),
+    aiUsedToday: 0,
+    aiDailyLimit: FORMFORGE_AI_PRO_DAILY_LIMIT,
+    aiRemainingToday: FORMFORGE_AI_PRO_DAILY_LIMIT,
+    creditsRemaining: FORMFORGE_AI_PRO_DAILY_LIMIT,
+    creditsTotal: FORMFORGE_AI_PRO_DAILY_LIMIT,
+    creditMonth: currentPremiumDay(),
+    starterCreditsGranted: true,
+    deviceId: "",
+    activeDeviceId: "",
+    deviceBoundAt: "",
+    deviceLastSeenAt: "",
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function ensureOwnerPremiumAccount(email){
+  const ownerEmail = normalizePremiumKey(email) || OWNER_PREMIUM_EMAIL;
+  return setPremiumAccount(ownerEmail, buildOwnerPremiumAccount(ownerEmail));
+}
+
+function getOwnerPremiumStatus(email){
+  const ownerEmail = normalizePremiumKey(email) || OWNER_PREMIUM_EMAIL;
+  const account = ensureOwnerPremiumAccount(ownerEmail);
+  const usage = getDailyUsage(account);
+  return {
+    premium: true,
+    active: true,
+    pinRequired: false,
+    pinOk: true,
+    deviceRequired: false,
+    deviceConflict: false,
+    deviceMessage: "",
+    deviceId: "",
+    activeDeviceId: "",
+    activeDeviceLabel: "Eigenaar",
+    creditsRemaining: FORMFORGE_AI_PRO_DAILY_LIMIT,
+    creditsTotal: FORMFORGE_AI_PRO_DAILY_LIMIT,
+    creditMonth: usage.day,
+    aiUsedToday: 0,
+    aiDailyLimit: FORMFORGE_AI_PRO_DAILY_LIMIT,
+    aiRemainingToday: FORMFORGE_AI_PRO_DAILY_LIMIT,
+    plan: "pro",
+    planLabel: "FormForge AI Pro",
+    starterCreditsGranted: true,
+    email: ownerEmail,
+    subscriptionId: "",
+    subscriptionStatus: "active",
+    periodStart: "",
+    periodEnd: "",
+    currentPeriodStart: "",
+    currentPeriodEnd: "",
+    nextPaymentDate: "",
+    cancelAtPeriodEnd: false,
+    cancelAt: "",
+    canceledAt: "",
+    trialEnd: "",
+    reason: "owner-account-always-active",
+    updatedAt: account ? String(account.updatedAt || "") : new Date().toISOString()
+  };
+}
+
+
+function normalizePremiumPin(value){
+  return String(value || "").trim().replace(/\D/g, "");
+}
+
+function makePremiumPin(){
+  try{
+    return String(crypto.randomInt(100000, 1000000));
+  }catch(err){
+    return String(Math.floor(100000 + Math.random() * 900000));
+  }
+}
+
+function verifyPremiumPin(account, pin){
+  if(!account || !account.premiumPin) return false;
+  return normalizePremiumPin(pin) === normalizePremiumPin(account.premiumPin);
+}
+
+function normalizeDeviceId(value){
+  return String(value || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9._:-]/g, "")
+    .slice(0, 120);
+}
+
+function deviceLabel(deviceId){
+  const safe = normalizeDeviceId(deviceId);
+  if(!safe) return "";
+  if(safe.length <= 12) return safe;
+  return safe.slice(0, 6) + "..." + safe.slice(-6);
+}
+
+function getRequestDeviceId(req){
+  const body = req && req.body ? req.body : {};
+  const query = req && req.query ? req.query : {};
+  return normalizeDeviceId(
+    body.deviceId ||
+    body.device_id ||
+    body.formforgeDeviceId ||
+    query.deviceId ||
+    query.device_id ||
+    query.formforgeDeviceId ||
+    ""
+  );
+}
+
+function checkAccountDevice(account, deviceId, options){
+  const opts = options || {};
+  const safeDeviceId = normalizeDeviceId(deviceId);
+  const accountDeviceId = normalizeDeviceId(account && (account.deviceId || account.activeDeviceId) ? (account.deviceId || account.activeDeviceId) : "");
+  const requireDevice = opts.requireDevice !== false;
+
+  if(!account || !account.active){
+    return { ok: true, deviceId: safeDeviceId, accountDeviceId };
+  }
+
+  const lockedPlan = normalizeAiPlan(account.plan || "starter");
+  if(lockedPlan === "starter" || lockedPlan === "credits"){
+    return { ok: true, deviceId: safeDeviceId, accountDeviceId };
+  }
+
+  if(requireDevice && !safeDeviceId){
+    return {
+      ok: false,
+      status: 428,
+      code: "DEVICE_REQUIRED",
+      deviceRequired: true,
+      message: "Apparaatcontrole is actief. Open FormForge opnieuw of ververs de pagina zodat dit toestel gekoppeld kan worden."
+    };
+  }
+
+  if(accountDeviceId && safeDeviceId && accountDeviceId !== safeDeviceId){
+    return {
+      ok: false,
+      status: 409,
+      code: "DEVICE_CONFLICT",
+      deviceConflict: true,
+      deviceId: safeDeviceId,
+      accountDeviceId,
+      message: "Dit FormForge AI abonnement is al actief op een ander toestel."
+    };
+  }
+
+  return { ok: true, deviceId: safeDeviceId, accountDeviceId };
+}
+
+function bindAccountDeviceIfNeeded(key, account, deviceId){
+  const safeKey = normalizePremiumKey(key || (account && account.email) || "");
+  const safeDeviceId = normalizeDeviceId(deviceId);
+  if(!safeKey || !account || !account.active || !safeDeviceId) return account;
+  const plan = normalizeAiPlan(account.plan || "starter");
+  if(plan === "starter" || plan === "credits") return account;
+
+  const existingDeviceId = normalizeDeviceId(account.deviceId || account.activeDeviceId || "");
+  if(existingDeviceId) return account;
+
+  return setPremiumAccount(safeKey, {
+    deviceId: safeDeviceId,
+    activeDeviceId: safeDeviceId,
+    deviceBoundAt: new Date().toISOString(),
+    deviceLastSeenAt: new Date().toISOString()
+  });
+}
+
+function touchAccountDevice(key, account, deviceId){
+  const safeKey = normalizePremiumKey(key || (account && account.email) || "");
+  const safeDeviceId = normalizeDeviceId(deviceId);
+  if(!safeKey || !account || !account.active || !safeDeviceId) return account;
+  const plan = normalizeAiPlan(account.plan || "starter");
+  if(plan === "starter" || plan === "credits") return account;
+  const existingDeviceId = normalizeDeviceId(account.deviceId || account.activeDeviceId || "");
+  if(existingDeviceId !== safeDeviceId) return account;
+  return setPremiumAccount(safeKey, {
+    deviceLastSeenAt: new Date().toISOString()
+  });
+}
+
+function setPremiumAccount(key, data){
+  const safeKey = normalizePremiumKey(key);
+  if(!safeKey) return null;
+  const existing = premiumAccounts.get(safeKey) || {};
+  const shouldActivate = data && data.active === true;
+  const incomingPlan = data && data.plan ? normalizeAiPlan(data.plan) : "";
+  const existingPlan = existing.plan ? normalizeAiPlan(existing.plan) : "";
+  const finalPlan = incomingPlan || existingPlan || "starter";
+  const dailyLimit = getAiPlanDailyLimit(finalPlan);
+  const day = currentPremiumDay();
+  const existingUsage = getDailyUsage(existing);
+  const incomingUsageDate = data && typeof data.aiUsageDate !== "undefined" ? String(data.aiUsageDate || "") : existingUsage.day;
+  const incomingUsedToday = data && typeof data.aiUsedToday !== "undefined" ? Number(data.aiUsedToday || 0) : existingUsage.used;
+  const usedToday = incomingUsageDate === day ? Math.max(0, Math.floor(incomingUsedToday || 0)) : 0;
+  const creditRemaining = finalPlan === "credits" ? Math.max(0, Math.floor(Number(data && typeof data.creditsRemaining !== "undefined" ? data.creditsRemaining : existing.creditsRemaining || 0))) : 0;
+  const creditTotal = finalPlan === "credits" ? Math.max(creditRemaining, Math.floor(Number(data && typeof data.creditsTotal !== "undefined" ? data.creditsTotal : existing.creditsTotal || creditRemaining))) : 0;
+  const remainingToday = finalPlan === "credits" ? creditRemaining : (finalPlan === "pro" ? dailyLimit : Math.max(0, dailyLimit - usedToday));
+  const totalCredits = finalPlan === "credits" ? creditTotal : dailyLimit;
+
+  let premiumPin = existing.premiumPin || "";
+  if(shouldActivate && !premiumPin){
+    premiumPin = makePremiumPin();
+  }
+  if(data && typeof data.premiumPin !== "undefined"){
+    premiumPin = normalizePremiumPin(data.premiumPin);
+  }
+
+  const merged = {
+    ...existing,
+    ...data,
+    key: safeKey,
+    plan: finalPlan,
+    planLabel: getAiPlanLabel(finalPlan),
+    premiumPin,
+    aiUsageDate: day,
+    aiUsedToday: usedToday,
+    aiDailyLimit: finalPlan === "credits" ? totalCredits : dailyLimit,
+    aiRemainingToday: remainingToday,
+    creditsRemaining: remainingToday,
+    creditsTotal: totalCredits,
+    creditMonth: day,
+    updatedAt: new Date().toISOString()
+  };
+  premiumAccounts.set(safeKey, merged);
+  savePremiumAccounts();
+  return merged;
+}
+
+function unixToIso(value){
+  const n = Number(value || 0);
+  if(!Number.isFinite(n) || n <= 0) return "";
+  try{
+    return new Date(n * 1000).toISOString();
+  }catch(err){
+    return "";
+  }
+}
+
+function extractStripeSubscriptionPeriod(subscription){
+  const sub = subscription || {};
+  const firstItem = sub.items && sub.items.data && sub.items.data[0] ? sub.items.data[0] : {};
+
+  const periodStart = sub.current_period_start || firstItem.current_period_start || 0;
+  const periodEnd = sub.current_period_end || firstItem.current_period_end || 0;
+
+  return {
+    subscriptionStatus: String(sub.status || ""),
+    currentPeriodStart: unixToIso(periodStart),
+    currentPeriodEnd: unixToIso(periodEnd),
+    periodStart: unixToIso(periodStart),
+    periodEnd: unixToIso(periodEnd),
+    cancelAtPeriodEnd: !!sub.cancel_at_period_end,
+    cancelAt: unixToIso(sub.cancel_at),
+    canceledAt: unixToIso(sub.canceled_at),
+    trialEnd: unixToIso(sub.trial_end)
+  };
+}
+
+async function refreshPremiumAccountFromStripe(value){
+  const account = getPremiumAccount(value);
+  if(!account || !account.subscriptionId || !STRIPE_SECRET_KEY){
+    return account;
+  }
+
+  try{
+    const subscription = await callStripeGet("/subscriptions/" + encodeURIComponent(account.subscriptionId));
+    const periodData = extractStripeSubscriptionPeriod(subscription);
+    const active = ["active","trialing","past_due"].includes(String(subscription.status || ""));
+    const firstItem = subscription.items && subscription.items.data && subscription.items.data[0] ? subscription.items.data[0] : {};
+    const priceId = firstItem.price && firstItem.price.id ? firstItem.price.id : "";
+    const plan = getAiPlanByPriceId(priceId) || account.plan || "pro";
+    return setPremiumAccount(account.email || value, {
+      ...periodData,
+      subscriptionId: subscription.id || account.subscriptionId,
+      customerId: subscription.customer || account.customerId || "",
+      active,
+      plan,
+      priceId,
+      reason: "stripe.subscription.refreshed"
+    });
+  }catch(err){
+    console.warn("Stripe abonnement kon niet worden ververst:", err.message || String(err));
+    return account;
+  }
+}
+
+function setPremiumForStripeData({ email, clientReferenceId, customerId, subscriptionId, active, reason, subscriptionStatus, currentPeriodStart, currentPeriodEnd, periodStart, periodEnd, cancelAtPeriodEnd, cancelAt, canceledAt, trialEnd, plan, priceId, deviceId, activeDeviceId, deviceBoundAt, deviceLastSeenAt }){
+  const finalPlan = normalizeAiPlan(plan || getAiPlanByPriceId(priceId) || "pro");
+  const data = {
+    active: !!active,
+    email: normalizePremiumKey(email),
+    clientReferenceId: normalizePremiumKey(clientReferenceId),
+    customerId: customerId || "",
+    subscriptionId: subscriptionId || "",
+    subscriptionStatus: subscriptionStatus || "",
+    currentPeriodStart: currentPeriodStart || periodStart || "",
+    currentPeriodEnd: currentPeriodEnd || periodEnd || "",
+    periodStart: periodStart || currentPeriodStart || "",
+    periodEnd: periodEnd || currentPeriodEnd || "",
+    cancelAtPeriodEnd: !!cancelAtPeriodEnd,
+    cancelAt: cancelAt || "",
+    canceledAt: canceledAt || "",
+    trialEnd: trialEnd || "",
+    reason: reason || "",
+    source: "stripe",
+    plan: finalPlan,
+    priceId: priceId || "",
+    deviceId: normalizeDeviceId(deviceId || activeDeviceId || ""),
+    activeDeviceId: normalizeDeviceId(activeDeviceId || deviceId || ""),
+    deviceBoundAt: deviceBoundAt || "",
+    deviceLastSeenAt: deviceLastSeenAt || ""
+  };
+
+  const keys = [
+    data.email,
+    data.clientReferenceId,
+    data.customerId,
+    data.subscriptionId
+  ].filter(Boolean);
+
+  /* Bij een opzegging stuurt Stripe vaak geen e-mailadres mee: een
+     Subscription-object heeft helemaal geen customer_email. Zoek daarom ook
+     op klant-id en abonnement-id op welke records hierbij horen. Zonder deze
+     stap wordt alleen het record onder cus_... en sub_... bijgewerkt en blijft
+     het record op e-mailadres (dat de app gebruikt) gewoon actief staan. */
+  const cid = normalizePremiumKey(data.customerId);
+  const sid = normalizePremiumKey(data.subscriptionId);
+  if(cid || sid){
+    for(const [k, rec] of premiumAccounts.entries()){
+      if(!rec) continue;
+      const hoortErbij = (sid && normalizePremiumKey(rec.subscriptionId) === sid)
+                      || (cid && normalizePremiumKey(rec.customerId) === cid);
+      if(hoortErbij && keys.indexOf(k) < 0) keys.push(k);
+    }
+  }
+  /* Hetzelfde adres kan ook onder een app-sleutel staan (formforge: of echo:).
+     Die bestaande records moeten mee, anders is een abonnement in de ene app
+     opgezegd en in de andere nog gewoon actief. Nieuwe app-sleutels worden
+     hier niet aangemaakt. */
+  [data.email, data.clientReferenceId].filter(Boolean).forEach((adres) => {
+    existingPremiumAccountKeys(adres).forEach((k) => {
+      if(keys.indexOf(k) < 0) keys.push(k);
+    });
+  });
+
+  if(data.active){
+    keys.forEach((key) => activateSubscriptionAccount(key, data));
+  }else{
+    /* Opzegging of mislukte betaling. activateSubscriptionAccount zet active
+       ALTIJD op true, ook als hier false meekomt. Daardoor bleef een opgezegd
+       abonnement in de praktijk gewoon doorlopen. Voor het uitzetten schrijven
+       we daarom rechtstreeks weg, en alleen naar records die al bestaan. Het
+       pakket blijft staan zoals het was; alleen de toegang gaat uit. */
+    const uit = Object.assign({}, data);
+    if(!plan && !priceId) delete uit.plan;
+    if(!priceId) delete uit.priceId;
+    keys.forEach((key) => {
+      const k = normalizePremiumKey(key);
+      if(k && premiumAccounts.has(k)) setPremiumAccount(k, uit);
+    });
+  }
+  return data;
+}
+
+function getPremiumAccount(value){
+  const safeKey = normalizePremiumKey(value);
+  if(!safeKey) return null;
+  const account = premiumAccounts.get(safeKey) || null;
+  if(account && account.active){
+    const usage = getDailyUsage(account);
+    if(String(account.aiUsageDate || "") !== usage.day || Number(account.aiUsedToday || 0) !== usage.used || Number(account.aiDailyLimit || 0) !== usage.limit){
+      return setPremiumAccount(safeKey, {
+        aiUsageDate: usage.day,
+        aiUsedToday: usage.used,
+        aiDailyLimit: usage.limit,
+        aiRemainingToday: usage.remaining,
+        creditsRemaining: usage.remaining,
+        creditsTotal: usage.limit,
+        creditMonth: usage.day,
+        plan: normalizeAiPlan(account.plan || "starter")
+      });
+    }
+  }
+  return account;
+}
+
+function getPremiumStatus(value, pin, options){
+  if(isOwnerPremiumEmail(value)){
+    return getOwnerPremiumStatus(value);
+  }
+  let account = getPremiumAccount(value);
+  const allowWithoutPin = !!(options && options.allowWithoutPin);
+  const deviceId = normalizeDeviceId(options && options.deviceId ? options.deviceId : "");
+  const requireDevice = !(options && options.requireDevice === false);
+  const pinOkBeforeDevice = account && account.active && (allowWithoutPin || verifyPremiumPin(account, pin));
+
+  let deviceCheck = { ok: true };
+  if(pinOkBeforeDevice){
+    account = bindAccountDeviceIfNeeded(value, account, deviceId);
+    deviceCheck = checkAccountDevice(account, deviceId, { requireDevice });
+    if(deviceCheck.ok){
+      account = touchAccountDevice(value, account, deviceId);
+    }
+  }
+
+  const pinOk = !!(pinOkBeforeDevice && deviceCheck.ok);
+  const usage = account ? getDailyUsage(account) : { day: currentPremiumDay(), used: 0, limit: STARTER_FREE_CREDITS, remaining: 0 };
+  const plan = account ? normalizeAiPlan(account.plan || "starter") : "";
+  const accountDeviceId = account ? normalizeDeviceId(account.deviceId || account.activeDeviceId || "") : "";
+
+  return {
+    premium: !!pinOk,
+    active: !!pinOk,
+    pinRequired: !!(account && account.active && !pinOkBeforeDevice),
+    pinOk: !!pinOk,
+    deviceRequired: !!(pinOkBeforeDevice && deviceCheck.deviceRequired),
+    deviceConflict: !!(pinOkBeforeDevice && deviceCheck.deviceConflict),
+    deviceMessage: deviceCheck.message || "",
+    deviceId: deviceId,
+    activeDeviceId: accountDeviceId,
+    activeDeviceLabel: deviceLabel(accountDeviceId),
+    creditsRemaining: account ? usage.remaining : 0,
+    creditsTotal: account ? usage.limit : STARTER_FREE_CREDITS,
+    creditMonth: usage.day,
+    aiUsedToday: account ? usage.used : 0,
+    aiDailyLimit: account ? usage.limit : STARTER_FREE_CREDITS,
+    aiRemainingToday: account ? usage.remaining : 0,
+    plan,
+    planLabel: account ? getAiPlanLabel(plan) : "",
+    starterCreditsGranted: account ? !!account.starterCreditsGranted : false,
+    email: account ? String(account.email || "") : "",
+    subscriptionId: account ? String(account.subscriptionId || "") : "",
+    subscriptionStatus: account ? String(account.subscriptionStatus || "") : "",
+    periodStart: account ? String(account.periodStart || account.currentPeriodStart || "") : "",
+    periodEnd: account ? String(account.periodEnd || account.currentPeriodEnd || "") : "",
+    currentPeriodStart: account ? String(account.currentPeriodStart || account.periodStart || "") : "",
+    currentPeriodEnd: account ? String(account.currentPeriodEnd || account.periodEnd || "") : "",
+    nextPaymentDate: account && !account.cancelAtPeriodEnd ? String(account.periodEnd || account.currentPeriodEnd || "") : "",
+    cancelAtPeriodEnd: account ? !!account.cancelAtPeriodEnd : false,
+    cancelAt: account ? String(account.cancelAt || "") : "",
+    canceledAt: account ? String(account.canceledAt || "") : "",
+    trialEnd: account ? String(account.trialEnd || "") : "",
+    reason: account ? String(account.reason || "") : "",
+    updatedAt: account ? String(account.updatedAt || "") : ""
+  };
+}
+
+function consumePremiumCredit(value, pin, deviceId){
+  const safeKey = normalizePremiumKey(value);
+  const safeDeviceId = normalizeDeviceId(deviceId);
+  if(isOwnerPremiumEmail(safeKey)){
+    const account = ensureOwnerPremiumAccount(safeKey);
+    return { ok: true, account, status: getOwnerPremiumStatus(safeKey) };
+  }
+
+  if(!safeKey){
+    return { ok: false, status: 401, error: "E-mailadres ontbreekt" };
+  }
+  let account = getPremiumAccount(safeKey);
+  if(!account || !account.active){
+    return { ok: false, status: 402, error: "FormForge AI is niet actief voor dit account" };
+  }
+  if(!verifyPremiumPin(account, pin)){
+    return { ok: false, status: 403, error: "Pincode is ongeldig" };
+  }
+
+  account = bindAccountDeviceIfNeeded(safeKey, account, safeDeviceId);
+  const deviceCheck = checkAccountDevice(account, safeDeviceId, { requireDevice: true });
+  if(!deviceCheck.ok){
+    return { ok: false, status: deviceCheck.status || 409, error: deviceCheck.message || "Dit abonnement kan maar op één toestel actief zijn", code: deviceCheck.code || "DEVICE_ERROR" };
+  }
+  account = touchAccountDevice(safeKey, account, safeDeviceId);
+
+  const usage = getDailyUsage(account);
+  const plan = normalizeAiPlan(account.plan || "starter");
+  let nextUsed = usage.used + 1;
+  let updatePayload = {
+    aiUsageDate: usage.day,
+    aiUsedToday: nextUsed,
+    lastCreditUsedAt: new Date().toISOString(),
+    plan
+  };
+
+  if(plan !== "starter" && plan !== "credits"){
+    updatePayload.deviceId = safeDeviceId;
+    updatePayload.activeDeviceId = safeDeviceId;
+    updatePayload.deviceLastSeenAt = new Date().toISOString();
+  }
+
+  if(plan === "credits"){
+    if(usage.remaining <= 0){
+      return { ok: false, status: 402, error: "Je losse AI credits zijn op. Koop nieuwe credits of neem Unlimited." };
+    }
+    updatePayload.creditsRemaining = Math.max(0, usage.remaining - 1);
+    updatePayload.creditsTotal = usage.limit;
+    updatePayload.aiRemainingToday = Math.max(0, usage.remaining - 1);
+    updatePayload.aiDailyLimit = usage.limit;
+  }else if(plan !== "pro" && usage.used >= usage.limit){
+    return { ok: false, status: 402, error: "Je dagelijkse AI opdrachten zijn op. Upgrade naar AI Plus of AI Pro." };
+  }
+
+  const updated = setPremiumAccount(safeKey, updatePayload);
+
+  return { ok: true, account: updated, status: getPremiumStatus(safeKey, pin, { deviceId: safeDeviceId }) };
+}
+
+function addCreditsToAccount(email, credits, reason, stripeSessionId){
+  const safeEmail = normalizePremiumKey(email);
+  const amount = Math.max(0, Math.floor(Number(credits) || 0));
+  const safeSessionId = String(stripeSessionId || "").trim();
+
+  if(!safeEmail || amount <= 0) return null;
+
+  const existing = getPremiumAccount(safeEmail) || {};
+  const processedSessions = Array.isArray(existing.processedStripeSessions) ? existing.processedStripeSessions : [];
+
+  if(safeSessionId && processedSessions.includes(safeSessionId)){
+    return {
+      ...existing,
+      duplicateStripeSession: true,
+      duplicateStripeSessionId: safeSessionId
+    };
+  }
+
+  const existingCredits = Number(existing.creditsRemaining || 0);
+  const existingTotal = Number(existing.creditsTotal || 0);
+  const pin = existing.premiumPin || makePremiumPin();
+
+  const nextProcessedSessions = safeSessionId
+    ? processedSessions.concat([safeSessionId]).slice(-100)
+    : processedSessions;
+
+  return setPremiumAccount(safeEmail, {
+    active: true,
+    email: safeEmail,
+    premiumPin: pin,
+    creditsRemaining: existingCredits + amount,
+    creditsTotal: existingTotal + amount,
+    plan: normalizeAiPlan(existing.plan) === "pro" ? "pro" : "credits",
+    source: "stripe_credits",
+    processedStripeSessions: nextProcessedSessions,
+    lastStripeSessionId: safeSessionId,
+    lastCreditPurchaseAt: new Date().toISOString(),
+    lastCreditPurchaseAmount: amount,
+    reason: reason || "stripe_credit_purchase"
+  });
+}
+
+function activateSubscriptionAccount(email, data){
+  const safeEmail = normalizePremiumKey(email);
+  if(!safeEmail) return null;
+  const existing = getPremiumAccount(safeEmail) || {};
+  const pin = existing.premiumPin || makePremiumPin();
+  const plan = normalizeAiPlan((data && data.plan) || "pro");
+  const limit = getAiPlanDailyLimit(plan);
+  const usage = getDailyUsage({ ...(existing || {}), plan });
+  return setPremiumAccount(safeEmail, {
+    ...(data || {}),
+    active: true,
+    email: safeEmail,
+    premiumPin: pin,
+    aiUsageDate: usage.day,
+    aiUsedToday: usage.used,
+    aiDailyLimit: limit,
+    aiRemainingToday: plan === "pro" ? limit : Math.max(0, limit - usage.used),
+    creditsRemaining: plan === "pro" ? limit : Math.max(0, limit - usage.used),
+    creditsTotal: limit,
+    creditMonth: usage.day,
+    plan,
+    source: "stripe_subscription",
+    reason: (data && data.reason) || "stripe_subscription_active"
+  });
+}
+
+function activateUnlimitedAccount(email, data){
+  return activateSubscriptionAccount(email, { ...(data || {}), plan: (data && data.plan) || "pro" });
+}
+
+loadPremiumAccounts();
+ALL_OWNER_EMAILS.forEach(em => ensureOwnerPremiumAccount(em));
+
+/* ---- Stripe webhook: alleen ondertekende events, en elk event maar een keer ----
+   Zonder STRIPE_WEBHOOK_SECRET valt de route dicht. Zou hij openblijven, dan
+   kan iedereen een verzonnen betaling posten en zichzelf een abonnement of
+   extra minuten geven. Verwerkte event-ids gaan naar de schijf, zodat een
+   herlevering van Stripe (die gebeurt tot drie dagen lang) nooit dubbel telt. */
+const STRIPE_EVENTS_FILE = path.join(DATA_DIR, "salve_stripe_events.json");
+let stripeHandledEvents = [];
+const stripeHandledSet = new Set();
+const stripeEventsInFlight = new Set();
+function loadStripeHandledEvents(){
+  try{
+    if(!fs.existsSync(STRIPE_EVENTS_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(STRIPE_EVENTS_FILE, "utf8") || "{}");
+    if(data && Array.isArray(data.ids)){
+      stripeHandledEvents = data.ids.filter(x => typeof x === "string").slice(-2000);
+      stripeHandledEvents.forEach(id => stripeHandledSet.add(id));
+    }
+  }catch(e){ rescueCorruptStore(STRIPE_EVENTS_FILE, e); }
+}
+loadStripeHandledEvents();
+/* false = dit event is al verwerkt of wordt op dit moment verwerkt. */
+function stripeEventStart(id){
+  if(!id) return true;
+  if(stripeHandledSet.has(id) || stripeEventsInFlight.has(id)) return false;
+  stripeEventsInFlight.add(id);
+  return true;
+}
+/* Pas na een geslaagde verwerking vastleggen. Gaat er iets mis, dan mag de
+   herlevering van Stripe het gewoon opnieuw proberen. */
+function stripeEventDone(id, gelukt){
+  if(!id) return;
+  stripeEventsInFlight.delete(id);
+  if(!gelukt || stripeHandledSet.has(id)) return;
+  stripeHandledSet.add(id);
+  stripeHandledEvents.push(id);
+  if(stripeHandledEvents.length > 2000){
+    stripeHandledEvents.splice(0, stripeHandledEvents.length - 2000).forEach(x => stripeHandledSet.delete(x));
+  }
+  try{ safeWriteFileSync(STRIPE_EVENTS_FILE, JSON.stringify({ ids: stripeHandledEvents })); }
+  catch(e){ console.error("Stripe event-log opslaan mislukt:", (e && e.message) || e); }
+}
+
+app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  let event = null;
+
+  if(!STRIPE_WEBHOOK_SECRET || !stripeClient){
+    console.error("Stripe webhook geweigerd: STRIPE_WEBHOOK_SECRET of de stripe-client ontbreekt. Zet STRIPE_WEBHOOK_SECRET in de Render Environment Variables.");
+    return res.status(503).json({ error: "Webhook niet geconfigureerd" });
+  }
+  try{
+    const signature = req.headers["stripe-signature"];
+    event = stripeClient.webhooks.constructEvent(req.body, signature, STRIPE_WEBHOOK_SECRET);
+  }catch(err){
+    console.error("Stripe webhook verificatie fout:", err.message || String(err));
+    return res.status(400).json({ error: "Webhook verificatie mislukt" });
+  }
+
+  const eventId = String((event && event.id) || "");
+  if(!stripeEventStart(eventId)){
+    return res.json({ received: true, duplicate: true });
+  }
+
+  try{
+    const object = event && event.data && event.data.object ? event.data.object : {};
+    const type = String(event && event.type ? event.type : "");
+
+    if(type === "checkout.session.completed"){
+      const email = object.customer_email || object.customer_details?.email || object.metadata?.email || "";
+      const mode = String(object.mode || "");
+      const metadata = object.metadata || {};
+      const packageCredits = Number(metadata.credits || 0);
+      const packageType = String(metadata.packageType || "");
+
+      // Guesttalk: online gekochte extra minuten, of een nieuw abonnement.
+      // De sessie-id gaat mee als referentie, zodat dezelfde betaling nooit
+      // twee keer wordt bijgeboekt.
+      if(metadata.kind === "guesttalk_topup"){
+        try{ guesttalkAddMinutes(metadata.code, Number(metadata.addMinutes || 0), "Online betaald " + (object.id || ""), object.id || eventId); }
+        catch(e){ console.error("Guesttalk topup verwerken mislukt:", (e && e.message) || e); }
+      }else if(metadata.kind === "guesttalk_sub"){
+        try{ guesttalkActivateSub(metadata.code, metadata.tier, object.customer || "", object.subscription || ""); }
+        catch(e){ console.error("Guesttalk sub activeren mislukt:", (e && e.message) || e); }
+      }else if(metadata.kind === "merchant"){
+        setMerchantActiveFromMeta(metadata, true, object.customer || "", object.subscription || "");
+      }else if(metadata.kind === "website_model1"){
+        // Website voor 1 euro per maand: wordt afgehandeld in websitemodel.js, geen ECHO-premium.
+      }else if(mode === "payment" && packageType === "credits" && packageCredits > 0){
+        addCreditsToAccount(email, packageCredits, "checkout.session.completed.credit_pack", object.id || "");
+      }else{
+        setPremiumForStripeData({
+          email,
+          clientReferenceId: object.client_reference_id || metadata.clientReferenceId || "",
+          customerId: object.customer || "",
+          subscriptionId: object.subscription || "",
+          active: true,
+          plan: metadata.plan || metadata.aiPlan || "",
+          priceId: metadata.priceId || "",
+          reason: "checkout.session.completed"
+        });
+      }
+    }
+
+    /* Betaalde factuur. Verschillende Stripe API-versies sturen hier een ander
+       event en een ander object:
+         invoice.payment_succeeded / invoice.paid  -> het Invoice-object zelf
+         invoice.payment.paid                      -> een InvoicePayment, dus
+           zonder customer, subscription of metadata. Daarom halen we in dat
+           geval de bijbehorende factuur er alsnog bij.
+       Sinds API-versie 2025-03-31 staat de abonnementsinfo bovendien onder
+       invoice.parent.subscription_details in plaats van invoice.subscription.
+       Beide vormen worden hieronder gelezen. */
+    if(type === "invoice.payment_succeeded" || type === "invoice.paid" || type === "invoice.payment.paid"){
+      let inv = object || {};
+      if(type === "invoice.payment.paid"){
+        try{
+          const invId = typeof inv.invoice === "string" ? inv.invoice : ((inv.invoice && inv.invoice.id) || "");
+          inv = invId ? await callStripeGet("/invoices/" + encodeURIComponent(invId)) : {};
+        }catch(e){
+          console.error("Factuur bij invoice.payment.paid ophalen mislukt:", (e && e.message) || e);
+          inv = {};
+        }
+      }
+      const invSubDetails = inv.subscription_details || (inv.parent && inv.parent.subscription_details) || null;
+      const invSubId = (typeof inv.subscription === "string" ? inv.subscription : "")
+        || ((invSubDetails && typeof invSubDetails.subscription === "string") ? invSubDetails.subscription : "");
+      const invSubMeta = (invSubDetails && invSubDetails.metadata) || null;
+      const invOwnMeta = inv.metadata || {};
+      try{
+        if(invSubMeta && invSubMeta.kind === "guesttalk_sub"){ guesttalkActivateSub(invSubMeta.code, invSubMeta.tier, inv.customer || "", invSubId); }
+      }catch(e){ console.error("Guesttalk sub verlenging mislukt:", (e && e.message) || e); }
+      // Ondernemer-abonnement: houd de onderneming bij elke maandelijkse
+      // verlenging expliciet uitgelicht (consistent met de andere merchant-events).
+      const invMeta = invOwnMeta.kind === "merchant"
+        ? invOwnMeta
+        : ((invSubMeta && invSubMeta.kind === "merchant") ? invSubMeta : null);
+      if(invMeta){
+        setMerchantActiveFromMeta(invMeta, true, inv.customer || "", invSubId);
+      }
+      const invIsWebsite = invOwnMeta.kind === "website_model1" || (invSubMeta && invSubMeta.kind === "website_model1");
+      if(!invIsWebsite) setPremiumForStripeData({
+        email: inv.customer_email || invOwnMeta.email || "",
+        clientReferenceId: invOwnMeta.clientReferenceId || "",
+        customerId: inv.customer || "",
+        subscriptionId: invSubId,
+        active: true,
+        plan: invOwnMeta.plan || invOwnMeta.aiPlan || "",
+        priceId: invOwnMeta.priceId || "",
+        reason: type
+      });
+    }
+
+    if(type === "invoice.payment_failed"){
+      const failSubDetails = object.subscription_details || (object.parent && object.parent.subscription_details) || null;
+      const failSubId = (typeof object.subscription === "string" ? object.subscription : "")
+        || ((failSubDetails && typeof failSubDetails.subscription === "string") ? failSubDetails.subscription : "");
+      const failSubMeta = (failSubDetails && failSubDetails.metadata) || null;
+      const failOwnMeta = object.metadata || {};
+      try{
+        if(failSubMeta && failSubMeta.kind === "guesttalk_sub"){ guesttalkDeactivateSub(failSubMeta.code || "", failSubId, "betaling mislukt"); }
+      }catch(e){ console.error("Guesttalk sub blokkeren mislukt:", (e && e.message) || e); }
+      if(failOwnMeta.kind === "merchant" || (failSubMeta && failSubMeta.kind === "merchant")){
+        setMerchantActiveFromMeta(failOwnMeta.kind === "merchant" ? failOwnMeta : failSubMeta, false, object.customer || "");
+      }
+      const failIsWebsite = failOwnMeta.kind === "website_model1" || (failSubMeta && failSubMeta.kind === "website_model1");
+      if(!failIsWebsite) setPremiumForStripeData({
+        email: object.customer_email || failOwnMeta.email || "",
+        clientReferenceId: failOwnMeta.clientReferenceId || "",
+        customerId: object.customer || "",
+        subscriptionId: failSubId,
+        active: false,
+        reason: "invoice.payment_failed"
+      });
+    }
+
+    if(type === "customer.subscription.deleted"){
+      try{
+        if(object.metadata && object.metadata.kind === "guesttalk_sub"){ guesttalkDeactivateSub(object.metadata.code || "", object.id || "", "opgezegd"); }
+        else if(object.id){ guesttalkDeactivateSub("", object.id, "opgezegd"); }
+      }catch(e){ console.error("Guesttalk sub opzeggen mislukt:", (e && e.message) || e); }
+      // Ondernemer-abonnement opgezegd: zet de onderneming automatisch offline
+      if(object.metadata?.kind === "merchant"){
+        setMerchantActiveFromMeta(object.metadata, false, object.customer || "");
+      }
+      if(object.metadata?.kind !== "website_model1") setPremiumForStripeData({
+        email: object.customer_email || object.metadata?.email || "",
+        clientReferenceId: object.metadata?.clientReferenceId || "",
+        customerId: object.customer || "",
+        subscriptionId: object.id || "",
+        active: false,
+        reason: "customer.subscription.deleted",
+        ...extractStripeSubscriptionPeriod(object)
+      });
+    }
+
+    stripeEventDone(eventId, true);
+    res.json({ received: true });
+  }catch(err){
+    stripeEventDone(eventId, false);
+    console.error("Stripe webhook verwerking fout:", err.message || String(err));
+    res.status(500).json({ error: "Webhook verwerking mislukt" });
+  }
+});
+
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
+// Ondernemer-foto's tonen vanaf de blijvende schijf
+app.get("/fotos/:name", (req, res) => {
+  const name = String(req.params.name || "");
+  if(!/^[a-zA-Z0-9_.-]+\.(jpg|jpeg|png|webp)$/.test(name)) return res.status(404).end();
+  const file = path.join(PHOTOS_DIR, name);
+  if(!fs.existsSync(file)) return res.status(404).end();
+  res.set("Access-Control-Allow-Origin", "*");
+  res.sendFile(file);
+});
+
+// Publiek bereikbare basis-URL voor foto's/logo's. BELANGRIJK: de gids-cache
+// bewaart absolute foto-URL's. Wordt de gids opgebouwd via een INTERNE aanroep
+// (bv. de nachtelijke herbouw of de warm-up, die via 127.0.0.1 loopt), dan zou
+// de request-host "127.0.0.1" zijn en kregen gasten onbereikbare foto's. Daarom
+// gebruiken we een vaste publieke basis:
+//   1) PUBLIC_MEDIA_BASE (zelf te zetten in Render, bv. https://formforge-sync-1.onrender.com)
+//   2) anders RENDER_EXTERNAL_URL (zet Render automatisch)
+//   3) anders de request-host, maar NOOIT localhost/127.0.0.1 (dan lege basis).
+function publicMediaBase(req){
+  const envBase = String(process.env.PUBLIC_MEDIA_BASE || process.env.RENDER_EXTERNAL_URL || "").trim();
+  if(envBase) return envBase.replace(/\/+$/, "");
+  const host = String((req && req.headers && req.headers.host) || "").trim();
+  if(host && !/^(127\.0\.0\.1|localhost)(:\d+)?$/i.test(host)){
+    const proto = (req.headers["x-forwarded-proto"] || req.protocol || "https");
+    return proto + "://" + host;
+  }
+  // Geen betrouwbare host (interne aanroep): laat de basis leeg, dan vult de
+  // frontend zelf de backend-URL aan. Veiliger dan een 127.0.0.1-link cachen.
+  return "";
+}
+
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:bernardwijnen@gmail.com";
+
+if(webpush && VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY){
+  webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+}
+
+const pushSubscriptions = new Map();
+
+function addPushSubscription(userId, subscription, pageUrl){
+  if(!userId || !subscription || !subscription.endpoint) return;
+  const existing = pushSubscriptions.get(userId) || [];
+  const filtered = existing.filter((item) => item.subscription && item.subscription.endpoint !== subscription.endpoint);
+  filtered.push({ subscription, pageUrl: pageUrl || "", addedAt: new Date().toISOString() });
+  pushSubscriptions.set(userId, filtered);
+}
+
+async function sendPushToUser(userId, payload){
+  if(!webpush || !VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
+  const list = pushSubscriptions.get(userId) || [];
+  if(!list.length) return;
+  const valid = [];
+  for(const item of list){
+    try{
+      await webpush.sendNotification(item.subscription, JSON.stringify(payload));
+      valid.push(item);
+    }catch(err){
+      if(err.statusCode !== 404 && err.statusCode !== 410){
+        valid.push(item);
+      }
+    }
+  }
+  pushSubscriptions.set(userId, valid);
+}
+
+function jsonError(res, status, message, details){
+  return res.status(status).json({ error: message, details: details || "" });
+}
+
+// ==== Hulpmiddelen voor stabiliteit onder drukte ====
+
+// Atomair wegschrijven: eerst naar een tijdelijk bestand, dan hernoemen.
+// Zo kan een herstart of crash tijdens het schrijven nooit een half (corrupt)
+// JSON-bestand achterlaten.
+function safeWriteFileSync(file, data){
+  const tmp = file + ".tmp";
+  fs.writeFileSync(tmp, data);
+  fs.renameSync(tmp, file);
+}
+
+// Als een opslagbestand corrupt blijkt bij het laden: bewaar het originele
+// bestand onder een .corrupt-naam (zodat er niets verloren gaat) en log luid.
+// Zonder deze stap zou een lege Map het corrupte bestand bij de eerstvolgende
+// save stilletjes overschrijven en zou alle data definitief weg zijn.
+function rescueCorruptStore(file, err){
+  console.error("LET OP: opslagbestand kon niet worden gelezen: " + file);
+  console.error("Foutmelding: " + (err && err.message ? err.message : String(err)));
+  try{
+    if(fs.existsSync(file)){
+      const rescue = file + ".corrupt-" + Date.now();
+      fs.copyFileSync(file, rescue);
+      console.error("Het originele bestand is veiliggesteld als: " + rescue);
+    }
+  }catch(e){}
+}
+
+// HTML-escapen voor teksten die in e-mails terechtkomen (gastnaam, bericht).
+function escHtmlServer(s){
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+// IP-adres van de bezoeker (achter de Render-proxy staat het echte adres
+// vooraan in x-forwarded-for).
+function clientIp(req){
+  const fwd = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  return fwd || (req.socket && req.socket.remoteAddress) || "onbekend";
+}
+
+// Eenvoudige rate limiter per IP per doel (bucket). Houdt tellers in het
+// geheugen bij en ruimt verlopen vensters periodiek op.
+const _rateBuckets = new Map(); // "bucket|ip" -> { count, resetAt }
+function rateLimited(bucket, ip, max, windowMs){
+  const key = bucket + "|" + ip;
+  const now = Date.now();
+  let e = _rateBuckets.get(key);
+  if(!e || now >= e.resetAt){
+    e = { count: 0, resetAt: now + windowMs };
+    _rateBuckets.set(key, e);
+  }
+  e.count++;
+  return e.count > max;
+}
+setInterval(() => {
+  const now = Date.now();
+  for(const [key, e] of _rateBuckets.entries()){
+    if(now >= e.resetAt) _rateBuckets.delete(key);
+  }
+}, 5 * 60 * 1000);
+
+/* ---- Rem op alles wat rechtstreeks OpenAI-geld kost ----------------------
+   Deze routes roepen OpenAI aan zonder pincode of abonnement. Zonder rem kan
+   iedereen die de URL kent ze in een lus aanroepen en zo de rekening laten
+   oplopen. Twee vensters tegelijk: een korte tegen een lus, een lange tegen
+   iemand die de hele dag doorgaat. Een gewone gebruiker merkt hier niets van.
+
+   Instelbaar via Render Environment Variables, allemaal optioneel:
+     AI_REM_PER_MINUUT   standaard 20
+     AI_REM_PER_UUR      standaard 200
+--------------------------------------------------------------------------- */
+const AI_REM_PER_MINUUT = Math.max(1, Number(process.env.AI_REM_PER_MINUUT || 20));
+const AI_REM_PER_UUR = Math.max(1, Number(process.env.AI_REM_PER_UUR || 200));
+
+function aiRemOk(req, res, naam, perMinuut, perUur){
+  const ip = clientIp(req);
+  const kortMax = Number(perMinuut || AI_REM_PER_MINUUT);
+  const langMax = Number(perUur || AI_REM_PER_UUR);
+  if(rateLimited("ai:" + naam + ":m", ip, kortMax, 60 * 1000) ||
+     rateLimited("ai:" + naam + ":u", ip, langMax, 60 * 60 * 1000)){
+    console.error("AI-rem: te veel aanvragen op " + naam + " vanaf " + ip);
+    res.status(429).json({ error: "Te veel aanvragen achter elkaar. Wacht even en probeer het opnieuw." });
+    return false;
+  }
+  return true;
+}
+
+// Mislukte inlogpogingen per IP bijhouden, zodat pincodes niet te raden zijn
+// door eindeloos proberen. Na 30 mislukte pogingen binnen 15 minuten wordt
+// het IP tijdelijk geweigerd. Geslaagde logins (zoals het normale pollen van
+// het portaal) tellen niet mee.
+const _loginFails = new Map(); // ip -> { count, resetAt }
+function loginBlocked(ip){
+  const e = _loginFails.get(ip);
+  if(!e) return false;
+  if(Date.now() >= e.resetAt){ _loginFails.delete(ip); return false; }
+  return e.count >= 30;
+}
+function noteLoginFail(ip){
+  const now = Date.now();
+  let e = _loginFails.get(ip);
+  if(!e || now >= e.resetAt){
+    e = { count: 0, resetAt: now + 15 * 60 * 1000 };
+    _loginFails.set(ip, e);
+  }
+  e.count++;
+}
+
+// fetch met een harde tijdslimiet, zodat een trage of hangende externe dienst
+// (zoals OpenAI) nooit verzoeken eindeloos open laat staan onder drukte.
+async function fetchWithTimeout(url, options, timeoutMs){
+  const ms = timeoutMs || 90000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try{
+    return await fetch(url, Object.assign({}, options || {}, { signal: controller.signal }));
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
+async function callOpenAI(messages, temperature, modelOverride){
+  if(!OPENAI_API_KEY){
+    throw new Error("OPENAI_API_KEY ontbreekt in Render Environment Variables");
+  }
+
+  const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": "Bearer " + OPENAI_API_KEY,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(
+      /* temperature === "geen" laat de instelling helemaal weg. Sommige
+         modellen accepteren alleen hun eigen standaardwaarde en geven anders
+         een fout; dan kan de aanroeper het nog een keer zo proberen. */
+      temperature === "geen"
+        ? { model: modelOverride || OPENAI_MODEL, messages }
+        : {
+            model: modelOverride || OPENAI_MODEL,
+            messages,
+            temperature: typeof temperature === "number" ? temperature : 0.2
+          }
+    )
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if(!response.ok){
+    const msg = data && data.error && data.error.message ? data.error.message : "OpenAI aanvraag mislukt";
+    throw new Error(msg);
+  }
+
+  return String(data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content ? data.choices[0].message.content : "").trim();
+}
+
+
+function buildFormBody(data, prefix){
+  const params = new URLSearchParams();
+  function add(value, key){
+    if(value === undefined || value === null) return;
+    if(Array.isArray(value)){
+      value.forEach((item, index) => add(item, key + "[" + index + "]"));
+      return;
+    }
+    if(typeof value === "object"){
+      Object.keys(value).forEach((childKey) => add(value[childKey], key ? key + "[" + childKey + "]" : childKey));
+      return;
+    }
+    params.append(key, String(value));
+  }
+  add(data, prefix || "");
+  return params;
+}
+
+async function callStripe(pathName, payload){
+  if(!STRIPE_SECRET_KEY){
+    throw new Error("STRIPE_SECRET_KEY ontbreekt in Render Environment Variables");
+  }
+
+  const response = await fetch("https://api.stripe.com/v1" + pathName, {
+    method: "POST",
+    headers: {
+      "Authorization": "Bearer " + STRIPE_SECRET_KEY,
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body: buildFormBody(payload).toString()
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if(!response.ok){
+    const msg = data && data.error && data.error.message ? data.error.message : "Stripe aanvraag mislukt";
+    throw new Error(msg);
+  }
+  return data;
+}
+
+async function callStripeGet(pathName){
+  if(!STRIPE_SECRET_KEY){
+    throw new Error("STRIPE_SECRET_KEY ontbreekt in Render Environment Variables");
+  }
+
+  const response = await fetch("https://api.stripe.com/v1" + pathName, {
+    method: "GET",
+    headers: {
+      "Authorization": "Bearer " + STRIPE_SECRET_KEY
+    }
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if(!response.ok){
+    const msg = data && data.error && data.error.message ? data.error.message : "Stripe aanvraag mislukt";
+    throw new Error(msg);
+  }
+  return data;
+}
+
+function successUrlWithCheckoutSession(url){
+  const safeUrl = String(url || STRIPE_SUCCESS_URL || "").trim();
+  if(!safeUrl) return STRIPE_SUCCESS_URL;
+  if(safeUrl.includes("checkout_session_id=") || safeUrl.includes("session_id=")) return safeUrl;
+  const separator = safeUrl.includes("?") ? "&" : "?";
+  return safeUrl + separator + "checkout_session_id={CHECKOUT_SESSION_ID}";
+}
+
+async function sendResendEmail({ to, subject, text, html, attachments }){
+  if(!RESEND_API_KEY){
+    throw new Error("RESEND_API_KEY ontbreekt in Render Environment Variables");
+  }
+
+  if(!FROM_EMAIL){
+    throw new Error("FROM_EMAIL ontbreekt in Render Environment Variables");
+  }
+
+  const payload = {
+    from: FROM_EMAIL,
+    to: [to],
+    subject: subject,
+    text: text,
+    html: html
+  };
+  // Optionele bijlagen: [{ filename, content (base64) }]
+  if(Array.isArray(attachments) && attachments.length){
+    payload.attachments = attachments;
+  }
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Authorization": "Bearer " + RESEND_API_KEY,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if(!response.ok){
+    const msg = data && data.message ? data.message : (data && data.error ? data.error : "Resend mail aanvraag mislukt");
+    throw new Error(msg);
+  }
+
+  return data;
+}
+
+// Laadt de hotel-uitleg PDF (indien aanwezig) als bijlage voor de mail.
+// Het bestand zoeken we in DATA_DIR (zodat je het kunt vervangen) of naast server.js.
+function loadHotelPdfAttachment(){
+  try{
+    const candidates = [
+      path.join(DATA_DIR, "salve-uitleg-voor-hotels.pdf"),
+      path.join(__dirname, "salve-uitleg-voor-hotels.pdf")
+    ];
+    for(const p of candidates){
+      if(fs.existsSync(p)){
+        const content = fs.readFileSync(p).toString("base64");
+        return [{ filename: "Salve-uitleg-voor-hotels.pdf", content }];
+      }
+    }
+  }catch(e){ console.log("Hotel-PDF laden mislukt: " + (e.message||e)); }
+  return null;
+}
+
+function loadMerchantPdfAttachment(){
+  try{
+    const candidates = [
+      path.join(DATA_DIR, "salve-uitleg-voor-ondernemers.pdf"),
+      path.join(__dirname, "salve-uitleg-voor-ondernemers.pdf")
+    ];
+    for(const p of candidates){
+      if(fs.existsSync(p)){
+        const content = fs.readFileSync(p).toString("base64");
+        return [{ filename: "Salve-uitleg-voor-ondernemers.pdf", content }];
+      }
+    }
+  }catch(e){ console.log("Ondernemer-PDF laden mislukt: " + (e.message||e)); }
+  return null;
+}
+
+function premiumPinEmailText(pin){
+  return "Beste ECHO AI Premium gebruiker,\n\nJe nieuwe 6 cijferige pincode is: " + pin + "\n\nGebruik deze pincode samen met je e-mailadres om AI Premium te activeren.\n\nAls jij deze reset niet hebt aangevraagd, neem dan contact op met FormForge.\n\nFormForge ECHO";
+}
+
+function premiumPinEmailHtml(pin){
+  return "<div style=\"font-family:Arial,sans-serif;line-height:1.5;color:#111\">" +
+    "<h2>Je nieuwe ECHO AI Premium pincode</h2>" +
+    "<p>Je nieuwe 6 cijferige pincode is:</p>" +
+    "<p style=\"font-size:28px;font-weight:800;letter-spacing:4px\">" + pin + "</p>" +
+    "<p>Gebruik deze pincode samen met je e-mailadres om AI Premium te activeren.</p>" +
+    "<p>Als jij deze reset niet hebt aangevraagd, neem dan contact op met FormForge.</p>" +
+    "<p>FormForge ECHO</p>" +
+  "</div>";
+}
+
+
+function starterCreditsEmailText(pin, credits, source){
+  const appSource = normalizeAppSource(source);
+  if(appSource === "echo"){
+    return "Beste ECHO gebruiker,\n\nJe ECHO account is aangemaakt.\n\nJe 6 cijferige pincode is: " + pin + "\nJe hebt eenmalig " + credits + " gratis AI credits ontvangen.\n\nGebruik deze pincode samen met je e-mailadres om ECHO AI te activeren.\n\nFormForge ECHO";
+  }
+  return "Beste FormForge gebruiker,\n\nJe FormForge AI account is aangemaakt.\n\nJe 6 cijferige pincode is: " + pin + "\nJe hebt iedere dag " + credits + " gratis AI opdracht.\n\nGebruik deze pincode samen met je e-mailadres om FormForge AI te activeren.\n\nFormForge";
+}
+
+function starterCreditsEmailHtml(pin, credits, source){
+  const appSource = normalizeAppSource(source);
+  const title = appSource === "echo" ? "Je ECHO startercredits" : "Je FormForge AI pincode";
+  const intro = appSource === "echo" ? "Je ECHO account is aangemaakt." : "Je FormForge AI account is aangemaakt.";
+  const creditText = appSource === "echo" ? ("Je hebt <strong>eenmalig " + credits + " gratis AI credits</strong> ontvangen.") : ("Je hebt <strong>iedere dag " + credits + " gratis AI opdracht</strong>.");
+  const activateText = appSource === "echo" ? "Gebruik deze pincode samen met je e-mailadres om ECHO AI te activeren." : "Gebruik deze pincode samen met je e-mailadres om FormForge AI te activeren.";
+  return "<div style=\"font-family:Arial,sans-serif;line-height:1.5;color:#111\">" +
+    "<h2>" + title + "</h2>" +
+    "<p>" + intro + "</p>" +
+    "<p>Je 6 cijferige pincode is:</p>" +
+    "<p style=\"font-size:28px;font-weight:800;letter-spacing:4px\">" + pin + "</p>" +
+    "<p>" + creditText + "</p>" +
+    "<p>" + activateText + "</p>" +
+    "<p>FormForge</p>" +
+  "</div>";
+}
+
+app.get("/api/openai/status", (req, res) => {
+  res.json({
+    ok: true,
+    openaiConfigured: !!OPENAI_API_KEY,
+    model: OPENAI_MODEL
+  });
+});
+
+/* ==========================================================
+   GUESTTALK realtime vertaler
+   tokens, verbruikslimiet, apparaatslot, top-ups (online of
+   op aanvraag), upgrade-aanvragen en per-code activiteitenlog.
+
+   Vaste regels in dit blok:
+   - elk record loopt via guesttalkGetRecord, zodat de maandwissel
+     en de standaardwaarden overal op dezelfde manier gaan
+   - elke publieke route heeft een rem per IP (rateLimited)
+   - beheerroutes: timing-veilige wachtwoordcontrole, extra rem op
+     mislukte pogingen, antwoorden nooit in de cache
+   - betaalde top-ups worden per Stripe-referentie maar een keer
+     bijgeboekt
+   - alles wat in een e-mail belandt gaat door escHtmlServer
+   - verbruik kan nooit sneller oplopen dan de klok, ook niet als
+     iemand de heartbeat-route misbruikt
+   ========================================================== */
+const OPENAI_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || "gpt-realtime";
+const OPENAI_REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE || "marin";
+const REALTIME_ADMIN_PASS = process.env.ADMIN_PASS || (typeof OWNER_PREMIUM_PIN !== "undefined" ? OWNER_PREMIUM_PIN : "");
+const GUESTTALK_USAGE_FILE = path.join(DATA_DIR, "salve_guesttalk_usage.json");
+const GUESTTALK_TIERS = { instap: 300, zakelijk: 1000, pro: 2500 };
+const GUESTTALK_BASE_URL = process.env.GUESTTALK_BASE_URL || "https://formforge.nl/guesttalk/";
+const GUESTTALK_ADMIN_EMAIL = process.env.GUESTTALK_ADMIN_EMAIL || (typeof OWNER_PREMIUM_EMAIL !== "undefined" ? OWNER_PREMIUM_EMAIL : (typeof FROM_EMAIL !== "undefined" ? FROM_EMAIL : ""));
+/* Een apparaatslot dat zo lang niet gebruikt is, komt vanzelf vrij. */
+const GUESTTALK_DEVICE_TTL_DAYS = Math.max(1, parseInt(process.env.GUESTTALK_DEVICE_TTL_DAYS || "30", 10) || 30);
+/* Hoeveel realtime-tokens een code per uur mag aanmaken. */
+const GUESTTALK_MAX_TOKENS_PER_HOUR = Math.max(1, parseInt(process.env.GUESTTALK_MAX_TOKENS_PER_HOUR || "120", 10) || 120);
+const GUESTTALK_TOPUP_PACKS = {
+  "300":  { minutes: 300,  priceId: process.env.GUESTTALK_TOPUP_300_PRICE_ID  || "price_1Tzz925s8MDSsy0eJEjxBe7o", label: "Guesttalk 300 extra minuten" },
+  "1000": { minutes: 1000, priceId: process.env.GUESTTALK_TOPUP_1000_PRICE_ID || "price_1Tzz9z5s8MDSsy0e79REQOVe", label: "Guesttalk 1000 extra minuten" }
+};
+
+if(!process.env.ADMIN_PASS){
+  console.warn("GUESTTALK LET OP: ADMIN_PASS staat niet in de Render Environment Variables. Het beheer draait nu op de ingebouwde standaardpincode. Zet ADMIN_PASS zo snel mogelijk.");
+}
+if(!REALTIME_ADMIN_PASS){
+  console.error("GUESTTALK LET OP: er is helemaal geen beheerwachtwoord ingesteld. Alle beheerroutes worden geweigerd tot ADMIN_PASS gezet is.");
+}
+if(!process.env.GUESTTALK_TOPUP_300_PRICE_ID || !process.env.GUESTTALK_TOPUP_1000_PRICE_ID){
+  console.warn("GUESTTALK LET OP: GUESTTALK_TOPUP_300_PRICE_ID of GUESTTALK_TOPUP_1000_PRICE_ID staat niet in de omgeving. Er wordt teruggevallen op de ingebouwde price-id. Controleer of die bij deze Stripe-account hoort.");
+}
+
+let guesttalkUsage = { codes: {} };
+let _guesttalkSaveTimer = null;
+
+function loadGuesttalkUsage(){
+  try{
+    if(!fs.existsSync(GUESTTALK_USAGE_FILE)){ guesttalkUsage = { codes: {} }; return; }
+    const raw = fs.readFileSync(GUESTTALK_USAGE_FILE, "utf8");
+    const data = JSON.parse(raw || "{}");
+    if(!data || typeof data !== "object") throw new Error("onverwachte inhoud in het verbruiksbestand");
+    guesttalkUsage = { codes: (data.codes && typeof data.codes === "object") ? data.codes : {} };
+  }catch(e){
+    /* Niet stil leegmaken: het originele bestand wordt eerst veiliggesteld,
+       anders zou de eerstvolgende save alle klantsaldi definitief wissen. */
+    rescueCorruptStore(GUESTTALK_USAGE_FILE, e);
+    guesttalkUsage = { codes: {} };
+  }
+}
+function saveGuesttalkUsageNow(){
+  if(_guesttalkSaveTimer){ clearTimeout(_guesttalkSaveTimer); _guesttalkSaveTimer = null; }
+  try{ safeWriteFileSync(GUESTTALK_USAGE_FILE, JSON.stringify(guesttalkUsage)); }
+  catch(e){ console.error("Guesttalk verbruik opslaan mislukt:", (e && e.message) || e); }
+}
+/* Uitgestelde save voor de heartbeats. Alles wat met geld of beheer te maken
+   heeft gebruikt saveGuesttalkUsageNow, zodat dat nooit kan verdampen. */
+function saveGuesttalkUsage(){
+  if(_guesttalkSaveTimer) return;
+  _guesttalkSaveTimer = setTimeout(() => {
+    _guesttalkSaveTimer = null;
+    saveGuesttalkUsageNow();
+  }, 1500);
+}
+loadGuesttalkUsage();
+
+/* De bundelmaand volgt de Nederlandse kalender, niet UTC. */
+function guesttalkPeriodMonth(){
+  try{
+    const t = nlNow();
+    if(t && typeof t.day === "string" && t.day.length >= 7) return t.day.slice(0, 7);
+  }catch(e){}
+  const d = new Date();
+  return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
+}
+function guesttalkNormCode(c){ return String(c || "").trim().toLowerCase().slice(0, 60); }
+function guesttalkLink(code){ return GUESTTALK_BASE_URL + (GUESTTALK_BASE_URL.indexOf("?") >= 0 ? "&" : "?") + "code=" + encodeURIComponent(code); }
+function guesttalkLimitMinutes(rec){ return (rec.limitMinutes || 0) + (rec.bonusMinutes || 0); }
+function guesttalkLog(rec, text){
+  if(!Array.isArray(rec.log)) rec.log = [];
+  rec.log.push({ t: new Date().toISOString(), text: String(text).slice(0, 200) });
+  if(rec.log.length > 50) rec.log = rec.log.slice(-50);
+}
+
+/* Timing-veilige vergelijking, zodat het wachtwoord niet teken voor teken
+   te raden is. Zonder ingesteld wachtwoord gaat alles dicht. */
+function guesttalkAuthOk(given){
+  if(!REALTIME_ADMIN_PASS) return false;
+  const a = Buffer.from(String(given || ""), "utf8");
+  const b = Buffer.from(String(REALTIME_ADMIN_PASS), "utf8");
+  if(a.length !== b.length) return false;
+  try{ return crypto.timingSafeEqual(a, b); }catch(e){ return false; }
+}
+/* Beheerpoort: rem, wachtwoord, geen caching. Geeft true als de aanroep door mag. */
+function guesttalkAdminGate(req, res, q){
+  res.set("Cache-Control", "no-store");
+  const ip = clientIp(req);
+  if(rateLimited("gtadmin", ip, 120, 5 * 60 * 1000)){
+    res.status(429).json({ error: "Te veel verzoeken, probeer het straks opnieuw" });
+    return false;
+  }
+  if(!guesttalkAuthOk(q.adminPass)){
+    rateLimited("gtadminfail", ip, 10, 10 * 60 * 1000);
+    console.warn("Guesttalk beheer: mislukte inlogpoging vanaf " + ip);
+    res.status(403).json({ error: "Geen toegang" });
+    return false;
+  }
+  return true;
+}
+/* Extra rem die alleen op mislukte pogingen loopt. */
+function guesttalkAdminBlocked(req, res){
+  const ip = clientIp(req);
+  const key = "gtadminfail|" + ip;
+  const e = _rateBuckets.get(key);
+  if(e && Date.now() < e.resetAt && e.count > 10){
+    res.set("Cache-Control", "no-store");
+    res.status(429).json({ error: "Te veel mislukte pogingen, probeer het over tien minuten opnieuw" });
+    return true;
+  }
+  return false;
+}
+
+function guesttalkNewRecord(){
+  return {
+    tier: "instap", limitMinutes: GUESTTALK_TIERS.instap, bonusMinutes: 0, secondsUsed: 0,
+    periodMonth: guesttalkPeriodMonth(), label: "", email: "", devices: [], maxDevices: 1,
+    perDeviceMinutes: 0, deviceUsage: {}, beatAt: {}, paidRefs: [], requests: [], log: [],
+    active: true, pendingSub: false
+  };
+}
+
+/* Alle velden op een veilige waarde zetten. Een half of handmatig aangepast
+   record kan hierna geen NaN of undefined meer veroorzaken. */
+function guesttalkNormRecord(rec){
+  if(!rec || typeof rec !== "object") return null;
+  const num = (v, fallback) => (typeof v === "number" && isFinite(v) && v >= 0) ? v : fallback;
+  if(typeof rec.tier !== "string" || !rec.tier) rec.tier = "instap";
+  rec.limitMinutes = num(rec.limitMinutes, GUESTTALK_TIERS[rec.tier] || GUESTTALK_TIERS.instap);
+  rec.bonusMinutes = num(rec.bonusMinutes, 0);
+  rec.secondsUsed = num(rec.secondsUsed, 0);
+  rec.perDeviceMinutes = num(rec.perDeviceMinutes, 0);
+  rec.maxDevices = Math.max(1, Math.floor(num(rec.maxDevices, 1)) || 1);
+  if(typeof rec.label !== "string") rec.label = "";
+  if(typeof rec.email !== "string") rec.email = "";
+  if(typeof rec.periodMonth !== "string") rec.periodMonth = "";
+  if(!Array.isArray(rec.devices)) rec.devices = [];
+  if(!Array.isArray(rec.requests)) rec.requests = [];
+  if(!Array.isArray(rec.log)) rec.log = [];
+  if(!Array.isArray(rec.paidRefs)) rec.paidRefs = [];
+  if(!rec.deviceUsage || typeof rec.deviceUsage !== "object") rec.deviceUsage = {};
+  if(!rec.beatAt || typeof rec.beatAt !== "object") rec.beatAt = {};
+  /* Oude records hebben geen active-veld en werkten gewoon. Dat blijft zo,
+     maar het veld staat er vanaf nu altijd expliciet in. */
+  if(typeof rec.active !== "boolean") rec.active = true;
+  if(typeof rec.pendingSub !== "boolean") rec.pendingSub = false;
+  rec.devices = rec.devices.filter(d => d && typeof d === "object" && d.id);
+  return rec;
+}
+
+/* Apparaatsloten die lang niet gebruikt zijn vrijgeven. */
+function guesttalkPruneDevices(rec){
+  const ttl = GUESTTALK_DEVICE_TTL_DAYS * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const before = rec.devices.length;
+  rec.devices = rec.devices.filter(d => {
+    const seen = Date.parse(d.lastSeen || d.firstSeen || "");
+    if(!isFinite(seen)) return true;
+    return (now - seen) < ttl;
+  });
+  return rec.devices.length !== before;
+}
+
+/* Losse mappen (verbruik en heartbeat-tijden) niet ongelimiteerd laten groeien. */
+function guesttalkTrimMaps(rec){
+  ["deviceUsage", "beatAt"].forEach((veld) => {
+    const keys = Object.keys(rec[veld]);
+    if(keys.length > 200){
+      keys.slice(0, keys.length - 200).forEach(k => { delete rec[veld][k]; });
+    }
+  });
+}
+
+/* De enige plek waar een record uit de opslag wordt gehaald. */
+function guesttalkGetRecord(code){
+  const key = guesttalkNormCode(code);
+  if(!key) return null;
+  const rec = guesttalkNormRecord(guesttalkUsage.codes[key]);
+  if(!rec) return null;
+  let changed = false;
+  const nowMonth = guesttalkPeriodMonth();
+  if(rec.periodMonth !== nowMonth){
+    rec.periodMonth = nowMonth;
+    rec.secondsUsed = 0;
+    rec.bonusMinutes = 0;
+    rec.deviceUsage = {};
+    rec.beatAt = {};
+    changed = true;
+    /* paidRefs blijft staan: die bewaakt dubbele Stripe-leveringen en mag
+       niet met de maand mee opnieuw beginnen. */
+  }
+  if(guesttalkPruneDevices(rec)) changed = true;
+  guesttalkTrimMaps(rec);
+  if(changed) saveGuesttalkUsageNow();
+  return rec;
+}
+
+/* Minuten bijboeken. ref is de Stripe-sessie of het event, zodat dezelfde
+   betaling nooit twee keer wordt bijgeschreven bij een herlevering. */
+function guesttalkAddMinutes(code, minutes, reason, ref){
+  const rec = guesttalkGetRecord(code);
+  if(!rec){
+    console.error("Guesttalk: minuten bijboeken voor onbekende code " + guesttalkNormCode(code));
+    return false;
+  }
+  const m = parseInt(minutes, 10);
+  if(!isFinite(m) || m <= 0) return false;
+  const refKey = String(ref || "").trim().slice(0, 120);
+  if(refKey && rec.paidRefs.indexOf(refKey) >= 0){
+    console.log("Guesttalk: betaling " + refKey + " was al verwerkt, overgeslagen.");
+    return false;
+  }
+  rec.bonusMinutes += m;
+  if(refKey){
+    rec.paidRefs.push(refKey);
+    if(rec.paidRefs.length > 100) rec.paidRefs = rec.paidRefs.slice(-100);
+  }
+  guesttalkLog(rec, "Plus " + m + " minuten (" + (reason || "handmatig") + ")");
+  saveGuesttalkUsageNow();
+  return true;
+}
+
+function guesttalkAdmin(req, res){
+  const q = Object.assign({}, req.query || {}, req.body || {});
+  if(guesttalkAdminBlocked(req, res)) return;
+  if(!guesttalkAdminGate(req, res, q)) return;
+  const action = String(q.action || "").toLowerCase();
+  if(action === "list"){
+    return res.json({ ok: true, tiers: GUESTTALK_TIERS, baseUrl: GUESTTALK_BASE_URL, codes: guesttalkUsage.codes });
+  }
+  const key = guesttalkNormCode(q.code);
+  if(!key) return res.status(400).json({ error: "code ontbreekt" });
+  if(action === "remove"){
+    if(!guesttalkUsage.codes[key]) return res.status(404).json({ error: "Onbekende locatiecode" });
+    delete guesttalkUsage.codes[key];
+    saveGuesttalkUsageNow();
+    return res.json({ ok: true, removed: key });
+  }
+  /* Bij deze acties hoort de code al te bestaan. Zo levert een typefout geen
+     spookrecord meer op. */
+  const bestaandVereist = ["reset", "resetdevice", "topup", "resolverequest"];
+  let rec = guesttalkGetRecord(key);
+  if(!rec){
+    if(bestaandVereist.indexOf(action) >= 0) return res.status(404).json({ error: "Onbekende locatiecode" });
+    rec = guesttalkNewRecord();
+    guesttalkUsage.codes[key] = rec;
+    guesttalkLog(rec, "Aangemaakt");
+  }
+  if(action === "reset"){ rec.secondsUsed = 0; rec.periodMonth = guesttalkPeriodMonth(); rec.beatAt = {}; guesttalkLog(rec, "Bundel gereset"); }
+  if(action === "resetdevice"){ rec.devices = []; guesttalkLog(rec, "Apparaat losgekoppeld"); }
+  if(action === "topup"){
+    const m = parseInt(q.minutes, 10);
+    if(!isNaN(m) && m > 0){ rec.bonusMinutes += m; guesttalkLog(rec, "Plus " + m + " minuten (handmatig)"); }
+  }
+  if(action === "resolverequest"){
+    const rid = String(q.requestId || "");
+    const rq = rec.requests.find(r => r && r.id === rid);
+    if(rq){ rq.status = "afgehandeld"; guesttalkLog(rec, "Aanvraag afgehandeld"); }
+  }
+  if(action === "activate"){ rec.active = true; rec.pendingSub = false; guesttalkLog(rec, "Handmatig op actief gezet"); }
+  if(action === "deactivate"){ rec.active = false; guesttalkLog(rec, "Handmatig op non-actief gezet"); }
+  if(q.tier && GUESTTALK_TIERS[String(q.tier).toLowerCase()]){
+    const nt = String(q.tier).toLowerCase();
+    if(nt !== rec.tier) guesttalkLog(rec, "Pakket gewijzigd naar " + nt);
+    rec.tier = nt;
+    rec.limitMinutes = GUESTTALK_TIERS[rec.tier];
+  }
+  if(q.minutes !== undefined && q.minutes !== "" && action !== "topup"){
+    const m = parseInt(q.minutes, 10);
+    if(!isNaN(m) && m >= 0) rec.limitMinutes = m;
+  }
+  if(q.maxDevices !== undefined && q.maxDevices !== ""){
+    const md = parseInt(q.maxDevices, 10);
+    if(!isNaN(md) && md >= 1) rec.maxDevices = md;
+  }
+  if(q.perDeviceMinutes !== undefined && q.perDeviceMinutes !== ""){
+    const pdm = parseInt(q.perDeviceMinutes, 10);
+    if(!isNaN(pdm) && pdm >= 0) rec.perDeviceMinutes = pdm;
+  }
+  if(q.label !== undefined) rec.label = String(q.label).slice(0, 120);
+  if(q.email !== undefined) rec.email = String(q.email).slice(0, 160);
+  saveGuesttalkUsageNow();
+  return res.json({ ok: true, code: key, link: guesttalkLink(key), record: rec });
+}
+app.get("/api/realtime/admin", guesttalkAdmin);
+app.post("/api/realtime/admin", guesttalkAdmin);
+
+async function guesttalkSendInvite(req, res){
+  const q = Object.assign({}, req.query || {}, req.body || {});
+  if(guesttalkAdminBlocked(req, res)) return;
+  if(!guesttalkAdminGate(req, res, q)) return;
+  if(rateLimited("gtinvite", clientIp(req), 30, 60 * 60 * 1000)){
+    return res.status(429).json({ error: "Te veel uitnodigingen achter elkaar" });
+  }
+  const key = guesttalkNormCode(q.code);
+  if(!key) return res.status(400).json({ error: "code ontbreekt" });
+  const rec = guesttalkGetRecord(key);
+  if(!rec) return res.status(404).json({ error: "Onbekende locatiecode" });
+  const to = String(q.email || rec.email || "").trim().slice(0, 160);
+  if(!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(to)) return res.status(400).json({ error: "Geen geldig e-mailadres" });
+  const link = guesttalkLink(key);
+  const naam = rec.label || "uw locatie";
+  const extra = String(q.message || "").slice(0, 1000).trim();
+  const subject = "Uw Guesttalk vertaler is klaar";
+  const text = "Beste,\n\nUw persoonlijke Guesttalk live vertaler staat klaar voor " + naam + ".\n\nOpen deze link op het apparaat waarop u de vertaler wilt gebruiken (tablet, telefoon of computer):\n" + link + "\n\nLet op: de vertaler werkt op 1 apparaat. Het eerste apparaat dat de link opent, wordt het vaste apparaat.\n" + (extra ? ("\n" + extra + "\n") : "") + "\nMet vriendelijke groet,\nFormForge";
+  const html = '<div style="font-family:Arial,Helvetica,sans-serif;color:#1d2b50;line-height:1.5">' +
+    '<h2 style="font-family:Georgia,serif;color:#1d2b50">Uw Guesttalk vertaler is klaar</h2>' +
+    '<p>Beste,</p><p>Uw persoonlijke Guesttalk live vertaler staat klaar voor <b>' + escHtmlServer(naam) + '</b>.</p>' +
+    '<p>Open deze link op het apparaat waarop u de vertaler wilt gebruiken (tablet, telefoon of computer):</p>' +
+    '<p><a href="' + escHtmlServer(link) + '" style="display:inline-block;background:#1d2b50;color:#fff;text-decoration:none;padding:12px 20px;border-radius:999px;font-weight:bold">Guesttalk openen</a></p>' +
+    '<p style="font-size:13px;color:#667085">Of kopieer: ' + escHtmlServer(link) + '</p>' +
+    '<p style="font-size:13px;color:#667085">Let op: de vertaler werkt op 1 apparaat. Het eerste apparaat dat de link opent wordt het vaste apparaat.</p>' +
+    (extra ? ('<p>' + escHtmlServer(extra).replace(/\n/g, "<br>") + '</p>') : '') +
+    '<p>Met vriendelijke groet,<br>FormForge</p></div>';
+  try{
+    await sendResendEmail({ to: to, subject: subject, text: text, html: html });
+    if(q.email){ rec.email = to; saveGuesttalkUsageNow(); }
+    return res.json({ ok: true, sentTo: to, link: link });
+  }catch(e){
+    console.error("Guesttalk invite mail mislukt:", (e && e.message) || e);
+    return res.status(500).json({ error: "Mail versturen mislukt" });
+  }
+}
+app.get("/api/realtime/send-invite", guesttalkSendInvite);
+app.post("/api/realtime/send-invite", guesttalkSendInvite);
+
+/* Klant vraagt zelf een upgrade of extra minuten aan (jij keurt goed in de admin) */
+async function guesttalkRequestUpgrade(req, res){
+  const q = Object.assign({}, req.query || {}, req.body || {});
+  res.set("Cache-Control", "no-store");
+  const code = guesttalkNormCode(q.code);
+  if(!code) return res.status(400).json({ error: "code ontbreekt" });
+  if(rateLimited("gtupgrade", clientIp(req), 5, 60 * 60 * 1000)) return res.status(429).json({ error: "Te veel aanvragen achter elkaar" });
+  if(rateLimited("gtupgradecode", code, 5, 60 * 60 * 1000)) return res.status(429).json({ error: "Te veel aanvragen achter elkaar" });
+  const rec = guesttalkGetRecord(code);
+  if(!rec) return res.status(404).json({ error: "Onbekende locatiecode" });
+  const type = (String(q.type || "minuten").slice(0, 24)) || "minuten";
+  const detail = String(q.detail || "").slice(0, 200);
+  const reqObj = { id: "r" + Date.now().toString(36), t: new Date().toISOString(), type: type, detail: detail, status: "open" };
+  rec.requests.push(reqObj);
+  if(rec.requests.length > 30) rec.requests = rec.requests.slice(-30);
+  guesttalkLog(rec, "Aanvraag: " + type + (detail ? (" - " + detail) : ""));
+  saveGuesttalkUsageNow();
+  try{
+    if(GUESTTALK_ADMIN_EMAIL){
+      const used = Math.round((rec.secondsUsed || 0) / 60);
+      const lim = guesttalkLimitMinutes(rec);
+      const naam = rec.label || code;
+      await sendResendEmail({
+        to: GUESTTALK_ADMIN_EMAIL,
+        subject: "Guesttalk aanvraag: " + naam,
+        text: "Locatie " + naam + " (" + code + ") vraagt: " + type + (detail ? (" - " + detail) : "") + "\nVerbruik deze maand: " + used + " / " + lim + " min.\nHandel dit af in je Guesttalk beheer.",
+        html: "<p>Locatie <b>" + escHtmlServer(naam) + "</b> (" + escHtmlServer(code) + ") vraagt: <b>" + escHtmlServer(type) + "</b>" + (detail ? (" - " + escHtmlServer(detail)) : "") + "</p><p>Verbruik deze maand: " + used + " / " + lim + " min.</p><p>Handel dit af in je Guesttalk beheer.</p>"
+      });
+    }
+  }catch(e){ console.error("Guesttalk aanvraag mail mislukt:", (e && e.message) || e); }
+  return res.json({ ok: true });
+}
+app.get("/api/realtime/request-upgrade", guesttalkRequestUpgrade);
+app.post("/api/realtime/request-upgrade", guesttalkRequestUpgrade);
+
+/* Klant koopt online extra minuten (Stripe). Vereist ingestelde price-ids. */
+async function guesttalkBuyMinutes(req, res){
+  try{
+    const q = Object.assign({}, req.query || {}, req.body || {});
+    res.set("Cache-Control", "no-store");
+    const code = guesttalkNormCode(q.code);
+    if(!code) return res.status(400).json({ error: "code ontbreekt" });
+    if(rateLimited("gtbuy", clientIp(req), 10, 60 * 60 * 1000)) return res.status(429).json({ error: "Te veel pogingen achter elkaar" });
+    const rec = guesttalkGetRecord(code);
+    if(!rec) return res.status(404).json({ error: "Onbekende locatiecode" });
+    const packKey = String(q.pack || "300").trim();
+    const pack = GUESTTALK_TOPUP_PACKS[packKey];
+    if(!pack || !pack.priceId) return res.status(400).json({ error: "Online betalen is nog niet ingesteld", notConfigured: true });
+    const link = guesttalkLink(code);
+    const payload = {
+      mode: "payment",
+      line_items: [{ price: pack.priceId, quantity: 1 }],
+      success_url: link + "&betaald=1",
+      cancel_url: link + "&betaald=0",
+      allow_promotion_codes: true,
+      billing_address_collection: "auto",
+      client_reference_id: code,
+      metadata: { kind: "guesttalk_topup", code: code, addMinutes: String(pack.minutes), source: "guesttalk" }
+    };
+    if(rec.email) payload.customer_email = rec.email;
+    const session = await callStripe("/checkout/sessions", payload);
+    return res.json({ ok: true, url: session.url, id: session.id });
+  }catch(err){
+    console.error("Guesttalk buy-minutes fout:", (err && err.message) || err);
+    return res.status(500).json({ error: "Betaling starten mislukt" });
+  }
+}
+app.get("/api/realtime/buy-minutes", guesttalkBuyMinutes);
+app.post("/api/realtime/buy-minutes", guesttalkBuyMinutes);
+
+/* ---- Abonnementen (Stripe) ---- */
+const GUESTTALK_SUB_PRICES = {
+  instap:   process.env.GUESTTALK_SUB_INSTAP_PRICE_ID   || "price_1Tzz3R5s8MDSsy0eca7ASEzD",
+  zakelijk: process.env.GUESTTALK_SUB_ZAKELIJK_PRICE_ID || "price_1Tzz4t5s8MDSsy0eqlVIpRXA",
+  pro:      process.env.GUESTTALK_SUB_PRO_PRICE_ID      || "price_1Tzz615s8MDSsy0edJfb6kmM"
+};
+if(!process.env.GUESTTALK_SUB_INSTAP_PRICE_ID || !process.env.GUESTTALK_SUB_ZAKELIJK_PRICE_ID || !process.env.GUESTTALK_SUB_PRO_PRICE_ID){
+  console.warn("GUESTTALK LET OP: een of meer GUESTTALK_SUB_*_PRICE_ID ontbreken in de omgeving. Er wordt teruggevallen op de ingebouwde price-id. Controleer of die bij deze Stripe-account hoort.");
+}
+
+function guesttalkActivateSub(code, tier, customerId, subId){
+  const key = guesttalkNormCode(code);
+  if(!key) return;
+  let rec = guesttalkGetRecord(key);
+  if(!rec){
+    rec = guesttalkNewRecord();
+    guesttalkUsage.codes[key] = rec;
+    guesttalkLog(rec, "Aangemaakt via betaling");
+  }
+  const t = String(tier || "").toLowerCase();
+  if(GUESTTALK_TIERS[t]){ rec.tier = t; rec.limitMinutes = GUESTTALK_TIERS[t]; }
+  rec.active = true;
+  rec.pendingSub = false;
+  if(customerId) rec.stripeCustomerId = String(customerId).slice(0, 80);
+  if(subId) rec.subscriptionId = String(subId).slice(0, 80);
+  guesttalkLog(rec, "Abonnement actief (" + rec.tier + ")");
+  saveGuesttalkUsageNow();
+}
+function guesttalkFindBySub(subId){
+  const s = String(subId || "");
+  if(!s) return null;
+  const key = Object.keys(guesttalkUsage.codes).find(k => guesttalkUsage.codes[k] && guesttalkUsage.codes[k].subscriptionId === s);
+  return key ? guesttalkGetRecord(key) : null;
+}
+function guesttalkDeactivateSub(code, subId, reason){
+  let rec = code ? guesttalkGetRecord(code) : null;
+  if(!rec) rec = guesttalkFindBySub(subId);
+  if(!rec) return;
+  rec.active = false;
+  guesttalkLog(rec, "Abonnement non-actief (" + (reason || "") + ")");
+  saveGuesttalkUsageNow();
+}
+async function guesttalkSubscribeLink(req, res){
+  const q = Object.assign({}, req.query || {}, req.body || {});
+  if(guesttalkAdminBlocked(req, res)) return;
+  if(!guesttalkAdminGate(req, res, q)) return;
+  const code = guesttalkNormCode(q.code);
+  if(!code) return res.status(400).json({ error: "code ontbreekt" });
+  const rec = guesttalkGetRecord(code);
+  if(!rec) return res.status(404).json({ error: "Onbekende locatiecode" });
+  const tier = String(q.tier || rec.tier || "instap").toLowerCase();
+  const priceId = GUESTTALK_SUB_PRICES[tier];
+  if(!priceId) return res.status(400).json({ error: "Stripe-abonnement niet ingesteld voor pakket " + tier, notConfigured: true });
+  const email = String(q.email || rec.email || "").trim().slice(0, 160);
+  const link = guesttalkLink(code);
+  try{
+    const payload = {
+      mode: "subscription",
+      line_items: [{ price: priceId, quantity: 1 }],
+      success_url: link + "&welkom=1",
+      cancel_url: link + "&betaald=0",
+      allow_promotion_codes: true,
+      billing_address_collection: "auto",
+      client_reference_id: code,
+      metadata: { kind: "guesttalk_sub", code: code, tier: tier, source: "guesttalk" },
+      subscription_data: { metadata: { kind: "guesttalk_sub", code: code, tier: tier } }
+    };
+    if(email && email.indexOf("@") > 0) payload.customer_email = email;
+    const session = await callStripe("/checkout/sessions", payload);
+    rec.tier = tier;
+    rec.limitMinutes = GUESTTALK_TIERS[tier] || rec.limitMinutes;
+    rec.active = false;
+    rec.pendingSub = true;
+    if(email) rec.email = email;
+    guesttalkLog(rec, "Betaallink aangemaakt (" + tier + "), wacht op betaling");
+    saveGuesttalkUsageNow();
+    let mailed = false;
+    if(String(q.send || "") === "1" && /^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(email)){
+      const naam = rec.label || "uw locatie";
+      const subject = "Uw Guesttalk abonnement activeren";
+      const text = "Beste,\n\nUw Guesttalk live vertaler voor " + naam + " staat klaar. Rond de betaling af via onderstaande link, daarna is de vertaler direct actief:\n" + session.url + "\n\nMet vriendelijke groet,\nFormForge";
+      const html = '<div style="font-family:Arial,Helvetica,sans-serif;color:#1d2b50;line-height:1.5"><h2 style="font-family:Georgia,serif;color:#1d2b50">Uw Guesttalk abonnement activeren</h2><p>Beste,</p><p>Uw Guesttalk live vertaler voor <b>' + escHtmlServer(naam) + '</b> staat klaar. Rond de betaling af, daarna is de vertaler direct actief:</p><p><a href="' + escHtmlServer(session.url || "") + '" style="display:inline-block;background:#1d2b50;color:#fff;text-decoration:none;padding:12px 20px;border-radius:999px;font-weight:bold">Abonnement activeren</a></p><p style="font-size:13px;color:#667085">Of kopieer: ' + escHtmlServer(session.url || "") + '</p><p>Met vriendelijke groet,<br>FormForge</p></div>';
+      try{ await sendResendEmail({ to: email, subject: subject, text: text, html: html }); mailed = true; }
+      catch(e){ console.error("Betaallink mail mislukt:", (e && e.message) || e); }
+    }
+    return res.json({ ok: true, url: session.url, mailed: mailed, tier: tier });
+  }catch(err){
+    console.error("Guesttalk subscribe-link fout:", (err && err.message) || err);
+    return res.status(500).json({ error: "Betaallink maken mislukt" });
+  }
+}
+app.get("/api/realtime/subscribe-link", guesttalkSubscribeLink);
+app.post("/api/realtime/subscribe-link", guesttalkSubscribeLink);
+
+
+/* ---- Aanmeldingen vanaf de verkooppagina (mailt naar info@formforge.nl) ---- */
+const GUESTTALK_LEAD_EMAIL = process.env.GUESTTALK_LEAD_EMAIL || "info@formforge.nl";
+async function guesttalkLead(req, res){
+  try{
+    const q = Object.assign({}, req.query || {}, req.body || {});
+    res.set("Cache-Control", "no-store");
+    if(q.hp){ return res.json({ ok: true }); } /* honeypot: waarschijnlijk een bot */
+    if(rateLimited("gtlead", clientIp(req), 5, 60 * 60 * 1000)){
+      return res.status(429).json({ error: "Te veel aanmeldingen achter elkaar, probeer het later opnieuw" });
+    }
+    const naam = String(q.naam || "").slice(0, 120).trim();
+    const email = String(q.email || "").slice(0, 160).trim();
+    const bedrijf = String(q.bedrijf || "").slice(0, 160).trim();
+    const telefoon = String(q.telefoon || "").slice(0, 60).trim();
+    const onderwerp = String(q.onderwerp || "").slice(0, 140).trim();
+    const bericht = String(q.bericht || "").slice(0, 2000).trim();
+    if(!naam || !/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(email)){
+      return res.status(400).json({ error: "Naam en een geldig e-mailadres zijn verplicht" });
+    }
+    const subject = "Guesttalk aanmelding: " + (bedrijf || naam);
+    const text = "Nieuwe aanmelding via de Guesttalk-pagina.\n\nNaam: " + naam + "\nBedrijf: " + bedrijf + "\nE-mail: " + email + "\nTelefoon: " + telefoon + "\nOnderwerp: " + onderwerp + "\n\nBericht:\n" + bericht;
+    const html = '<div style="font-family:Arial,Helvetica,sans-serif;color:#1d2b50;line-height:1.55">' +
+      '<h2 style="font-family:Georgia,serif;color:#1d2b50">Nieuwe Guesttalk-aanmelding</h2>' +
+      '<p><b>Naam:</b> ' + escHtmlServer(naam) + '<br><b>Bedrijf:</b> ' + escHtmlServer(bedrijf) + '<br><b>E-mail:</b> ' + escHtmlServer(email) + '<br><b>Telefoon:</b> ' + escHtmlServer(telefoon) + '<br><b>Onderwerp:</b> ' + escHtmlServer(onderwerp) + '</p>' +
+      '<p><b>Bericht:</b><br>' + escHtmlServer(bericht).replace(/\n/g, "<br>") + '</p></div>';
+    await sendResendEmail({ to: GUESTTALK_LEAD_EMAIL, subject: subject, text: text, html: html });
+    return res.json({ ok: true });
+  }catch(e){
+    console.error("Guesttalk lead mislukt:", (e && e.message) || e);
+    return res.status(500).json({ error: "Versturen mislukt" });
+  }
+}
+app.post("/api/realtime/lead", guesttalkLead);
+app.get("/api/realtime/lead", guesttalkLead);
+
+async function mintRealtimeToken(req, res){
+  try{
+    res.set("Cache-Control", "no-store");
+    if(!OPENAI_API_KEY) return res.status(500).json({ error: "OPENAI_API_KEY ontbreekt op de server" });
+    const src = Object.assign({}, req.query || {}, req.body || {});
+    const code = guesttalkNormCode(src.code);
+    if(!code) return res.status(400).json({ error: "Geen locatiecode meegegeven", limitReached: false });
+    if(rateLimited("gttokenip", clientIp(req), 60, 60 * 1000)){
+      return res.status(429).json({ error: "Te veel verzoeken, probeer het zo opnieuw" });
+    }
+    const rec = guesttalkGetRecord(code);
+    if(!rec) return res.status(404).json({ error: "Onbekende locatiecode", limitReached: false });
+    if(rec.active !== true){
+      return res.status(402).json({ error: "Dit abonnement is nog niet actief of de betaling ontbreekt.", subInactive: true });
+    }
+    if(rateLimited("gttokencode", code, GUESTTALK_MAX_TOKENS_PER_HOUR, 60 * 60 * 1000)){
+      return res.status(429).json({ error: "Te veel sessies op deze code in een uur", rateLimited: true });
+    }
+
+    const deviceId = String(src.deviceId || "").trim().slice(0, 80);
+    if(!deviceId) return res.status(400).json({ error: "Geen apparaat-id meegegeven" });
+    const nowIso = new Date().toISOString();
+    let dev = rec.devices.find(d => d.id === deviceId);
+    if(dev){ dev.lastSeen = nowIso; }
+    else{
+      if(rec.devices.length >= (rec.maxDevices || 1)){
+        return res.status(423).json({ error: "Deze code is al in gebruik op een ander apparaat", deviceBlocked: true });
+      }
+      rec.devices.push({ id: deviceId, firstSeen: nowIso, lastSeen: nowIso });
+    }
+    saveGuesttalkUsageNow();
+
+    if(rec.perDeviceMinutes && rec.perDeviceMinutes > 0){
+      const du = (rec.deviceUsage && rec.deviceUsage[deviceId]) || 0;
+      if(du >= rec.perDeviceMinutes * 60){
+        return res.status(402).json({ error: "Demo-limiet bereikt", perDeviceReached: true, perDeviceMinutes: rec.perDeviceMinutes });
+      }
+    }
+
+    const limitSec = guesttalkLimitMinutes(rec) * 60;
+    if(rec.secondsUsed >= limitSec){
+      return res.status(402).json({ error: "Bundel op", limitReached: true, limitMinutes: guesttalkLimitMinutes(rec), minutesUsed: Math.round(rec.secondsUsed / 60) });
+    }
+
+    const r = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
+      method: "POST",
+      headers: { "Authorization": "Bearer " + OPENAI_API_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ session: { type: "realtime", model: OPENAI_REALTIME_MODEL, audio: { output: { voice: OPENAI_REALTIME_VOICE } } } })
+    });
+    const data = await r.json().catch(() => ({}));
+    if(!r.ok){
+      console.error("Realtime token fout:", JSON.stringify(data));
+      /* De letterlijke reden meesturen: bij een geweigerd veld staat daar
+         precies in welk veld het is. De app toont dat op het scherm. */
+      return res.status(r.status).json({
+        error: "Token maken mislukt",
+        detail: (data && data.error && (data.error.message || data.error.code)) || ""
+      });
+    }
+    const value = data && (data.value || (data.client_secret && data.client_secret.value));
+    if(!value){ console.error("Realtime token: geen value:", JSON.stringify(data)); return res.status(500).json({ error: "Token maken mislukt" }); }
+    /* Het startmoment vastleggen, zodat de eerste heartbeat niet meer seconden
+       kan boeken dan er sinds het begin van de sessie verstreken zijn. */
+    rec.beatAt[deviceId] = Date.now();
+    guesttalkTrimMaps(rec);
+    saveGuesttalkUsage();
+    return res.json({
+      value: value,
+      expires_at: data.expires_at || (data.client_secret && data.client_secret.expires_at) || null,
+      model: OPENAI_REALTIME_MODEL,
+      voice: OPENAI_REALTIME_VOICE,
+      remainingSeconds: Math.max(0, limitSec - rec.secondsUsed),
+      limitMinutes: guesttalkLimitMinutes(rec),
+      minutesUsed: Math.round(rec.secondsUsed / 60),
+      onlinePay: !!(GUESTTALK_TOPUP_PACKS["300"] && GUESTTALK_TOPUP_PACKS["300"].priceId),
+      demo: !!(rec.perDeviceMinutes && rec.perDeviceMinutes > 0),
+      perDeviceMinutes: rec.perDeviceMinutes || 0,
+      perDeviceRemainingSeconds: (rec.perDeviceMinutes && rec.perDeviceMinutes > 0) ? Math.max(0, rec.perDeviceMinutes * 60 - ((rec.deviceUsage && rec.deviceUsage[deviceId]) || 0)) : null
+    });
+  }catch(error){
+    console.error("Realtime token uitzondering:", (error && error.message) || error);
+    return res.status(500).json({ error: "Token maken mislukt" });
+  }
+}
+app.post("/api/realtime/token", (req, res) => mintRealtimeToken(req, res));
+app.get("/api/realtime/token", (req, res) => mintRealtimeToken(req, res));
+
+function guesttalkUsageBeat(req, res){
+  const q = Object.assign({}, req.query || {}, req.body || {});
+  res.set("Cache-Control", "no-store");
+  const code = guesttalkNormCode(q.code);
+  if(!code) return res.status(400).json({ error: "code ontbreekt" });
+  if(rateLimited("gtbeatip", clientIp(req), 300, 60 * 1000)){
+    return res.status(429).json({ error: "Te veel verzoeken" });
+  }
+  const rec = guesttalkGetRecord(code);
+  if(!rec) return res.status(404).json({ error: "Onbekende locatiecode" });
+  let sec = parseFloat(q.seconds);
+  if(!isFinite(sec) || sec < 0) sec = 0;
+  if(sec > 120) sec = 120;
+  const deviceId = String(q.deviceId || "").trim().slice(0, 80);
+  const beatKey = deviceId || "_geen_apparaat";
+
+  /* Kern van de beveiliging: er kan nooit meer tijd geboekt worden dan er
+     sinds de vorige heartbeat van dit apparaat echt verstreken is. Wie de
+     route in een lus aanroept, boekt dus niets extra en kan de bundel van een
+     klant niet leegtrekken. */
+  const nowMs = Date.now();
+  const vorige = Number(rec.beatAt[beatKey] || 0);
+  if(vorige > 0){
+    const verstreken = Math.max(0, Math.round((nowMs - vorige) / 1000)) + 5;
+    if(sec > verstreken) sec = verstreken;
+  }
+  rec.beatAt[beatKey] = nowMs;
+
+  rec.secondsUsed += sec;
+  if(rec.perDeviceMinutes && rec.perDeviceMinutes > 0 && deviceId){
+    rec.deviceUsage[deviceId] = (rec.deviceUsage[deviceId] || 0) + sec;
+  }
+  guesttalkTrimMaps(rec);
+  saveGuesttalkUsage();
+  const limitSec = guesttalkLimitMinutes(rec) * 60;
+  let perDeviceReached = false;
+  if(rec.perDeviceMinutes && rec.perDeviceMinutes > 0 && deviceId){
+    perDeviceReached = ((rec.deviceUsage[deviceId] || 0) >= rec.perDeviceMinutes * 60);
+  }
+  const perDeviceRemainingSeconds = (rec.perDeviceMinutes && rec.perDeviceMinutes > 0 && deviceId) ? Math.max(0, rec.perDeviceMinutes * 60 - (rec.deviceUsage[deviceId] || 0)) : null;
+  return res.json({ ok: true, limitReached: rec.secondsUsed >= limitSec, perDeviceReached: perDeviceReached, remainingSeconds: Math.max(0, limitSec - rec.secondsUsed), limitMinutes: guesttalkLimitMinutes(rec), demo: !!(rec.perDeviceMinutes && rec.perDeviceMinutes > 0), perDeviceRemainingSeconds: perDeviceRemainingSeconds, deviceCounted: !!deviceId });
+}
+app.post("/api/realtime/usage", guesttalkUsageBeat);
+app.get("/api/realtime/usage", guesttalkUsageBeat);
+
+app.post("/api/openai/translate", async (req, res) => {
+  try{
+    if(!aiRemOk(req, res, "vertaal")) return;
+    const text = String(req.body && req.body.text ? req.body.text : "").trim();
+    const from = String(req.body && req.body.from ? req.body.from : "auto").trim();
+    const to = String(req.body && req.body.to ? req.body.to : "nl").trim();
+    const context = String(req.body && req.body.context ? req.body.context : "").trim();
+
+    if(!text){
+      return jsonError(res, 400, "Tekst ontbreekt");
+    }
+
+    const translatedText = await callOpenAI([
+      {
+        role: "system",
+        content: "Je bent de vertaalmotor van ECHO. Vertaal natuurlijk, volledig en professioneel. Geef alleen de vertaling terug. Geen uitleg. Behoud namen, plaatsen, getallen, links en technische termen zo goed mogelijk."
+      },
+      {
+        role: "user",
+        content: "Vertaal van " + from + " naar " + to + ".\nContext: " + context + "\nTekst:\n" + text
+      }
+    ], 0.1);
+
+    res.json({ ok: true, translatedText, translation: translatedText, text: translatedText, result: translatedText });
+  }catch(err){
+    jsonError(res, 500, "Vertaal fout", err.message || String(err));
+  }
+});
+
+app.post("/api/translate", async (req, res) => {
+  try{
+    if(!aiRemOk(req, res, "vertaal")) return;
+    const text = String(req.body && req.body.text ? req.body.text : "").trim();
+    const source = String(req.body && (req.body.source || req.body.from) ? (req.body.source || req.body.from) : "auto").trim();
+    const target = String(req.body && (req.body.target || req.body.to) ? (req.body.target || req.body.to) : "nl").trim();
+
+    if(!text){
+      return jsonError(res, 400, "Tekst ontbreekt");
+    }
+
+    const translatedText = await callOpenAI([
+      {
+        role: "system",
+        content: "Je bent de vertaalmotor van ECHO. Vertaal natuurlijk en geef alleen de vertaling terug."
+      },
+      {
+        role: "user",
+        content: "Vertaal van " + source + " naar " + target + ":\n" + text
+      }
+    ], 0.1);
+
+    res.json({ ok: true, translatedText, translation: translatedText, text: translatedText, result: translatedText });
+  }catch(err){
+    jsonError(res, 500, "Vertaal fout", err.message || String(err));
+  }
+});
+
+app.post("/openai/translate", async (req, res) => {
+  try{
+    if(!aiRemOk(req, res, "vertaal")) return;
+    const text = String(req.body && req.body.text ? req.body.text : "").trim();
+    const from = String(req.body && req.body.from ? req.body.from : "auto").trim();
+    const to = String(req.body && req.body.to ? req.body.to : "nl").trim();
+
+    if(!text){
+      return jsonError(res, 400, "Tekst ontbreekt");
+    }
+
+    const translatedText = await callOpenAI([
+      { role: "system", content: "Vertaal exact en natuurlijk. Geef alleen de vertaling terug." },
+      { role: "user", content: "Van " + from + " naar " + to + ":\n" + text }
+    ], 0.1);
+
+    res.json({ ok: true, translatedText, translation: translatedText, text: translatedText, result: translatedText });
+  }catch(err){
+    jsonError(res, 500, "Vertaal fout", err.message || String(err));
+  }
+});
+
+app.post("/api/openai/chat", async (req, res) => {
+  try{
+    if(!aiRemOk(req, res, "chat")) return;
+    const text = String(req.body && req.body.text ? req.body.text : "").trim();
+    const instruction = String(req.body && req.body.instruction ? req.body.instruction : "Geef een kort, bruikbaar antwoord.").trim();
+
+    if(!text){
+      return jsonError(res, 400, "Tekst ontbreekt");
+    }
+
+    const answer = await callOpenAI([
+      { role: "system", content: instruction },
+      { role: "user", content: text }
+    ], 0.3);
+
+    res.json({ ok: true, answer, text: answer, result: answer });
+  }catch(err){
+    jsonError(res, 500, "OpenAI fout", err.message || String(err));
+  }
+});
+
+
+function normalizeTtsVoice(value){
+  const requested = String(value || "").trim().toLowerCase();
+  const allowed = ["alloy","ash","ballad","coral","echo","fable","nova","onyx","sage","shimmer","verse","marin","cedar"];
+  if(allowed.includes(requested)) return requested;
+  return "nova";
+}
+
+function normalizeTtsModel(value){
+  const requested = String(value || "").trim();
+  if(requested === "tts-1" || requested === "tts-1-hd" || requested === "gpt-4o-mini-tts"){
+    return requested;
+  }
+  return process.env.OPENAI_TTS_MODEL || "gpt-4o-mini-tts";
+}
+
+function buildTtsInstructions(language){
+  const lang = String(language || "").trim().toLowerCase();
+  if(lang === "ar" || lang === "ar-sa"){
+    return "Spreek de tekst duidelijk en natuurlijk uit in modern Arabisch. Gebruik een warme, rustige professionele stem. Spreek niet te snel.";
+  }
+  if(lang === "nl" || lang === "nl-nl"){
+    return "Spreek de tekst duidelijk en natuurlijk uit in Nederlands. Gebruik een warme, rustige professionele stem. Spreek niet te snel.";
+  }
+  if(lang === "en" || lang === "en-gb" || lang === "en-us"){
+    return "Speak clearly and naturally in English. Use a warm, calm professional voice. Do not speak too fast.";
+  }
+  if(lang === "de" || lang === "de-de"){
+    return "Sprich den Text klar und natürlich auf Deutsch. Verwende eine warme, ruhige professionelle Stimme. Sprich nicht zu schnell.";
+  }
+  if(lang === "fr" || lang === "fr-fr"){
+    return "Prononce le texte clairement et naturellement en français. Utilise une voix chaleureuse, calme et professionnelle. Ne parle pas trop vite.";
+  }
+  if(lang === "es" || lang === "es-es"){
+    return "Lee el texto con claridad y naturalidad en español. Usa una voz cálida, tranquila y profesional. No hables demasiado rápido.";
+  }
+  return "Spreek de tekst duidelijk, natuurlijk en professioneel uit in de gevraagde taal. Spreek niet te snel.";
+}
+
+app.post("/api/openai/tts", async (req, res) => {
+  try{
+    if(!OPENAI_API_KEY){
+      return jsonError(res, 500, "OPENAI_API_KEY ontbreekt");
+    }
+
+    const text = String(req.body && req.body.text ? req.body.text : "").trim();
+    const language = String(req.body && (req.body.language || req.body.lang) ? (req.body.language || req.body.lang) : "").trim();
+    const premiumKey = String(req.body && (req.body.email || req.body.premiumEmail || req.body.userId || req.body.premiumKey) ? (req.body.email || req.body.premiumEmail || req.body.userId || req.body.premiumKey) : "").trim();
+    const premiumPin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
+
+    if(!text){
+      return jsonError(res, 400, "Tekst ontbreekt");
+    }
+
+    if(text.length > 1800){
+      return jsonError(res, 400, "Tekst is te lang voor AI stem");
+    }
+
+    const premiumStatus = getPremiumStatus(premiumKey, premiumPin, { deviceId: getRequestDeviceId(req) });
+    if(!premiumStatus.premium){
+      return jsonError(res, premiumStatus.pinRequired ? 403 : 402, premiumStatus.pinRequired ? "Premium pincode is ongeldig" : "AI Premium is niet actief voor dit account");
+    }
+
+    const voice = normalizeTtsVoice(req.body && req.body.voice ? req.body.voice : process.env.OPENAI_TTS_VOICE || "nova");
+    const model = normalizeTtsModel(req.body && req.body.model ? req.body.model : process.env.OPENAI_TTS_MODEL || "gpt-4o-mini-tts");
+    const instructions = String(req.body && req.body.instructions ? req.body.instructions : buildTtsInstructions(language)).trim();
+
+    const response = await fetchWithTimeout("https://api.openai.com/v1/audio/speech", {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + OPENAI_API_KEY,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model,
+        voice,
+        input: text,
+        instructions,
+        response_format: "mp3"
+      })
+    });
+
+    if(!response.ok){
+      const errorText = await response.text().catch(() => "");
+      return jsonError(res, 500, "AI stem kon niet worden gemaakt", errorText || "OpenAI TTS fout");
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const audioBuffer = Buffer.from(arrayBuffer);
+
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.setHeader("Content-Length", audioBuffer.length);
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-ECHO-TTS-Voice", voice);
+    res.setHeader("X-ECHO-TTS-Model", model);
+    res.send(audioBuffer);
+
+  }catch(err){
+    jsonError(res, 500, "AI stem fout", err.message || String(err));
+  }
+});
+
+const GROUP_ID = "familie_ben_001";
+const OWNER_NAME = "Ben";
+
+const GROUP_MEMBERS = [
+  { id: "user_ben", name: "Ben", phone: "0618391659", email: "bernardwijnen@gmail.com", groupId: GROUP_ID, role: "owner", code: "725524" },
+  { id: "user_linda", name: "Linda", phone: "0642741759", email: "curfslinda@gmail.com", groupId: GROUP_ID, role: "member", code: "100001" },
+  { id: "user_branko", name: "Branko", phone: "0615474917", email: "brankowijnen2@gmail.com", groupId: GROUP_ID, role: "member", code: "100002" },
+  { id: "user_romy", name: "Romy", phone: "0615637231", email: "romywijnen20062006@gmail.com", groupId: GROUP_ID, role: "member", code: "100003" },
+  { id: "user_ron_bakkers", name: "Ron Bakkers", phone: "0653222539", email: "ron@bakkersgeleen.nl", groupId: GROUP_ID, role: "member", code: "100004" },
+  { id: "user_harrie_veltman", name: "Harrie Veltman", phone: "0648936144", email: "hawveltman@home.nl", groupId: GROUP_ID, role: "member", code: "100005" },
+  { id: "user_melvin", name: "Melvin", phone: "0637917415", email: "vertinosdesign@gmail.com", groupId: GROUP_ID, role: "member", code: "100006" }
+];
+
+const users = new Map();
+const conversations = new Map();
+const messages = new Map();
+const dynamicMembers = new Map();
+
+function normalize(value){
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function normalizePhone(value){
+  return String(value || "").replace(/\D/g, "");
+}
+
+function publicUser(user){
+  return {
+    id: user.id,
+    name: user.name,
+    phone: user.phone,
+    email: user.email,
+    groupId: user.groupId,
+    role: user.role,
+    code: user.code,
+    lastSeen: user.lastSeen || null
+  };
+}
+
+function seedUsers(){
+  GROUP_MEMBERS.forEach((member) => {
+    users.set(member.id, { ...member, lastSeen: null });
+  });
+}
+
+function makeDynamicCode(){
+  let code = "";
+  do{
+    code = "9" + Math.floor(10000 + Math.random() * 89999);
+  }while(Array.from(users.values()).some((u) => u.code === code));
+  return code;
+}
+
+function createDynamicMember({ name, phone, email }){
+  const safeName = String(name || "").trim();
+  const safePhone = String(phone || "").trim();
+  const safeEmail = String(email || "").trim();
+
+  if(!safeName || !safePhone){
+    throw new Error("Naam en telefoonnummer zijn verplicht");
+  }
+
+  const existing = Array.from(users.values()).find((u) => normalizePhone(u.phone) === normalizePhone(safePhone));
+  if(existing) return existing;
+
+  const code = makeDynamicCode();
+  const id = "user_dynamic_" + code;
+  const member = { id, name: safeName, phone: safePhone, email: safeEmail, groupId: GROUP_ID, role: "member", code, dynamic: true, lastSeen: null };
+  users.set(id, member);
+  dynamicMembers.set(id, member);
+  return member;
+}
+
+function findMember({ name, phone, email, code }){
+  const n = normalize(name);
+  const p = normalizePhone(phone);
+  const e = normalize(email);
+  const c = String(code || "").trim();
+
+  return Array.from(users.values()).find((user) => {
+    const byCode = c && user.code === c;
+    const byEmail = e && normalize(user.email) === e;
+    const byPhone = p && normalizePhone(user.phone) === p;
+    const byName = n && normalize(user.name) === n;
+    return byCode || byEmail || byPhone || byName;
+  }) || null;
+}
+
+function touchUser(userId){
+  const user = users.get(userId);
+  if(user){
+    user.lastSeen = new Date().toISOString();
+  }
+  return user;
+}
+
+function conversationIdFor(userA, userB){
+  return [userA.id, userB.id].sort().join("__");
+}
+
+function ensureConversation(userA, userB){
+  if(!userA || !userB){
+    throw new Error("Gebruiker niet gevonden");
+  }
+
+  if(userA.groupId !== userB.groupId){
+    throw new Error("Deze gebruikers zitten niet in dezelfde gesloten groep");
+  }
+
+  const id = conversationIdFor(userA, userB);
+  if(!conversations.has(id)){
+    conversations.set(id, { id, groupId: userA.groupId, participants: [userA.id, userB.id], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), deletedFor: {} });
+    messages.set(id, []);
+  }
+  return conversations.get(id);
+}
+
+function getOtherUser(conv, userId){
+  const otherId = conv.participants.find((id) => id !== userId);
+  return users.get(otherId);
+}
+
+function getVisibleMessages(convId, userId){
+  return (messages.get(convId) || []).filter((msg) => !msg.deletedFor || !msg.deletedFor[userId]);
+}
+
+function getLastVisibleMessage(convId, userId){
+  const visible = getVisibleMessages(convId, userId);
+  return visible[visible.length - 1] || null;
+}
+
+function getUnreadCount(convId, userId){
+  const list = messages.get(convId) || [];
+  return list.filter((msg) => msg.senderId !== userId && !msg.readBy?.[userId] && (!msg.deletedFor || !msg.deletedFor[userId])).length;
+}
+
+function asConversationForUser(conv, userId){
+  const other = getOtherUser(conv, userId);
+  return { id: conv.id, groupId: conv.groupId, updatedAt: conv.updatedAt, otherUser: other ? publicUser(other) : null, lastMessage: getLastVisibleMessage(conv.id, userId), unread: getUnreadCount(conv.id, userId) };
+}
+
+function cleanupOldMessages(){
+  const now = Date.now();
+  const maxAge = 1000 * 60 * 60 * 24;
+  for(const [conversationId, list] of messages.entries()){
+    const fresh = list.filter((msg) => now - new Date(msg.createdAt).getTime() < maxAge);
+    messages.set(conversationId, fresh);
+  }
+}
+
+seedUsers();
+setInterval(cleanupOldMessages, 1000 * 60 * 15);
+
+app.get("/", (req, res) => {
+  res.json({
+    ok: true,
+    name: "ECHO Central Server",
+    services: ["private-chat", "echochat-5", "echoconnect", "openai-translate", "openai-tts", "stripe-checkout", "stripe-webhook"],
+    groupId: GROUP_ID,
+    members: GROUP_MEMBERS.length,
+    openaiConfigured: !!OPENAI_API_KEY,
+    stripeConfigured: !!STRIPE_SECRET_KEY,
+    time: new Date().toISOString()
+  });
+});
+
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true, service: "ECHO Central Server", openaiConfigured: !!OPENAI_API_KEY, stripeConfigured: !!STRIPE_SECRET_KEY, time: new Date().toISOString() });
+});
+
+
+app.get("/api/stripe/status", (req, res) => {
+  res.json({
+    ok: true,
+    stripeConfigured: !!STRIPE_SECRET_KEY,
+    defaultPriceConfigured: !!STRIPE_DEFAULT_PRICE_ID,
+    webhookSecretConfigured: !!STRIPE_WEBHOOK_SECRET,
+    resendConfigured: !!RESEND_API_KEY,
+    fromEmail: FROM_EMAIL,
+    premiumAccountsInMemory: premiumAccounts.size,
+    unlimitedFairUseCredits: UNLIMITED_FAIR_USE_CREDITS,
+    starterFreeCredits: STARTER_FREE_CREDITS,
+    echoStarterFreeCredits: ECHO_STARTER_FREE_CREDITS,
+    formforgeFreeDailyLimit: FORMFORGE_FREE_DAILY_LIMIT,
+    creditPackages: {
+      aiPlus: !!STRIPE_FORMFORGE_AI_PLUS_PRICE_ID,
+      aiPro: !!STRIPE_FORMFORGE_AI_PRO_PRICE_ID,
+      unlimited: !!STRIPE_UNLIMITED_PRICE_ID
+    },
+    premiumStoreFile: PREMIUM_STORE_FILE,
+    mode: STRIPE_SECRET_KEY.startsWith("sk_live_") ? "live" : (STRIPE_SECRET_KEY.startsWith("sk_test_") ? "test" : "unknown")
+  });
+});
+
+app.get("/api/stripe/premium-status", async (req, res) => {
+  const key = String(req.query.email || req.query.userId || req.query.customerId || req.query.subscriptionId || "").trim();
+  const pin = String(req.query.pin || req.query.pincode || req.query.premiumPin || "").trim();
+  const deviceId = getRequestDeviceId(req);
+  const appSource = detectAppSourceFromReq(req);
+  const accountKey = buildPremiumAccountKey(key, appSource);
+  await refreshPremiumAccountFromStripe(accountKey);
+  const status = getPremiumStatus(accountKey, pin, { deviceId });
+  res.json({
+    ok: true,
+    premium: status.premium,
+    pinRequired: status.pinRequired,
+    deviceRequired: status.deviceRequired,
+    deviceConflict: status.deviceConflict,
+    deviceMessage: status.deviceMessage,
+    activeDeviceId: status.activeDeviceId,
+    activeDeviceLabel: status.activeDeviceLabel,
+    creditsRemaining: status.creditsRemaining,
+    creditsTotal: status.creditsTotal,
+    creditMonth: status.creditMonth,
+    aiUsedToday: status.aiUsedToday,
+    aiDailyLimit: status.aiDailyLimit,
+    aiRemainingToday: status.aiRemainingToday,
+    plan: status.plan,
+    planLabel: status.planLabel,
+    starterCreditsGranted: status.starterCreditsGranted,
+    subscriptionStatus: status.subscriptionStatus,
+    periodStart: status.periodStart,
+    periodEnd: status.periodEnd,
+    currentPeriodStart: status.currentPeriodStart,
+    currentPeriodEnd: status.currentPeriodEnd,
+    nextPaymentDate: status.nextPaymentDate,
+    cancelAtPeriodEnd: status.cancelAtPeriodEnd,
+    cancelAt: status.cancelAt,
+    canceledAt: status.canceledAt,
+    account: status
+  });
+});
+
+app.post("/api/stripe/premium-status", async (req, res) => {
+  const key = String(req.body && (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) ? (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) : "").trim();
+  const pin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
+  const deviceId = getRequestDeviceId(req);
+  const appSource = detectAppSourceFromReq(req);
+  const accountKey = buildPremiumAccountKey(key, appSource);
+  await refreshPremiumAccountFromStripe(accountKey);
+  const status = getPremiumStatus(accountKey, pin, { deviceId });
+  res.json({
+    ok: true,
+    premium: status.premium,
+    pinRequired: status.pinRequired,
+    deviceRequired: status.deviceRequired,
+    deviceConflict: status.deviceConflict,
+    deviceMessage: status.deviceMessage,
+    activeDeviceId: status.activeDeviceId,
+    activeDeviceLabel: status.activeDeviceLabel,
+    creditsRemaining: status.creditsRemaining,
+    creditsTotal: status.creditsTotal,
+    creditMonth: status.creditMonth,
+    aiUsedToday: status.aiUsedToday,
+    aiDailyLimit: status.aiDailyLimit,
+    aiRemainingToday: status.aiRemainingToday,
+    plan: status.plan,
+    planLabel: status.planLabel,
+    starterCreditsGranted: status.starterCreditsGranted,
+    subscriptionStatus: status.subscriptionStatus,
+    periodStart: status.periodStart,
+    periodEnd: status.periodEnd,
+    currentPeriodStart: status.currentPeriodStart,
+    currentPeriodEnd: status.currentPeriodEnd,
+    nextPaymentDate: status.nextPaymentDate,
+    cancelAtPeriodEnd: status.cancelAtPeriodEnd,
+    cancelAt: status.cancelAt,
+    canceledAt: status.canceledAt,
+    account: status
+  });
+});
+
+app.post("/api/stripe/confirm-session", async (req, res) => {
+  try{
+    const sessionId = String(req.body && (req.body.sessionId || req.body.checkout_session_id || req.body.session_id) ? (req.body.sessionId || req.body.checkout_session_id || req.body.session_id) : "").trim();
+    const deviceId = getRequestDeviceId(req);
+    if(!sessionId || !sessionId.startsWith("cs_")){
+      return jsonError(res, 400, "Stripe checkout sessie ontbreekt");
+    }
+
+    const session = await callStripeGet("/checkout/sessions/" + encodeURIComponent(sessionId));
+    const email = normalizePremiumKey(session.customer_email || (session.customer_details && session.customer_details.email) || (session.metadata && session.metadata.email) || "");
+    const clientReferenceId = normalizePremiumKey(session.client_reference_id || (session.metadata && session.metadata.clientReferenceId) || email);
+    const subscriptionId = session.subscription || "";
+    const customerId = session.customer || "";
+    const mode = String(session.mode || "");
+    const metadata = session.metadata || {};
+    const packageCredits = Number(metadata.credits || 0);
+    const packageType = String(metadata.packageType || "");
+    const plan = normalizeAiPlan(metadata.plan || metadata.aiPlan || "");
+    let subscriptionData = null;
+    let periodData = {};
+    if(subscriptionId){
+      try{
+        subscriptionData = await callStripeGet("/subscriptions/" + encodeURIComponent(subscriptionId));
+        periodData = extractStripeSubscriptionPeriod(subscriptionData);
+      }catch(e){
+        console.warn("Stripe abonnement details konden niet worden opgehaald:", e.message || String(e));
+      }
+    }
+    const sessionOk = session.status === "complete" || session.payment_status === "paid" || !!subscriptionId;
+
+    if(!sessionOk || !email){
+      return jsonError(res, 402, "Stripe betaling is nog niet bevestigd");
+    }
+
+    if(mode === "payment" && packageType === "credits" && packageCredits > 0){
+      const creditAccount = addCreditsToAccount(email, packageCredits, "checkout.session.confirmed.credit_pack", session.id || "");
+      return res.json({
+        ok: true,
+        premium: true,
+        email,
+        premiumPin: creditAccount && creditAccount.premiumPin ? creditAccount.premiumPin : "",
+        pin: creditAccount && creditAccount.premiumPin ? creditAccount.premiumPin : "",
+        creditsRemaining: creditAccount ? Number(creditAccount.creditsRemaining || 0) : 0,
+        creditsTotal: creditAccount ? Number(creditAccount.creditsTotal || 0) : 0,
+        creditMonth: creditAccount ? String(creditAccount.creditMonth || currentPremiumMonth()) : currentPremiumMonth(),
+        plan: creditAccount ? String(creditAccount.plan || "credits") : "credits",
+        addedCredits: packageCredits,
+        message: creditAccount && creditAccount.duplicateStripeSession ? "Deze betaling was al verwerkt. Credits zijn niet dubbel toegevoegd." : packageCredits + " AI credits zijn toegevoegd."
+      });
+    }
+
+    // Ondernemer-abonnement (stadsgids): zet de onderneming uitgelicht en geef de
+    // pincode terug. Dit is een vangnet naast de webhook, zodat de ondernemer bij
+    // terugkeer altijd bevestiging krijgt, ook als de webhook (nog) niet binnen is.
+    if(metadata.kind === "merchant"){
+      setMerchantActiveFromMeta(metadata, true, customerId, subscriptionId);
+      const mCity = String(metadata.city || "").toLowerCase();
+      const mId = String(metadata.merchantId || "");
+      const mList = merchants.get(mCity) || [];
+      const mm = mList.find(x => x.id === mId) || null;
+      return res.json({
+        ok: true,
+        premium: true,
+        merchant: true,
+        featured: true,
+        email: (mm && mm.email) ? mm.email : email,
+        premiumPin: (mm && mm.pin) ? mm.pin : "",
+        pin: (mm && mm.pin) ? mm.pin : "",
+        merchantName: mm ? String(mm.name || "") : "",
+        message: "Uw abonnement is actief. Uw zaak staat nu uitgelicht bovenaan in de gids."
+      });
+    }
+
+    setPremiumForStripeData({
+      email,
+      clientReferenceId,
+      customerId,
+      subscriptionId,
+      active: true,
+      reason: "checkout.session.confirmed",
+      plan: plan || "pro",
+      priceId: metadata.priceId || "",
+      deviceId: deviceId,
+      activeDeviceId: deviceId,
+      deviceBoundAt: deviceId ? new Date().toISOString() : "",
+      deviceLastSeenAt: deviceId ? new Date().toISOString() : "",
+      ...periodData
+    });
+
+    const account = getPremiumAccount(email);
+    res.json({
+      ok: true,
+      premium: true,
+      email,
+      premiumPin: account && account.premiumPin ? account.premiumPin : "",
+      pin: account && account.premiumPin ? account.premiumPin : "",
+      creditsRemaining: account ? Number(account.creditsRemaining || 0) : 0,
+      creditsTotal: account ? Number(account.creditsTotal || 0) : 0,
+      creditMonth: account ? String(account.creditMonth || currentPremiumMonth()) : currentPremiumMonth(),
+      subscriptionStatus: account ? String(account.subscriptionStatus || "") : "",
+      periodStart: account ? String(account.periodStart || account.currentPeriodStart || "") : "",
+      periodEnd: account ? String(account.periodEnd || account.currentPeriodEnd || "") : "",
+      currentPeriodStart: account ? String(account.currentPeriodStart || account.periodStart || "") : "",
+      currentPeriodEnd: account ? String(account.currentPeriodEnd || account.periodEnd || "") : "",
+      nextPaymentDate: account && !account.cancelAtPeriodEnd ? String(account.periodEnd || account.currentPeriodEnd || "") : "",
+      cancelAtPeriodEnd: account ? !!account.cancelAtPeriodEnd : false,
+      cancelAt: account ? String(account.cancelAt || "") : "",
+      canceledAt: account ? String(account.canceledAt || "") : ""
+    });
+  }catch(err){
+    jsonError(res, 500, "Stripe sessie kon niet worden bevestigd", err.message || String(err));
+  }
+});
+
+app.post("/api/stripe/use-credit", (req, res) => {
+  const key = String(req.body && (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) ? (req.body.email || req.body.userId || req.body.customerId || req.body.subscriptionId) : "").trim();
+  const pin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
+  const deviceId = getRequestDeviceId(req);
+  const appSource = detectAppSourceFromReq(req);
+  const accountKey = buildPremiumAccountKey(key, appSource);
+  const result = consumePremiumCredit(accountKey, pin, deviceId);
+  if(!result.ok){
+    return jsonError(res, result.status || 400, result.error || "Credit kon niet worden verwerkt");
+  }
+  res.json({
+    ok: true,
+    premium: true,
+    creditsRemaining: result.status.creditsRemaining,
+    creditsTotal: result.status.creditsTotal,
+    creditMonth: result.status.creditMonth,
+    account: result.status
+  });
+});
+
+
+
+app.post("/api/stripe/transfer-device", async (req, res) => {
+  try{
+    const email = normalizePremiumKey(req.body && req.body.email ? req.body.email : "");
+    const pin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
+    const deviceId = getRequestDeviceId(req);
+
+    if(!email){
+      return jsonError(res, 400, "E-mailadres ontbreekt");
+    }
+    if(!pin){
+      return jsonError(res, 400, "Pincode ontbreekt");
+    }
+    if(!deviceId){
+      return jsonError(res, 428, "Apparaat ID ontbreekt");
+    }
+
+    let account = getPremiumAccount(email);
+    if(!account || !account.active){
+      return jsonError(res, 404, "Geen actief FormForge AI account gevonden");
+    }
+    if(!verifyPremiumPin(account, pin)){
+      return jsonError(res, 403, "Pincode is ongeldig");
+    }
+
+    account = setPremiumAccount(email, {
+      deviceId,
+      activeDeviceId: deviceId,
+      deviceBoundAt: new Date().toISOString(),
+      deviceLastSeenAt: new Date().toISOString(),
+      deviceTransferredAt: new Date().toISOString()
+    });
+
+    res.json({
+      ok: true,
+      transferred: true,
+      message: "Dit toestel is nu gekoppeld aan jouw FormForge AI account.",
+      account: getPremiumStatus(email, pin, { deviceId })
+    });
+  }catch(err){
+    jsonError(res, 500, "Toestel overzetten mislukt", err.message || String(err));
+  }
+});
+
+app.post("/api/stripe/cancel-subscription", async (req, res) => {
+  try{
+    const email = normalizePremiumKey(req.body && req.body.email ? req.body.email : "");
+    const pin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
+
+    if(!email){
+      return jsonError(res, 400, "E-mailadres ontbreekt");
+    }
+
+    if(!pin){
+      return jsonError(res, 400, "Pincode ontbreekt");
+    }
+
+    if(isOwnerPremiumEmail(email)){
+      return jsonError(res, 400, "Dit is een vast eigenaar-account. Daar hoort geen Stripe-abonnement bij.");
+    }
+
+    /* Het account kan onder de kale e-mail staan (webhook) of onder een
+       app-sleutel (formforge: / echo:). We kijken ze alle drie na, want de
+       klant weet niet onder welke sleutel hij is aangemaakt. */
+    const keys = existingPremiumAccountKeys(email);
+    if(!keys.length){
+      return jsonError(res, 404, "Geen actief Premium abonnement gevonden");
+    }
+
+    const accounts = keys.map(k => getPremiumAccount(k)).filter(Boolean);
+
+    /* De pincode mag bij elk van die sleutels kloppen. De webhook maakt bij
+       een nieuw record namelijk zijn eigen pincode aan, dus de pincode uit de
+       welkomstmail hoeft niet op alle sleutels dezelfde te zijn. */
+    if(!accounts.some(a => verifyPremiumPin(a, pin))){
+      return jsonError(res, 403, "Pincode is ongeldig");
+    }
+
+    const actieve = accounts.filter(a => a.active);
+    if(!actieve.length){
+      return jsonError(res, 404, "Geen actief Premium abonnement gevonden");
+    }
+
+    const metAbo = actieve.find(a => a.subscriptionId) || accounts.find(a => a.subscriptionId);
+    if(!metAbo || !metAbo.subscriptionId){
+      return jsonError(res, 400, "Geen Stripe abonnement gevonden bij dit account. Heb je via een andere weg betaald, neem dan contact met ons op.");
+    }
+
+    if(metAbo.cancelAtPeriodEnd){
+      return res.json({
+        ok: true,
+        cancelled: true,
+        alreadyCancelled: true,
+        cancelAtPeriodEnd: true,
+        periodEnd: String(metAbo.periodEnd || metAbo.currentPeriodEnd || ""),
+        currentPeriodEnd: String(metAbo.currentPeriodEnd || metAbo.periodEnd || ""),
+        message: "Dit abonnement was al opgezegd. Het blijft actief tot het einde van de betaalde periode."
+      });
+    }
+
+    const cancelledSubscription = await callStripe("/subscriptions/" + encodeURIComponent(metAbo.subscriptionId), {
+      cancel_at_period_end: true
+    });
+    const periodData = extractStripeSubscriptionPeriod(cancelledSubscription);
+
+    const payload = {
+      ...periodData,
+      cancelAtPeriodEnd: true,
+      cancelRequestedAt: new Date().toISOString(),
+      reason: "cancel_requested_by_user"
+    };
+
+    /* De opzegging op ALLE sleutels van dit account vastleggen, plus op de
+       Stripe-sleutels als die als los record bestaan. Zo ziet de klant in
+       elke app hetzelfde, en kan hij niet per ongeluk twee keer opzeggen. */
+    const schrijfSleutels = keys.slice();
+    [metAbo.customerId, metAbo.subscriptionId].forEach((k) => {
+      if(k && premiumAccounts.has(k) && schrijfSleutels.indexOf(k) < 0) schrijfSleutels.push(k);
+    });
+    schrijfSleutels.forEach(k => setPremiumAccount(k, payload));
+
+    res.json({
+      ok: true,
+      cancelled: true,
+      cancelAtPeriodEnd: true,
+      periodStart: periodData.periodStart || periodData.currentPeriodStart || "",
+      periodEnd: periodData.periodEnd || periodData.currentPeriodEnd || "",
+      currentPeriodStart: periodData.currentPeriodStart || periodData.periodStart || "",
+      currentPeriodEnd: periodData.currentPeriodEnd || periodData.periodEnd || "",
+      subscriptionStatus: periodData.subscriptionStatus || "",
+      message: "Je abonnement is opgezegd en blijft actief tot het einde van de betaalde periode."
+    });
+
+  }catch(err){
+    console.error("Abonnement opzeggen mislukt:", (err && err.message) || err);
+    jsonError(res, 500, "Abonnement kon niet worden opgezegd", err.message || String(err));
+  }
+});
+
+app.post("/api/stripe/request-pin-reset", async (req, res) => {
+  try{
+    const email = normalizePremiumKey(req.body && req.body.email ? req.body.email : "");
+    const appSource = detectAppSourceFromReq(req);
+    const accountKey = buildPremiumAccountKey(email, appSource);
+
+    if(!email){
+      return jsonError(res, 400, "E-mailadres ontbreekt");
+    }
+
+    const account = getPremiumAccount(email);
+
+    if(!account || !account.active){
+      return res.json({
+        ok: true,
+        sent: false,
+        message: "Als dit e-mailadres een actief Premium account heeft, wordt er een nieuwe pincode verstuurd."
+      });
+    }
+
+    const newPin = makePremiumPin();
+    setPremiumAccount(accountKey, {
+      email,
+      premiumPin: newPin,
+      lastPinResetAt: new Date().toISOString(),
+      reason: "pin_reset_requested"
+    });
+
+    await sendResendEmail({
+      to: email,
+      subject: "Je nieuwe ECHO AI Premium pincode",
+      text: premiumPinEmailText(newPin),
+      html: premiumPinEmailHtml(newPin)
+    });
+
+    res.json({
+      ok: true,
+      sent: true,
+      message: "Nieuwe pincode is verstuurd naar het Premium e-mailadres."
+    });
+  }catch(err){
+    jsonError(res, 500, "Pincode reset mail kon niet worden verstuurd", err.message || String(err));
+  }
+});
+
+// Een bestaand (al betaald) Stripe-abonnement koppelen aan dit account.
+// Robuust: zet het account onder ALLE mogelijke sleutels op "pro" met EEN
+// vaste pincode, zodat het inloggen het altijd vindt (los van app-source).
+app.post("/api/stripe/link-subscription", async (req, res) => {
+  try{
+    const email = normalizePremiumKey(req.body && req.body.email ? req.body.email : "");
+    let subscriptionId = String(req.body && req.body.subscriptionId ? req.body.subscriptionId : "").trim();
+    const deviceId = getRequestDeviceId(req);
+    if(!email) return jsonError(res, 400, "E-mailadres ontbreekt");
+    if(!STRIPE_SECRET_KEY) return jsonError(res, 500, "Stripe niet geconfigureerd");
+
+    // 1) Als er geen subscriptionId is meegegeven, zoek het actieve abonnement op e-mail
+    let subscription = null;
+    if(subscriptionId && subscriptionId.startsWith("sub_")){
+      try{ subscription = await callStripeGet("/subscriptions/" + encodeURIComponent(subscriptionId)); }
+      catch(e){ return jsonError(res, 404, "Abonnement niet gevonden in Stripe"); }
+    }else{
+      // zoek klant op e-mail, dan diens actieve abonnement
+      try{
+        const customers = await callStripeGet("/customers?email=" + encodeURIComponent(email) + "&limit=10");
+        const list = (customers && customers.data) ? customers.data : [];
+        for(const cust of list){
+          const subs = await callStripeGet("/subscriptions?customer=" + encodeURIComponent(cust.id) + "&status=active&limit=10");
+          const sd = (subs && subs.data) ? subs.data : [];
+          // kies een abonnement met de Unlimited price-ID, anders het eerste actieve
+          let chosen = sd.find(s => {
+            const it = s.items && s.items.data && s.items.data[0];
+            const pid = it && it.price && it.price.id;
+            return pid === STRIPE_UNLIMITED_PRICE_ID || getAiPlanByPriceId(pid) === "pro";
+          }) || sd[0];
+          if(chosen){ subscription = chosen; break; }
+        }
+      }catch(e){
+        return jsonError(res, 500, "Kon Stripe-klant niet opzoeken: " + (e.message || String(e)));
+      }
+    }
+
+    if(!subscription) return jsonError(res, 404, "Geen actief abonnement gevonden voor dit e-mailadres.");
+
+    // 2) Veiligheid: controleer dat het abonnement bij dit e-mailadres hoort
+    let custEmail = "";
+    try{
+      const customerId = subscription.customer || "";
+      if(customerId){
+        const customer = await callStripeGet("/customers/" + encodeURIComponent(customerId));
+        custEmail = normalizePremiumKey(customer.email || "");
+      }
+    }catch(e){ /* doorgaan */ }
+    if(custEmail && custEmail !== email){
+      return jsonError(res, 403, "Dit abonnement hoort bij een ander e-mailadres.");
+    }
+
+    const status = String(subscription.status || "");
+    if(!["active","trialing","past_due"].includes(status)){
+      return jsonError(res, 400, "Dit abonnement is niet actief (status: " + (status || "onbekend") + ").");
+    }
+
+    const firstItem = subscription.items && subscription.items.data && subscription.items.data[0] ? subscription.items.data[0] : {};
+    const priceId = firstItem.price && firstItem.price.id ? firstItem.price.id : "";
+    const plan = getAiPlanByPriceId(priceId) || "pro";
+    const periodData = extractStripeSubscriptionPeriod(subscription);
+
+    // 3) EEN vaste pincode bepalen (hergebruik bestaande als die er is)
+    const existing = getPremiumAccount(email)
+      || getPremiumAccount("formforge:" + email)
+      || getPremiumAccount("echo:" + email);
+    const pin = (existing && existing.premiumPin) ? existing.premiumPin : makePremiumPin();
+
+    // 4) Onder ALLE mogelijke sleutels wegschrijven, met dezelfde pincode
+    const keys = [email, "formforge:" + email, "echo:" + email];
+    const payload = {
+      email,
+      customerId: subscription.customer || "",
+      subscriptionId: subscription.id || subscriptionId,
+      active: true,
+      plan,
+      priceId,
+      premiumPin: pin,
+      reason: "manual.link_subscription",
+      deviceId,
+      activeDeviceId: deviceId,
+      deviceBoundAt: deviceId ? new Date().toISOString() : "",
+      deviceLastSeenAt: deviceId ? new Date().toISOString() : "",
+      ...periodData
+    };
+    keys.forEach(k => setPremiumAccount(k, payload));
+
+    res.json({
+      ok: true,
+      linked: true,
+      plan,
+      premium: true,
+      email,
+      premiumPin: pin,
+      pin,
+      subscriptionId: subscription.id || subscriptionId,
+      subscriptionStatus: status,
+      message: "Je abonnement is gekoppeld. Log in met dit e-mailadres en deze pincode."
+    });
+  }catch(err){
+    jsonError(res, 500, "Koppelen mislukt", err.message || String(err));
+  }
+});
+
+app.post("/api/stripe/activate-starter", async (req, res) => {
+  try{
+    const email = normalizePremiumKey(req.body && req.body.email ? req.body.email : "");
+    const suppliedPin = normalizePremiumPin(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "");
+    const deviceId = getRequestDeviceId(req);
+    const appSource = detectAppSourceFromReq(req);
+    const accountKey = buildPremiumAccountKey(email, appSource);
+    const isEchoStarter = appSource === "echo";
+    const freeCredits = isEchoStarter ? ECHO_STARTER_FREE_CREDITS : FORMFORGE_FREE_DAILY_LIMIT;
+    const freePlan = isEchoStarter ? "credits" : "starter";
+    const appLabel = isEchoStarter ? "ECHO" : "FormForge AI";
+
+    if(!email){
+      return jsonError(res, 400, "E-mailadres ontbreekt");
+    }
+
+    let account = getPremiumAccount(accountKey);
+
+    if(account && account.active){
+      const deviceCheck = checkAccountDevice(account, deviceId, { requireDevice: true });
+      if(!deviceCheck.ok){
+        return jsonError(res, deviceCheck.status || 409, deviceCheck.message || "Dit FormForge AI account is al actief op een ander toestel", deviceCheck.code || "DEVICE_ERROR");
+      }
+      account = bindAccountDeviceIfNeeded(accountKey, account, deviceId);
+      account = touchAccountDevice(accountKey, account, deviceId);
+    }
+
+    if(account && account.premiumPin && suppliedPin && !verifyPremiumPin(account, suppliedPin)){
+      return jsonError(res, 403, "Pincode is ongeldig voor dit e-mailadres");
+    }
+
+    if(account && account.active && account.plan !== "starter" && account.plan !== "credits"){
+      const status = getPremiumStatus(accountKey, suppliedPin || account.premiumPin, { allowWithoutPin: !suppliedPin, deviceId });
+      return res.json({
+        ok: true,
+        alreadyActive: true,
+        premium: status.premium || !!account.active,
+        active: !!account.active,
+        email,
+        creditsRemaining: Number(account.creditsRemaining || 0),
+        creditsTotal: Number(account.creditsTotal || UNLIMITED_FAIR_USE_CREDITS),
+        creditMonth: String(account.creditMonth || currentPremiumDay()),
+        plan: String(account.plan || "premium"),
+        starterCreditsGranted: !!account.starterCreditsGranted,
+        emailSent: false,
+        message: "Dit e-mailadres heeft al een actief AI account. Gebruik je pincode of vraag een nieuwe pincode aan."
+      });
+    }
+
+    if(account && account.starterCreditsGranted){
+      return res.json({
+        ok: true,
+        alreadyActive: true,
+        premium: true,
+        active: true,
+        email,
+        creditsRemaining: Number(account.creditsRemaining || 0),
+        creditsTotal: Number(account.creditsTotal || freeCredits),
+        creditMonth: String(account.creditMonth || currentPremiumDay()),
+        plan: String(account.plan || freePlan),
+        starterCreditsGranted: true,
+        emailSent: false,
+        message: "Gratis credits waren al geactiveerd voor dit e-mailadres. Gebruik de pincode uit je e-mail of vraag een nieuwe pincode aan."
+      });
+    }
+
+    const pin = suppliedPin && suppliedPin.length === 6 ? suppliedPin : (account && account.premiumPin ? account.premiumPin : makePremiumPin());
+
+    const accountPayload = {
+      active: true,
+      email,
+      premiumPin: pin,
+      creditMonth: currentPremiumDay(),
+      aiUsageDate: currentPremiumDay(),
+      aiUsedToday: 0,
+      deviceId: deviceId,
+      activeDeviceId: deviceId,
+      deviceBoundAt: deviceId ? new Date().toISOString() : "",
+      deviceLastSeenAt: deviceId ? new Date().toISOString() : "",
+      plan: freePlan,
+      source: appSource,
+      appSource,
+      starterCreditsGranted: true,
+      starterCreditsGrantedAt: new Date().toISOString(),
+      reason: isEchoStarter ? "echo_starter_credits_activated" : "formforge_daily_free_activated"
+    };
+
+    if(isEchoStarter){
+      accountPayload.creditsRemaining = freeCredits;
+      accountPayload.creditsTotal = freeCredits;
+      accountPayload.aiDailyLimit = freeCredits;
+      accountPayload.aiRemainingToday = freeCredits;
+    }else{
+      accountPayload.creditsRemaining = freeCredits;
+      accountPayload.creditsTotal = freeCredits;
+      accountPayload.aiDailyLimit = freeCredits;
+      accountPayload.aiRemainingToday = freeCredits;
+    }
+
+    account = setPremiumAccount(accountKey, accountPayload);
+
+    let emailSent = false;
+    if(RESEND_API_KEY){
+      try{
+        await sendResendEmail({
+          to: email,
+          subject: isEchoStarter ? "Je ECHO pincode" : "Je FormForge AI pincode",
+          text: starterCreditsEmailText(pin, freeCredits, appSource),
+          html: starterCreditsEmailHtml(pin, freeCredits, appSource)
+        });
+        emailSent = true;
+      }catch(mailErr){
+        console.warn("Startercredits mail kon niet worden verstuurd:", mailErr.message || String(mailErr));
+      }
+    }
+
+    res.json({
+      ok: true,
+      premium: true,
+      active: true,
+      email,
+      creditsRemaining: Number(account.creditsRemaining || 0),
+      creditsTotal: Number(account.creditsTotal || freeCredits),
+      creditMonth: String(account.creditMonth || currentPremiumDay()),
+      plan: String(account.plan || freePlan),
+      starterCreditsGranted: true,
+      emailSent,
+      message: emailSent ? "Je gratis credits zijn geactiveerd. De pincode is naar je e-mailadres verzonden." : "Je gratis credits zijn geactiveerd, maar de pincode mail kon niet worden verzonden. Controleer RESEND_API_KEY en FROM_EMAIL in Render."
+    });
+  }catch(err){
+    jsonError(res, 500, "Startercredits konden niet worden geactiveerd", err.message || String(err));
+  }
+});
+
+
+app.post("/api/stripe/create-credit-checkout", async (req, res) => {
+  try{
+    const email = normalizePremiumKey(req.body && req.body.email ? req.body.email : "");
+    const packageKey = String(req.body && (req.body.package || req.body.packageKey || req.body.credits) ? (req.body.package || req.body.packageKey || req.body.credits) : "").trim();
+    const pkg = CREDIT_PACKAGES[packageKey];
+
+    if(!email){
+      return jsonError(res, 400, "E-mailadres ontbreekt");
+    }
+
+    if(!pkg || !pkg.priceId){
+      return jsonError(res, 400, "Ongeldig creditpakket");
+    }
+
+    const successUrl = String(req.body && req.body.successUrl ? req.body.successUrl : STRIPE_SUCCESS_URL).trim();
+    const cancelUrl = String(req.body && req.body.cancelUrl ? req.body.cancelUrl : STRIPE_CANCEL_URL).trim();
+
+    const payload = {
+      mode: "payment",
+      line_items: [
+        {
+          price: pkg.priceId,
+          quantity: 1
+        }
+      ],
+      success_url: successUrlWithCheckoutSession(successUrl),
+      cancel_url: cancelUrl,
+      allow_promotion_codes: true,
+      billing_address_collection: "auto",
+      customer_email: email,
+      client_reference_id: email,
+      metadata: {
+        product: pkg.label,
+        source: "formforge-echo",
+        packageType: "credits",
+        packageKey,
+        credits: String(pkg.credits),
+        email
+      }
+    };
+
+    const session = await callStripe("/checkout/sessions", payload);
+
+    res.json({
+      ok: true,
+      id: session.id,
+      url: session.url,
+      packageKey,
+      credits: pkg.credits
+    });
+  }catch(err){
+    jsonError(res, 500, "Credit checkout fout", err.message || String(err));
+  }
+});
+
+app.post("/api/stripe/create-checkout", async (req, res) => {
+  try{
+    const requestedPlan = normalizeAiPlan(req.body && (req.body.plan || req.body.aiPlan) ? (req.body.plan || req.body.aiPlan) : "");
+    const defaultPlanPriceId = requestedPlan === "plus" ? STRIPE_FORMFORGE_AI_PLUS_PRICE_ID : STRIPE_FORMFORGE_AI_PRO_PRICE_ID;
+    const priceId = String(req.body && (req.body.priceId || req.body.price_id) ? (req.body.priceId || req.body.price_id) : (defaultPlanPriceId || STRIPE_UNLIMITED_PRICE_ID || STRIPE_DEFAULT_PRICE_ID)).trim();
+    const deviceId = getRequestDeviceId(req);
+    const plan = requestedPlan || getAiPlanByPriceId(priceId) || "pro";
+    const customerEmail = String(req.body && req.body.email ? req.body.email : "").trim();
+    const clientReferenceId = String(req.body && (req.body.userId || req.body.clientReferenceId) ? (req.body.userId || req.body.clientReferenceId) : "").trim();
+    const successUrl = String(req.body && req.body.successUrl ? req.body.successUrl : STRIPE_SUCCESS_URL).trim();
+    const cancelUrl = String(req.body && req.body.cancelUrl ? req.body.cancelUrl : STRIPE_CANCEL_URL).trim();
+
+    if(!priceId){
+      return jsonError(res, 400, "Stripe priceId ontbreekt. Zet STRIPE_PRICE_ID in Render of stuur priceId mee vanuit de app.");
+    }
+
+    const payload = {
+      mode: "subscription",
+      "line_items": [
+        {
+          price: priceId,
+          quantity: 1
+        }
+      ],
+      success_url: successUrlWithCheckoutSession(successUrl),
+      cancel_url: cancelUrl,
+      allow_promotion_codes: true,
+      billing_address_collection: "auto",
+      metadata: {
+        product: getAiPlanLabel(plan),
+        source: "formforge-offerte-factuur",
+        email: customerEmail,
+        plan,
+        aiPlan: plan,
+        priceId,
+        deviceId
+      },
+      subscription_data: {
+        metadata: {
+          product: getAiPlanLabel(plan),
+          source: "formforge-offerte-factuur",
+          email: customerEmail,
+          plan,
+          aiPlan: plan,
+          priceId,
+          deviceId
+        }
+      }
+    };
+
+    if(customerEmail){
+      payload.customer_email = customerEmail;
+    }
+    if(clientReferenceId){
+      payload.client_reference_id = clientReferenceId;
+      payload.metadata.clientReferenceId = clientReferenceId;
+      payload.subscription_data.metadata.clientReferenceId = clientReferenceId;
+    }
+
+    const session = await callStripe("/checkout/sessions", payload);
+
+    res.json({
+      ok: true,
+      id: session.id,
+      url: session.url
+    });
+  }catch(err){
+    jsonError(res, 500, "Stripe checkout fout", err.message || String(err));
+  }
+});
+
+app.get("/api/push/public-key", (req, res) => {
+  res.json({ publicKey: VAPID_PUBLIC_KEY });
+});
+
+app.post("/api/push/subscribe", (req, res) => {
+  const { userId, subscription, pageUrl } = req.body || {};
+  if(!users.has(userId)){
+    return jsonError(res, 404, "Gebruiker niet gevonden");
+  }
+  addPushSubscription(userId, subscription, pageUrl);
+  res.json({ ok: true });
+});
+
+app.post("/api/dynamic-members", (req, res) => {
+  const { ownerId, name, phone, email } = req.body || {};
+  const owner = users.get(ownerId);
+  if(!owner || owner.role !== "owner"){
+    return jsonError(res, 403, "Alleen Ben kan nieuwe personen uitnodigen");
+  }
+  try{
+    const member = createDynamicMember({ name, phone, email });
+    res.json({ member: publicUser(member) });
+  }catch(err){
+    jsonError(res, 400, err.message || "Nieuw contact kon niet worden gemaakt");
+  }
+});
+
+app.get("/api/group/members", (req, res) => {
+  res.json({ groupId: GROUP_ID, members: Array.from(users.values()).map(publicUser) });
+});
+
+app.post("/api/register", (req, res) => {
+  const { name, phone, email, code } = req.body || {};
+  const user = findMember({ name, phone, email, code });
+  if(!user){
+    return jsonError(res, 403, "Deze persoon staat niet in de gesloten ECHO groep");
+  }
+  touchUser(user.id);
+  res.json({ user: publicUser(user) });
+});
+
+app.post("/api/login", (req, res) => {
+  const { code, phone, email, name } = req.body || {};
+  const user = findMember({ code, phone, email, name });
+  if(!user){
+    return jsonError(res, 403, "Geen toegang tot deze gesloten ECHO groep");
+  }
+  touchUser(user.id);
+  res.json({ user: publicUser(user) });
+});
+
+app.post("/api/presence", (req, res) => {
+  const { userId } = req.body || {};
+  const user = touchUser(userId);
+  if(!user){
+    return jsonError(res, 404, "Gebruiker niet gevonden");
+  }
+  res.json({ ok: true, user: publicUser(user) });
+});
+
+app.post("/api/conversations", (req, res) => {
+  const { userId, otherCode, otherUserId, phone, email, name } = req.body || {};
+  const user = users.get(userId);
+  if(!user){
+    return jsonError(res, 404, "Gebruiker niet gevonden");
+  }
+
+  let other = null;
+  if(otherUserId){
+    other = users.get(otherUserId);
+  }
+  if(!other){
+    other = findMember({ code: otherCode, phone, email, name });
+  }
+  if(!other){
+    return jsonError(res, 404, "Contact staat niet in de gesloten groep");
+  }
+  if(other.id === user.id){
+    return jsonError(res, 400, "Je kunt geen gesprek met jezelf starten");
+  }
+  if(other.groupId !== user.groupId){
+    return jsonError(res, 403, "Contact zit niet in jouw gesloten groep");
+  }
+
+  const conv = ensureConversation(user, other);
+  conv.deletedFor[user.id] = false;
+  conv.deletedFor[other.id] = false;
+  conv.updatedAt = new Date().toISOString();
+  res.json({ conversation: asConversationForUser(conv, user.id) });
+});
+
+app.get("/api/conversations/:userId", (req, res) => {
+  const userId = req.params.userId;
+  const user = users.get(userId);
+  if(!user){
+    return jsonError(res, 404, "Gebruiker niet gevonden");
+  }
+  touchUser(userId);
+  const list = Array.from(conversations.values())
+    .filter((conv) => conv.participants.includes(userId))
+    .filter((conv) => !conv.deletedFor || !conv.deletedFor[userId])
+    .map((conv) => asConversationForUser(conv, userId))
+    .sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+  res.json({ conversations: list });
+});
+
+app.get("/api/messages/:conversationId", (req, res) => {
+  const conversationId = req.params.conversationId;
+  const userId = String(req.query.userId || "");
+  const conv = conversations.get(conversationId);
+  if(!conv){
+    return jsonError(res, 404, "Gesprek niet gevonden");
+  }
+  if(!conv.participants.includes(userId)){
+    return jsonError(res, 403, "Geen toegang tot dit gesprek");
+  }
+  touchUser(userId);
+  res.json({ messages: getVisibleMessages(conversationId, userId) });
+});
+
+app.post("/api/messages", (req, res) => {
+  const { conversationId, senderId, type, text, fileName, fileType, fileData, fileSize } = req.body || {};
+  const conv = conversations.get(conversationId);
+  const sender = users.get(senderId);
+  if(!conv){
+    return jsonError(res, 404, "Gesprek niet gevonden");
+  }
+  if(!sender || !conv.participants.includes(sender.id)){
+    return jsonError(res, 403, "Geen toegang tot dit gesprek");
+  }
+
+  const msg = {
+    id: "msg_" + Date.now() + "_" + Math.random().toString(36).slice(2, 10),
+    conversationId,
+    senderId,
+    type: type || "text",
+    text: String(text || ""),
+    fileName: fileName || "",
+    fileType: fileType || "",
+    fileData: fileData || "",
+    fileSize: fileSize || 0,
+    createdAt: new Date().toISOString(),
+    readAt: null,
+    readBy: { [sender.id]: true },
+    deletedFor: {}
+  };
+
+  if(!msg.text && msg.type === "text"){
+    return jsonError(res, 400, "Leeg bericht");
+  }
+
+  const list = messages.get(conversationId) || [];
+  list.push(msg);
+  messages.set(conversationId, list);
+
+  conv.updatedAt = msg.createdAt;
+  conv.deletedFor = {};
+  touchUser(sender.id);
+
+  const recipients = conv.participants.filter((id) => id !== sender.id);
+  recipients.forEach((recipientId) => {
+    sendPushToUser(recipientId, {
+      title: "ECHO Messenger",
+      body: sender.name + " stuurde een bericht",
+      conversationId,
+      senderId: sender.id,
+      url: "/formforge/adminmode/pages/private-group-ben.html"
+    });
+  });
+
+  res.json({ message: msg });
+});
+
+app.post("/api/messages/read", (req, res) => {
+  const { conversationId, userId } = req.body || {};
+  const conv = conversations.get(conversationId);
+  if(!conv){
+    return jsonError(res, 404, "Gesprek niet gevonden");
+  }
+  if(!conv.participants.includes(userId)){
+    return jsonError(res, 403, "Geen toegang tot dit gesprek");
+  }
+  const now = new Date().toISOString();
+  const list = messages.get(conversationId) || [];
+  list.forEach((msg) => {
+    if(msg.senderId !== userId){
+      msg.readAt = msg.readAt || now;
+      msg.readBy = msg.readBy || {};
+      msg.readBy[userId] = true;
+    }
+  });
+  touchUser(userId);
+  res.json({ ok: true });
+});
+
+app.post("/api/messages/purge-conversation", (req, res) => {
+  const { conversationId, userId } = req.body || {};
+  const conv = conversations.get(conversationId);
+  if(!conv){
+    return jsonError(res, 404, "Gesprek niet gevonden");
+  }
+  if(!conv.participants.includes(userId)){
+    return jsonError(res, 403, "Geen toegang tot dit gesprek");
+  }
+  const list = messages.get(conversationId) || [];
+  list.forEach((msg) => {
+    msg.deletedFor = msg.deletedFor || {};
+    msg.deletedFor[userId] = true;
+  });
+  res.json({ ok: true });
+});
+
+app.delete("/api/conversations/:conversationId", (req, res) => {
+  const conversationId = req.params.conversationId;
+  const userId = String(req.query.userId || "");
+  const conv = conversations.get(conversationId);
+  if(!conv){
+    return jsonError(res, 404, "Gesprek niet gevonden");
+  }
+  if(!conv.participants.includes(userId)){
+    return jsonError(res, 403, "Geen toegang tot dit gesprek");
+  }
+  conv.deletedFor = conv.deletedFor || {};
+  conv.deletedFor[userId] = true;
+  res.json({ ok: true });
+});
+
+const signalingSessions = new Map();
+const SIGNALING_DEFAULT_TTL_MS = 1000 * 60 * 10;
+
+function normalizeSignalingCode(value){
+  return String(value || "").trim();
+}
+
+function getSignalingExpiry(expiresAt){
+  const parsed = Number(expiresAt || 0);
+  const fallback = Date.now() + SIGNALING_DEFAULT_TTL_MS;
+  if(!Number.isFinite(parsed) || parsed <= Date.now()) return fallback;
+  return parsed;
+}
+
+function cleanSignalingSessions(){
+  const now = Date.now();
+  for(const [code, session] of signalingSessions.entries()){
+    if(!session || Number(session.expiresAt || 0) < now){
+      signalingSessions.delete(code);
+    }
+  }
+}
+
+function getSignalingSession(code){
+  cleanSignalingSessions();
+  const safeCode = normalizeSignalingCode(code);
+  if(!safeCode) return null;
+  return signalingSessions.get(safeCode) || null;
+}
+
+setInterval(cleanSignalingSessions, 1000 * 30);
+
+app.post("/api/signaling/session", (req, res) => {
+  const { code, ownerId, expiresAt } = req.body || {};
+  const safeCode = normalizeSignalingCode(code);
+  if(!safeCode){
+    return jsonError(res, 400, "Code ontbreekt");
+  }
+  const session = {
+    code: safeCode,
+    ownerId: String(ownerId || ""),
+    offer: null,
+    answer: null,
+    candidates: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    expiresAt: getSignalingExpiry(expiresAt)
+  };
+  signalingSessions.set(safeCode, session);
+  res.json({ ok: true, code: safeCode, expiresAt: session.expiresAt });
+});
+
+app.post("/api/signaling/offer", (req, res) => {
+  const { code, ownerId, sdp, offer, expiresAt } = req.body || {};
+  const safeCode = normalizeSignalingCode(code);
+  const offerSdp = sdp || (offer && offer.sdp) || "";
+  if(!safeCode){
+    return jsonError(res, 400, "Code ontbreekt");
+  }
+  if(!offerSdp){
+    return jsonError(res, 400, "SDP offer ontbreekt");
+  }
+  const existing = getSignalingSession(safeCode) || { code: safeCode, ownerId: String(ownerId || ""), answer: null, candidates: [], createdAt: new Date().toISOString() };
+  existing.ownerId = String(ownerId || existing.ownerId || "");
+  existing.offer = { type: "offer", sdp: String(offerSdp || "") };
+  existing.updatedAt = new Date().toISOString();
+  existing.expiresAt = getSignalingExpiry(expiresAt || existing.expiresAt);
+  signalingSessions.set(safeCode, existing);
+  res.json({ ok: true, code: safeCode, expiresAt: existing.expiresAt });
+});
+
+app.get("/api/signaling/offer/:code", (req, res) => {
+  const session = getSignalingSession(req.params.code);
+  if(!session || !session.offer){
+    return jsonError(res, 404, "Nog geen offer beschikbaar");
+  }
+  res.json({ code: session.code, ownerId: session.ownerId || "", type: "offer", sdp: session.offer.sdp, offer: session.offer, expiresAt: session.expiresAt });
+});
+
+app.post("/api/signaling/answer", (req, res) => {
+  const { code, ownerId, sdp, answer, expiresAt } = req.body || {};
+  const safeCode = normalizeSignalingCode(code);
+  const answerSdp = sdp || (answer && answer.sdp) || "";
+  if(!safeCode){
+    return jsonError(res, 400, "Code ontbreekt");
+  }
+  if(!answerSdp){
+    return jsonError(res, 400, "SDP answer ontbreekt");
+  }
+  const existing = getSignalingSession(safeCode);
+  if(!existing){
+    return jsonError(res, 404, "Sessie niet gevonden");
+  }
+  existing.answer = { type: "answer", sdp: String(answerSdp || "") };
+  existing.answerOwnerId = String(ownerId || "");
+  existing.updatedAt = new Date().toISOString();
+  existing.expiresAt = getSignalingExpiry(expiresAt || existing.expiresAt);
+  signalingSessions.set(safeCode, existing);
+  res.json({ ok: true, code: safeCode, expiresAt: existing.expiresAt });
+});
+
+app.get("/api/signaling/answer/:code", (req, res) => {
+  const session = getSignalingSession(req.params.code);
+  if(!session || !session.answer){
+    return jsonError(res, 404, "Nog geen answer beschikbaar");
+  }
+  res.json({ code: session.code, ownerId: session.answerOwnerId || "", type: "answer", sdp: session.answer.sdp, answer: session.answer, expiresAt: session.expiresAt });
+});
+
+app.post("/api/signaling/candidate", (req, res) => {
+  const { code, ownerId, candidate } = req.body || {};
+  const safeCode = normalizeSignalingCode(code);
+  if(!safeCode){
+    return jsonError(res, 400, "Code ontbreekt");
+  }
+  const existing = getSignalingSession(safeCode) || { code: safeCode, ownerId: String(ownerId || ""), offer: null, answer: null, candidates: [], createdAt: new Date().toISOString(), expiresAt: getSignalingExpiry() };
+  existing.candidates = existing.candidates || [];
+  if(candidate){
+    existing.candidates.push({ ownerId: String(ownerId || ""), candidate, createdAt: new Date().toISOString() });
+  }
+  existing.updatedAt = new Date().toISOString();
+  signalingSessions.set(safeCode, existing);
+  res.json({ ok: true, code: safeCode });
+});
+
+app.get("/api/signaling/candidates/:code", (req, res) => {
+  const session = getSignalingSession(req.params.code);
+  if(!session){
+    return jsonError(res, 404, "Sessie niet gevonden");
+  }
+  res.json({ code: session.code, candidates: session.candidates || [] });
+});
+
+app.get("/api/signaling/session/:code", (req, res) => {
+  const session = getSignalingSession(req.params.code);
+  if(!session){
+    return jsonError(res, 404, "Sessie niet gevonden");
+  }
+  res.json({
+    code: session.code,
+    ownerId: session.ownerId || "",
+    hasOffer: !!session.offer,
+    hasAnswer: !!session.answer,
+    offer: session.offer || null,
+    answer: session.answer || null,
+    candidates: session.candidates || [],
+    expiresAt: session.expiresAt,
+    updatedAt: session.updatedAt
+  });
+});
+
+app.post("/api/signaling/clear", (req, res) => {
+  const { code } = req.body || {};
+  const safeCode = normalizeSignalingCode(code);
+  if(safeCode){
+    signalingSessions.delete(safeCode);
+  }
+  res.json({ ok: true });
+});
+
+
+app.post("/api/speech/transcribe", upload.single("audio"), async (req, res) => {
+  try{
+    if(!aiRemOk(req, res, "spraak", 10, 60)) return;
+    if(!OPENAI_API_KEY){
+      return jsonError(res, 500, "OPENAI_API_KEY ontbreekt");
+    }
+
+    if(!req.file){
+      return jsonError(res, 400, "Geen audio ontvangen");
+    }
+
+    const formData = new FormData();
+
+    formData.append(
+      "file",
+      new Blob(
+        [fs.readFileSync(req.file.path)],
+        { type: req.file.mimetype || "audio/webm" }
+      ),
+      req.file.originalname || "audio.webm"
+    );
+
+    formData.append("model", "whisper-1");
+
+    const forcedLanguage = String(req.body && req.body.language ? req.body.language : "").trim();
+    const prompt = String(req.body && req.body.prompt ? req.body.prompt : "").trim();
+
+    if(forcedLanguage){
+      formData.append("language", forcedLanguage);
+    }
+
+    if(prompt){
+      formData.append("prompt", prompt);
+    }
+
+    const response = await fetchWithTimeout("https://api.openai.com/v1/audio/transcriptions", {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + OPENAI_API_KEY
+      },
+      body: formData
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    try{
+      fs.unlinkSync(req.file.path);
+    }catch(e){}
+
+    if(!response.ok){
+      return jsonError(
+        res,
+        500,
+        "Transcriptie mislukt",
+        data && data.error && data.error.message
+          ? data.error.message
+          : "Whisper fout"
+      );
+    }
+
+    res.json({
+      ok: true,
+      text: String(data.text || "").trim()
+    });
+
+  }catch(err){
+    if(req.file && req.file.path){
+      try{
+        fs.unlinkSync(req.file.path);
+      }catch(e){}
+    }
+
+    jsonError(
+      res,
+      500,
+      "Transcriptie mislukt",
+      err.message || String(err)
+    );
+  }
+});
+
+
+
+
+function normalizeEchoLanguageName(value){
+  const raw = String(value || "").trim();
+  const key = raw.toLowerCase();
+  const map = {
+    "nl":"Nederlands","nl-nl":"Nederlands","dutch":"Nederlands","nederlands":"Nederlands",
+    "en":"Engels","en-gb":"Engels","en-us":"Engels","english":"Engels","engels":"Engels",
+    "de":"Duits","de-de":"Duits","german":"Duits","duits":"Duits",
+    "fr":"Frans","fr-fr":"Frans","french":"Frans","frans":"Frans",
+    "es":"Spaans","es-es":"Spaans","spanish":"Spaans","spaans":"Spaans",
+    "it":"Italiaans","it-it":"Italiaans","italian":"Italiaans","italiaans":"Italiaans",
+    "pt":"Portugees","pt-pt":"Portugees","portuguese":"Portugees","portugees":"Portugees",
+    "pl":"Pools","pl-pl":"Pools","polish":"Pools","pools":"Pools",
+    "tr":"Turks","tr-tr":"Turks","turkish":"Turks","turks":"Turks",
+    "ar":"Arabisch","ar-sa":"Arabisch","arabic":"Arabisch","arabisch":"Arabisch",
+    "uk":"Oekraïens","uk-ua":"Oekraïens","ukrainian":"Oekraïens","oekraiens":"Oekraïens","oekraïens":"Oekraïens",
+    "ru":"Russisch","ru-ru":"Russisch","russian":"Russisch","russisch":"Russisch",
+    "zh":"Chinees","zh-cn":"Chinees","chinese":"Chinees","chinees":"Chinees",
+    "ja":"Japans","ja-jp":"Japans","japanese":"Japans","japans":"Japans",
+    "ko":"Koreaans","ko-kr":"Koreaans","korean":"Koreaans","koreaans":"Koreaans",
+    "hi":"Hindi","hi-in":"Hindi","hindi":"Hindi",
+    "id":"Indonesisch","id-id":"Indonesisch","indonesian":"Indonesisch","indonesisch":"Indonesisch",
+    "th":"Thais","th-th":"Thais","thai":"Thais","thais":"Thais",
+    "vi":"Vietnamees","vi-vn":"Vietnamees","vietnamese":"Vietnamees","vietnamees":"Vietnamees",
+    "ro":"Roemeens","ro-ro":"Roemeens","romanian":"Roemeens","roemeens":"Roemeens",
+    "cs":"Tsjechisch","cs-cz":"Tsjechisch","czech":"Tsjechisch","tsjechisch":"Tsjechisch",
+    "sv":"Zweeds","sv-se":"Zweeds","swedish":"Zweeds","zweeds":"Zweeds"
+  };
+  return map[key] || raw || "de doeltaal";
+}
+
+function normalizeWhisperLanguageCode(value){
+  const raw = String(value || "").trim().toLowerCase();
+  const map = {
+    "dutch":"nl","nederlands":"nl","nl-nl":"nl","nl":"nl",
+    "english":"en","engels":"en","en-gb":"en","en-us":"en","en":"en",
+    "german":"de","duits":"de","de-de":"de","de":"de",
+    "french":"fr","frans":"fr","fr-fr":"fr","fr":"fr",
+    "spanish":"es","spaans":"es","es-es":"es","es":"es",
+    "italian":"it","italiaans":"it","it-it":"it","it":"it",
+    "portuguese":"pt","portugees":"pt","pt-pt":"pt","pt":"pt",
+    "polish":"pl","pools":"pl","pl-pl":"pl","pl":"pl",
+    "turkish":"tr","turks":"tr","tr-tr":"tr","tr":"tr",
+    "arabic":"ar","arabisch":"ar","ar-sa":"ar","ar":"ar",
+    "ukrainian":"uk","oekraiens":"uk","oekraïens":"uk","uk-ua":"uk","uk":"uk",
+    "russian":"ru","russisch":"ru","ru-ru":"ru","ru":"ru",
+    "chinese":"zh","chinees":"zh","zh-cn":"zh","zh":"zh",
+    "japanese":"ja","japans":"ja","ja-jp":"ja","ja":"ja",
+    "korean":"ko","koreaans":"ko","ko-kr":"ko","ko":"ko",
+    "hindi":"hi","hi-in":"hi","hi":"hi",
+    "indonesian":"id","indonesisch":"id","id-id":"id","id":"id",
+    "thai":"th","thais":"th","th-th":"th","th":"th",
+    "vietnamese":"vi","vietnamees":"vi","vi-vn":"vi","vi":"vi",
+    "romanian":"ro","roemeens":"ro","ro-ro":"ro","ro":"ro",
+    "czech":"cs","tsjechisch":"cs","cs-cz":"cs","cs":"cs",
+    "swedish":"sv","zweeds":"sv","sv-se":"sv","sv":"sv"
+  };
+  return map[raw] || raw.split("-")[0] || "";
+}
+
+app.post("/api/speech/translate-direct", upload.single("audio"), async (req, res) => {
+  try{
+    if(!OPENAI_API_KEY){
+      return jsonError(res, 500, "OPENAI_API_KEY ontbreekt");
+    }
+
+    if(!req.file){
+      return jsonError(res, 400, "Geen audio ontvangen");
+    }
+
+    const sourceLanguageRaw = String(req.body && (req.body.sourceLanguage || req.body.from || req.body.language) ? (req.body.sourceLanguage || req.body.from || req.body.language) : "").trim();
+    const targetLanguageRaw = String(req.body && (req.body.targetLanguage || req.body.to) ? (req.body.targetLanguage || req.body.to) : "").trim();
+    const sourceLanguage = normalizeWhisperLanguageCode(sourceLanguageRaw);
+    const sourceLanguageName = normalizeEchoLanguageName(sourceLanguageRaw || sourceLanguage);
+    const targetLanguageName = normalizeEchoLanguageName(targetLanguageRaw);
+    const premiumKey = String(req.body && (req.body.email || req.body.premiumEmail || req.body.userId || req.body.premiumKey) ? (req.body.email || req.body.premiumEmail || req.body.userId || req.body.premiumKey) : "").trim();
+    const premiumPin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
+
+    const prompt = String(req.body && req.body.prompt ? req.body.prompt : "").trim() || (
+      "De spreker spreekt " + sourceLanguageName + ". Dit is een live gesprek. " +
+      "Verwacht gewone spreektaal, korte zinnen, namen, plaatsnamen, bedrijfsnamen, bedragen, aantallen en normale vragen. " +
+      "Schrijf alleen op wat er echt gezegd wordt."
+    );
+
+    if(!sourceLanguage || !targetLanguageName){
+      try{ fs.unlinkSync(req.file.path); }catch(e){}
+      return jsonError(res, 400, "sourceLanguage en targetLanguage zijn verplicht");
+    }
+
+    const premiumStatusBefore = getPremiumStatus(premiumKey, premiumPin, { deviceId: getRequestDeviceId(req) });
+    if(!premiumStatusBefore.premium){
+      try{ fs.unlinkSync(req.file.path); }catch(e){}
+      return jsonError(
+        res,
+        premiumStatusBefore.pinRequired ? 403 : 402,
+        premiumStatusBefore.pinRequired ? "Premium pincode is ongeldig" : "AI Premium is niet actief voor dit account"
+      );
+    }
+
+    if(Number(premiumStatusBefore.creditsRemaining || 0) <= 0){
+      try{ fs.unlinkSync(req.file.path); }catch(e){}
+      return jsonError(res, 402, "AI credits zijn op voor deze maand");
+    }
+
+    const audioBuffer = fs.readFileSync(req.file.path);
+    const formData = new FormData();
+    formData.append(
+      "file",
+      new Blob(
+        [audioBuffer],
+        { type: req.file.mimetype || "audio/webm" }
+      ),
+      req.file.originalname || "audio.webm"
+    );
+    formData.append("model", "whisper-1");
+    formData.append("language", sourceLanguage);
+    formData.append("response_format", "json");
+    if(prompt){
+      formData.append("prompt", prompt);
+    }
+
+    const transcriptionResponse = await fetchWithTimeout("https://api.openai.com/v1/audio/transcriptions", {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + OPENAI_API_KEY
+      },
+      body: formData
+    });
+
+    const transcriptionData = await transcriptionResponse.json().catch(() => ({}));
+
+    try{ fs.unlinkSync(req.file.path); }catch(e){}
+
+    if(!transcriptionResponse.ok){
+      return jsonError(
+        res,
+        500,
+        "Transcriptie mislukt",
+        transcriptionData && transcriptionData.error && transcriptionData.error.message
+          ? transcriptionData.error.message
+          : "Whisper fout"
+      );
+    }
+
+    const transcript = String(transcriptionData.text || "").trim();
+
+    if(!transcript){
+      return res.json({
+        ok: true,
+        transcript: "",
+        translation: "",
+        translatedText: "",
+        text: "",
+        result: "",
+        sourceLanguage,
+        sourceLanguageName,
+        targetLanguage: targetLanguageName,
+        targetLanguageName
+      });
+    }
+
+    const translatedText = await callOpenAI([
+      {
+        role: "system",
+        content:
+          "Je bent ECHO, een professionele universele live tolk. Je vertaalt gesproken tekst voor een echt gesprek tussen twee mensen. " +
+          "Vertaal altijd exact van " + sourceLanguageName + " naar " + targetLanguageName + ". " +
+          "Dit geldt voor Nederlands naar elke andere taal en voor elke andere taal terug naar Nederlands. " +
+          "Geef uitsluitend de vertaling in " + targetLanguageName + ". " +
+          "Geen uitleg, geen opmerkingen, geen aanhalingstekens, geen bronzin en geen extra tekst. " +
+          "Gebruik natuurlijke spreektaal zoals een menselijke tolk. " +
+          "Vertaal nooit woord voor woord als dat onnatuurlijk klinkt. Vertaal de bedoeling, toon, vraagvorm en emotie correct. " +
+          "Behoud namen, plaatsnamen, bedrijfsnamen, bedragen, getallen, datums, tijden, telefoonnummers en e-mailadressen exact. " +
+          "Als de zin informeel is, vertaal informeel. Als de zin zakelijk is, vertaal zakelijk. " +
+          "Corrigeer alleen duidelijke transcriptiefouten wanneer de bedoeling overduidelijk is."
+      },
+      {
+        role: "user",
+        content:
+          "Brontaal: " + sourceLanguageName + "\n" +
+          "Doeltaal: " + targetLanguageName + "\n\n" +
+          "Gesproken transcript:\n" + transcript + "\n\n" +
+          "Vertaling in " + targetLanguageName + ":"
+      }
+    ], 0);
+
+    const cleanTranslation = String(translatedText || "")
+      .replace(/^["'\u201C\u201D\u2018\u2019]+|["'\u201C\u201D\u2018\u2019]+$/g, "")
+      .trim();
+
+    const creditResult = consumePremiumCredit(premiumKey, premiumPin, getRequestDeviceId(req));
+    if(!creditResult.ok){
+      return jsonError(
+        res,
+        creditResult.status || 402,
+        creditResult.error || "AI Premium credit ontbreekt"
+      );
+    }
+
+    res.json({
+      ok: true,
+      transcript,
+      translation: cleanTranslation,
+      translatedText: cleanTranslation,
+      text: cleanTranslation,
+      result: cleanTranslation,
+      sourceLanguage,
+      sourceLanguageName,
+      targetLanguage: targetLanguageName,
+      targetLanguageName,
+      creditsRemaining: creditResult.status.creditsRemaining,
+      creditsTotal: creditResult.status.creditsTotal,
+      creditMonth: creditResult.status.creditMonth
+    });
+
+  }catch(err){
+    if(req.file && req.file.path){
+      try{ fs.unlinkSync(req.file.path); }catch(e){}
+    }
+    jsonError(res, 500, "Directe spraakvertaling mislukt", err.message || String(err));
+  }
+});
+
+
+
+
+// ============================================================
+// FORMFORGE PDF STUDIO BACKEND
+// Extra routes voor offerte en factuurmaker.
+// Bestaande ECHO, Stripe, OpenAI, push en formulieren blijven ongemoeid.
+// ============================================================
+
+const PDF_STUDIO_STORE_FILE = path.join(DATA_DIR, "formforge_pdf_studio_documents.json");
+const pdfStudioDocuments = new Map();
+
+function loadPdfStudioDocuments(){
+  try{
+    if(!fs.existsSync(PDF_STUDIO_STORE_FILE)) return;
+    const raw = fs.readFileSync(PDF_STUDIO_STORE_FILE, "utf8");
+    const data = JSON.parse(raw || "{}");
+    Object.keys(data || {}).forEach((key) => {
+      if(key && data[key]){
+        pdfStudioDocuments.set(key, data[key]);
+      }
+    });
+  }catch(err){
+    console.warn("PDF Studio documenten konden niet worden geladen:", err.message || String(err));
+  }
+}
+
+function savePdfStudioDocuments(){
+  try{
+    const data = {};
+    for(const [key, value] of pdfStudioDocuments.entries()){
+      data[key] = value;
+    }
+    safeWriteFileSync(PDF_STUDIO_STORE_FILE, JSON.stringify(data, null, 2));
+  }catch(err){
+    console.warn("PDF Studio documenten konden niet worden opgeslagen:", err.message || String(err));
+  }
+}
+
+function cleanOldPdfStudioDocuments(){
+  const now = Date.now();
+  let changed = false;
+  for(const [id, rec] of pdfStudioDocuments.entries()){
+    if(rec && rec.expiresAt){
+      const expires = new Date(rec.expiresAt).getTime();
+      if(Number.isFinite(expires) && expires > 0 && now > expires + 1000 * 60 * 60 * 24 * 30){
+        pdfStudioDocuments.delete(id);
+        changed = true;
+      }
+    }
+  }
+  if(changed) savePdfStudioDocuments();
+}
+
+loadPdfStudioDocuments();
+setInterval(cleanOldPdfStudioDocuments, 1000 * 60 * 60);
+
+/* De oude PDF Studio-routes (/api/pdf-studio/...) zijn op 30 augustus 2026
+   verwijderd. Ze waren vervangen door /api/pdfstudio/... verderop in dit
+   bestand, dat de enige versie is die het offerte- en factuurprogramma
+   gebruikt. Voor het verwijderen is /api/pdf-studio/status geraadpleegd:
+   die meldde 0 documenten, dus er kon geen openstaande ondertekenlink meer
+   naar deze routes wijzen.
+
+   De opslag zelf (formforge_pdf_studio_documents.json) blijft wel bestaan:
+   het opruimen van ondertekende documenten, het wegschrijven bij afsluiten
+   en de tellers van de wachter lezen die nog. */
+
+
+
+
+
+
+
+
+
+/* =========================
+   UNIVERSELE PDF STUDIO OPENAI ROUTES
+   Voor ieder beroep, iedere vraag, offerte, factuur, advies, calculatie en vertaling.
+========================= */
+
+function extractJsonObjectFromText(value){
+  const text = String(value || "").trim();
+  if(!text) return {};
+  try{
+    return JSON.parse(text);
+  }catch(err){}
+  const first = text.indexOf("{");
+  const last = text.lastIndexOf("}");
+  if(first >= 0 && last > first){
+    try{
+      return JSON.parse(text.slice(first, last + 1));
+    }catch(err){}
+  }
+  return {};
+}
+
+/* ---- PDF Studio: bedragen horen nooit in een omschrijving ----
+   De AI mag prijzen, tarieven en btw bedragen uitsluitend in de numerieke
+   velden zetten (qty, price, vat). Staat er toch een bedrag in een
+   omschrijving, dan halen we het er hier uit en zetten we het in price. */
+const PDFSTUDIO_DANGLING_WORDS = ["prijs","tarief","bedrag","totaal","subtotaal","aanbetaling","btw","eur","euro","is","van","per","voor","tegen","stuk","stuks"];
+
+function pdfStudioTrimDanglingWords(value){
+  const bare = (word) => String(word || "").toLowerCase().replace(/^[,;:.\-]+/,"").replace(/[,;:.\-]+$/,"");
+  const dropable = (word) => bare(word) === "" || PDFSTUDIO_DANGLING_WORDS.indexOf(bare(word)) >= 0;
+  const words = String(value || "").split(/\s+/).filter(Boolean);
+  while(words.length && dropable(words[words.length - 1])) words.pop();
+  while(words.length && dropable(words[0])) words.shift();
+  return words.join(" ");
+}
+
+function pdfStudioStripAmountsFromLine(value){
+  const withoutAmounts = String(value || "")
+    .replace(/\u20ac/g," euro ")
+    .replace(/\b[0-9]+(?:[.,][0-9]{1,2})?\s*(?:eur|euro)?\s*per\s*(?:stuks|stuk|uur|m2|m1|meter|dag|dagdeel|post|behandeling|sessie|les|persoon)\b/gi," ")
+    .replace(/\b(?:eur|euro)\s*[0-9]+(?:[.,][0-9]{1,2})?/gi," ")
+    .replace(/\b[0-9]+(?:[.,][0-9]{1,2})?\s*(?:eur|euro)\b/gi," ")
+    .replace(/\b(?:excl\.?|incl\.?|exclusief|inclusief)\s*(?:[0-9]+\s*%?\s*)?btw\b/gi," ")
+    .replace(/\b(?:prijs|tarief|bedrag|totaal|subtotaal|aanbetaling)\s*(?:is|van)?\s*:?\s*[0-9]+(?:[.,][0-9]{1,2})?/gi," ")
+    .replace(/\s{2,}/g," ")
+    .trim();
+
+  return pdfStudioTrimDanglingWords(withoutAmounts)
+    .replace(/\s+([,.;:])/g,"$1")
+    .replace(/^[\s,;:.-]+/,"")
+    .replace(/[\s,;:-]+$/,"")
+    .replace(/\s{2,}/g," ")
+    .trim();
+}
+
+function pdfStudioStripAmountsFromText(value){
+  return String(value || "")
+    .replace(/\r/g,"")
+    .split("\n")
+    .map((line) => pdfStudioStripAmountsFromLine(line))
+    .join("\n")
+    .replace(/\n{3,}/g,"\n\n")
+    .trim();
+}
+
+function pdfStudioFindAmount(value){
+  const text = String(value || "").replace(/\u20ac/g," euro ").toLowerCase().replace(/\s+/g," ");
+  const patterns = [
+    /([0-9]+(?:[.,][0-9]{1,2})?)\s*(?:euro|eur)?\s*per\s*(stuks|stuk|uur|m2|m1|meter|dag|dagdeel|post|behandeling|sessie|les|persoon)\b/,
+    /(?:euro|eur)\s*([0-9]+(?:[.,][0-9]{1,2})?)/,
+    /([0-9]+(?:[.,][0-9]{1,2})?)\s*(?:euro|eur)\b/,
+    /(?:prijs|tarief|bedrag)\s*(?:is|van)?\s*:?\s*([0-9]+(?:[.,][0-9]{1,2})?)/
+  ];
+  for(const pattern of patterns){
+    const match = text.match(pattern);
+    if(match){
+      const price = Number(String(match[1]).replace(",","."));
+      if(price > 0){
+        const unit = match[2] ? (match[2] === "stuk" ? "stuks" : match[2]) : "";
+        return { price: Math.round(price * 100) / 100, unit: unit };
+      }
+    }
+  }
+  return { price: 0, unit: "" };
+}
+
+app.post("/api/pdfstudio/ai/workorder", async (req, res) => {  try{
+    const rawText = String(req.body && (req.body.text || req.body.note || req.body.input || req.body.question) ? (req.body.text || req.body.note || req.body.input || req.body.question) : "").trim();
+    const documentType = String(req.body && req.body.type ? req.body.type : "offerte").trim();
+
+    if(!rawText){
+      return jsonError(res, 400, "Tekst ontbreekt");
+    }
+
+    const premiumKey = String(req.body && (req.body.email || req.body.premiumEmail || req.body.userId || req.body.premiumKey) ? (req.body.email || req.body.premiumEmail || req.body.userId || req.body.premiumKey) : "").trim();
+    const premiumPin = String(req.body && (req.body.pin || req.body.pincode || req.body.premiumPin) ? (req.body.pin || req.body.pincode || req.body.premiumPin) : "").trim();
+    const creditResult = consumePremiumCredit(premiumKey, premiumPin, getRequestDeviceId(req));
+    if(!creditResult.ok){
+      return jsonError(res, creditResult.status || 402, creditResult.error || "FormForge AI is niet actief");
+    }
+
+    const answer = await callOpenAI([
+      {
+        role: "system",
+        content:
+          "Je bent de universele AI assistent van FormForge PDF Studio. " +
+          "Dit systeem is een offerte en factuur formulier voor iedereen, ongeacht beroep of branche. " +
+          "Je helpt schilders, kappers, schoonheidsspecialisten, tandartsen, coaches, juristen, hoveniers, monteurs, installateurs, intercedenten, fotografen, consultants, freelancers, zzp'ers, mkb bedrijven en iedere andere beroepsgroep. " +
+          "Je taak is: begrijp de vrije tekst van de gebruiker, herken de branche, herken of het advies, calculatie, offerte, factuur, intake of vertaling is, en geef bruikbare output terug. " +
+          "Zet vrije, rommelige of korte werkomschrijvingen altijd om naar professionele offerte of factuurtekst in het veld description. " +
+          "Ook als je berekeningen en items maakt, moet description gevuld worden met een nette zakelijke werkomschrijving op basis van de ingevoerde tekst. " +
+          "Schrijf description alsof een professionele ondernemer dit aan een klant aanbiedt: helder, netjes, concreet en zonder overdreven verkooppraat. " +
+          "Als de gebruiker een vraag stelt, geef professioneel advies dat past bij de branche. " +
+          "Als er aantallen, uren, stuks, m2, m1, behandelingen, sessies, producten, tarieven of prijzen staan, maak offerte of factuurregels. " +
+          "Als er onvoldoende gegevens zijn voor een harde calculatie, geef advies en benoem helder welke gegevens ontbreken. " +
+          "Je mag aannames doen als dat nuttig is, maar zet die aannames in warnings. " +
+          "Reken bedragen exclusief btw, tenzij de gebruiker expliciet inclusief btw zegt. " +
+          "Gebruik voor btw in Nederland standaard 21 procent, behalve wanneer de tekst duidelijk wijst op een verlaagd tarief of 0 procent. Bij twijfel zet 21 procent en vermeld twijfel in warnings. " +
+          "Voor schilderwerk, stukadoorswerk, kappersdiensten, schoonheidsbehandelingen, consulten, uren, producten, tandartsbehandelingen en zakelijke diensten moet je professioneel en neutraal blijven. " +
+          "Voor medische of juridische onderwerpen geef je geen definitieve diagnose of juridisch bindend advies, maar wel veilige algemene uitleg en verwijs bij risico naar een bevoegde professional. " +
+          "Geef uitsluitend geldig JSON terug. Geen markdown. Geen tekst buiten JSON. " +
+          "Bedragen en aantallen moeten numeriek zijn. Rond geld af op 2 decimalen. Rond m2 of uren logisch af op maximaal 2 decimalen. " +
+          "Zeer belangrijke regel: in de tekstvelden description, projectName en in item.description mag NOOIT een bedrag, prijs, tarief, valuta, korting of btw bedrag staan. " +
+          "Geen euro, geen EUR, geen euroteken, geen prijs per stuk, per uur of per m2 en geen totaalbedragen in die tekstvelden. " +
+          "Elk bedrag hoort uitsluitend in de numerieke velden price, qty, vat, lineTotalExVat en totals. " +
+          "In item.description staat alleen wat er gedaan of geleverd wordt, bijvoorbeeld Binnenschilderwerk wanden woonkamer, en niet de prijs daarvan."
+      },
+      {
+        role: "user",
+        content:
+          "Documenttype: " + documentType + "\n\n" +
+          "Vrije tekst van gebruiker:\n" + rawText + "\n\n" +
+          "Geef JSON terug met exact deze structuur:\n" +
+          "{\n" +
+          "  \"detectedSector\":\"\",\n" +
+          "  \"detectedIntent\":\"advies | calculatie | offerte | factuur | intake | vertaling | combinatie\",\n" +
+          "  \"projectName\":\"\",\n" +
+          "  \"description\":\"\",\n" +
+          "  \"advice\":\"\",\n" +
+          "  \"calculationExplanation\":[\"\"],\n" +
+          "  \"client\":{\"name\":\"\",\"contact\":\"\",\"address\":\"\",\"city\":\"\",\"email\":\"\",\"phone\":\"\"},\n" +
+          "  \"items\":[{\"description\":\"\",\"qty\":0,\"unit\":\"stuks\",\"price\":0,\"vat\":21,\"lineTotalExVat\":0}],\n" +
+          "  \"totals\":{\"subtotalExVat\":0,\"vatTotal\":0,\"totalIncVat\":0},\n" +
+          "  \"warnings\":[\"\"]\n" +
+          "}\n\n" +
+          "Belangrijk: vul description altijd met een professionele werkomschrijving zonder enig bedrag, ook wanneer er calculatieregels worden gemaakt. " +
+          "Zet prijzen, tarieven, kortingen en btw bedragen alleen in de numerieke velden price, qty, vat en totals, nooit in description, projectName of item.description. " +
+          "Als de gebruiker bijvoorbeeld schrijft: houtwerk schuren, afwassen, kitten en lakken, schrijf dan in description netjes uit dat het houtwerk wordt gereinigd, ontvet, geschuurd, waar nodig gekit en afgewerkt met lak voor een duurzame en verzorgde afwerking. " +
+          "Gebruik geen opsomming met symbolen in description, maar gewone zakelijke tekst. " +
+          "Als het alleen een adviesvraag is zonder prijs of aantal, laat items leeg en vul advice goed in. " +
+          "Als het wel een offerte of factuur kan worden, vul items met duidelijke regels. " +
+          "Voorbeelden: '10 deuren per stuk 153' wordt qty 10, unit stuks, price 153. " +
+          "'36 uur per week tarief 38 per uur' wordt qty 36, unit uur, price 38. " +
+          "'hydrafacial 95 euro' wordt qty 1, unit behandeling, price 95. " +
+          "'balayage inclusief knippen 185 euro' wordt qty 1, unit behandeling, price 185. " +
+          "'kamer 6 x 4 hoogte 2.40 texwerk 18 per m2' mag je voor schilderwerk berekenen als wanden = 2 x 6 x 2.40 + 2 x 4 x 2.40 = 48 m2."
+      }
+    ], 0.15);
+
+    const parsed = extractJsonObjectFromText(answer);
+
+    const safeItems = Array.isArray(parsed.items) ? parsed.items.map((item) => {
+      const rawDescription = String(item.description || "");
+      const found = pdfStudioFindAmount(rawDescription);
+      const qty = Number(item.qty || 0);
+      let price = Number(item.price || 0);
+      if(!price && found.price) price = found.price;
+      let unit = String(item.unit || "").trim();
+      if((!unit || unit === "stuks") && found.unit) unit = found.unit;
+      const vat = Number(item.vat === 0 ? 0 : (item.vat || 21));
+      return {
+        description: pdfStudioStripAmountsFromLine(rawDescription),
+        qty,
+        unit: unit || "stuks",
+        price,
+        vat,
+        lineTotalExVat: Number(item.lineTotalExVat || (qty * price))
+      };
+    }).filter((item) => item.description || item.qty || item.price) : [];
+
+    let subtotalExVat = Number(parsed.totals && parsed.totals.subtotalExVat ? parsed.totals.subtotalExVat : 0);
+    let vatTotal = Number(parsed.totals && parsed.totals.vatTotal ? parsed.totals.vatTotal : 0);
+
+    if(!subtotalExVat && safeItems.length){
+      subtotalExVat = safeItems.reduce((sum,item) => sum + (Number(item.qty || 0) * Number(item.price || 0)), 0);
+      vatTotal = safeItems.reduce((sum,item) => sum + ((Number(item.qty || 0) * Number(item.price || 0)) * (Number(item.vat || 0) / 100)), 0);
+    }
+
+    res.json({
+      ok: true,
+      detectedSector: String(parsed.detectedSector || "").trim(),
+      detectedIntent: String(parsed.detectedIntent || "").trim(),
+      projectName: pdfStudioStripAmountsFromLine(parsed.projectName),
+      description: pdfStudioStripAmountsFromText(parsed.description),
+      advice: String(parsed.advice || "").trim(),
+      calculationExplanation: Array.isArray(parsed.calculationExplanation) ? parsed.calculationExplanation : [],
+      client: parsed.client || {},
+      items: safeItems,
+      totals: {
+        subtotalExVat: Number(subtotalExVat.toFixed ? subtotalExVat.toFixed(2) : subtotalExVat),
+        vatTotal: Number(vatTotal.toFixed ? vatTotal.toFixed(2) : vatTotal),
+        totalIncVat: Number((subtotalExVat + vatTotal).toFixed ? (subtotalExVat + vatTotal).toFixed(2) : (subtotalExVat + vatTotal))
+      },
+      warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
+      premium: true,
+      plan: creditResult.status.plan,
+      planLabel: creditResult.status.planLabel,
+      creditsRemaining: creditResult.status.creditsRemaining,
+      creditsTotal: creditResult.status.creditsTotal,
+      aiUsedToday: creditResult.status.aiUsedToday,
+      aiDailyLimit: creditResult.status.aiDailyLimit,
+      aiRemainingToday: creditResult.status.aiRemainingToday,
+      account: creditResult.status,
+      raw: parsed
+    });
+
+  }catch(err){
+    jsonError(res, 500, "Universele PDF Studio AI fout", err.message || String(err));
+  }
+});
+
+app.post("/api/pdfstudio/ai/translate-document", async (req, res) => {
+  try{
+    if(!aiRemOk(req, res, "pdfvertaal")) return;
+    const documentData = req.body && req.body.document ? req.body.document : req.body;
+    const targetLanguage = String(req.body && req.body.targetLanguage ? req.body.targetLanguage : "English").trim();
+
+    if(!documentData){
+      return jsonError(res, 400, "Document ontbreekt");
+    }
+
+    const answer = await callOpenAI([
+      {
+        role: "system",
+        content:
+          "Je bent een professionele zakelijke vertaler voor offertes en facturen. " +
+          "Vertaal alle tekstvelden naar de gevraagde taal. " +
+          "Behoud alle bedragen, aantallen, btw percentages, datums, documentnummers, e-mailadressen, telefoonnummers, IBAN, KVK en btw nummers exact hetzelfde. " +
+          "Vertaal geen merknamen, bedrijfsnamen of persoonsnamen. " +
+          "Geef uitsluitend geldig JSON terug met dezelfde structuur als de invoer."
+      },
+      {
+        role: "user",
+        content:
+          "Doeltaal: " + targetLanguage + "\n\n" +
+          "Vertaal dit document volledig naar de doeltaal maar behoud getallen en bedragen exact:\n" +
+          JSON.stringify(documentData, null, 2)
+      }
+    ], 0.05);
+
+    const parsed = extractJsonObjectFromText(answer);
+
+    res.json({
+      ok: true,
+      targetLanguage,
+      document: parsed,
+      raw: parsed
+    });
+
+  }catch(err){
+    jsonError(res, 500, "Document vertalen mislukt", err.message || String(err));
+  }
+});
+
+app.post("/api/pdfstudio/ai/ask", async (req, res) => {
+  try{
+    if(!aiRemOk(req, res, "pdfvraag")) return;
+    const question = String(req.body && (req.body.question || req.body.text || req.body.input) ? (req.body.question || req.body.text || req.body.input) : "").trim();
+
+    if(!question){
+      return jsonError(res, 400, "Vraag ontbreekt");
+    }
+
+    const answer = await callOpenAI([
+      {
+        role: "system",
+        content:
+          "Je bent een universele zakelijke AI assistent voor ieder beroep en iedere branche. " +
+          "Help met advies, offerte voorbereiding, factuurregels, prijsopbouw, klantcommunicatie, vertaling, intake, planning en calculatie. " +
+          "Blijf praktisch, professioneel en duidelijk. " +
+          "Als iets branche specifiek is, pas je advies aan die branche aan. " +
+          "Als informatie ontbreekt, zeg wat ontbreekt. " +
+          "Bij medische, juridische of financiële risico's geef je veilige algemene informatie en verwijs je naar een bevoegde professional."
+      },
+      {
+        role: "user",
+        content: question
+      }
+    ], 0.3);
+
+    res.json({
+      ok: true,
+      answer,
+      text: answer,
+      result: answer
+    });
+
+  }catch(err){
+    jsonError(res, 500, "AI vraag mislukt", err.message || String(err));
+  }
+});
+
+/* =========================
+   EINDE UNIVERSELE PDF STUDIO OPENAI ROUTES
+========================= */
+
+
+
+
+/* =========================
+   PDF STUDIO RENDER KLANTLINK OPSLAG
+   Externe klantlinks werken via Render, niet via localStorage.
+========================= */
+
+const PDFSTUDIO_RENDER_STORE_FILE = path.join(DATA_DIR, "pdfstudio_render_links.json");
+const pdfStudioRenderDocs = new Map();
+const pdfStudioRenderTokens = new Map();
+
+function loadPdfStudioRenderStore(){
+  try{
+    if(!fs.existsSync(PDFSTUDIO_RENDER_STORE_FILE)) return;
+    const raw = fs.readFileSync(PDFSTUDIO_RENDER_STORE_FILE, "utf8");
+    const data = JSON.parse(raw || "{}");
+
+    Object.values(data.documents || {}).forEach((doc) => {
+      if(doc && doc.id) pdfStudioRenderDocs.set(doc.id, doc);
+    });
+
+    Object.values(data.tokens || {}).forEach((tok) => {
+      if(tok && tok.token) pdfStudioRenderTokens.set(tok.token, tok);
+    });
+
+  }catch(err){
+    console.warn("PDF Studio Render opslag kon niet worden geladen:", err.message || String(err));
+  }
+}
+
+function savePdfStudioRenderStore(){
+  try{
+    const documents = {};
+    const tokens = {};
+
+    for(const [id, doc] of pdfStudioRenderDocs.entries()){
+      documents[id] = doc;
+    }
+
+    for(const [token, tok] of pdfStudioRenderTokens.entries()){
+      tokens[token] = tok;
+    }
+
+    safeWriteFileSync(PDFSTUDIO_RENDER_STORE_FILE, JSON.stringify({ documents, tokens }, null, 2));
+  }catch(err){
+    console.warn("PDF Studio Render opslag kon niet worden opgeslagen:", err.message || String(err));
+  }
+}
+
+function makePdfStudioRenderId(){
+  return "doc_" + Date.now() + "_" + crypto.randomBytes(8).toString("hex");
+}
+
+function makePdfStudioRenderToken(){
+  return crypto.randomBytes(24).toString("hex");
+}
+
+loadPdfStudioRenderStore();
+
+app.post("/api/pdfstudio/documents/save", (req, res) => {
+  try{
+    const body = req.body || {};
+    const documentData = body.document || body.data || body;
+
+    const id = body.id && String(body.id).trim().startsWith("doc_")
+      ? String(body.id).trim()
+      : makePdfStudioRenderId();
+
+    const now = new Date().toISOString();
+
+    const doc = {
+      id,
+      ownerKey: String(body.ownerKey || body.ownerEmail || body.companyEmail || "").trim(),
+      type: String(body.type || documentData.type || "quote"),
+      status: String(body.status || "draft"),
+      document: documentData,
+      createdAt: body.createdAt || now,
+      updatedAt: now
+    };
+
+    pdfStudioRenderDocs.set(id, doc);
+    savePdfStudioRenderStore();
+
+    res.json({
+      ok:true,
+      saved:true,
+      id,
+      document:doc
+    });
+
+  }catch(err){
+    jsonError(res, 500, "PDF Studio document opslaan mislukt", err.message || String(err));
+  }
+});
+
+app.get("/api/pdfstudio/documents/:id", (req, res) => {
+  const id = String(req.params.id || "").trim();
+  const doc = pdfStudioRenderDocs.get(id);
+
+  if(!doc){
+    return jsonError(res, 404, "Document niet gevonden");
+  }
+
+  res.json({
+    ok:true,
+    document:doc.document,
+    record:doc
+  });
+});
+
+app.post("/api/pdfstudio/signing/create-link", (req, res) => {
+  try{
+    const documentId = String(req.body && req.body.documentId ? req.body.documentId : "").trim();
+
+    if(!documentId){
+      return jsonError(res, 400, "documentId ontbreekt");
+    }
+
+    const doc = pdfStudioRenderDocs.get(documentId);
+
+    if(!doc){
+      return jsonError(res, 404, "Document niet gevonden");
+    }
+
+    const token = makePdfStudioRenderToken();
+
+    const signing = {
+      token,
+      documentId,
+      status:"open",
+      createdAt:new Date().toISOString(),
+      expiresAt:req.body && req.body.expiresAt ? req.body.expiresAt : new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString(),
+      clientSignature:"",
+      clientSigner:"",
+      signedAt:""
+    };
+
+    pdfStudioRenderTokens.set(token, signing);
+
+    doc.status = "sent";
+    doc.updatedAt = new Date().toISOString();
+    pdfStudioRenderDocs.set(documentId, doc);
+
+    savePdfStudioRenderStore();
+
+    res.json({
+      ok:true,
+      token,
+      signingUrl:"/api/pdfstudio/sign/" + token,
+      documentId
+    });
+
+  }catch(err){
+    jsonError(res, 500, "Klantlink maken mislukt", err.message || String(err));
+  }
+});
+
+app.get("/api/pdfstudio/sign/:token", (req, res) => {
+  const token = String(req.params.token || "").trim();
+  const signing = pdfStudioRenderTokens.get(token);
+
+  if(!signing){
+    return jsonError(res, 404, "Token niet gevonden");
+  }
+
+  if(signing.expiresAt && new Date(signing.expiresAt).getTime() < Date.now()){
+    return jsonError(res, 410, "Klantlink verlopen");
+  }
+
+  const doc = pdfStudioRenderDocs.get(signing.documentId);
+
+  if(!doc){
+    return jsonError(res, 404, "Document niet gevonden");
+  }
+
+  res.json({
+    ok:true,
+    signing,
+    document:doc.document,
+    record:doc
+  });
+});
+
+app.post("/api/pdfstudio/sign/:token/approve", (req, res) => {
+  try{
+    const token = String(req.params.token || "").trim();
+    const signing = pdfStudioRenderTokens.get(token);
+
+    if(!signing){
+      return jsonError(res, 404, "Token niet gevonden");
+    }
+
+    const doc = pdfStudioRenderDocs.get(signing.documentId);
+
+    if(!doc){
+      return jsonError(res, 404, "Document niet gevonden");
+    }
+
+    signing.status = "signed";
+    signing.clientSignature = req.body && req.body.signature ? req.body.signature : "";
+    signing.clientSigner = req.body && req.body.name ? req.body.name : "";
+    signing.signedAt = new Date().toISOString();
+
+    doc.status = "signed";
+    doc.updatedAt = new Date().toISOString();
+    doc.clientSignature = signing.clientSignature;
+    doc.clientSigner = signing.clientSigner;
+    doc.signedAt = signing.signedAt;
+
+    pdfStudioRenderTokens.set(token, signing);
+    pdfStudioRenderDocs.set(doc.id, doc);
+    savePdfStudioRenderStore();
+
+    res.json({
+      ok:true,
+      signed:true,
+      signing,
+      document:doc.document,
+      record:doc
+    });
+
+  }catch(err){
+    jsonError(res, 500, "Ondertekenen mislukt", err.message || String(err));
+  }
+});
+
+/* ---- Ondertekende documenten automatisch wissen --------------------------
+   Zodra een klant heeft getekend heeft hij zijn PDF. De servercopie mag dan
+   weg, inclusief de handtekening. We wachten nog een korte bewaartermijn af,
+   zodat je een vergissing kunt merken voordat het onherroepelijk is.
+
+   Instelling (Render Environment Variable, optioneel):
+     PDFSTUDIO_BEWAAR_DAGEN   aantal dagen na ondertekening (standaard 10)
+                              0 = wissen bij de eerstvolgende ronde
+
+   De ronde loopt elk uur. Wat weg is, is echt weg: er wordt niets
+   veiliggesteld en er gaat geen kopie naar de mail.
+--------------------------------------------------------------------------- */
+
+const PDFSTUDIO_BEWAAR_DAGEN = Math.max(0, Number(process.env.PDFSTUDIO_BEWAAR_DAGEN || 10));
+
+function pdfStudioIsOndertekend(d){
+  return !!(d && (d.status === "signed" || d.signedAt || d.clientSignature));
+}
+
+/* Wanneer is er getekend? Valt terug op de laatste wijziging als het losse
+   veld ontbreekt, zodat oude records ook meegaan. */
+function pdfStudioOndertekendOp(d){
+  const t = Date.parse((d && (d.signedAt || d.updatedAt || d.createdAt)) || "");
+  return isFinite(t) ? t : 0;
+}
+
+/* echt = false betekent alleen kijken. Geeft altijd terug wat er zou gebeuren. */
+function pdfStudioWisOndertekend(echt){
+  const grens = Date.now() - PDFSTUDIO_BEWAAR_DAGEN * 24 * 60 * 60 * 1000;
+  const uit = { documenten: 0, klantlinks: 0, bytes: 0, lijst: [] };
+
+  /* 1. De klantlink-opslag (pdfstudio_render_links.json) */
+  const wegIds = [];
+  try{
+    for(const [id, doc] of pdfStudioRenderDocs.entries()){
+      if(!pdfStudioIsOndertekend(doc)) continue;
+      const op = pdfStudioOndertekendOp(doc);
+      if(!op || op >= grens) continue;
+      let grootte = 0;
+      try{ grootte = Buffer.byteLength(JSON.stringify(doc), "utf8"); }catch(e){}
+      uit.bytes += grootte;
+      uit.lijst.push({ opslag: "klantlinks", id: id, type: doc.type || "", getekendOp: doc.signedAt || doc.updatedAt || "", bytes: grootte });
+      wegIds.push(id);
+    }
+    const wegTokens = [];
+    for(const [token, tok] of pdfStudioRenderTokens.entries()){
+      if(tok && wegIds.indexOf(tok.documentId) >= 0) wegTokens.push(token);
+    }
+    uit.documenten += wegIds.length;
+    uit.klantlinks += wegTokens.length;
+    if(echt && (wegIds.length || wegTokens.length)){
+      for(const id of wegIds) pdfStudioRenderDocs.delete(id);
+      for(const t of wegTokens) pdfStudioRenderTokens.delete(t);
+      savePdfStudioRenderStore();
+    }
+  }catch(e){
+    console.error("PDF Studio: opruimen van klantlinks mislukt:", (e && e.message) || e);
+  }
+
+  /* 2. De oudere documentopslag (formforge_pdf_studio_documents.json) */
+  try{
+    const weg = [];
+    for(const [id, rec] of pdfStudioDocuments.entries()){
+      if(!pdfStudioIsOndertekend(rec)) continue;
+      const op = pdfStudioOndertekendOp(rec);
+      if(!op || op >= grens) continue;
+      let grootte = 0;
+      try{ grootte = Buffer.byteLength(JSON.stringify(rec), "utf8"); }catch(e){}
+      uit.bytes += grootte;
+      uit.lijst.push({ opslag: "documenten", id: id, type: rec.type || "", getekendOp: rec.signedAt || rec.updatedAt || "", bytes: grootte });
+      weg.push(id);
+    }
+    uit.documenten += weg.length;
+    if(echt && weg.length){
+      for(const id of weg) pdfStudioDocuments.delete(id);
+      savePdfStudioDocuments();
+    }
+  }catch(e){
+    console.error("PDF Studio: opruimen van documenten mislukt:", (e && e.message) || e);
+  }
+
+  return uit;
+}
+
+function pdfStudioWisRonde(){
+  try{
+    const uit = pdfStudioWisOndertekend(true);
+    if(uit.documenten || uit.klantlinks){
+      console.log("PDF Studio: " + uit.documenten + " ondertekend(e) document(en) en " + uit.klantlinks +
+                  " klantlink(s) gewist na " + PDFSTUDIO_BEWAAR_DAGEN + " dagen (" + Math.round(uit.bytes / 1024) + " kB vrij).");
+    }
+  }catch(e){
+    console.error("PDF Studio: wisronde mislukt:", (e && e.message) || e);
+  }
+}
+setInterval(pdfStudioWisRonde, 60 * 60 * 1000);
+setTimeout(pdfStudioWisRonde, 5 * 60 * 1000);
+
+/* ---- Opruimen van oude klantlinks ----------------------------------------
+   pdfstudio_render_links.json bewaart per document de hele inhoud, inclusief
+   de HTML van de PDF. Er zat geen enkele opruiming op, dus dat bestand groeit
+   alleen maar. Deze route ruimt op, maar met de rem erop:
+
+     - standaard laat hij ALLEEN ZIEN wat hij zou weggooien (proefdraaien)
+     - pas met &echt=1 wordt er echt iets verwijderd
+     - ondertekende documenten worden NOOIT verwijderd
+     - een document met een nog geldige klantlink wordt NOOIT verwijderd
+     - standaard blijft alles van het afgelopen jaar staan
+
+   Gebruik:
+     /api/pdfstudio/opruimen?adminPass=...                      (alleen kijken)
+     /api/pdfstudio/opruimen?adminPass=...&ouderDanDagen=365    (andere grens)
+     /api/pdfstudio/opruimen?adminPass=...&echt=1               (echt opruimen)
+--------------------------------------------------------------------------- */
+app.get("/api/pdfstudio/opruimen", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if(!adminOk(req)) return jsonError(res, 401, "Geen toegang. Beheerwachtwoord ontbreekt of is onjuist.");
+
+  const dagen = Math.max(30, parseInt(req.query.ouderDanDagen, 10) || 365);
+  const echt = String(req.query.echt || "") === "1";
+  const grens = Date.now() - dagen * 24 * 60 * 60 * 1000;
+  const nu = Date.now();
+
+  /* Welke documenten hebben nog een geldige klantlink? Die blijven sowieso. */
+  const beschermd = new Set();
+  for(const tok of pdfStudioRenderTokens.values()){
+    if(!tok || !tok.documentId) continue;
+    const verloopt = Date.parse(tok.expiresAt || "");
+    if(tok.status === "signed" || !isFinite(verloopt) || verloopt > nu) beschermd.add(tok.documentId);
+  }
+
+  const weg = [];
+  let bytes = 0;
+  for(const [id, doc] of pdfStudioRenderDocs.entries()){
+    if(!doc) continue;
+    if(doc.status === "signed" || doc.clientSignature) continue;   /* ondertekend blijft */
+    if(beschermd.has(id)) continue;                                /* link nog geldig */
+    const laatst = Date.parse(doc.updatedAt || doc.createdAt || "");
+    if(!isFinite(laatst) || laatst >= grens) continue;             /* te recent */
+    let grootte = 0;
+    try{ grootte = Buffer.byteLength(JSON.stringify(doc), "utf8"); }catch(e){}
+    bytes += grootte;
+    weg.push({ id: id, type: doc.type || "", status: doc.status || "", bijgewerkt: doc.updatedAt || doc.createdAt || "", bytes: grootte });
+  }
+
+  /* Tokens die naar een verdwenen document wijzen of allang verlopen zijn. */
+  const wegTokens = [];
+  const wegIds = new Set(weg.map(w => w.id));
+  for(const [token, tok] of pdfStudioRenderTokens.entries()){
+    if(!tok) continue;
+    if(tok.status === "signed") continue;
+    const verloopt = Date.parse(tok.expiresAt || "");
+    const dood = wegIds.has(tok.documentId) || !pdfStudioRenderDocs.has(tok.documentId);
+    const oud = isFinite(verloopt) && verloopt < grens;
+    if(dood || oud) wegTokens.push(token);
+  }
+
+  /* Wat de automatische wisronde binnenkort weghaalt, puur ter informatie.
+     Dit wordt hier NIET verwijderd, ook niet met echt=1; dat doet de ronde. */
+  const ondertekend = pdfStudioWisOndertekend(false);
+
+  if(echt){
+    for(const w of weg) pdfStudioRenderDocs.delete(w.id);
+    for(const t of wegTokens) pdfStudioRenderTokens.delete(t);
+    if(weg.length || wegTokens.length) savePdfStudioRenderStore();
+  }
+
+  return res.json({
+    ok: true,
+    proefdraai: !echt,
+    ouderDanDagen: dagen,
+    documentenTotaal: pdfStudioRenderDocs.size + (echt ? weg.length : 0),
+    documentenOpgeruimd: weg.length,
+    klantlinksOpgeruimd: wegTokens.length,
+    ongeveerVrijgemaakt: Math.round(bytes / 1024) + " kB",
+    beschermdOndertekendOfActief: beschermd.size,
+    voorbeeld: weg.slice(0, 20),
+    ondertekendBewaardagen: PDFSTUDIO_BEWAAR_DAGEN,
+    ondertekendKlaarVoorWissen: ondertekend.documenten,
+    ondertekendOngeveer: Math.round(ondertekend.bytes / 1024) + " kB",
+    ondertekendVoorbeeld: ondertekend.lijst.slice(0, 20),
+    uitleg: echt
+      ? "Er is echt opgeruimd."
+      : "Dit was alleen kijken. Zet &echt=1 achter de link om het door te voeren."
+  });
+});
+
+/* =========================
+   EINDE PDF STUDIO RENDER KLANTLINK OPSLAG
+========================= */
+
+
+/* =========================
+   FORMFORGE MARKETPLACE BOD FORMULIER
+   Losstaande route. Raakt geen bestaande functies.
+========================= */
+
+app.post("/api/marketplace-bod", async (req, res) => {
+  try{
+    const body = req.body || {};
+
+    const project = String(body.project || "").trim();
+    const name = String(body.name || "").trim();
+    const company = String(body.company || "").trim();
+    const email = String(body.email || "").trim();
+    const phone = String(body.phone || "").trim();
+    const amount = String(body.amount || "").trim();
+    const message = String(body.message || "").trim();
+
+    if(!project || !name || !email || !amount){
+      return res.status(400).json({
+        ok: false,
+        error: "Niet alle verplichte velden zijn ingevuld."
+      });
+    }
+
+    const subject = "Nieuw bod via FormForge Marketplace: " + project;
+
+    const text =
+      "Nieuw bod via FormForge Marketplace\n\n" +
+      "Project:\n" + project + "\n\n" +
+      "Naam:\n" + name + "\n\n" +
+      "Bedrijf:\n" + (company || "Niet ingevuld") + "\n\n" +
+      "E-mailadres:\n" + email + "\n\n" +
+      "Telefoonnummer:\n" + (phone || "Niet ingevuld") + "\n\n" +
+      "Bodbedrag:\nEUR " + amount + "\n\n" +
+      "Toelichting:\n" + (message || "Geen toelichting ingevuld");
+
+    const html =
+      "<div style=\"font-family:Arial,sans-serif;line-height:1.6;color:#111\">" +
+      "<h2>Nieuw bod via FormForge Marketplace</h2>" +
+      "<p><strong>Project:</strong><br>" + project + "</p>" +
+      "<p><strong>Naam:</strong><br>" + name + "</p>" +
+      "<p><strong>Bedrijf:</strong><br>" + (company || "Niet ingevuld") + "</p>" +
+      "<p><strong>E-mailadres:</strong><br>" + email + "</p>" +
+      "<p><strong>Telefoonnummer:</strong><br>" + (phone || "Niet ingevuld") + "</p>" +
+      "<p><strong>Bodbedrag:</strong><br>EUR " + amount + "</p>" +
+      "<p><strong>Toelichting:</strong><br>" + (message || "Geen toelichting ingevuld") + "</p>" +
+      "</div>";
+
+    await sendResendEmail({
+      to: "info@formforge.nl",
+      subject,
+      text,
+      html
+    });
+
+    res.json({
+      ok: true,
+      message: "Bod verzonden"
+    });
+  }catch(err){
+    console.error("FormForge Marketplace bod fout:", err.message || String(err));
+    res.status(500).json({
+      ok: false,
+      error: "Bod verzenden is mislukt."
+    });
+  }
+});
+
+/* =========================
+   EINDE FORMFORGE MARKETPLACE BOD FORMULIER
+========================= */
+
+
+/* ==========================================================================
+   OPZEGGEN  -  gedeeld opzegformulier voor alle abonnementen
+   --------------------------------------------------------------------------
+   De klant kiest op formforge.nl/abonnement-opzeggen welk abonnement hij wil
+   stoppen en vult zijn e-mailadres in. Dat is op zichzelf GEEN bewijs:
+   iedereen kan een willekeurig adres intypen. Daarom gaat het in twee stappen:
+
+     1. Het verzoek wordt vastgelegd als "wacht op bevestiging" en er gaat een
+        mail met een eenmalige link naar het INGEVULDE adres. Jij hoort hier
+        nog niets van.
+     2. Pas als iemand op die link klikt, staat vast dat hij bij die mailbox
+        kan. Dan pas krijg jij bericht, en dan pas telt het als opzegging.
+
+   Een grappenmaker die het adres van een ander invult, bereikt dus niets:
+   de link belandt bij de echte eigenaar, en zonder klik verloopt het verzoek
+   vanzelf. Rate limiting voorkomt dat iemand daarmee een mailbox volpompt.
+
+   Bovendien zoekt de server bij de bevestiging op of dat adres voorkomt bij
+   een bekende klant (Guesttalk-code, ondernemersvermelding, AI-account). Dat
+   staat in jouw mail, zodat je meteen ziet of het klopt of dat je het beter
+   even nabelt.
+
+   BLIJFT WAAR: dit is een opzegVERZOEK. Er wordt pas gestopt met incasseren
+   als jij het abonnement in Stripe stopzet en de klant verwijdert.
+   ========================================================================== */
+
+const OPZEG_EMAIL = process.env.OPZEG_EMAIL || "info@formforge.nl";
+const OPZEG_FILE = path.join(DATA_DIR, "formforge_opzegverzoeken.json");
+/* Basis-URL voor de bevestigingslink in de mail. */
+const OPZEG_BASE = String(process.env.OPZEG_BASE_URL || process.env.PUBLIC_MEDIA_BASE ||
+  process.env.RENDER_EXTERNAL_URL || "https://formforge-sync-1.onrender.com").replace(/\/+$/, "");
+/* Hoelang een niet-bevestigd verzoek geldig blijft. */
+const OPZEG_TTL_MS = 48 * 60 * 60 * 1000;
+
+/* De abonnementen die de klant kan kiezen. Vul gerust aan; "anders" vangt de
+   rest op, dus een ontbrekende regel blokkeert nooit een opzegging. */
+const OPZEG_PRODUCTEN = {
+  guesttalk:      "Guesttalk live vertaler",
+  salve_hotel:    "Salve hotelabonnement",
+  salve_merchant: "Salve uitgelicht abonnement voor ondernemers",
+  ai_plus:        "FormForge AI Plus",
+  ai_pro:         "FormForge AI Pro",
+  credits:        "Losse AI credits",
+  worldchat_unlimited: "Worldchat United onbeperkt",
+  worldchat_credits:   "Worldchat United credits",
+  anders:         "Anders"
+};
+
+let opzegVerzoeken = [];
+function loadOpzeg(){
+  try{
+    if(!fs.existsSync(OPZEG_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(OPZEG_FILE, "utf8") || "{}");
+    if(data && Array.isArray(data.verzoeken)) opzegVerzoeken = data.verzoeken.slice(-500);
+    console.log("Opzegverzoeken geladen: " + opzegVerzoeken.length);
+  }catch(e){ rescueCorruptStore(OPZEG_FILE, e); opzegVerzoeken = []; }
+}
+function saveOpzeg(){
+  try{ safeWriteFileSync(OPZEG_FILE, JSON.stringify({ verzoeken: opzegVerzoeken })); }
+  catch(e){ console.error("Opzegverzoeken opslaan mislukt:", (e && e.message) || e); }
+}
+loadOpzeg();
+
+/* Niet-bevestigde verzoeken lopen na twee dagen af. Bevestigde blijven staan
+   tot jij ze afvinkt. */
+function opzegOpruimen(){
+  const nu = Date.now();
+  const voor = opzegVerzoeken.length;
+  opzegVerzoeken = opzegVerzoeken.filter(v => {
+    if(v.bevestigd) return true;
+    const t = Date.parse(v.t || "");
+    if(!isFinite(t)) return true;
+    return (nu - t) < OPZEG_TTL_MS;
+  });
+  if(opzegVerzoeken.length !== voor) saveOpzeg();
+}
+setInterval(opzegOpruimen, 60 * 60 * 1000);
+
+function opzegKenmerk(){
+  const d = new Date();
+  const dag = d.getUTCFullYear().toString().slice(2) +
+              String(d.getUTCMonth() + 1).padStart(2, "0") +
+              String(d.getUTCDate()).padStart(2, "0");
+  return "OPZ-" + dag + "-" + crypto.randomBytes(2).toString("hex").toUpperCase();
+}
+
+/* Zoekt op waar dit e-mailadres als klant voorkomt. Puur ter controle voor
+   jou; de uitkomst wordt NOOIT aan de bezoeker getoond, anders kan iemand het
+   formulier gebruiken om te achterhalen wie er klant is. */
+function opzegZoekKlant(email){
+  const adres = normalizePremiumKey(email);
+  const gevonden = [];
+  if(!adres) return gevonden;
+  try{
+    Object.keys(guesttalkUsage.codes || {}).forEach((k) => {
+      const r = guesttalkUsage.codes[k];
+      if(r && normalizePremiumKey(r.email) === adres){
+        gevonden.push("Guesttalk: code " + k + (r.label ? (" (" + r.label + ")") : "") +
+          ", pakket " + (r.tier || "?") + ", " + (r.active === false ? "non-actief" : "actief") +
+          (r.subscriptionId ? (", Stripe " + r.subscriptionId) : ""));
+      }
+    });
+  }catch(e){}
+  try{
+    for(const [stad, lijst] of merchants.entries()){
+      (lijst || []).forEach((m) => {
+        if(m && normalizePremiumKey(m.email) === adres){
+          gevonden.push("Salve " + (m.categoryId === "hotels" ? "hotel" : "ondernemer") + ": " +
+            (m.name || "?") + " (" + stad + "), " + (m.subscribed ? "betaald" : "gratis") +
+            (m.subscriptionId ? (", Stripe " + m.subscriptionId) : ""));
+        }
+      });
+    }
+  }catch(e){}
+  try{
+    for(const [sleutel, a] of premiumAccounts.entries()){
+      if(a && normalizePremiumKey(a.email) === adres && a.active){
+        gevonden.push("FormForge AI: sleutel " + sleutel + ", pakket " + (a.plan || "?") +
+          (a.subscriptionId ? (", Stripe " + a.subscriptionId) : ""));
+      }
+    }
+  }catch(e){}
+  return gevonden;
+}
+
+/* ---- Stap 1: verzoek indienen, bevestigingsmail versturen ---- */
+app.post("/api/opzeggen", async (req, res) => {
+  try{
+    const q = req.body || {};
+    res.set("Cache-Control", "no-store");
+    if(q.hp){ return res.json({ ok: true, bevestigingNodig: true }); } /* honeypot */
+
+    if(rateLimited("opzegip", clientIp(req), 5, 60 * 60 * 1000)){
+      return res.status(429).json({ error: "Te veel verzoeken achter elkaar. Probeer het later opnieuw of mail ons rechtstreeks." });
+    }
+
+    const productKey = String(q.product || "").trim().toLowerCase();
+    const product = OPZEG_PRODUCTEN[productKey] || "";
+    if(!product) return res.status(400).json({ error: "Kies welk abonnement u wilt opzeggen." });
+
+    const email = String(q.email || "").trim().slice(0, 160);
+    if(!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(email)){
+      return res.status(400).json({ error: "Vul een geldig e-mailadres in." });
+    }
+    /* Rem per adres: voorkomt dat iemand de mailbox van een ander volpompt
+       met bevestigingsverzoeken. */
+    if(rateLimited("opzegmail", normalizePremiumKey(email), 3, 60 * 60 * 1000)){
+      return res.status(429).json({ error: "Er is kort geleden al een bevestigingsmail naar dit adres gestuurd. Kijk in uw postvak, ook in de map ongewenste e-mail." });
+    }
+
+    const anders = productKey === "anders" ? String(q.anders || "").trim().slice(0, 120) : "";
+    if(productKey === "anders" && !anders){
+      return res.status(400).json({ error: "Omschrijf even om welk abonnement het gaat." });
+    }
+
+    const kenmerk = opzegKenmerk();
+    const nu = new Date();
+    const verzoek = {
+      kenmerk: kenmerk,
+      token: crypto.randomBytes(24).toString("hex"),
+      t: nu.toISOString(),
+      product: product + (anders ? (": " + anders) : ""),
+      productKey: productKey,
+      email: email,
+      naam: String(q.naam || "").trim().slice(0, 120),
+      bedrijf: String(q.bedrijf || "").trim().slice(0, 160),
+      code: String(q.code || "").trim().slice(0, 60),
+      telefoon: String(q.telefoon || "").trim().slice(0, 60),
+      toelichting: String(q.toelichting || "").trim().slice(0, 1000),
+      ip: clientIp(req),
+      bevestigd: false,
+      afgehandeld: false
+    };
+    opzegVerzoeken.push(verzoek);
+    if(opzegVerzoeken.length > 500) opzegVerzoeken = opzegVerzoeken.slice(-500);
+    saveOpzeg();
+
+    const link = OPZEG_BASE + "/api/opzeggen/bevestig?token=" + encodeURIComponent(verzoek.token);
+    const datumNl = nu.toLocaleString("nl-NL", { timeZone: "Europe/Amsterdam" });
+
+    try{
+      const text = "Beste" + (verzoek.naam ? (" " + verzoek.naam) : "") + ",\n\n" +
+        "Er is een opzegging aangevraagd voor: " + verzoek.product + "\n" +
+        "Kenmerk: " + kenmerk + "\n" +
+        "Aangevraagd op: " + datumNl + "\n\n" +
+        "Klik op onderstaande link om uw opzegging te bevestigen. Pas daarna wordt hij bij ons in behandeling genomen:\n" +
+        link + "\n\n" +
+        "Deze link is 48 uur geldig.\n\n" +
+        "HEEFT U DIT NIET AANGEVRAAGD? Doe dan niets. Zonder uw bevestiging gebeurt er niets " +
+        "en vervalt het verzoek vanzelf. Uw abonnement loopt gewoon door.\n\n" +
+        "Met vriendelijke groet,\nFormForge";
+      const html = '<div style="font-family:Arial,Helvetica,sans-serif;color:#1d2b50;line-height:1.55">' +
+        '<h2 style="font-family:Georgia,serif;color:#1d2b50">Bevestig uw opzegging</h2>' +
+        '<p>Beste' + (verzoek.naam ? (" " + escHtmlServer(verzoek.naam)) : "") + ',</p>' +
+        '<p>Er is een opzegging aangevraagd voor <b>' + escHtmlServer(verzoek.product) + '</b>.</p>' +
+        '<p><b>Kenmerk:</b> ' + escHtmlServer(kenmerk) + '<br><b>Aangevraagd op:</b> ' + escHtmlServer(datumNl) + '</p>' +
+        '<p>Klik op de knop om uw opzegging te bevestigen. Pas daarna wordt hij bij ons in behandeling genomen.</p>' +
+        '<p><a href="' + escHtmlServer(link) + '" style="display:inline-block;background:#1d2b50;color:#fff;text-decoration:none;padding:14px 26px;border-radius:999px;font-weight:bold">Opzegging bevestigen</a></p>' +
+        '<p style="font-size:13px;color:#667085">Of kopieer deze link: ' + escHtmlServer(link) + '<br>De link is 48 uur geldig.</p>' +
+        '<p style="background:#fef3f2;border:1px solid #fecdc9;border-radius:8px;padding:12px 14px">' +
+        '<b>Heeft u dit niet aangevraagd?</b> Doe dan niets. Zonder uw bevestiging gebeurt er niets en ' +
+        'vervalt het verzoek vanzelf. Uw abonnement loopt gewoon door.</p>' +
+        '<p>Met vriendelijke groet,<br>FormForge</p></div>';
+      await sendResendEmail({ to: email, subject: "Bevestig uw opzegging (" + kenmerk + ")", text: text, html: html });
+    }catch(e){
+      console.error("Opzeg-bevestigingsmail mislukt:", (e && e.message) || e);
+      return res.status(500).json({ error: "De bevestigingsmail kon niet worden verstuurd. Probeer het later opnieuw of mail ons rechtstreeks." });
+    }
+
+    return res.json({ ok: true, kenmerk: kenmerk, bevestigingNodig: true });
+  }catch(err){
+    console.error("Opzegging verwerken mislukt:", (err && err.message) || err);
+    return res.status(500).json({ error: "Versturen mislukt. Probeer het later opnieuw of mail ons rechtstreeks." });
+  }
+});
+
+/* ---- Stap 2: de klant klikt op de link uit zijn mail ---- */
+function opzegPagina(titel, tekst, kleur){
+  return '<!DOCTYPE html><html lang="nl"><head><meta charset="UTF-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    '<title>' + escHtmlServer(titel) + ' - FormForge</title></head>' +
+    '<body style="margin:0;background:#f7f6f2;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1d2b50">' +
+    '<div style="max-width:560px;margin:0 auto;padding:40px 18px">' +
+    '<div style="text-align:center;margin-bottom:22px">' +
+    '<div style="font-family:Georgia,serif;font-size:26px;font-weight:700;letter-spacing:5px">FORMFORGE</div>' +
+    '<div style="height:2px;width:60px;background:#c79a3a;margin:12px auto 0"></div></div>' +
+    '<div style="background:#fff;border-radius:18px;padding:26px;box-shadow:0 10px 30px rgba(15,23,42,.10);text-align:center">' +
+    '<h1 style="font-family:Georgia,serif;font-size:22px;margin:0 0 12px;color:' + (kleur || "#1d2b50") + '">' + escHtmlServer(titel) + '</h1>' +
+    '<p style="color:#667085;font-size:15px;line-height:1.6;margin:0">' + tekst + '</p></div>' +
+    '<p style="text-align:center;color:#667085;font-size:12.5px;margin-top:22px">' +
+    'Vragen? Mail ons via <a href="mailto:info@formforge.nl" style="color:#1d2b50">info@formforge.nl</a></p>' +
+    '</div></body></html>';
+}
+
+app.get("/api/opzeggen/bevestig", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.set("Content-Type", "text/html; charset=utf-8");
+  try{
+    if(rateLimited("opzegbevestig", clientIp(req), 30, 60 * 60 * 1000)){
+      return res.status(429).send(opzegPagina("Te veel pogingen",
+        "Probeer het over een uur opnieuw.", "#b42318"));
+    }
+    opzegOpruimen();
+    const token = String((req.query && req.query.token) || "").trim();
+    const v = token ? opzegVerzoeken.find(x => x.token === token) : null;
+    if(!v){
+      return res.status(404).send(opzegPagina("Link niet geldig",
+        "Deze bevestigingslink is verlopen of al gebruikt. Vraag de opzegging opnieuw aan via " +
+        "<a href=\"https://formforge.nl/abonnement-opzeggen/\" style=\"color:#1d2b50\">formforge.nl/abonnement-opzeggen</a>.", "#b42318"));
+    }
+    if(v.bevestigd){
+      return res.send(opzegPagina("Al bevestigd",
+        "Uw opzegging met kenmerk <b>" + escHtmlServer(v.kenmerk) + "</b> is al bij ons binnen. " +
+        "Wij nemen contact met u op zodra hij verwerkt is."));
+    }
+
+    v.bevestigd = true;
+    v.bevestigdOp = new Date().toISOString();
+    v.bevestigdIp = clientIp(req);
+    /* Het token blijft staan, zodat wie twee keer klikt (of wiens mailprogramma
+       de link vooraf ophaalt) een nette "al bevestigd"-pagina ziet in plaats
+       van een foutmelding. Nogmaals klikken doet niets: bevestigd blijft
+       bevestigd, en er gaat geen tweede melding uit. Naar buiten toe wordt het
+       token nergens getoond. */
+    v.klantTreffers = opzegZoekKlant(v.email);
+    saveOpzeg();
+
+    /* Hoort er een Guesttalk-code bij, zet het dan ook in het activiteitenlog
+       van die code. Zo zie je het staan in je Guesttalk-beheer, ook als de
+       mail je niet bereikt. */
+    if(v.code){
+      try{
+        const rec = guesttalkGetRecord(v.code);
+        if(rec){
+          guesttalkLog(rec, "Opzegging bevestigd (" + v.kenmerk + ")");
+          rec.requests.push({ id: v.kenmerk, t: v.bevestigdOp, type: "opzegging", detail: v.email, status: "open" });
+          if(rec.requests.length > 30) rec.requests = rec.requests.slice(-30);
+          saveGuesttalkUsageNow();
+        }
+      }catch(e){ console.error("Opzegging bij code vastleggen mislukt:", (e && e.message) || e); }
+    }
+
+    /* Nu pas jouw melding. */
+    const datumNl = new Date(v.bevestigdOp).toLocaleString("nl-NL", { timeZone: "Europe/Amsterdam" });
+    const regels = [
+      ["Kenmerk", v.kenmerk],
+      ["Abonnement", v.product],
+      ["E-mailadres", v.email],
+      ["Naam", v.naam],
+      ["Bedrijf", v.bedrijf],
+      ["Locatiecode", v.code],
+      ["Telefoon", v.telefoon],
+      ["Aangevraagd op", new Date(v.t).toLocaleString("nl-NL", { timeZone: "Europe/Amsterdam" })],
+      ["Bevestigd op", datumNl]
+    ].filter(r => r[1]);
+
+    const treffers = Array.isArray(v.klantTreffers) ? v.klantTreffers : [];
+    const controleTekst = treffers.length
+      ? ("Dit e-mailadres is teruggevonden bij:\n  - " + treffers.join("\n  - "))
+      : "LET OP: dit e-mailadres komt bij geen enkele klant in het systeem voor. Controleer handmatig voordat je iets verwijdert.";
+    const controleHtml = treffers.length
+      ? ('<p style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px 14px">' +
+         '<b>Adres teruggevonden bij:</b><br>' + treffers.map(x => "&bull; " + escHtmlServer(x)).join("<br>") + '</p>')
+      : ('<p style="background:#fef3f2;border:1px solid #fecdc9;border-radius:8px;padding:12px 14px">' +
+         '<b>Let op:</b> dit e-mailadres komt bij geen enkele klant in het systeem voor. ' +
+         'Controleer handmatig voordat je iets verwijdert.</p>');
+
+    try{
+      const text = "Een opzegging is BEVESTIGD via de link in de e-mail.\n\n" +
+        regels.map(r => r[0] + ": " + r[1]).join("\n") +
+        (v.toelichting ? ("\n\nToelichting:\n" + v.toelichting) : "") +
+        "\n\n" + controleTekst +
+        "\n\nLET OP: dit is een verzoek. Er wordt pas gestopt met incasseren als je het abonnement " +
+        "in Stripe stopzet en de klant verwijdert.";
+      const html = '<div style="font-family:Arial,Helvetica,sans-serif;color:#1d2b50;line-height:1.55">' +
+        '<h2 style="font-family:Georgia,serif;color:#1d2b50">Opzegging bevestigd</h2>' +
+        '<p>' + regels.map(r => "<b>" + escHtmlServer(r[0]) + ":</b> " + escHtmlServer(r[1])).join("<br>") + '</p>' +
+        (v.toelichting ? ('<p><b>Toelichting:</b><br>' + escHtmlServer(v.toelichting).replace(/\n/g, "<br>") + '</p>') : '') +
+        controleHtml +
+        '<p style="background:#fff8ec;border:1px solid #f0dfb8;border-radius:8px;padding:10px 12px;font-size:13px">' +
+        'Dit is een verzoek. Er wordt pas gestopt met incasseren als je het abonnement in Stripe stopzet ' +
+        'en de klant verwijdert.</p></div>';
+      await sendResendEmail({ to: OPZEG_EMAIL, subject: "Opzegging bevestigd " + v.kenmerk + ": " + v.product, text: text, html: html });
+      v.gemeld = true;
+    }catch(e){
+      v.gemeld = false;
+      console.error("Opzegmelding naar ons mislukt:", (e && e.message) || e);
+    }
+    saveOpzeg();
+
+    return res.send(opzegPagina("Uw opzegging is bevestigd",
+      "Kenmerk <b>" + escHtmlServer(v.kenmerk) + "</b><br><br>" +
+      "Wij hebben uw opzegging voor <b>" + escHtmlServer(v.product) + "</b> ontvangen en nemen contact " +
+      "met u op zodra hij verwerkt is. Uw abonnement blijft werken tot het einde van de betaalde periode.<br><br>" +
+      "U kunt dit venster sluiten."));
+  }catch(err){
+    console.error("Opzegbevestiging mislukt:", (err && err.message) || err);
+    return res.status(500).send(opzegPagina("Er ging iets mis",
+      "Probeer de link nog een keer, of mail ons via info@formforge.nl.", "#b42318"));
+  }
+});
+
+/* Overzicht voor jou. Niet-bevestigde verzoeken staan er ook in, zodat je ziet
+   dat iemand het geprobeerd heeft maar nooit heeft bevestigd. */
+function opzegBeheer(req, res){
+  const q = Object.assign({}, req.query || {}, req.body || {});
+  res.set("Cache-Control", "no-store");
+  if(!adminOk(req)) return jsonError(res, 401, "Geen toegang. Beheerwachtwoord ontbreekt of is onjuist.");
+  opzegOpruimen();
+  const actie = String(q.action || "").toLowerCase();
+  if(actie === "afgehandeld" || actie === "verwijder"){
+    const kenmerk = String(q.kenmerk || "").trim();
+    const v = opzegVerzoeken.find(x => x.kenmerk === kenmerk);
+    if(!v) return jsonError(res, 404, "Kenmerk niet gevonden");
+    if(actie === "verwijder"){
+      opzegVerzoeken = opzegVerzoeken.filter(x => x.kenmerk !== kenmerk);
+    }else{
+      v.afgehandeld = true;
+      v.afgehandeldOp = new Date().toISOString();
+    }
+    saveOpzeg();
+  }
+  /* De tokens gaan niet mee naar buiten. */
+  const lijst = opzegVerzoeken.map(v => {
+    const kopie = Object.assign({}, v);
+    delete kopie.token;
+    return kopie;
+  }).reverse();
+  return res.json({
+    ok: true,
+    open: opzegVerzoeken.filter(x => x.bevestigd && !x.afgehandeld).length,
+    onbevestigd: opzegVerzoeken.filter(x => !x.bevestigd).length,
+    totaal: opzegVerzoeken.length,
+    producten: OPZEG_PRODUCTEN,
+    verzoeken: lijst
+  });
+}
+app.get("/api/opzeggen/lijst", opzegBeheer);
+app.post("/api/opzeggen/lijst", opzegBeheer);
+
+/* ==================== EINDE OPZEGGEN ==================== */
+
+
+/* ===== UNIVERSELE VERTAALCHAT (kamers, vluchtig) =====
+   Iedereen kan een kamer maken met een 6-cijferige code en die delen.
+   Deelnemers kiezen hun eigen taal. Berichten leven max ROOM_TTL_MS en
+   worden daarna automatisch gewist (niets blijft permanent bewaard).
+   Vertaling gebeurt per lezer-taal en wordt kort gecachet om kosten te sparen. */
+const ROOM_TTL_MS = 15 * 1000;
+const ROOM_MEDIA_TTL_MS = 60 * 1000; // foto's/video's/bestanden blijven 1 minuut zichtbaar
+const ROOM_IDLE_MS = 1000 * 60 * 30; // lege/stille kamers na 30 min opruimen
+/* Vroeger stond hier een harde rem van 100 vertalingen per kamer per dag. Die
+   was er toen alles gratis en onbeperkt was en iemand met een enkele kamer de
+   OpenAI-rekening kon laten oplopen.
+
+   Nu betaalt de klant per vertaling: zijn de credits op, dan stopt het vertalen
+   vanzelf. Die dagrem werkte dus alleen nog tegen de klant zelf; met vier talen
+   in een kamer zat hij na 33 berichten stil terwijl hij duizenden credits had.
+
+   Standaard staat hij daarom uit (0 = geen grens). Wil je hem ooit toch, zet dan
+   ROOM_DAILY_TRANSLATION_LIMIT in Render op een aantal. */
+const ROOM_DAILY_TRANSLATION_LIMIT = Math.max(0, Number(process.env.ROOM_DAILY_TRANSLATION_LIMIT || 0));
+const rooms = new Map(); // code -> { code, createdAt, lastActive, members:Map(id->member), messages:[] }
+
+// ===== KAMERS BEWAREN OP SCHIJF (overleeft serverherstart) =====
+const ROOMS_STORE_FILE = path.join(DATA_DIR, "echo_rooms.json");
+
+function saveRooms(){
+  try{
+    const data = {};
+    for(const [code, room] of rooms.entries()){
+      data[code] = {
+        code: room.code,
+        createdAt: room.createdAt,
+        naam: room.naam || "",
+        hostName: room.hostName || "",
+        hostLang: room.hostLang || "en",
+        freeMode: !!room.freeMode,
+        roomLang: room.roomLang || "",
+        msgTtlMs: room.msgTtlMs || 0,
+        hostKey: room.hostKey || "",
+        hostEmail: room.hostEmail || "",
+        translationsToday: room.translationsToday || 0,
+        translationDay: room.translationDay || roomToday()
+      };
+    }
+    safeWriteFileSync(ROOMS_STORE_FILE, JSON.stringify(data, null, 2));
+  }catch(err){
+    console.warn("Kamers konden niet worden opgeslagen:", err.message || String(err));
+  }
+}
+
+function loadRooms(){
+  try{
+    if(!fs.existsSync(ROOMS_STORE_FILE)) return;
+    const raw = fs.readFileSync(ROOMS_STORE_FILE, "utf8");
+    const data = JSON.parse(raw || "{}");
+    Object.keys(data || {}).forEach((code) => {
+      const r = data[code];
+      if(!code || !r) return;
+      rooms.set(code, {
+        code: r.code || code,
+        createdAt: r.createdAt || Date.now(),
+        lastActive: Date.now(),
+        naam: r.naam || "",
+        hostName: r.hostName || "",
+        hostLang: r.hostLang || "en",
+        freeMode: !!r.freeMode,
+        roomLang: r.roomLang || "",
+        msgTtlMs: r.msgTtlMs || 0,
+        hostKey: r.hostKey || "",
+        hostEmail: r.hostEmail || "",
+        banned: new Set(),
+        banAt: new Map(),
+        members: new Map(),
+        messages: [],
+        translationsToday: r.translationsToday || 0,
+        translationDay: r.translationDay || roomToday(),
+        persistent: true
+      });
+    });
+    console.log("Kamers geladen: " + rooms.size);
+  }catch(err){
+    console.warn("Kamers konden niet worden geladen:", err.message || String(err));
+    rescueCorruptStore(ROOMS_STORE_FILE, err);
+  }
+}
+loadRooms();
+
+// ===== PUSH-AANMELDINGEN PER KAMER =====
+const roomPushSubs = new Map(); // code -> Map(memberId -> subscription)
+
+function addRoomPush(code, memberId, subscription){
+  if(!code || !memberId || !subscription || !subscription.endpoint) return;
+  let m = roomPushSubs.get(code);
+  if(!m){ m = new Map(); roomPushSubs.set(code, m); }
+  m.set(memberId, subscription);
+}
+
+function removeRoomPush(code, memberId){
+  const m = roomPushSubs.get(code);
+  if(m) m.delete(memberId);
+}
+
+async function notifyRoom(code, exceptMemberId, payload){
+  if(!webpush || !VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
+  const m = roomPushSubs.get(code);
+  if(!m || m.size === 0) return;
+  for(const [memberId, sub] of Array.from(m.entries())){
+    if(memberId === exceptMemberId) continue;
+    try{
+      await webpush.sendNotification(sub, JSON.stringify(payload));
+    }catch(err){
+      if(err.statusCode === 404 || err.statusCode === 410){
+        m.delete(memberId);
+      }
+    }
+  }
+}
+
+// Controleer of een e-mail + pincode een ACTIEF Unlimited (pro) abonnement is.
+function requireUnlimited(req){
+  const email = String((req.body && (req.body.email || req.body.premiumEmail)) || "").trim();
+  const pin = String((req.body && (req.body.pin || req.body.pincode || req.body.premiumPin)) || "").trim();
+  if(!email) return { ok:false, status:400, error:"Vul je Premium e-mailadres in." };
+  if(!pin) return { ok:false, status:400, error:"Vul je 6-cijferige pincode in." };
+  const deviceId = getRequestDeviceId(req);
+  const appSource = detectAppSourceFromReq(req);
+  const accountKey = buildPremiumAccountKey(email, appSource);
+
+  // Probeer eerst de gewone sleutel (appSource:email). Vindt die niets,
+  // val dan terug op de kale e-mail, want sommige activaties (Stripe-webhook,
+  // confirm-session, handmatige koppeling) slaan op onder de kale e-mail.
+  const candidateKeys = [accountKey];
+  const bareEmail = normalizePremiumKey(email);
+  if(bareEmail && !candidateKeys.includes(bareEmail)) candidateKeys.push(bareEmail);
+
+  let status = null;
+  let usedKey = accountKey;
+  for(const key of candidateKeys){
+    try{
+      const s = getPremiumStatus(key, pin, { deviceId });
+      if(s && s.premium){ status = s; usedKey = key; break; }
+      if(!status) status = s; // bewaar eerste resultaat voor de foutmelding
+    }catch(e){
+      return { ok:false, status:500, error:"Kon abonnement niet controleren." };
+    }
+  }
+
+  if(!status || !status.premium){
+    return { ok:false, status:403, error:"Geen actief Premium account gevonden. Controleer e-mail en pincode." };
+  }
+  const plan = String(status.plan || "");
+  if(plan !== "pro"){
+    return { ok:false, status:403, error:"Hiervoor is een Unlimited abonnement nodig. Je huidige plan: " + (status.planLabel || plan || "geen") + "." };
+  }
+  return { ok:true, accountKey: usedKey, email };
+}
+
+/* ==========================================================================
+   WORLDCHAT MET CREDITS
+   --------------------------------------------------------------------------
+   Een vertaalkamer kan op twee manieren betaald worden:
+     - pakket "pro" (Unlimited): onbeperkt, er wordt niets afgeboekt
+     - pakket "credits": er gaat een credit af, uit dezelfde portemonnee als
+       de AI van het offerte- en factuurprogramma
+
+   Wat een credit koopt, is instelbaar (Render Environment Variable):
+     WORLDCHAT_CREDIT_PER = "bericht"  1 credit per ECHT vertaald bericht
+                                       (een zin die al vertaald is, is gratis)
+                          = "kamer"    1 credit bij het openen van een kamer,
+                                       daarna onbeperkt vertalen in die kamer
+   Standaard "bericht", want dat is precies waar de server zelf voor betaalt.
+   ========================================================================== */
+const WORLDCHAT_CREDIT_PER = String(process.env.WORLDCHAT_CREDIT_PER || "bericht").toLowerCase() === "kamer" ? "kamer" : "bericht";
+
+/* Mag er in deze kamer nog vertaald worden? Bij afrekenen per kamer is de
+   credit al bij het openen betaald, dus dan altijd ja. */
+function wcMagVertalen(room){
+  if(!room || !room.hostKey) return true;              /* oude kamer zonder eigenaar */
+  if(WORLDCHAT_CREDIT_PER === "kamer") return true;
+  const saldo = wcSaldo(room.hostKey);
+  return saldo === -1 || saldo > 0;
+}
+
+/* Een vertaling afboeken bij de eigenaar van de kamer. */
+function wcAfboeken(room){
+  if(!room || !room.hostKey) return;
+  if(WORLDCHAT_CREDIT_PER === "kamer") return;
+  try{ wcNeemCredit(room.hostKey); }catch(e){}
+}
+
+/* Hoeveel credits heeft dit account nog? -1 betekent onbeperkt (Unlimited). */
+function wcSaldo(accountKey){
+  const a = getPremiumAccount(accountKey);
+  if(!a || !a.active) return 0;
+  if(normalizeAiPlan(a.plan) === "pro") return -1;
+  return Math.max(0, Math.floor(Number(a.creditsRemaining || 0)));
+}
+
+/* Een credit afboeken. Geen pincode nodig: de eigenaar van de kamer heeft zich
+   bij het openen al gelegitimeerd. Bij Unlimited gebeurt er niets. */
+/* Het saldo van een e-mailadres. Een gewoon account staat onder
+   "formforge:adres", maar een eigenaar-account staat onder het kale adres.
+   Daarom allebei proberen; -1 (onbeperkt) wint altijd. */
+function wcSaldoVan(email){
+  const a = wcSaldo("formforge:" + email);
+  const b = wcSaldo(email);
+  if(a === -1 || b === -1) return -1;
+  return Math.max(a, b);
+}
+
+function wcNeemCredit(accountKey){
+  const a = getPremiumAccount(accountKey);
+  if(!a || !a.active) return false;
+  if(normalizeAiPlan(a.plan) === "pro") return true;
+  const over = Math.max(0, Math.floor(Number(a.creditsRemaining || 0)));
+  if(over <= 0) return false;
+  setPremiumAccount(accountKey, {
+    creditsRemaining: over - 1,
+    creditsTotal: Math.max(over, Math.floor(Number(a.creditsTotal || over))),
+    lastCreditUsedAt: new Date().toISOString()
+  });
+  return true;
+}
+
+/* Toegang tot een vertaalkamer: Unlimited OF credits met saldo. */
+function requireChatTegoed(req){
+  const email = String((req.body && (req.body.email || req.body.premiumEmail)) || "").trim();
+  const pin = String((req.body && (req.body.pin || req.body.pincode || req.body.premiumPin)) || "").trim();
+  if(!email) return { ok:false, status:400, error:"Vul je e-mailadres in." };
+  if(!pin) return { ok:false, status:400, error:"Vul je pincode in." };
+  const deviceId = getRequestDeviceId(req);
+  const appSource = detectAppSourceFromReq(req);
+  const sleutels = [buildPremiumAccountKey(email, appSource)];
+  const kaal = normalizePremiumKey(email);
+  if(kaal && sleutels.indexOf(kaal) < 0) sleutels.push(kaal);
+
+  let status = null, gebruikt = "";
+  for(const k of sleutels){
+    try{
+      const st = getPremiumStatus(k, pin, { deviceId });
+      if(st && st.premium){ status = st; gebruikt = k; break; }
+      if(!status) status = st;
+    }catch(e){
+      return { ok:false, status:500, error:"Kon je account niet controleren." };
+    }
+  }
+  if(!status || !status.premium){
+    return { ok:false, status:403, error:"Geen actief account gevonden. Controleer je e-mailadres en pincode." };
+  }
+  const plan = normalizeAiPlan(status.plan || "");
+  const saldo = wcSaldo(gebruikt);
+  if(plan !== "pro" && saldo <= 0){
+    return { ok:false, status:402, error:"Je credits zijn op. Koop nieuwe credits om te blijven vertalen.", creditsOp:true };
+  }
+  return { ok:true, accountKey: gebruikt, email: kaal, plan: plan, saldo: saldo };
+}
+
+/* ==========================================================================
+   WORLDCHAT: PINCODE AANVRAGEN
+   --------------------------------------------------------------------------
+   Wie meerdere talen in een kamer wil, heeft een account nodig. Dat account
+   bestaat uit een e-mailadres plus een pincode van zes cijfers. Deze route
+   maakt dat account aan (of vindt het terug) en mailt de pincode.
+
+   Meertalig chatten kan pas nadat er betaald is. De mail legt dat uit en
+   bevat de knop naar de app, waar credits of een abonnement gekocht worden.
+
+   Instellingen (Render Environment Variables, allemaal optioneel):
+     WORLDCHAT_START_CREDITS   gratis credits bij een nieuw account (standaard 0)
+                               Meertalig chatten kan pas na betalen, dus dit
+                               staat bewust uit. Zet er een getal neer als je
+                               later toch een proef wilt weggeven.
+     WORLDCHAT_URL             adres van de chatpagina, voor de knop in de mail
+   ========================================================================== */
+
+const WORLDCHAT_START_CREDITS = Math.max(0, Number(process.env.WORLDCHAT_START_CREDITS || 0));
+const WORLDCHAT_URL = String(process.env.WORLDCHAT_URL || "https://formforge.nl/worldchat/").trim();
+
+function wcPinMail(pin, credits, nieuw, taal){
+  const nl = String(taal || "").toLowerCase() === "nl";
+  const t = nl ? {
+    titel: nieuw ? "Je Worldchat-account staat klaar" : "Je pincode voor Worldchat",
+    hoi: "Beste,",
+    intro: nieuw
+      ? "Je account voor Worldchat United is aangemaakt. Met je e-mailadres en de pincode hieronder open je een kamer waarin iedereen in zijn eigen taal leest."
+      : "Hier is de pincode die bij je e-mailadres hoort. Gebruik hem samen met je e-mailadres om een kamer te openen.",
+    pinkop: "Je pincode",
+    proef: credits > 0
+      ? ("Je hebt nog " + credits + " credits staan. Elke vertaalde regel kost een credit; een regel die al vertaald is, is gratis.")
+      : "Om in meerdere talen te chatten heb je credits of een abonnement nodig. Zonder dat werkt alleen een kamer in een taal, en die is gratis.",
+    koop: "Credits koop je in de app zelf, bij Kamer openen. Je kunt daar ook kiezen voor een Unlimited-abonnement, dan is vertalen onbeperkt.",
+    knop: "Worldchat openen",
+    slot: "Met vriendelijke groet,\nFormForge",
+    opzeg: "Een abonnement opzeggen kan altijd via formforge.nl/abonnement-opzeggen"
+  } : {
+    titel: nieuw ? "Your Worldchat account is ready" : "Your Worldchat pin code",
+    hoi: "Hello,",
+    intro: nieuw
+      ? "Your account for Worldchat United has been created. Use your e-mail address and the pin code below to open a room where everyone reads in their own language."
+      : "Here is the pin code that belongs to your e-mail address. Use it together with your e-mail address to open a room.",
+    pinkop: "Your pin code",
+    proef: credits > 0
+      ? ("You have " + credits + " credits left. Every translated line costs one credit; a line that was already translated is free.")
+      : "To chat in several languages you need credits or a subscription. Without those, only a one-language room works, and that one is free.",
+    koop: "You can buy credits in the app itself, under Open a room. You can also choose an Unlimited subscription there, which makes translating unlimited.",
+    knop: "Open Worldchat",
+    slot: "Kind regards,\nFormForge",
+    opzeg: "You can cancel a subscription at any time via formforge.nl/abonnement-opzeggen"
+  };
+
+  const tekst = t.hoi + "\n\n" + t.intro + "\n\n" + t.pinkop + ": " + pin + "\n\n" +
+    t.proef + "\n\n" + t.koop + "\n\n" + WORLDCHAT_URL + "\n\n" + t.slot + "\n\n" + t.opzeg;
+
+  const html =
+    '<div style="margin:0;padding:0;background:#eef1f6">' +
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef1f6;padding:24px 0"><tr><td align="center">' +
+    '<table role="presentation" width="560" cellpadding="0" cellspacing="0" style="width:560px;max-width:560px;background:#fff;border-radius:16px;overflow:hidden;font-family:Arial,Helvetica,sans-serif">' +
+    '<tr><td style="background:#1e2d4f;padding:30px 24px;text-align:center">' +
+      '<div style="font-size:34px;line-height:1;color:#fff">&#9812;</div>' +
+      '<div style="font-family:Georgia,serif;font-size:23px;letter-spacing:2px;color:#fff;font-weight:700;margin-top:8px">Worldchat United</div>' +
+      '<div style="height:2px;width:56px;background:#c9a24b;margin:14px auto 0"></div>' +
+    '</td></tr>' +
+    '<tr><td style="padding:28px 32px 8px">' +
+      '<h2 style="font-family:Georgia,serif;font-size:19px;color:#1e2d4f;margin:0 0 14px">' + escHtmlServer(t.titel) + '</h2>' +
+      '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 8px">' + escHtmlServer(t.hoi) + '</p>' +
+      '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 18px">' + escHtmlServer(t.intro) + '</p>' +
+    '</td></tr>' +
+    '<tr><td style="padding:0 32px">' +
+      '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#1e2d4f;border-radius:12px"><tr><td style="padding:18px;text-align:center">' +
+        '<div style="font-size:11.5px;letter-spacing:2px;color:#d8b866;font-weight:700;text-transform:uppercase">' + escHtmlServer(t.pinkop) + '</div>' +
+        '<div style="font-size:32px;letter-spacing:8px;color:#fff;font-weight:700;margin-top:6px">' + escHtmlServer(pin) + '</div>' +
+      '</td></tr></table>' +
+    '</td></tr>' +
+    '<tr><td style="padding:18px 32px 4px">' +
+      '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 14px">' + escHtmlServer(t.proef) + '</p>' +
+      '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 18px">' + escHtmlServer(t.koop) + '</p>' +
+      '<table role="presentation" cellpadding="0" cellspacing="0" align="center"><tr><td style="background:#c9a24b;border-radius:9px">' +
+        '<a href="' + escHtmlServer(WORLDCHAT_URL) + '" style="display:inline-block;padding:13px 30px;font-size:15px;font-weight:700;color:#1e2d4f;text-decoration:none">' + escHtmlServer(t.knop) + '</a>' +
+      '</td></tr></table>' +
+    '</td></tr>' +
+    '<tr><td style="padding:22px 32px 26px">' +
+      '<p style="font-size:12.5px;color:#667085;margin:0;text-align:center">' + escHtmlServer(t.opzeg) + '</p>' +
+    '</td></tr>' +
+    '<tr><td style="background:#1e2d4f;padding:14px;text-align:center;border-top:3px solid #c9a24b">' +
+      '<div style="font-size:12px;color:#dfe4ee">Worldchat United &middot; powered by FormForge</div>' +
+    '</td></tr>' +
+    '</table></td></tr></table></div>';
+
+  return { tekst: tekst, html: html, onderwerp: t.titel };
+}
+
+/* ==========================================================================
+   WORLDCHAT: DE KNOPTEKSTEN IN DE TAAL VAN DE BEZOEKER
+   --------------------------------------------------------------------------
+   De vaste teksten van de app (knoppen, labels, meldingen) staan hieronder in
+   het Engels. Kiest een bezoeker een andere taal, dan gaan ze EEN KEER door de
+   vertaler en daarna staan ze permanent op de schijf in salve_guide_trans.json,
+   dezelfde cache die de stadsgids gebruikt.
+
+   Dus: de eerste bezoeker in het Japans wacht kort, alle Japanners daarna
+   krijgen het meteen, ook na een herstart of een nieuwe deploy. Verander je
+   later een tekst, dan wordt alleen die ene regel opnieuw vertaald, want de
+   cachesleutel is de brontekst zelf.
+
+   Nederlands en Engels zitten al in het HTML-bestand zelf en komen hier dus
+   nooit langs; die kosten helemaal niets.
+   ========================================================================== */
+
+const WC_UI = {
+  joinKop: "Join the room",
+  join: "Join",
+  naam: "Your name",
+  taal: "Your language",
+  openKop: "Open a room",
+  open: "Open room",
+  vertaald: "Everyone their own language",
+  vrij: "One language",
+  uitlegVertaald: "Messages are translated for every reader. This needs credits or a subscription.",
+  uitlegVrij: "No translation, everyone types in the same language. Free.",
+  mail: "Your e-mail",
+  pin: "Pin code",
+  bericht: "Message",
+  mensen: "In this room",
+  uitnodigen: "Invite someone",
+  taalWijzig: "Change my language",
+  verlaat: "Leave room",
+  persoon: "person",
+  personen: "people",
+  keuzeKop: "How do you want to chat?",
+  kiesGratisKop: "Free",
+  kiesGratisUit: "One language, no translation. Only the last message stays on screen.",
+  kiesBetaaldKop: "With translation",
+  kiesBetaaldUit: "Everyone reads in their own language. You need credits for this.",
+  gratisKop: "Open a free room",
+  gratisUitleg: "Everyone picks their own language, but nothing is translated and nothing is kept.",
+  betaaldKop: "Open a room with translation",
+  kopenUitleg: "You receive your pin code by e-mail as soon as you have credits. You never make one up yourself.",
+  pinLabel: "Pin code from the e-mail",
+  terug: "Back",
+  danTekst: "then",
+  pinOpnieuw: "Send my pin code again",
+  naBetaling: "Done. Your pin code is in your mail and is filled in below, so you can start right away.",
+  kamersKop: "My rooms",
+  kamersNieuw: "New room",
+  kamerNaam: "Name for this room",
+  kamerNaamKop: "Rename this room",
+  mijnKamers: "My rooms",
+  geenKamers: "You are not in any room yet.",
+  jijHost: "you opened this room",
+  jijGast: "invited",
+  geluidAan: "Sound: on",
+  geluidUit: "Sound: off",
+  thuisKnop: "Add to home screen",
+  thuisKop: "Keep this chat at hand",
+  thuisOk: "Got it",
+  inlogKop: "Log in",
+  inlogKnop: "Log in",
+  inlogUit: "Your rooms are kept with your e-mail address, so you find them back on any phone. The pin code arrives by mail; you never make one up yourself.",
+  uitloggen: "Log out",
+  pinNodig: "Fill in the pin code from the e-mail.",
+  inlogGestuurd: "Check your mail. Your pin code is on its way.",
+  bewaarVraag: "Want to find this room again later?",
+  bewaarJa: "Save",
+  kamerWegVraag: "Delete the room %s? It closes for everyone and the messages are gone. This cannot be undone.",
+  unlimitedKnop: "Unlimited subscription",
+  ofAbo: "or",
+  reclame: "Advertisement",
+  permanent: "Keep permanently",
+  melden: "Report this room",
+  meldenUit: "Something here that should not be? Report it to us. We do not keep messages, so we cannot read along; we depend on your report. Add a screenshot if you can.",
+  alAccount: "Log in to my account",
+  alAccountUit: "Log in first and this room lands in your app on every device.",
+  maakAccount: "Create an account",
+  maakAccountUit: "Fill in your e-mail address and we will send you a pin code. Then this room is yours on every device.",
+  perDuizend: "per 1,000",
+  meestGekozen: "most chosen",
+  tellerTekst: "%s people are already chatting along",
+  uitKamer: "Leave",
+  kamerUitVraag: "Leave the room %s? It disappears from your list. With the invitation link you can come back any time.",
+  thuisIos: "Tap the share button at the bottom of your screen, then choose Add to Home Screen. The chat then opens like an app and you go straight back into this room.",
+  thuisAndroid: "Open the menu with the three dots and choose Add to home screen, or Install app. The chat then opens like an app and you go straight back into this room.",
+  abo: "Buy credits",
+  mailNodig: "Fill in your e-mail address.",
+  aboBezig: "Opening payment page...",
+  aboKlaar: "Your credits are ready. This is your pin code, keep it safe:",
+  kiesPakket: "Choose a package",
+  credits: "credits",
+  creditsOp: "Credits used up. Messages still arrive, in the original language.",
+  creditsOver: "credits left",
+  opzeg: "Cancel subscription",
+  vrijNotitie: "Messages in this room are not translated. Everyone reads what was typed. Want everyone to read in their own language? Then the room needs credits.",
+  bewaarKop: "Keep messages for",
+  vrijBewaar: "Free rooms keep nothing: a line disappears as soon as the next message is sent.",
+  verdwijntVrij: "Only the last message stays on screen.",
+  min: "minutes",
+  uur: "hour",
+  uren: "hours",
+  pinVraag: "Send me a pin code",
+  pinBezig: "Sending...",
+  pinGestuurd: "Check your mail. Your pin code is on its way. After that, buy credits to start a multilingual room.",
+  deel: "Share link",
+  nieuwLink: "New link",
+  bewaar: "Save",
+  eenmalig: "This link works once, for one person.",
+  groepLink: "This is the link to your room. Send it to everyone who may join; it keeps working.",
+  leegChat: "No messages yet. Say hello.",
+  host: "host",
+  verwijder: "Remove",
+  gekopieerd: "Link copied",
+  vertaald2: "translated",
+  verdwijnt: "Messages disappear after",
+  limiet: "Translation limit for today reached. Messages still arrive, in the original language.",
+  weg: "You are no longer in this room.",
+  naamNodig: "Fill in your name.",
+  inlogNodig: "Fill in your e-mail and pin code.",
+  drukte: "Too many requests. Wait a moment."
+};
+
+/* De vertaalde interface per taal. Eigen bestand op de schijf, los van de
+   gidscache, zodat een fout hier nooit de stadsgids raakt. */
+const WC_UI_FILE = path.join(DATA_DIR, "worldchat_ui.json");
+const WC_UI_VERSIE = 17;      /* ophogen dwingt alle talen opnieuw te vertalen */
+const wcUiKlaar = new Map();
+
+function wcUiLaad(){
+  try{
+    if(!fs.existsSync(WC_UI_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(WC_UI_FILE, "utf8") || "{}");
+    if(!data || data.versie !== WC_UI_VERSIE) return;   /* oude versie: opnieuw vertalen */
+    Object.keys(data.talen || {}).forEach((k) => wcUiKlaar.set(k, data.talen[k]));
+    console.log("Worldchat interfaceteksten geladen: " + wcUiKlaar.size + " talen");
+  }catch(e){
+    console.error("Worldchat interfaceteksten laden mislukt:", (e && e.message) || e);
+  }
+}
+function wcUiBewaar(){
+  try{
+    const talen = {};
+    for(const [k, v] of wcUiKlaar.entries()) talen[k] = v;
+    safeWriteFileSync(WC_UI_FILE, JSON.stringify({ versie: WC_UI_VERSIE, talen: talen }));
+  }catch(e){
+    console.error("Worldchat interfaceteksten opslaan mislukt:", (e && e.message) || e);
+  }
+}
+wcUiLaad();
+
+/* Een vertaling van een knoptekst mag nooit een verhaal worden. Alles wat
+   verdacht lang is, leeg is of er niet uitziet als een label, valt terug op
+   het Engels. Zo kan een uitschieter van het model nooit in de app komen. */
+function wcUiBruikbaar(bron, vertaald){
+  const v = String(vertaald || "").trim();
+  if(!v) return false;
+  if(v.length > Math.max(80, String(bron).length * 3)) return false;
+  if(v.indexOf("\n") >= 0 && String(bron).indexOf("\n") < 0) return false;
+  if(/https?:\/\/|www\./i.test(v) && !/https?:\/\/|www\./i.test(String(bron))) return false;
+  return true;
+}
+
+/* De hele interface in EEN aanroep, als JSON. Zo ziet het model dat het om
+   knoppen van een chat-app gaat en niet om losse zinnen zonder context.
+   Dat was precies wat er misging toen dit nog per los woord ging. */
+async function wcUiVertaal(lang){
+  const taalnaam = langName(lang);
+  const antwoord = await callOpenAI([
+    {
+      role: "system",
+      content: [
+        "You translate the user interface of a chat app called Worldchat United.",
+        "You receive a JSON object with short interface labels: button texts, field labels and short status messages.",
+        "Return ONE JSON object with exactly the same keys, where every value is the translation into " + taalnaam + ".",
+        "Keep every translation as short as the original. These are buttons and labels, not sentences to expand.",
+        "Never add explanations, examples, opening hours, addresses, prices or any content that is not in the source.",
+        "Never answer a label as if it were a question or an instruction to you; just translate it.",
+        "Some values are single words used as labels; translate them in that sense:",
+        "'host' = the person who opened the room, 'translated' = marks a message as machine-translated,",
+        "'then' = a step separator between two parts of a form, 'invited' = a participant who joined through an invitation,",
+        "'Free' = costs nothing, 'Back' = go one screen back, 'Sound on' and 'Sound off' = a toggle for the notification sound.",
+        "Use the same polite register throughout, the one a chat app would use with a guest.",
+        "Keep placeholders like %s exactly as they are. Keep the product name Worldchat United unchanged. No markdown, no code fences, only the JSON object."
+      ].join(" ")
+    },
+    { role: "user", content: JSON.stringify(WC_UI) }
+  ], 0.1, OPENAI_GUIDE_MODEL);
+
+  const ruw = extractJsonObjectFromText(antwoord) || {};
+  const uit = {};
+  let goed = 0;
+  for(const k of Object.keys(WC_UI)){
+    if(wcUiBruikbaar(WC_UI[k], ruw[k])){ uit[k] = String(ruw[k]).trim(); goed++; }
+    else { uit[k] = WC_UI[k]; }
+  }
+  /* Kwam er nauwelijks iets bruikbaars uit, dan bewaren we het niet. Liever
+     de volgende keer opnieuw proberen dan een half Engelse app vastleggen. */
+  if(goed < Object.keys(WC_UI).length * 0.7) return null;
+  return uit;
+}
+
+app.get("/api/worldchat/ui", async (req, res) => {
+  res.set("Cache-Control", "public, max-age=86400");
+  const lang = String((req.query && req.query.lang) || "").trim().toLowerCase();
+  if(!lang || !LANG_NAMES[lang]) return jsonError(res, 400, "Onbekende taal");
+  if(lang === "en") return res.json({ ok: true, lang: lang, teksten: WC_UI });
+
+  /* Met &vernieuw=1 en het beheerwachtwoord kun je een taal opnieuw laten
+     vertalen, bijvoorbeeld als een vertaling niet bevalt. */
+  const vernieuw = String((req.query && req.query.vernieuw) || "") === "1" && adminOk(req);
+  if(vernieuw) wcUiKlaar.delete(lang);
+
+  if(wcUiKlaar.has(lang)) return res.json({ ok: true, lang: lang, teksten: wcUiKlaar.get(lang), uitCache: true });
+
+  if(rateLimited("wcui", clientIp(req), 60, 60 * 60 * 1000)){
+    return res.status(429).json({ error: "Te veel verzoeken" });
+  }
+
+  try{
+    const uit = await wcUiVertaal(lang);
+    if(!uit) return res.json({ ok: true, lang: "en", teksten: WC_UI, terugval: true });
+    wcUiKlaar.set(lang, uit);
+    wcUiBewaar();
+    return res.json({ ok: true, lang: lang, teksten: uit });
+  }catch(e){
+    console.error("Worldchat interfaceteksten mislukt (" + lang + "):", (e && e.message) || e);
+    return res.json({ ok: true, lang: "en", teksten: WC_UI, terugval: true });
+  }
+});
+
+/* ==========================================================================
+   WORLDCHAT: DE KAMERS VAN EEN GEBRUIKER, OP DE SERVER
+   --------------------------------------------------------------------------
+   De kamerlijst stond eerst alleen in de browser. Dat gaat mis zodra iemand de
+   app op zijn beginscherm zet: op een iPhone krijgt zo'n app een eigen opslag,
+   los van Safari, dus de kamers uit Safari bestaan daar niet. Ook een nieuwe
+   telefoon of het wissen van sitegegevens kostte je al je kamers.
+
+   Daarom horen ze bij het account. Iedereen logt in met zijn e-mailadres en de
+   pincode die hij per mail krijgt, of hij nu gratis chat of credits heeft.
+   ========================================================================== */
+
+const WC_KAMERS_FILE = path.join(DATA_DIR, "worldchat_kamers.json");
+
+/* ----------------------------------------------------------------------------
+   GEBLOKKEERDE ACCOUNTS
+
+   Een account verwijderen is niet genoeg: dezelfde persoon maakt binnen een
+   minuut een nieuw account met hetzelfde e-mailadres. Deze lijst houdt dat
+   tegen. Nodig als iemand de dienst misbruikt en zeker als politie of justitie
+   aanklopt: dan moet je kunnen laten zien dat je hebt ingegrepen.
+---------------------------------------------------------------------------- */
+const WC_BLOK_FILE = path.join(DATA_DIR, "worldchat_geblokkeerd.json");
+const wcBlok = new Map();            /* e-mailadres -> { reden, sinds } */
+
+function wcBlokLaad(){
+  try{
+    if(!fs.existsSync(WC_BLOK_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(WC_BLOK_FILE, "utf8") || "{}");
+    for(const k of Object.keys(data)) wcBlok.set(k, data[k]);
+    console.log("Worldchat: " + wcBlok.size + " geblokkeerde account(s) geladen.");
+  }catch(e){ console.log("Worldchat: blokkadelijst laden mislukt: " + e.message); }
+}
+function wcBlokBewaar(){
+  try{
+    const uit = {};
+    for(const [k, v] of wcBlok.entries()) uit[k] = v;
+    fs.writeFileSync(WC_BLOK_FILE, JSON.stringify(uit, null, 2));
+  }catch(e){ console.log("Worldchat: blokkadelijst bewaren mislukt: " + e.message); }
+}
+function wcGeblokkeerd(email){
+  const k = normalizePremiumKey(email);
+  return !!(k && wcBlok.has(k));
+}
+wcBlokLaad();
+const wcKamers = new Map();          /* e-mailadres -> [{ code, reconnect, kamerNaam, isHost, ts }] */
+
+function wcKamersLaad(){
+  try{
+    if(!fs.existsSync(WC_KAMERS_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(WC_KAMERS_FILE, "utf8") || "{}");
+    Object.keys(data || {}).forEach((k) => { if(Array.isArray(data[k])) wcKamers.set(k, data[k]); });
+    console.log("Worldchat kamerlijsten geladen: " + wcKamers.size + " accounts");
+  }catch(e){
+    try{ rescueCorruptStore(WC_KAMERS_FILE, e); }catch(e2){}
+  }
+}
+function wcKamersBewaar(){
+  try{
+    const uit = {};
+    for(const [k, v] of wcKamers.entries()) uit[k] = v;
+    safeWriteFileSync(WC_KAMERS_FILE, JSON.stringify(uit));
+  }catch(e){
+    console.error("Worldchat kamerlijsten opslaan mislukt:", (e && e.message) || e);
+  }
+}
+wcKamersLaad();
+
+/* Klopt het e-mailadres met de pincode? Geeft het genormaliseerde adres terug,
+   of null. Werkt voor iedereen: gratis, credits en Unlimited. */
+function wcInlogOk(req){
+  const email = normalizePremiumKey(req.body && req.body.email);
+  const pin = String((req.body && req.body.pin) || "").trim();
+  if(!email || !pin) return null;
+  const acc = getPremiumAccount("formforge:" + email) || getPremiumAccount(email);
+  if(!acc) return null;
+  if(String(acc.premiumPin || "") !== pin) return null;
+  return email;
+}
+
+/* Kamers die niet meer bestaan vallen er vanzelf uit. */
+function wcKamersVan(email){
+  const lijst = wcKamers.get(email) || [];
+  const schoon = lijst.filter((k) => k && k.code && rooms.has(k.code));
+  if(schoon.length !== lijst.length){ wcKamers.set(email, schoon); wcKamersBewaar(); }
+  /* Of iemand de host is, halen we uit zijn terugkeersleutel en niet uit wat er
+     ooit bij het opslaan is meegegeven. Die sleutel geeft de server zelf uit,
+     dus oude of onvolledige regels in de lijst worden zo vanzelf rechtgezet.
+     De kamernaam pakken we ook vers uit de kamer, voor het geval de host hem
+     intussen heeft hernoemd. */
+  return schoon.map((k) => {
+    const t = k.reconnect ? reconnectTokens.get(k.reconnect) : null;
+    const room = rooms.get(k.code);
+    /* Wanneer kwam het laatste bericht binnen? Daarmee kan de app een stipje
+       zetten bij kamers waar iets nieuws is, zodat niemand alle kamers hoeft
+       open te klikken om dat te ontdekken. */
+    let laatsteBericht = 0;
+    if(room && room.messages && room.messages.length){
+      laatsteBericht = Number(room.messages[room.messages.length - 1].ts || 0);
+    }
+    return {
+      code: k.code,
+      reconnect: k.reconnect,
+      kamerNaam: (room && room.naam) ? room.naam : (k.kamerNaam || ""),
+      isHost: t ? !!t.isHost : !!k.isHost,
+      laatsteBericht: laatsteBericht,
+      ts: k.ts || 0
+    };
+  });
+}
+
+app.post("/api/worldchat/kamers", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const email = wcInlogOk(req);
+  if(!email) return res.status(403).json({ error: "E-mailadres of pincode klopt niet." });
+  if(wcGeblokkeerd(email)){
+    return res.status(403).json({ error: "Dit account is geblokkeerd. Neem contact op via info@formforge.nl." });
+  }
+  /* Saldo erbij, zodat de klant ook buiten een kamer ziet wat hij nog heeft.
+     -1 betekent Unlimited, dus onbeperkt vertalen. */
+  res.json({
+    ok: true,
+    kamers: wcKamersVan(email),
+    credits: wcSaldoVan(email),
+    unlimitedPrijs: WORLDCHAT_UNLIMITED_PRIJS,
+    meedoeners: wcMeedoeners(),
+    perMinuut: WORLDCHAT_TELLER_PER_MINUUT,
+    pakketten: ["wc1000", "wc5000", "wc15000"].map((k) => ({
+      sleutel: k,
+      credits: CREDIT_PACKAGES[k].credits,
+      prijs: CREDIT_PACKAGES[k].prijs
+    }))
+  });
+});
+
+app.post("/api/worldchat/kamers/opslaan", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const email = wcInlogOk(req);
+  if(!email) return res.status(403).json({ error: "E-mailadres of pincode klopt niet." });
+  const code = String((req.body && req.body.code) || "").trim();
+  const reconnect = String((req.body && req.body.reconnect) || "").trim();
+  if(!code || !reconnect) return jsonError(res, 400, "Kamercode of sleutel ontbreekt.");
+  const lijst = (wcKamers.get(email) || []).filter((k) => k && k.code !== code);
+  lijst.unshift({
+    code: code,
+    reconnect: reconnect,
+    kamerNaam: String((req.body && req.body.kamerNaam) || "").slice(0, 60),
+    isHost: !!(req.body && req.body.isHost),
+    ts: Date.now()
+  });
+  wcKamers.set(email, lijst.slice(0, 60));
+  wcKamersBewaar();
+  res.json({ ok: true, kamers: wcKamersVan(email) });
+});
+
+app.post("/api/worldchat/kamers/wissen", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const email = wcInlogOk(req);
+  if(!email) return res.status(403).json({ error: "E-mailadres of pincode klopt niet." });
+  const code = String((req.body && req.body.code) || "").trim();
+  wcKamers.set(email, (wcKamers.get(email) || []).filter((k) => k && k.code !== code));
+  wcKamersBewaar();
+  res.json({ ok: true, kamers: wcKamersVan(email) });
+});
+
+/* ==========================================================================
+   WORLDCHAT: BEHEER
+   --------------------------------------------------------------------------
+   Een eenvoudig scherm waarin je alle aangemelde adressen ziet, met hun pakket,
+   saldo en aantal kamers, en waarmee je iemand met een klik kunt verwijderen.
+   De server levert dit scherm zelf uit, dus je hoeft er geen pagina voor aan
+   te maken op je website. Adres:
+
+     https://formforge-sync-1.onrender.com/worldchat-beheer
+
+   Toegang met je beheerwachtwoord. Eigenaar-adressen kunnen niet verwijderd
+   worden; die zitten in de code en zouden bij de eerstvolgende opstart toch
+   weer terugkomen.
+   ========================================================================== */
+
+function wcBeheerOk(req){
+  const wachtwoord = String((req.query && req.query.adminPass) || (req.body && req.body.adminPass) || "").trim();
+  if(!wachtwoord) return false;
+  try{ if(adminOk(req)) return true; }catch(e){}
+  try{ if(guesttalkAuthOk(wachtwoord)) return true; }catch(e){}
+  return false;
+}
+
+/* Alles wat we van een account weten, in een nette regel. */
+function wcBeheerLijst(){
+  const uit = [];
+  for(const [sleutel, a] of premiumAccounts.entries()){
+    if(!a) continue;
+    const email = String(a.email || sleutel).replace(/^formforge:/, "");
+    const plan = normalizeAiPlan(a.plan || "");
+    uit.push({
+      sleutel: sleutel,
+      email: email,
+      eigenaar: isOwnerPremiumEmail(email),
+      plan: plan,
+      pakket: String(a.planLabel || plan || ""),
+      actief: !!a.active,
+      credits: plan === "pro" ? -1 : Math.max(0, Math.floor(Number(a.creditsRemaining || 0))),
+      gekocht: Math.max(0, Math.floor(Number(a.creditsTotal || 0))),
+      kamers: (wcKamers.get(normalizePremiumKey(email)) || []).length,
+      bron: String(a.source || ""),
+      abonnement: String(a.subscriptionStatus || ""),
+      aangemaakt: String(a.createdAt || a.starterCreditsGrantedAt || ""),
+      bijgewerkt: String(a.updatedAt || "")
+    });
+  }
+  uit.sort((x, y) => String(y.bijgewerkt).localeCompare(String(x.bijgewerkt)));
+  return uit;
+}
+
+app.get("/api/worldchat/admin/accounts", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if(!wcBeheerOk(req)) return jsonError(res, 403, "Geen toegang");
+  const lijst = wcBeheerLijst();
+  res.json({
+    ok: true,
+    aantal: lijst.length,
+    metCredits: lijst.filter(a => a.plan === "credits" && a.credits > 0).length,
+    onbeperkt: lijst.filter(a => a.plan === "pro").length,
+    accounts: lijst
+  });
+});
+
+/* Wie is er geblokkeerd, en hoe druk is het nu? */
+/* ----------------------------------------------------------------------------
+   MELDPUNT
+
+   Iemand die in een kamer iets ziet dat niet door de beugel kan, moet dat met
+   een paar tikken kunnen doorgeven, met bewijs erbij. Het e-mailadres staat
+   alleen hier op de server; de melder krijgt het nooit te zien.
+
+   Wij bewaren geen berichten, dus die bijlage is vaak het enige bewijs dat er
+   uberhaupt is. Daarom mag hij groot zijn.
+---------------------------------------------------------------------------- */
+const WC_MELD_MAIL = process.env.WORLDCHAT_MELD_MAIL || "bernardwijnen@gmail.com";
+const wcMeldUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024, files: 1 }
+});
+const wcMeldTeller = new Map();     /* toestel -> [tijdstippen] */
+
+app.post("/api/worldchat/melding", wcMeldUpload.single("bijlage"), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try{
+    const tekst = String((req.body && req.body.tekst) || "").trim().slice(0, 4000);
+    const code  = String((req.body && req.body.code) || "").trim().slice(0, 20);
+    const naam  = String((req.body && req.body.kamerNaam) || "").trim().slice(0, 120);
+    const melder = String((req.body && req.body.melder) || "").trim().slice(0, 160);
+
+    if(tekst.length < 5 && !req.file){
+      return res.status(400).json({ error: "Schrijf even kort wat er aan de hand is." });
+    }
+
+    /* Een simpele rem tegen misbruik van het meldpunt zelf: vijf per uur per
+       toestel. Anders wordt dit het volgende gat. */
+    const wie = String((req.body && req.body.toestel) || req.ip || "onbekend");
+    const nu = Date.now();
+    const eerder = (wcMeldTeller.get(wie) || []).filter(t => nu - t < 60 * 60 * 1000);
+    if(eerder.length >= 5){
+      return res.status(429).json({ error: "Je hebt net al gemeld. Probeer het over een uur opnieuw." });
+    }
+    eerder.push(nu);
+    wcMeldTeller.set(wie, eerder);
+
+    const regels = [
+      "Nieuwe melding vanuit Worldchat United.",
+      "",
+      "Kamer: " + (naam ? naam + " (#" + code + ")" : (code ? "#" + code : "onbekend")),
+      "Tijdstip: " + new Date().toISOString(),
+      "Melder: " + (melder || "niet ingevuld"),
+      "Bijlage: " + (req.file ? (req.file.originalname || "bestand") + " (" + Math.round(req.file.size / 1024) + " kB)" : "geen"),
+      "",
+      "Wat de melder schrijft:",
+      tekst || "(niets ingevuld)",
+      "",
+      "Ingrijpen kan via /worldchat-beheer: daar staat de blokkeerknop per account."
+    ];
+
+    const bijlagen = req.file ? [{
+      filename: String(req.file.originalname || "bijlage").slice(0, 120),
+      content: req.file.buffer.toString("base64")
+    }] : [];
+
+    await sendResendEmail({
+      to: WC_MELD_MAIL,
+      subject: "Melding Worldchat kamer " + (code || "onbekend"),
+      text: regels.join("\n"),
+      attachments: bijlagen
+    });
+
+    console.log("Worldchat: melding ontvangen voor kamer " + (code || "onbekend") + (req.file ? " met bijlage" : ""));
+    res.json({ ok: true });
+  }catch(e){
+    console.log("Worldchat: melding versturen mislukt: " + e.message);
+    res.status(500).json({ error: "Versturen mislukt. Probeer het zo nog eens." });
+  }
+});
+
+app.get("/api/worldchat/admin/blokkades", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if(!wcBeheerOk(req)) return jsonError(res, 403, "Geen toegang");
+
+  const lijst = [];
+  for(const [mail, v] of wcBlok.entries()){
+    lijst.push({ email: mail, reden: String((v && v.reden) || ""), sinds: String((v && v.sinds) || "") });
+  }
+  lijst.sort((a, b) => String(b.sinds).localeCompare(String(a.sinds)));
+
+  /* Hoeveel kamers draaien er nu, en hoeveel mensen zitten erin? */
+  let kamersNu = 0, mensenNu = 0;
+  for(const r of rooms.values()){
+    if(!r) continue;
+    kamersNu++;
+    mensenNu += r.members ? r.members.size : 0;
+  }
+  res.json({ ok: true, geblokkeerd: lijst, kamersNu: kamersNu, mensenNu: mensenNu });
+});
+
+/* Blokkeren: het account gaat op slot, zijn kamers gaan dicht voor iedereen die
+   erin zit, en zijn terugkeersleutels vervallen. Zonder dat laatste blijft hij
+   gewoon in zijn kamers zitten. */
+app.post("/api/worldchat/admin/blokkeer", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if(!wcBeheerOk(req)) return jsonError(res, 403, "Geen toegang");
+  const email = normalizePremiumKey(req.body && req.body.email);
+  if(!email) return jsonError(res, 400, "E-mailadres ontbreekt");
+  if(isOwnerPremiumEmail(email)) return jsonError(res, 400, "Dit is een eigenaar-account.");
+
+  const aan = !(req.body && req.body.opheffen);
+  if(!aan){
+    wcBlok.delete(email);
+    wcBlokBewaar();
+    console.log("Worldchat beheer: blokkade opgeheven voor " + email);
+    return res.json({ ok: true, geblokkeerd: false });
+  }
+
+  wcBlok.set(email, {
+    reden: String((req.body && req.body.reden) || "").slice(0, 300),
+    sinds: new Date().toISOString()
+  });
+  wcBlokBewaar();
+
+  /* Zijn kamers sluiten. */
+  let dicht = 0;
+  const mijn = wcKamers.get(email) || [];
+  for(const k of mijn){
+    if(!k || !k.code) continue;
+    const room = rooms.get(k.code);
+    if(room){ rooms.delete(k.code); dicht++; }
+    if(k.reconnect) reconnectTokens.delete(k.reconnect);
+  }
+  wcKamers.delete(email);
+  wcKamersBewaar();
+  try{ saveRooms(); saveReconnect(); }catch(e){}
+
+  console.log("Worldchat beheer: " + email + " geblokkeerd, " + dicht + " kamer(s) gesloten.");
+  res.json({ ok: true, geblokkeerd: true, kamersGesloten: dicht });
+});
+
+app.post("/api/worldchat/admin/verwijder", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if(!wcBeheerOk(req)) return jsonError(res, 403, "Geen toegang");
+  const email = normalizePremiumKey(req.body && req.body.email);
+  if(!email) return jsonError(res, 400, "E-mailadres ontbreekt");
+  if(isOwnerPremiumEmail(email)) return jsonError(res, 400, "Dit is een eigenaar-account en kan niet verwijderd worden.");
+
+  let weg = 0;
+  for(const sleutel of Array.from(premiumAccounts.keys())){
+    const kaal = String(sleutel).replace(/^formforge:/, "").replace(/^echo:/, "");
+    if(kaal === email){ premiumAccounts.delete(sleutel); weg++; }
+  }
+  if(weg) savePremiumAccounts();
+
+  const hadKamers = (wcKamers.get(email) || []).length;
+  if(wcKamers.has(email)){ wcKamers.delete(email); wcKamersBewaar(); }
+
+  console.log("Worldchat beheer: account verwijderd (" + weg + " sleutels, " + hadKamers + " kamers)");
+  res.json({ ok: true, verwijderd: weg, kamers: hadKamers });
+});
+
+/* Het beheerscherm zelf. Puur tekst en knoppen, geen opmaakbestanden nodig. */
+/* Het app-bestand voor het beheerscherm. Hiermee krijgt hij op je beginscherm
+   een eigen kroontje en naam in plaats van een schermafbeelding, en opent hij
+   zonder adresbalk zoals een gewone app. */
+app.get("/worldchat-beheer/app.webmanifest", (req, res) => {
+  res.set("Content-Type", "application/manifest+json; charset=utf-8");
+  res.set("Cache-Control", "no-store");
+  res.json({
+    name: "Worldchat beheer",
+    short_name: "WC beheer",
+    start_url: "/worldchat-beheer",
+    scope: "/worldchat-beheer",
+    display: "standalone",
+    background_color: "#eef1f6",
+    theme_color: "#1e2d4f",
+    icons: [
+      { src: "/icons/worldchat-icon-192.png", sizes: "192x192", type: "image/png" },
+      { src: "/icons/worldchat-icon-512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" }
+    ]
+  });
+});
+
+app.get("/worldchat-beheer", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.set("Content-Type", "text/html; charset=utf-8");
+  res.send(`<!DOCTYPE html>
+<html lang="nl"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1e2d4f">
+<title>Worldchat beheer</title>
+<link rel="apple-touch-icon" sizes="180x180" href="/icons/worldchat-icon-180.png">
+<link rel="apple-touch-icon" href="/icons/worldchat-icon-180.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/worldchat-icon-32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/icons/worldchat-icon-192.png">
+<link rel="manifest" href="/worldchat-beheer/app.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="WC beheer">
+<style>
+ *{box-sizing:border-box}
+ body{margin:0;background:#eef1f6;color:#12203a;font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+ header{background:#1e2d4f;color:#fff;padding:16px 20px;display:flex;align-items:center;gap:12px}
+ header b{font-family:Georgia,serif;letter-spacing:.05em}
+ main{max-width:1000px;margin:0 auto;padding:20px}
+ .balk{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+ input,button{font:inherit}
+ input{padding:10px 12px;border:1px solid #dbe1ec;border-radius:9px;min-width:220px}
+ button{padding:10px 16px;border:0;border-radius:9px;background:#1e2d4f;color:#fff;font-weight:600;cursor:pointer}
+ button.weg,label.weg{background:#b42318;color:#fff;padding:7px 12px;font-size:13px;font-weight:600;
+   border:0;border-radius:9px;cursor:pointer;display:inline-block;line-height:1.2;white-space:nowrap}
+ .kaart{background:#fff;border:1px solid #dbe1ec;border-radius:12px;padding:14px 16px;margin-bottom:14px}
+ table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #dbe1ec;border-radius:12px;overflow:hidden}
+ th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #eef1f6;font-size:14px}
+ th{background:#f6f8fb;font-size:12.5px;text-transform:uppercase;letter-spacing:.04em;color:#6b7a95}
+ tr:last-child td{border-bottom:0}
+ .kroon{color:#c9a24b;font-weight:600}
+ .melding{padding:10px 13px;border-radius:9px;margin-bottom:14px;display:none}
+ .melding.aan{display:block}
+ .fout{background:#fef3f2;border:1px solid #fecdc9;color:#b42318}
+ header{padding-top:calc(16px + env(safe-area-inset-top))}
+ main{padding-bottom:calc(20px + env(safe-area-inset-bottom))}
+ @media (max-width:760px){
+   input{min-width:0;width:100%}
+   .balk{flex-direction:column}
+   .balk button{width:100%}
+   table{border:0;background:none}
+   table,thead,tbody,tr,th,td{display:block}
+   thead{display:none}
+   tr{background:#fff;border:1px solid #dbe1ec;border-radius:12px;margin-bottom:12px;padding:6px 4px}
+   td{border-bottom:1px solid #eef1f6;padding:9px 12px}
+   td:last-child{border-bottom:0}
+   button.weg,label.weg{margin:3px 3px 3px 0}
+ }
+ .goed{background:#f0fdf4;border:1px solid #bbf7d0;color:#067647}
+</style></head><body>
+<header><b>Worldchat United</b> <span style="opacity:.7;font-size:13px">beheer</span><span style="margin-left:auto;opacity:.45;font-size:12px">v4</span></header>
+<main>
+  <div class="melding" id="melding"></div>
+  <div class="kaart">
+    <div class="balk">
+      <input id="pass" type="password" placeholder="Beheerwachtwoord" autocomplete="current-password">
+      <input id="zoek" placeholder="Zoek op e-mailadres">
+      <button id="laad">Ophalen</button>
+    </div>
+    <div id="samenvatting" style="font-size:13.5px;color:#6b7a95"></div>
+  </div>
+  <table id="tabel"><thead><tr>
+    <th>E-mailadres</th><th>Pakket</th><th>Credits</th><th>Kamers</th><th>Bijgewerkt</th><th></th>
+  </tr></thead><tbody id="rijen"></tbody></table>
+
+  <h2 style="font-family:Georgia,serif;font-size:20px;margin:28px 0 12px">Advertenties in de gratis kamers</h2>
+  <div class="kaart">
+    <div class="balk">
+      <input id="adTitel" placeholder="Titel" maxlength="60">
+      <input id="adTekst" placeholder="Regel eronder" maxlength="140" style="min-width:280px">
+      <input id="adUrl" placeholder="https://www.voorbeeld.nl" maxlength="300">
+      <button id="adNieuw">Toevoegen</button>
+    </div>
+    <div style="font-size:13px;color:#6b7a95">Getoond in kamers zonder vertaling. Betaalde kamers krijgen geen advertenties.</div>
+  </div>
+  <table><thead><tr>
+    <th>Advertentie</th><th>Webadres</th><th>Getoond</th><th>Geklikt</th><th>Stand</th><th></th>
+  </tr></thead><tbody id="adRijen"></tbody></table>
+</main>
+<script>
+var alles = [];
+function $(id){ return document.getElementById(id); }
+function zegt(tekst, goed){
+  var m = $("melding");
+  m.className = "melding aan " + (goed ? "goed" : "fout");
+  m.textContent = tekst;
+}
+function esc(t){ var d = document.createElement("div"); d.textContent = String(t == null ? "" : t); return d.innerHTML; }
+function datum(t){ if(!t) return ""; try{ return new Date(t).toLocaleString("nl-NL"); }catch(e){ return t; } }
+
+async function laden(){
+  var pass = $("pass").value.trim();
+  if(!pass) return zegt("Vul je beheerwachtwoord in.");
+  try{
+    var r = await fetch("/api/worldchat/admin/accounts?adminPass=" + encodeURIComponent(pass));
+    var d = await r.json();
+    if(!r.ok) throw new Error(d.error || "Ophalen mislukt");
+    alles = d.accounts || [];
+    try{ sessionStorage.setItem("wcpass", pass); }catch(e){}
+    tijdVerversen();
+    /* Ook de blokkadelijst en de drukte van dit moment ophalen. */
+    var extra = {};
+    try{
+      var rb = await fetch("/api/worldchat/admin/blokkades?adminPass=" + encodeURIComponent(pass));
+      extra = await rb.json();
+    }catch(e){}
+    geblokkeerd = {};
+    (extra.geblokkeerd || []).forEach(function(b){ geblokkeerd[b.email] = b; });
+
+    $("samenvatting").textContent =
+      d.aantal + " accounts, waarvan " + d.metCredits + " met credits en " + d.onbeperkt + " onbeperkt. " +
+      "Nu open: " + (extra.kamersNu || 0) + " kamers met " + (extra.mensenNu || 0) + " deelnemers. " +
+      (extra.geblokkeerd || []).length + " geblokkeerd.";
+    $("melding").className = "melding";
+    tekenen();
+  }catch(e){ zegt(e.message); }
+}
+
+var geblokkeerd = {};
+function tekenen(){
+  var zoek = $("zoek").value.trim().toLowerCase();
+  var lijst = alles.filter(function(a){ return !zoek || a.email.toLowerCase().indexOf(zoek) >= 0; });
+  $("rijen").innerHTML = lijst.map(function(a){
+    return "<tr>" +
+      "<td>" + esc(a.email) +
+        (a.eigenaar ? ' <span class="kroon">eigenaar</span>' : "") +
+        (geblokkeerd[a.email] ? ' <span class="kroon" style="background:#b3261e;color:#fff">geblokkeerd</span>' : "") +
+      "</td>" +
+      "<td>" + esc(a.pakket || a.plan || "-") + (a.actief ? "" : " (niet actief)") + "</td>" +
+      "<td>" + (a.credits === -1 ? "onbeperkt" : esc(a.credits) + (a.gekocht ? " van " + esc(a.gekocht) : "")) + "</td>" +
+      "<td>" + esc(a.kamers) + "</td>" +
+      "<td>" + esc(datum(a.bijgewerkt)) + "</td>" +
+      "<td>" + (a.eigenaar ? "" :
+          '<button data-blok="' + esc(a.email) + '">' + (geblokkeerd[a.email] ? "Deblokkeren" : "Blokkeren") + "</button> " +
+          '<button class="weg" data-weg="' + esc(a.email) + '">Verwijderen</button>') + "</td>" +
+      "</tr>";
+  }).join("");
+  Array.prototype.forEach.call(document.querySelectorAll("[data-weg]"), function(b){
+    b.onclick = function(){ verwijderen(b.getAttribute("data-weg")); };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-blok]"), function(b){
+    b.onclick = function(){ blokkeren(b.getAttribute("data-blok")); };
+  });
+}
+
+/* Blokkeren sluit meteen zijn kamers en zet zijn account op slot. Verwijderen
+   alleen is niet genoeg: dan maakt hij een minuut later een nieuw account met
+   hetzelfde adres. */
+async function blokkeren(email){
+  var opheffen = !!geblokkeerd[email];
+  var reden = "";
+  if(opheffen){
+    if(!confirm("Blokkade van " + email + " opheffen? Hij kan daarna weer inloggen en kamers openen.")) return;
+  }else{
+    /* LET OP: deze pagina staat in de server als een groot tekstblok. Een \n
+       zou daar een ECHT regeleinde worden en het script in de browser breken.
+       Daarom hier dubbel geschreven, zodat de browser een \n te zien krijgt. */
+    reden = prompt("Waarom blokkeer je " + email + "?\\n\\nDit wordt vastgelegd. Zijn kamers gaan meteen dicht voor iedereen die erin zit.", "");
+    if(reden === null) return;
+  }
+  try{
+    var r = await fetch("/api/worldchat/admin/blokkeer", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ adminPass: $("pass").value.trim(), email: email, reden: reden, opheffen: opheffen })
+    });
+    var d = await r.json();
+    if(!r.ok) throw new Error(d.error || "Mislukt");
+    zegt(opheffen ? "Blokkade opgeheven." :
+      ("Geblokkeerd. " + (d.kamersGesloten || 0) + " kamer(s) gesloten."), true);
+    laden();
+  }catch(e){ zegt(e.message); }
+}
+
+async function verwijderen(email){
+  if(!confirm("Account " + email + " verwijderen? Zijn kamerlijst en pincode gaan mee. Dit kan niet ongedaan worden gemaakt.")) return;
+  try{
+    var r = await fetch("/api/worldchat/admin/verwijder", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ adminPass: $("pass").value.trim(), email: email })
+    });
+    var d = await r.json();
+    if(!r.ok) throw new Error(d.error || "Verwijderen mislukt");
+    zegt(email + " is verwijderd.", true);
+    laden();
+  }catch(e){ zegt(e.message); }
+}
+
+async function adsLaden(){
+  var pass = $("pass").value.trim();
+  if(!pass) return;
+  try{
+    var r = await fetch("/api/worldchat/admin/reclame?adminPass=" + encodeURIComponent(pass));
+    var d = await r.json();
+    if(!r.ok) throw new Error(d.error || "Ophalen mislukt");
+    $("adRijen").innerHTML = (d.advertenties || []).map(function(a){
+      var ctr = a.vertoond ? Math.round((a.geklikt / a.vertoond) * 1000) / 10 : 0;
+      return "<tr>" +
+        "<td><div style='display:flex;align-items:center;gap:10px'>" +
+          (a.logo ? "<img src='/api/worldchat/reclame/logo/" + esc(a.id) + "' alt='' style='width:40px;height:40px;object-fit:contain;border:1px solid #dbe1ec;border-radius:8px;background:#fff'>" : "") +
+          "<span><b>" + esc(a.titel) + "</b><br><span style='color:#6b7a95;font-size:13px'>" + esc(a.tekst || "") + "</span></span>" +
+        "</div></td>" +
+        "<td style='font-size:13px'>" + esc(a.url) + "</td>" +
+        "<td>" + esc(a.vertoond || 0) + "</td>" +
+        "<td>" + esc(a.geklikt || 0) + (a.vertoond ? " (" + ctr + "%)" : "") + "</td>" +
+        "<td>" + (a.actief ? "actief" : "uit") + "</td>" +
+        "<td>" +
+          '<button class="weg" data-ad-aanuit="' + esc(a.id) + '" style="background:#1e2d4f">' + (a.actief ? "Uitzetten" : "Aanzetten") + "</button> " +
+          '<button class="weg" data-ad-nul="' + esc(a.id) + '" style="background:#667085">Tellers op 0</button> ' +
+          '<label class="weg" style="background:#1e2d4f;cursor:pointer;display:inline-block">Logo kiezen' +
+            '<input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" style="display:none" data-ad-logo="' + esc(a.id) + '"></label> ' +
+          (a.logo ? '<button class="weg" data-ad-logoweg="' + esc(a.id) + '" style="background:#667085">Logo weg</button> ' : "") +
+          '<button class="weg" data-ad-weg="' + esc(a.id) + '">Verwijderen</button>' +
+        "</td></tr>";
+    }).join("");
+    koppelAdKnoppen();
+  }catch(e){ zegt(e.message); }
+}
+
+function koppelAdKnoppen(){
+  function bind(attr, actie, vraag){
+    Array.prototype.forEach.call(document.querySelectorAll("[" + attr + "]"), function(b){
+      b.onclick = async function(){
+        var id = b.getAttribute(attr);
+        if(vraag && !confirm(vraag)) return;
+        try{
+          var r = await fetch("/api/worldchat/admin/reclame", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ adminPass: $("pass").value.trim(), actie: actie, id: id })
+          });
+          var d = await r.json();
+          if(!r.ok) throw new Error(d.error || "Mislukt");
+          adsLaden();
+        }catch(e){ zegt(e.message); }
+      };
+    });
+  }
+  /* Logo kiezen: het bestand gaat als formulier naar de server. */
+  Array.prototype.forEach.call(document.querySelectorAll("[data-ad-logo]"), function(inp){
+    inp.onchange = async function(){
+      if(!inp.files || !inp.files[0]) return;
+      var fd = new FormData();
+      fd.append("logo", inp.files[0]);
+      fd.append("id", inp.getAttribute("data-ad-logo"));
+      fd.append("adminPass", $("pass").value.trim());
+      try{
+        var r = await fetch("/api/worldchat/admin/reclame-logo", { method: "POST", body: fd });
+        var d = await r.json();
+        if(!r.ok) throw new Error(d.error || "Uploaden mislukt");
+        zegt("Logo geplaatst.", true);
+        adsLaden();
+      }catch(e){ zegt(e.message); }
+    };
+  });
+  bind("data-ad-logoweg", "logoweg", "Het logo weghalen?");
+  bind("data-ad-aanuit", "aanuit", "");
+  bind("data-ad-nul", "nulstellen", "Tellers op nul zetten?");
+  bind("data-ad-weg", "wissen", "Deze advertentie verwijderen?");
+}
+
+$("adNieuw").onclick = async function(){
+  try{
+    var r = await fetch("/api/worldchat/admin/reclame", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        adminPass: $("pass").value.trim(), actie: "nieuw",
+        titel: $("adTitel").value.trim(), tekst: $("adTekst").value.trim(), url: $("adUrl").value.trim()
+      })
+    });
+    var d = await r.json();
+    if(!r.ok) throw new Error(d.error || "Toevoegen mislukt");
+    $("adTitel").value = ""; $("adTekst").value = ""; $("adUrl").value = "";
+    zegt("Advertentie toegevoegd.", true);
+    adsLaden();
+  }catch(e){ zegt(e.message); }
+};
+
+$("laad").onclick = function(){ laden(); adsLaden(); };
+$("zoek").oninput = tekenen;
+$("pass").onkeydown = function(e){ if(e.key === "Enter") laden(); };
+/* Vergrendeling.
+
+   Dit scherm kan accounts blokkeren en verwijderen, en staat straks als app op
+   een telefoon. Daarom vullen we het wachtwoord niet meer vanzelf in en laden
+   we niets vanzelf; wie de app opent krijgt een leeg veld.
+
+   Binnen tien minuten na je laatste handeling blijft hij wel open, zodat je
+   tussendoor van app kunt wisselen zonder steeds opnieuw te typen. */
+var WACHT_MS = 10 * 60 * 1000;
+
+function nogGeldig(){
+  try{
+    var t = Number(sessionStorage.getItem("wctijd") || 0);
+    return t > 0 && (Date.now() - t) < WACHT_MS;
+  }catch(e){ return false; }
+}
+function tijdVerversen(){
+  try{ sessionStorage.setItem("wctijd", String(Date.now())); }catch(e){}
+}
+function opSlot(){
+  try{ sessionStorage.removeItem("wcpass"); sessionStorage.removeItem("wctijd"); }catch(e){}
+  $("pass").value = "";
+  $("rijen").innerHTML = "";
+  $("samenvatting").textContent = "";
+  alles = [];
+  var m = $("melding");
+  m.className = "melding";
+  $("pass").focus();
+}
+
+/* Weg uit beeld: de klok loopt door. Terug in beeld: te lang weg, dan op slot. */
+document.addEventListener("visibilitychange", function(){
+  if(document.visibilityState === "visible" && !nogGeldig()) opSlot();
+});
+
+/* Elke handeling schuift de vergrendeling weer op. */
+["click", "keydown"].forEach(function(soort){
+  document.addEventListener(soort, function(){ if(nogGeldig()) tijdVerversen(); }, { passive: true });
+});
+
+try{
+  var p = sessionStorage.getItem("wcpass");
+  if(p && nogGeldig()){ $("pass").value = p; laden(); adsLaden(); }
+  else opSlot();
+}catch(e){}
+</script>
+</body></html>`);
+});
+
+/* ==========================================================================
+   WORLDCHAT: UNLIMITED-ABONNEMENT
+   --------------------------------------------------------------------------
+   Onbeperkt vertalen voor een vast bedrag per maand. Er gaan dan geen credits
+   meer af, ongeacht hoeveel kamers of berichten.
+
+   Instellingen (Render Environment Variables, allebei optioneel):
+     WORLDCHAT_UNLIMITED_PRICE_ID  de price-id uit Stripe
+     WORLDCHAT_UNLIMITED_PRIJS     wat er op de knop staat, bijvoorbeeld
+                                   "50 euro per maand"
+   De price-id staat bewust hier en niet in de pagina, zodat je de prijs kunt
+   wijzigen zonder de frontend aan te raken.
+   ========================================================================== */
+
+const WORLDCHAT_UNLIMITED_PRICE_ID = String(process.env.WORLDCHAT_UNLIMITED_PRICE_ID || "price_1U5iaK5s8MDSsy0ecNSFtYrj").trim();
+const WORLDCHAT_UNLIMITED_PRIJS = String(process.env.WORLDCHAT_UNLIMITED_PRIJS || "50 euro per maand").trim();
+
+app.post("/api/worldchat/abonnement", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try{
+    if(!STRIPE_SECRET_KEY) return jsonError(res, 500, "Stripe is niet ingesteld op de server.");
+    if(!WORLDCHAT_UNLIMITED_PRICE_ID) return jsonError(res, 500, "De price-id voor Unlimited ontbreekt.");
+
+    const email = normalizePremiumKey(req.body && req.body.email);
+    if(!email) return jsonError(res, 400, "Vul een geldig e-mailadres in.");
+    if(rateLimited("wcabo", clientIp(req), 10, 60 * 60 * 1000)){
+      return res.status(429).json({ error: "Te veel pogingen. Probeer het later opnieuw." });
+    }
+
+    const terug = String((req.body && req.body.successUrl) || WORLDCHAT_URL).trim();
+    const afbreken = String((req.body && req.body.cancelUrl) || WORLDCHAT_URL).trim();
+    const deviceId = getRequestDeviceId(req);
+
+    /* plan "pro" is wat de kamercontrole als onbeperkt herkent. */
+    const meta = {
+      product: "Worldchat United onbeperkt",
+      source: "worldchat",
+      email: email,
+      plan: "pro",
+      aiPlan: "pro",
+      priceId: WORLDCHAT_UNLIMITED_PRICE_ID,
+      deviceId: deviceId
+    };
+
+    const session = await callStripe("/checkout/sessions", {
+      mode: "subscription",
+      "line_items": [{ price: WORLDCHAT_UNLIMITED_PRICE_ID, quantity: 1 }],
+      success_url: successUrlWithCheckoutSession(terug),
+      cancel_url: afbreken,
+      allow_promotion_codes: true,
+      billing_address_collection: "auto",
+      customer_email: email,
+      metadata: meta,
+      subscription_data: { metadata: meta }
+    });
+
+    if(!session || !session.url) return jsonError(res, 500, "Stripe gaf geen betaallink terug.");
+    return res.json({ ok: true, url: session.url, id: session.id });
+  }catch(err){
+    console.error("Worldchat abonnement mislukt:", (err && err.message) || err);
+    return jsonError(res, 500, "De betaalpagina kon niet worden geopend.");
+  }
+});
+
+/* ==========================================================================
+   WORLDCHAT: ADVERTENTIES IN DE GRATIS KAMERS
+   --------------------------------------------------------------------------
+   In een gratis kamer staat maar een regel op het scherm, dus er is ruimte
+   voor een nette advertentie. Betaalde kamers krijgen er nooit een: daar
+   betaalt de klant al.
+
+   Elke advertentie houdt twee getallen bij: hoe vaak hij getoond is en hoe
+   vaak erop geklikt is. Dat heb je nodig om ruimte te kunnen verkopen; zonder
+   cijfers is het gissen. De klik loopt via de server, anders valt hij niet te
+   tellen.
+
+   Beheren doe je in het beheerscherm op /worldchat-beheer.
+   ========================================================================== */
+
+const WC_ADS_FILE = path.join(DATA_DIR, "worldchat_ads.json");
+const WC_ADS_DIR = path.join(DATA_DIR, "worldchat_logos");   /* de logo's zelf */
+try{ if(!fs.existsSync(WC_ADS_DIR)) fs.mkdirSync(WC_ADS_DIR, { recursive: true }); }catch(e){}
+
+/* Logo's in het geheugen ontvangen en zelf wegschrijven, met een grens zodat
+   niemand de schijf kan vullen. */
+const wcLogoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 1.5 * 1024 * 1024 }
+});
+const WC_LOGO_SOORTEN = { "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/svg+xml": ".svg" };
+const wcAds = new Map();          /* id -> { id, titel, tekst, url, actief, vertoond, geklikt, aangemaakt } */
+
+function wcAdsLaad(){
+  try{
+    if(!fs.existsSync(WC_ADS_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(WC_ADS_FILE, "utf8") || "{}");
+    Object.keys(data || {}).forEach((k) => { if(data[k]) wcAds.set(k, data[k]); });
+    console.log("Worldchat advertenties geladen: " + wcAds.size);
+  }catch(e){
+    try{ rescueCorruptStore(WC_ADS_FILE, e); }catch(e2){}
+  }
+}
+function wcAdsBewaar(){
+  try{
+    const uit = {};
+    for(const [k, v] of wcAds.entries()) uit[k] = v;
+    safeWriteFileSync(WC_ADS_FILE, JSON.stringify(uit));
+  }catch(e){
+    console.error("Worldchat advertenties opslaan mislukt:", (e && e.message) || e);
+  }
+}
+wcAdsLaad();
+
+/* De eerste keer opstarten: jouw eigen bedrijf erin, zodat er meteen iets
+   staat om mee te proeven. Verwijder je hem, dan komt hij niet terug. */
+function wcAdsEerste(){
+  if(wcAds.size > 0) return;
+  const id = "ad_" + Date.now().toString(36);
+  wcAds.set(id, {
+    id: id,
+    titel: "De Generaal Projecten",
+    tekst: "Schilderwerk en afwerking, met oog voor detail.",
+    url: "https://www.generaalprojecten.nl",
+    actief: true,
+    vertoond: 0,
+    geklikt: 0,
+    aangemaakt: new Date().toISOString()
+  });
+  wcAdsBewaar();
+  console.log("Worldchat: eerste advertentie aangemaakt.");
+}
+wcAdsEerste();
+
+/* De volgende advertentie uit de rij. Ze komen om de beurt aan bod in plaats
+   van willekeurig, zodat elke adverteerder ongeveer evenveel vertoningen
+   krijgt. Dat is ook wat je een klant kunt beloven.
+
+   De app vraagt hier elke paar minuten om een nieuwe; hoe lang eentje blijft
+   staan bepaalt WORLDCHAT_RECLAME_SECONDEN (standaard 300, dus vijf minuten).
+   Publiek bereikbaar, want een gast hoeft niet ingelogd te zijn. */
+const WORLDCHAT_RECLAME_SECONDEN = Math.max(15, Number(process.env.WORLDCHAT_RECLAME_SECONDEN || 300));
+let wcAdBeurt = 0;
+
+app.get("/api/worldchat/reclame", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const actief = [];
+  for(const a of wcAds.values()){ if(a && a.actief) actief.push(a); }
+  if(!actief.length) return res.json({ ok: true, ad: null, seconden: WORLDCHAT_RECLAME_SECONDEN });
+
+  /* Op volgorde van aanmaken, zodat de rij voorspelbaar is. */
+  actief.sort((x, y) => String(x.aangemaakt).localeCompare(String(y.aangemaakt)));
+  const a = actief[wcAdBeurt % actief.length];
+  wcAdBeurt = (wcAdBeurt + 1) % 1000000;
+
+  a.vertoond = Math.max(0, Number(a.vertoond || 0)) + 1;
+  wcAdsBewaar();
+  res.json({
+    ok: true,
+    seconden: WORLDCHAT_RECLAME_SECONDEN,
+    aantal: actief.length,
+    ad: { id: a.id, titel: a.titel, tekst: a.tekst, logo: a.logo ? ("/api/worldchat/reclame/logo/" + a.id) : "" }
+  });
+});
+
+/* De klik loopt via de server, zodat hij geteld wordt, en gaat daarna door
+   naar de website van de adverteerder. */
+app.get("/api/worldchat/reclame/klik", (req, res) => {
+  const id = String((req.query && req.query.id) || "").trim();
+  const a = wcAds.get(id);
+  if(!a || !a.url) return res.redirect(302, WORLDCHAT_URL || "https://formforge.nl/");
+  a.geklikt = Math.max(0, Number(a.geklikt || 0)) + 1;
+  wcAdsBewaar();
+  res.redirect(302, a.url);
+});
+
+/* Het logo van een advertentie. Publiek, want de gast moet het zien. */
+app.get("/api/worldchat/reclame/logo/:id", (req, res) => {
+  const a = wcAds.get(String(req.params.id || "").trim());
+  if(!a || !a.logo) return res.status(404).end();
+  const pad = path.join(WC_ADS_DIR, a.logo);
+  if(!fs.existsSync(pad)) return res.status(404).end();
+  res.set("Cache-Control", "public, max-age=86400");
+  res.sendFile(pad);
+});
+
+/* ---- beheer ---- */
+
+/* Een logo uploaden bij een bestaande advertentie. */
+app.post("/api/worldchat/admin/reclame-logo", wcLogoUpload.single("logo"), (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if(!wcBeheerOk(req)) return jsonError(res, 403, "Geen toegang");
+  const a = wcAds.get(String((req.body && req.body.id) || "").trim());
+  if(!a) return jsonError(res, 404, "Advertentie niet gevonden");
+  if(!req.file || !req.file.buffer) return jsonError(res, 400, "Geen afbeelding ontvangen");
+  const ext = WC_LOGO_SOORTEN[String(req.file.mimetype || "").toLowerCase()];
+  if(!ext) return jsonError(res, 400, "Gebruik een PNG, JPG, WEBP of SVG.");
+  try{
+    /* Het oude logo weg, anders blijven er bestanden achter. */
+    if(a.logo){ try{ fs.unlinkSync(path.join(WC_ADS_DIR, a.logo)); }catch(e){} }
+    const naam = a.id + "_" + Date.now().toString(36) + ext;
+    fs.writeFileSync(path.join(WC_ADS_DIR, naam), req.file.buffer);
+    a.logo = naam;
+    wcAdsBewaar();
+    return res.json({ ok: true, logo: "/api/worldchat/reclame/logo/" + a.id });
+  }catch(e){
+    console.error("Worldchat logo opslaan mislukt:", (e && e.message) || e);
+    return jsonError(res, 500, "Het logo kon niet worden opgeslagen.");
+  }
+});
+
+app.get("/api/worldchat/admin/reclame", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if(!wcBeheerOk(req)) return jsonError(res, 403, "Geen toegang");
+  const lijst = Array.from(wcAds.values()).sort((x, y) => String(y.aangemaakt).localeCompare(String(x.aangemaakt)));
+  res.json({ ok: true, advertenties: lijst });
+});
+
+app.post("/api/worldchat/admin/reclame", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if(!wcBeheerOk(req)) return jsonError(res, 403, "Geen toegang");
+  const actie = String((req.body && req.body.actie) || "").trim();
+  const id = String((req.body && req.body.id) || "").trim();
+
+  if(actie === "nieuw"){
+    const titel = String((req.body && req.body.titel) || "").trim().slice(0, 60);
+    const tekst = String((req.body && req.body.tekst) || "").trim().slice(0, 140);
+    const url = String((req.body && req.body.url) || "").trim().slice(0, 300);
+    if(!titel || !url) return jsonError(res, 400, "Titel en webadres zijn nodig.");
+    if(!/^https?:\/\//i.test(url)) return jsonError(res, 400, "Het webadres moet met http:// of https:// beginnen.");
+    const nieuwId = "ad_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    wcAds.set(nieuwId, { id: nieuwId, titel, tekst, url, actief: true, vertoond: 0, geklikt: 0, aangemaakt: new Date().toISOString() });
+    wcAdsBewaar();
+    return res.json({ ok: true, id: nieuwId });
+  }
+
+  const a = wcAds.get(id);
+  if(!a) return jsonError(res, 404, "Advertentie niet gevonden");
+
+  if(actie === "aanuit"){ a.actief = !a.actief; wcAdsBewaar(); return res.json({ ok: true, actief: a.actief }); }
+  if(actie === "wissen"){
+    if(a.logo){ try{ fs.unlinkSync(path.join(WC_ADS_DIR, a.logo)); }catch(e){} }
+    wcAds.delete(id); wcAdsBewaar(); return res.json({ ok: true });
+  }
+  if(actie === "logoweg"){
+    if(a.logo){ try{ fs.unlinkSync(path.join(WC_ADS_DIR, a.logo)); }catch(e){} }
+    a.logo = ""; wcAdsBewaar(); return res.json({ ok: true });
+  }
+  if(actie === "nulstellen"){ a.vertoond = 0; a.geklikt = 0; wcAdsBewaar(); return res.json({ ok: true }); }
+  return jsonError(res, 400, "Onbekende actie");
+});
+
+/* ==========================================================================
+   WORLDCHAT: DE MEEDOETELLER
+   --------------------------------------------------------------------------
+   Een getal dat oploopt met de tijd. Het wordt HIER berekend en niet in de
+   browser, zodat elk toestel op elk moment hetzelfde getal ziet. Zou elke
+   telefoon zelf tellen, dan liepen ze uiteen en valt het meteen op.
+
+   Instellingen (Render Environment Variables, allemaal optioneel):
+     WORLDCHAT_TELLER_START       beginwaarde (standaard 129767)
+     WORLDCHAT_TELLER_PER_MINUUT  hoeveel erbij per minuut (standaard 3)
+     WORLDCHAT_TELLER_VANAF       datum waarop de teller op de beginwaarde
+                                  stond, bijvoorbeeld 2026-08-18T00:00:00Z
+     WORLDCHAT_TELLER_AAN         0 = helemaal uit, dan toont de app niets
+   ========================================================================== */
+
+const WORLDCHAT_TELLER_AAN = String(process.env.WORLDCHAT_TELLER_AAN || "1") !== "0";
+const WORLDCHAT_TELLER_START = Math.max(0, Number(process.env.WORLDCHAT_TELLER_START || 129767));
+const WORLDCHAT_TELLER_PER_MINUUT = Math.max(0, Number(process.env.WORLDCHAT_TELLER_PER_MINUUT || 3));
+const WORLDCHAT_TELLER_VANAF = (function(){
+  const t = Date.parse(String(process.env.WORLDCHAT_TELLER_VANAF || "2026-08-18T00:00:00Z"));
+  return isFinite(t) ? t : Date.parse("2026-08-18T00:00:00Z");
+})();
+
+function wcMeedoeners(){
+  if(!WORLDCHAT_TELLER_AAN) return 0;
+  const minuten = Math.max(0, Math.floor((Date.now() - WORLDCHAT_TELLER_VANAF) / 60000));
+  return WORLDCHAT_TELLER_START + minuten * WORLDCHAT_TELLER_PER_MINUUT;
+}
+
+app.post("/api/worldchat/pincode", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try{
+    const ip = clientIp(req);
+    /* Een pincode aanvragen kost een mail, dus stevig geremd. */
+    if(rateLimited("wcpin", ip, 5, 60 * 60 * 1000)){
+      return res.status(429).json({ error: "Te veel aanvragen achter elkaar. Probeer het over een uur opnieuw." });
+    }
+    const email = normalizePremiumKey(req.body && req.body.email);
+    if(!email || !/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(email)){
+      return res.status(400).json({ error: "Vul een geldig e-mailadres in." });
+    }
+    if(rateLimited("wcpinmail", email, 3, 60 * 60 * 1000)){
+      return res.status(429).json({ error: "Er is kort geleden al een pincode naar dit adres gestuurd. Kijk in je postvak, ook bij ongewenste e-mail." });
+    }
+
+    const taal = String((req.body && req.body.taal) || "en");
+    const sleutel = "formforge:" + email;
+
+    /* Bestaat er al een account? Dan sturen we de bestaande pincode opnieuw en
+       raken we het saldo niet aan. Anders maken we een nieuw account met de
+       proefcredits. Zo kan niemand door steeds opnieuw aan te vragen gratis
+       credits blijven bijschrijven. */
+    let account = getPremiumAccount(sleutel) || getPremiumAccount(email);
+    let nieuw = false;
+    let pin = "";
+
+    if(account && account.premiumPin){
+      pin = account.premiumPin;
+    }else{
+      nieuw = true;
+      pin = makePremiumPin();
+      account = setPremiumAccount(sleutel, {
+        active: true,
+        email: email,
+        premiumPin: pin,
+        plan: WORLDCHAT_START_CREDITS > 0 ? "credits" : "starter",
+        creditsRemaining: WORLDCHAT_START_CREDITS,
+        creditsTotal: WORLDCHAT_START_CREDITS,
+        source: "worldchat",
+        appSource: "echo",
+        starterCreditsGranted: true,
+        starterCreditsGrantedAt: new Date().toISOString(),
+        reason: "worldchat_pincode_aangevraagd"
+      });
+    }
+
+    const saldo = wcSaldo(sleutel);
+    const mail = wcPinMail(pin, nieuw ? WORLDCHAT_START_CREDITS : (saldo < 0 ? 0 : saldo), nieuw, taal);
+    try{
+      await sendResendEmail({ to: email, subject: mail.onderwerp, text: mail.tekst, html: mail.html });
+    }catch(e){
+      console.error("Worldchat pincode mailen mislukt:", (e && e.message) || e);
+      return res.status(500).json({ error: "De mail kon niet worden verstuurd. Probeer het later opnieuw." });
+    }
+
+    return res.json({ ok: true, nieuw: nieuw, credits: saldo < 0 ? -1 : saldo });
+  }catch(err){
+    console.error("Worldchat pincode fout:", (err && err.message) || err);
+    return res.status(500).json({ error: "Aanvragen mislukt" });
+  }
+});
+
+function roomToday(){
+  // datum als YYYY-MM-DD in lokale tijd, voor dagelijkse reset
+  const d = new Date();
+  return d.getFullYear() + "-" + (d.getMonth()+1) + "-" + d.getDate();
+}
+
+// Hoeveel ECHTE vertalingen mag deze kamer vandaag nog doen? (reset per dag)
+function roomTranslationsLeft(room){
+  const today = roomToday();
+  if(room.translationDay !== today){
+    room.translationDay = today;
+    room.translationsToday = 0;
+  }
+  /* 0 betekent: geen dagrem. We geven dan een groot getal terug zodat alle
+     bestaande controles gewoon blijven werken. */
+  if(!ROOM_DAILY_TRANSLATION_LIMIT) return 1000000;
+  return Math.max(0, ROOM_DAILY_TRANSLATION_LIMIT - room.translationsToday);
+}
+
+function makeRoomCode(){
+  let code="";
+  do{ code=String(Math.floor(100000 + Math.random()*900000)); }while(rooms.has(code));
+  return code;
+}
+
+// Verwijderde personen blijven 5 minuten geweerd; daarna mogen ze weer joinen.
+const ROOM_BAN_MS = 5 * 60 * 1000;
+
+/* ===== DIRECTE LIJN (1 gast tegelijk) =====
+   Voor kamers in deze lijst mag er maar EEN gast tegelijk in de kamer zijn,
+   naast de host. Komt er een tweede gast, dan krijgt die de melding dat de
+   lijn bezet is. Zo lezen klanten nooit elkaars berichten.
+   Een gast telt als aanwezig zolang hij de laatste DIRECTE_LIJN_ACTIEF_MS nog
+   iets van zich heeft laten horen (de chatpagina vraagt elke 3 seconden om
+   nieuwe berichten). Sluit hij de pagina, dan is de lijn daarna weer vrij.
+   Is het gesprek afgelopen, dan blijft de lijn nog DIRECTE_LIJN_WACHT_MS
+   (5 minuten) bezet, gerekend vanaf het laatste teken van leven van de gast.
+   In die tijd verdwijnen de berichten vanzelf. Komt er daarna een nieuwe gast
+   binnen, dan worden eventuele resten van het vorige gesprek ook nog gewist.
+   Instellen in Render: WORLDCHAT_DIRECTE_LIJN = kamercodes, gescheiden door
+   komma's. Staat de instelling er niet, dan geldt kamer 929554 (De Generaal
+   Projecten). */
+const DIRECTE_LIJN_CODES = new Set(
+  String(process.env.WORLDCHAT_DIRECTE_LIJN || "929554")
+    .split(",").map((c) => c.trim()).filter(Boolean)
+);
+const DIRECTE_LIJN_ACTIEF_MS = 60 * 1000;
+const DIRECTE_LIJN_WACHT_MS = 5 * 60 * 1000;
+const DIRECTE_LIJN_BEZET = "De lijn is op dit moment bezet. Probeer het over een paar minuten opnieuw. / The line is busy right now. Please try again in a few minutes.";
+
+function isDirecteLijn(code){ return DIRECTE_LIJN_CODES.has(String(code || "").trim()); }
+
+/* Haalt gasten die al een tijd niets meer van zich lieten horen uit de kamer
+   en geeft terug hoeveel gasten er nog echt aanwezig zijn. */
+function directeLijnActieveGasten(room){
+  const now = Date.now();
+  let actief = 0;
+  for(const [mid, mem] of Array.from(room.members.entries())){
+    if(mem.isHost) continue;
+    room.dlLaatsteGast = Math.max(room.dlLaatsteGast || 0, mem.lastSeen || 0);
+    if(now - (mem.lastSeen || 0) <= DIRECTE_LIJN_ACTIEF_MS){
+      actief += 1;
+    }else{
+      room.members.delete(mid);
+      removeRoomPush(room.code, mid);
+    }
+  }
+  return actief;
+}
+
+/* Bezet als er een gast aanwezig is, of als het vorige gesprek minder dan
+   5 minuten geleden is afgelopen. */
+function directeLijnBezet(room){
+  const actief = directeLijnActieveGasten(room);
+  if(actief >= 1) return true;
+  return (Date.now() - (room.dlLaatsteGast || 0)) < DIRECTE_LIJN_WACHT_MS;
+}
+
+/* Een gast verlaat de directe lijn: onthoud het moment, zodat de wachttijd
+   van 5 minuten vanaf nu telt. */
+function directeLijnGastWeg(room, mem){
+  if(!room || !mem || mem.isHost || !isDirecteLijn(room.code)) return;
+  room.dlLaatsteGast = Math.max(room.dlLaatsteGast || 0, Date.now());
+}
+
+// ===== UITNODIGINGEN =====
+// invites: token -> { code, maxUses, uses, expiresAt, kind }
+//   kind "single"  : voor 1 persoon, vervalt zodra hij gebruikt is (geen tijdslimiet)
+//   kind "company" : blijvend + herbruikbaar (voor gedrukte brief met QR)
+const roomInvites = new Map();
+const INVITE_DEFAULT_TTL_MS = 10 * 60 * 1000;       // standaard 10 minuten
+const INVITE_MAX_TTL_MS = 10 * 365 * 24 * 60 * 60 * 1000; // tot 10 jaar (bedrijf)
+const INVITE_MAX_USES_CAP = 100000;                 // bedrijf: effectief onbeperkt
+const INVITE_STORE_FILE = path.join(DATA_DIR, "echo_invites.json");
+
+function saveInvites(){
+  try{
+    const data = {};
+    for(const [t, inv] of roomInvites.entries()){ data[t] = inv; }
+    safeWriteFileSync(INVITE_STORE_FILE, JSON.stringify(data));
+  }catch(e){}
+}
+function loadInvites(){
+  try{
+    if(!fs.existsSync(INVITE_STORE_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(INVITE_STORE_FILE, "utf8") || "{}");
+    Object.keys(data || {}).forEach((t) => { if(t && data[t]) roomInvites.set(t, data[t]); });
+    console.log("Uitnodigingen geladen: " + roomInvites.size);
+  }catch(e){}
+}
+
+function makeInviteToken(){
+  let t;
+  do{
+    t = "inv_" + Math.random().toString(36).slice(2,10) + Math.random().toString(36).slice(2,10);
+  }while(roomInvites.has(t));
+  return t;
+}
+
+function pruneInvites(){
+  const now = Date.now();
+  let changed = false;
+  for(const [t, inv] of Array.from(roomInvites.entries())){
+    if(inv.expiresAt <= now || inv.uses >= inv.maxUses || !rooms.has(inv.code)){
+      roomInvites.delete(t); changed = true;
+    }
+  }
+  if(changed) saveInvites();
+}
+setInterval(pruneInvites, 30000);
+loadInvites();
+
+// Reconnect-tokens: laten een AL toegelaten persoon stilletjes herverbinden
+// (bv. na korte stilte, serverherstart, of dagen later via de webapp) ZONDER
+// een nieuwe uitnodiging. Worden op schijf bewaard zodat ze een herstart overleven.
+// reconnectTokens: token -> { code, name, lang, isHost, expiresAt }
+const reconnectTokens = new Map();
+const RECONNECT_TTL_MS = 365 * 24 * 60 * 60 * 1000; // 1 jaar
+const RECONNECT_STORE_FILE = path.join(DATA_DIR, "echo_reconnect.json");
+
+function saveReconnect(){
+  try{
+    const data = {};
+    for(const [t, r] of reconnectTokens.entries()){ data[t] = r; }
+    safeWriteFileSync(RECONNECT_STORE_FILE, JSON.stringify(data));
+  }catch(e){ /* niet kritiek */ }
+}
+function loadReconnect(){
+  try{
+    if(!fs.existsSync(RECONNECT_STORE_FILE)) return;
+    const raw = fs.readFileSync(RECONNECT_STORE_FILE, "utf8");
+    const data = JSON.parse(raw || "{}");
+    Object.keys(data || {}).forEach((t) => { if(t && data[t]) reconnectTokens.set(t, data[t]); });
+    console.log("Reconnect-tokens geladen: " + reconnectTokens.size);
+  }catch(e){ /* niet kritiek */ }
+}
+
+function issueReconnectToken(code, name, lang, isHost){
+  const t = "rc_" + Math.random().toString(36).slice(2,10) + Math.random().toString(36).slice(2,10);
+  reconnectTokens.set(t, { code, name, lang, isHost: !!isHost, expiresAt: Date.now() + RECONNECT_TTL_MS });
+  saveReconnect();
+  return t;
+}
+function pruneReconnect(){
+  const now = Date.now();
+  let changed = false;
+  for(const [t, r] of Array.from(reconnectTokens.entries())){
+    // alleen verwijderen bij echte verlooptijd of als de kamer niet meer bestaat
+    if(r.expiresAt <= now || !rooms.has(r.code)){ reconnectTokens.delete(t); changed = true; }
+  }
+  if(changed) saveReconnect();
+}
+setInterval(pruneReconnect, 60000);
+loadReconnect();
+
+// ===== GAST-ACCOUNTS =====
+// Een gast kiest eenmalig naam + pincode. De server onthoudt zijn kamers, zodat
+// hij op elk toestel (browser of webapp) zijn kamers terugziet. Geen abonnement nodig.
+// guestAccounts: guestKey ("g:" + naam-lowercase + ":" + pin) -> { name, pin, rooms:[{code,reconnect,label,ts}], createdAt }
+const guestAccounts = new Map();
+const GUEST_STORE_FILE = path.join(DATA_DIR, "echo_guests.json");
+
+function guestKeyOf(name, pin){
+  return "g:" + String(name||"").trim().toLowerCase() + ":" + String(pin||"").trim();
+}
+function saveGuests(){
+  try{
+    const data = {};
+    for(const [k, v] of guestAccounts.entries()){ data[k] = v; }
+    safeWriteFileSync(GUEST_STORE_FILE, JSON.stringify(data));
+  }catch(e){}
+}
+function loadGuests(){
+  try{
+    if(!fs.existsSync(GUEST_STORE_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(GUEST_STORE_FILE, "utf8") || "{}");
+    Object.keys(data || {}).forEach((k) => { if(k && data[k]) guestAccounts.set(k, data[k]); });
+    console.log("Gast-accounts geladen: " + guestAccounts.size);
+  }catch(e){}
+}
+function getGuestAccount(name, pin){
+  return guestAccounts.get(guestKeyOf(name, pin)) || null;
+}
+function upsertGuestRoom(name, pin, roomInfo){
+  const key = guestKeyOf(name, pin);
+  let acc = guestAccounts.get(key);
+  if(!acc){ acc = { name:String(name||"").trim(), pin:String(pin||"").trim(), rooms:[], createdAt:Date.now() }; guestAccounts.set(key, acc); }
+  if(roomInfo && roomInfo.code){
+    acc.rooms = (acc.rooms || []).filter(r => r.code !== roomInfo.code);
+    acc.rooms.unshift(roomInfo);
+    if(acc.rooms.length > 30) acc.rooms = acc.rooms.slice(0,30);
+  }
+  saveGuests();
+  return acc;
+}
+// kamers die niet meer bestaan opschonen uit een gast-account
+function cleanGuestRooms(acc){
+  if(!acc || !acc.rooms) return acc;
+  const before = acc.rooms.length;
+  acc.rooms = acc.rooms.filter(r => rooms.has(r.code));
+  if(acc.rooms.length !== before) saveGuests();
+  return acc;
+}
+loadGuests();
+
+// ===== MERKEN (white-label per bedrijf) =====
+// Per merk-code: bedrijfsnaam + logo-adres. De frontend toont dit bovenaan
+// in plaats van "World Chat" wanneer de link ?brand=CODE bevat.
+// NIEUWE KLANT TOEVOEGEN? Voeg hieronder simpelweg een regel toe:
+//   "code": { name: "Bedrijfsnaam", logo: "https://.../logo.png", tag: "optionele ondertitel" },
+const BRANDS = {
+  // voorbeeld (verwijder of pas aan):
+  "demo":   { name: "Demo Company", logo: "", tag: "Everyone in their own language" },
+  // "jansen": { name: "Schoonmaakbedrijf Jansen", logo: "https://formforge.nl/logos/jansen.png", tag: "" },
+};
+
+app.get("/api/brand", (req, res) => {
+  const code = String(req.query && req.query.code ? req.query.code : "").trim().toLowerCase();
+  if(!code || !BRANDS[code]) return res.json({ ok:true, found:false });
+  const b = BRANDS[code];
+  res.json({ ok:true, found:true, name: b.name || "", logo: b.logo || "", tag: (b.tag || "") });
+});
+
+// ===== STADSGIDS (toeristen) =====
+// Per stad: naam + categorieen, elk met ondernemers (naam, beschrijving, adres).
+// Jij beheert dit hier. NIEUWE STAD of ONDERNEMER? Voeg een regel toe.
+// De teksten schrijf je in EEN taal (sourceLang); de gids vertaalt automatisch
+// naar de taal van de bezoeker.
+const CITIES = {
+  "zuidlimburg": {
+    name: "Zuid-Limburg",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & caf\u00e9s", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "valkenburg": {
+    name: "Valkenburg",
+    sourceLang: "nl",
+    categories: [
+      {
+        id: "sights", icon: "&#127963;", title: "Bezienswaardigheden",
+        items: []
+      },
+      {
+        id: "attractions", icon: "&#127906;", title: "Attracties",
+        items: []
+      },
+      {
+        id: "kids", icon: "&#129528;", title: "Voor kinderen",
+        items: []
+      },
+      {
+        id: "food", icon: "&#127869;", title: "Restaurants",
+        items: []
+      },
+      {
+        id: "coffee", icon: "&#9749;", title: "Koffie & cafés",
+        items: []
+      },
+      {
+        id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen",
+        items: []
+      },
+      {
+        id: "shopping", icon: "&#128717;", title: "Winkelen",
+        items: []
+      },
+      {
+        id: "hotels", icon: "&#127976;", title: "Hotels & overnachten",
+        items: []
+      },
+      {
+        id: "wellness", icon: "&#9832;", title: "Wellness & thermen",
+        items: []
+      },
+      {
+        id: "boat", icon: "&#128676;", title: "Rondvaart",
+        items: []
+      },
+      {
+        id: "bikes", icon: "&#128692;", title: "Fietsverhuur",
+        items: []
+      },
+      {
+        id: "train", icon: "&#128642;", title: "Treinstation",
+        items: []
+      },
+      {
+        id: "parking", icon: "&#127359;", title: "Parkeren",
+        items: []
+      },
+      {
+        id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)",
+        items: []
+      },
+      {
+        id: "pharmacy", icon: "&#128138;", title: "Apotheek",
+        items: []
+      },
+      {
+        id: "atm", icon: "&#128179;", title: "Geldautomaat",
+        items: []
+      },
+      {
+        id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing",
+        items: []
+      }
+    ]
+  },
+
+  "maastricht": {
+    name: "Maastricht",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "amsterdam": {
+    name: "Amsterdam",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "rotterdam": {
+    name: "Rotterdam",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "denhaag": {
+    name: "Den Haag",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "utrecht": {
+    name: "Utrecht",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "haarlem": {
+    name: "Haarlem",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "delft": {
+    name: "Delft",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "leiden": {
+    name: "Leiden",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "groningen": {
+    name: "Groningen",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "nijmegen": {
+    name: "Nijmegen",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "denbosch": {
+    name: "'s-Hertogenbosch",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "breda": {
+    name: "Breda",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "gouda": {
+    name: "Gouda",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "arnhem": {
+    name: "Arnhem",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "eindhoven": {
+    name: "Eindhoven",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "zandvoort": {
+    name: "Zandvoort",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "scheveningen": {
+    name: "Scheveningen",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "giethoorn": {
+    name: "Giethoorn",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "kinderdijk": {
+    name: "Kinderdijk",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "volendam": {
+    name: "Volendam",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "friesland": {
+    name: "Friesland",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "zeeland": {
+    name: "Zeeland",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "texel": {
+    name: "Texel",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "vlieland": {
+    name: "Vlieland",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "terschelling": {
+    name: "Terschelling",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "ameland": {
+    name: "Ameland",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "schiermonnikoog": {
+    name: "Schiermonnikoog",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+
+  "apeldoorn": {
+    name: "Apeldoorn",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "tiel": {
+    name: "Tiel",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "zaltbommel": {
+    name: "Zaltbommel",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "drachten": {
+    name: "Drachten",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "lelystad": {
+    name: "Lelystad",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "almelo": {
+    name: "Almelo",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "amersfoort": {
+    name: "Amersfoort",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "leusden": {
+    name: "Leusden",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "veenendaal": {
+    name: "Veenendaal",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "gorinchem": {
+    name: "Gorinchem",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "ridderkerk": {
+    name: "Ridderkerk",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "noordwijk": {
+    name: "Noordwijk",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "gilze": {
+    name: "Gilze",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "venlo": {
+    name: "Venlo",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "roermond": {
+    name: "Roermond",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "hoorn": {
+    name: "Hoorn",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "hardegarijp": {
+    name: "Hardegarijp",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "hilversum": {
+    name: "Hilversum",
+    sourceLang: "nl",
+    categories: [
+      { id: "sights", icon: "&#127963;", title: "Bezienswaardigheden", items: [] },
+      { id: "attractions", icon: "&#127906;", title: "Attracties", items: [] },
+      { id: "kids", icon: "&#129528;", title: "Voor kinderen", items: [] },
+      { id: "food", icon: "&#127869;", title: "Restaurants", items: [] },
+      { id: "coffee", icon: "&#9749;", title: "Koffie & cafés", items: [] },
+      { id: "bars", icon: "&#127867;", title: "Uitgaan & terrassen", items: [] },
+      { id: "shopping", icon: "&#128717;", title: "Winkelen", items: [] },
+      { id: "hotels", icon: "&#127976;", title: "Hotels & overnachten", items: [] },
+      { id: "wellness", icon: "&#9832;", title: "Wellness & thermen", items: [] },
+      { id: "boat", icon: "&#128676;", title: "Rondvaart", items: [] },
+      { id: "bikes", icon: "&#128692;", title: "Fietsverhuur", items: [] },
+      { id: "train", icon: "&#128642;", title: "Treinstation", items: [] },
+      { id: "parking", icon: "&#127359;", title: "Parkeren", items: [] },
+      { id: "info", icon: "&#8505;", title: "Toeristeninfo (VVV)", items: [] },
+      { id: "pharmacy", icon: "&#128138;", title: "Apotheek", items: [] },
+      { id: "atm", icon: "&#128179;", title: "Geldautomaat", items: [] },
+      { id: "tattoo", icon: "&#128132;", title: "Tattoo & piercing", items: [] }
+    ]
+  },
+
+  "demo": {
+    name: "Demo City",
+    sourceLang: "en",
+    categories: [
+      {
+        id: "food", icon: "&#127869;", title: "Where to eat",
+        items: [
+          { name: "Trattoria Bella", desc: "Cozy Italian spot with fresh homemade pasta and wood-fired pizza.", address: "Damrak 12, Amsterdam" },
+          { name: "Green Garden", desc: "Vegetarian and vegan dishes with a sunny terrace.", address: "Leidseplein 5, Amsterdam" }
+        ]
+      },
+      {
+        id: "coffee", icon: "&#9749;", title: "Coffee & cafes",
+        items: [
+          { name: "The Roastery", desc: "Specialty coffee roasted on site, great pastries too.", address: "Prinsengracht 200, Amsterdam" }
+        ]
+      },
+      {
+        id: "bars", icon: "&#127867;", title: "Bars & nightlife",
+        items: [
+          { name: "Brown Cafe De Hoek", desc: "Traditional Dutch pub with local beers on tap.", address: "Spui 8, Amsterdam" }
+        ]
+      },
+      {
+        id: "hotels", icon: "&#127976;", title: "Hotels & stay",
+        items: [
+          { name: "Canal View Hotel", desc: "Comfortable rooms with a view over the canals.", address: "Herengracht 100, Amsterdam" }
+        ]
+      },
+      {
+        id: "sights", icon: "&#127963;", title: "Sights & landmarks",
+        items: [
+          { name: "Old Church", desc: "Beautiful historic church in the city centre.", address: "Oudekerksplein 23, Amsterdam" }
+        ]
+      },
+      {
+        id: "museums", icon: "&#127960;", title: "Museums",
+        items: [
+          { name: "City Museum", desc: "Art and history from the region, open daily.", address: "Museumplein 6, Amsterdam" }
+        ]
+      },
+      {
+        id: "churches", icon: "&#9962;", title: "Churches",
+        items: [
+          { name: "St. Nicholas Basilica", desc: "Impressive 19th-century basilica near the station.", address: "Prins Hendrikkade 73, Amsterdam" }
+        ]
+      },
+      {
+        id: "shopping", icon: "&#128717;", title: "Shopping",
+        items: [
+          { name: "Market Street", desc: "Boutiques, souvenirs and local shops.", address: "Kalverstraat 1, Amsterdam" }
+        ]
+      },
+      {
+        id: "boat", icon: "&#128676;", title: "Canal tours",
+        items: [
+          { name: "City Canal Cruise", desc: "One-hour guided boat tour through the historic canals.", address: "Stadhouderskade 30, Amsterdam" }
+        ]
+      },
+      {
+        id: "bikes", icon: "&#128692;", title: "Bike rental",
+        items: [
+          { name: "Rent-a-Bike Centraal", desc: "Rent city bikes by the hour or day.", address: "Damstraat 20, Amsterdam" }
+        ]
+      },
+      {
+        id: "train", icon: "&#128642;", title: "Train station",
+        items: [
+          { name: "Central Station", desc: "Main railway station for national and international trains.", address: "Stationsplein, Amsterdam" }
+        ]
+      },
+      {
+        id: "transit", icon: "&#128652;", title: "Public transport",
+        items: [
+          { name: "Tram & Metro Info", desc: "Tram, bus and metro information point.", address: "Stationsplein 10, Amsterdam" }
+        ]
+      },
+      {
+        id: "taxi", icon: "&#128661;", title: "Taxi",
+        items: [
+          { name: "City Taxi Stand", desc: "Official taxi rank, available 24/7.", address: "Stationsplein 15, Amsterdam" }
+        ]
+      },
+      {
+        id: "airport", icon: "&#9992;", title: "Airport",
+        items: [
+          { name: "Schiphol Airport", desc: "International airport, about 20 minutes by train.", address: "Schiphol, Amsterdam" }
+        ]
+      },
+      {
+        id: "parking", icon: "&#127359;", title: "Parking",
+        items: [
+          { name: "Centre Parking Garage", desc: "Covered parking garage in the city centre.", address: "Marnixstraat 250, Amsterdam" }
+        ]
+      },
+      {
+        id: "police", icon: "&#128110;", title: "Police",
+        items: [
+          { name: "Central Police Station", desc: "Police station. Emergency number: 112.", address: "Elandsgracht 117, Amsterdam" }
+        ]
+      },
+      {
+        id: "hospital", icon: "&#127973;", title: "Hospital & A&E",
+        items: [
+          { name: "City Hospital", desc: "Emergency department open 24/7. Emergency number: 112.", address: "Oosterpark 9, Amsterdam" }
+        ]
+      },
+      {
+        id: "pharmacy", icon: "&#128138;", title: "Pharmacy",
+        items: [
+          { name: "Central Pharmacy", desc: "Prescriptions and over-the-counter medicine.", address: "Damrak 50, Amsterdam" }
+        ]
+      },
+      {
+        id: "atm", icon: "&#128179;", title: "ATM / cash",
+        items: [
+          { name: "Bank ATM", desc: "Cash machine, multiple cards accepted.", address: "Rokin 80, Amsterdam" }
+        ]
+      },
+      {
+        id: "toilets", icon: "&#128701;", title: "Public toilets",
+        items: [
+          { name: "Public Restroom", desc: "Public toilet, small fee may apply.", address: "Dam Square, Amsterdam" }
+        ]
+      },
+      {
+        id: "info", icon: "&#8505;", title: "Tourist info",
+        items: [
+          { name: "Tourist Information Centre", desc: "Maps, tickets and local advice for visitors.", address: "Stationsplein 18, Amsterdam" }
+        ]
+      }
+    ]
+  }
+};
+
+// Stadsgids ophalen, vertaald naar de taal van de bezoeker
+// Vertaalgeheugen voor de stadsgids: per stad+taal bewaren we de volledig
+// vertaalde gids, zodat alleen de EERSTE bezoeker in een taal hoeft te wachten.
+const cityCache = new Map(); // sleutel "code:lang" -> { name, categories }
+// Voorkomt "thundering herd": als meerdere gasten tegelijk dezelfde (nog niet
+// vertaalde) stad+taal openen, laten we maar EEN vertaling lopen. De andere
+// verzoeken wachten op datzelfde resultaat i.p.v. allemaal OpenAI aan te roepen.
+// Dat scheelt kosten en voorkomt dat we de OpenAI rate-limit raken bij veel hotels.
+const cityCacheBuilding = new Map(); // sleutel "code:lang" -> Promise<{name, categories}>
+
+// ==== Vertaalcache op de persistente disk ====
+// De gids-vertalingen zijn duur om te maken (AI). We bewaren ze daarom op de disk,
+// zodat ze een herstart of nieuwe deploy overleven en niet opnieuw vertaald hoeven te
+// worden. Bij inhoudswijzigingen (nieuwe/aangepaste ondernemer) wordt de cache geleegd
+// via clearCityCache(), zodat gasten nooit een verouderde vertaling zien.
+const CITYCACHE_FILE = path.join(DATA_DIR, "salve_city_cache.json");
+function loadCityCache(){
+  try{
+    if(!fs.existsSync(CITYCACHE_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(CITYCACHE_FILE, "utf8") || "{}");
+    Object.keys(data || {}).forEach(key => cityCache.set(key, data[key]));
+    console.log("Vertaalcache geladen: " + cityCache.size + " items");
+  }catch(e){ console.log("Vertaalcache laden mislukt: " + (e.message||e)); }
+}
+function saveCityCache(){
+  try{
+    const data = {};
+    for(const [k, v] of cityCache.entries()) data[k] = v;
+    safeWriteFileSync(CITYCACHE_FILE, JSON.stringify(data));
+  }catch(e){ console.log("Vertaalcache opslaan mislukt: " + (e.message||e)); }
+}
+// Leegt zowel het geheugen als het diskbestand (gebruikt bij inhoudswijzigingen).
+function clearCityCache(){
+  cityCache.clear();
+  try{ if(fs.existsSync(CITYCACHE_FILE)) fs.unlinkSync(CITYCACHE_FILE); }catch(e){}
+}
+loadCityCache();
+
+// ====================================================================
+//  SLIMME, PER-STAD CACHE-VERVERSING (voor betalende ondernemers)
+// --------------------------------------------------------------------
+//  Wanneer een ondernemer zijn vermelding of advertentie wijzigt, mag NIET
+//  de hele gids-cache van alle steden geleegd worden. We verversen alleen de
+//  stad die echt veranderd is, en bouwen die op de achtergrond opnieuw op.
+//  Omdat de losse tekstvertalingen al in guideTransCache (op disk) staan,
+//  kost dat herbouwen geen AI voor ongewijzigde teksten: alleen de daadwerkelijk
+//  gewijzigde tekst (bv. de nieuwe dagactie) wordt een keer vertaald.
+//  Zo blijft de rest van de stad - en alle andere steden - onaangeroerd.
+// ====================================================================
+
+// Vingerafdruk van alleen de VERTAAL-relevante velden van een stad. Verandert
+// die, dan moet de gids-structuur van die stad opnieuw worden opgebouwd.
+function cityContentHash(cityCode){
+  const list = merchants.get(cityCode) || [];
+  const slim = list.map(m => ({
+    id: m.id || "",
+    cat: m.categoryId || "",
+    name: m.name || "",
+    address: m.address || "",
+    desc: m.desc || "",
+    promo: m.promo || "",
+    fields: m.fields || {},
+    active: !!m.active,
+    subscribed: !!m.subscribed,
+    hotelCode: m.hotelCode || ""
+  }));
+  return crypto.createHash("sha1").update(JSON.stringify(slim)).digest("hex");
+}
+
+// Laatst bekende vingerafdruk per stad, om te zien welke stad wijzigde.
+const cityHashes = new Map();
+function snapshotAllCityHashes(){
+  for(const cityCode of merchants.keys()){
+    cityHashes.set(cityCode, cityContentHash(cityCode));
+  }
+}
+
+// Drop alle taalvarianten van EEN stad uit de cache (geheugen + disk),
+// zonder de andere steden aan te raken.
+function dropCityFromCache(cityCode){
+  const prefix = cityCode + ":";
+  let removed = 0;
+  for(const key of Array.from(cityCache.keys())){
+    if(key.indexOf(prefix) === 0){ cityCache.delete(key); removed++; }
+  }
+  if(removed) saveCityCache();
+  return removed;
+}
+
+// Bouw EEN stad in alle talen opnieuw op de achtergrond. Hergebruikt de echte
+// /api/city (met preview=1), die ongewijzigde teksten uit guideTransCache haalt.
+// Gedebounced per stad, zodat een reeks snelle wijzigingen maar 1 herbouw geeft.
+const _cityRebuildTimers = new Map();
+function rebuildCityCacheSoon(cityCode){
+  if(!cityCode || !CITIES[cityCode]) return;
+  if(_cityRebuildTimers.has(cityCode)) return; // al gepland
+  const t = setTimeout(async () => {
+    _cityRebuildTimers.delete(cityCode);
+    const allLangs = Object.keys(LANG_NAMES);
+    const port = process.env.PORT || 10000;
+    const base = "http://127.0.0.1:" + port + "/api/city";
+    for(const lang of allLangs){
+      try{
+        const url = base + "?code=" + encodeURIComponent(cityCode) +
+                    "&lang=" + encodeURIComponent(lang) + "&preview=1";
+        await fetch(url);
+      }catch(e){ /* stille achtergrondtaak: fouten negeren, gast valt terug op live opbouw */ }
+    }
+    console.log("Gids-cache opnieuw opgebouwd voor stad: " + cityCode);
+  }, 1500);
+  _cityRebuildTimers.set(cityCode, t);
+}
+
+// Ververs alleen de steden waarvan de inhoud daadwerkelijk wijzigde.
+// Wordt aangeroepen na een merchant-wijziging in plaats van clearCityCache().
+function invalidateChangedCities(){
+  const changed = [];
+  // Alle steden die nu bestaan checken op wijziging t.o.v. de vorige snapshot.
+  for(const cityCode of merchants.keys()){
+    const h = cityContentHash(cityCode);
+    if(cityHashes.get(cityCode) !== h){
+      changed.push(cityCode);
+      cityHashes.set(cityCode, h);
+    }
+  }
+  for(const cityCode of changed){
+    dropCityFromCache(cityCode);   // oude (verouderde) structuur weg
+    rebuildCityCacheSoon(cityCode); // vers opbouwen op de achtergrond
+  }
+  return changed;
+}
+
+// Lijst van alle steden (voor de voorpagina). Geeft code + nette naam terug.
+app.get("/api/cities", (req, res) => {
+  const list = Object.keys(CITIES).map(code => ({
+    code,
+    name: (CITIES[code] && CITIES[code].name) ? CITIES[code].name : code
+  }));
+  list.sort((a, b) => a.name.localeCompare(b.name, "nl"));
+  res.json({ ok: true, cities: list });
+});
+
+app.get("/api/city", async (req, res) => {
+  const code = String(req.query && req.query.code ? req.query.code : "").trim().toLowerCase();
+  const lang = String(req.query && req.query.lang ? req.query.lang : "en").trim() || "en";
+  const hotelCode = String(req.query && req.query.hotel ? req.query.hotel : "").trim().toLowerCase();
+  const preview = String(req.query && req.query.preview ? req.query.preview : "") === "1";
+  const hotelPreview = String(req.query && req.query.hpreview ? req.query.hpreview : "") === "1";
+  const city = CITIES[code];
+  if(!city) return res.json({ ok:true, found:false });
+  const src = city.sourceLang || "en";
+  // Nette categorienaam (in de brontaal) voor categorieën die NIET in de vaste
+  // lijst staan. Zo wordt nooit de kale code (zoals "churches") getoond, en kan
+  // de naam netjes vertaald worden naar de taal van de gast.
+  const CAT_NAMES = {
+    sights:"Bezienswaardigheden", attractions:"Attracties", kids:"Voor kinderen",
+    food:"Restaurants", coffee:"Koffie & cafés", nightlife:"Uitgaan & terrassen",
+    shopping:"Winkelen", hotels:"Hotels & overnachten", wellness:"Wellness & thermen",
+    bikes:"Fietsverhuur", parking:"Parkeren", tattoo:"Tattoo & piercing",
+    churches:"Kerken", museums:"Musea", nature:"Natuur", events:"Evenementen",
+    sports:"Sport & activiteiten", transport:"Vervoer", health:"Gezondheid",
+    services:"Diensten", bars:"Bars", restaurants:"Restaurants"
+  };
+  function categoryTitleSrc(id){
+    const key = String(id || "").toLowerCase().trim();
+    if(CAT_NAMES[key]) return CAT_NAMES[key];
+    // onbekende code netjes leesbaar maken: "city-tour" -> "City tour"
+    const cleaned = key.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
+    if(!cleaned) return String(id || "");
+    return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+  }
+  // basis-URL voor absolute foto-links. Altijd een PUBLIEK bereikbare basis,
+  // ook als de gids via een interne aanroep (127.0.0.1) wordt opgebouwd.
+  const photoBase = publicMediaBase(req);
+
+  // kleine vertaalhelper, ook bruikbaar voor de banner
+  async function trh(text){
+    if(!text || lang === src) return text;
+    try{ return await translateGuideText(text, src, lang); }catch(e){ return text; }
+  }
+  // Demo-hotel: een vast voorbeeld dat je kunt delen met ?hotel=demo.
+  // Bestaat niet echt in het systeem; puur om te laten zien hoe het eruitziet.
+  function makeDemoHotel(){
+    return {
+      __demo: true,
+      name: "Demo Hotel",
+      welcome: "Welkom in ons hotel! Wat fijn dat u er bent. Hieronder vindt u onze persoonlijke stadsgids met de leukste plekken in de buurt, in uw eigen taal. Geniet van uw verblijf!",
+      desc: "Een sfeervol en gastvrij hotel in het hart van de stad. Onze comfortabele kamers, het gezellige restaurant en de persoonlijke ontvangst maken uw verblijf compleet. Zo ziet uw eigen hotel er straks uit voor uw gasten.",
+      promo: "Vandaag: welkomstdrankje gratis bij aankomst",
+      logo: "",
+      photos: []
+    };
+  }
+  function findHotelByCode(){
+    if(!hotelCode) return null;
+    if(hotelCode === "demo") return makeDemoHotel();
+    const list = merchants.get(code) || [];
+    // Normaal alleen actieve hotels (echte gasten). In eigenaar-preview (hpreview=1)
+    // ook een nog uitgeschakeld hotel, zodat de hotelier zijn vermelding kan bekijken.
+    return list.find(m => (m.hotelCode || "").toLowerCase() === hotelCode && (m.active || hotelPreview)) || null;
+  }
+  // Telt +1 voor dit hotel als de gids geopend wordt. Slaat geen
+  // persoonsgegevens op, alleen een totaal-aantal per hotel.
+  function countHotelScan(hotel){
+    if(!hotel || hotel.__demo) return;
+    hotel.scans = (hotel.scans || 0) + 1;
+    // Alleen de teller opslaan; de vertaalcache NIET legen (anders zou elke
+    // taalkeuze de gids opnieuw laten vertalen en moet de gast lang wachten).
+    // Uitgesteld wegschrijven: bij drukte niet per scan het hele bestand schrijven.
+    saveMerchantsSoon();
+  }
+  async function buildHotelBanner(hotel){
+    if(!hotel) return null;
+    const defaultWelcome = "Welkom! Fijn dat u bij ons verblijft. Ontdek hieronder de leukste plekken in de stad.";
+    const welcomeSrc = (hotel.welcome && hotel.welcome.trim()) ? hotel.welcome.trim() : defaultWelcome;
+    const welcome = await trh(welcomeSrc);
+    const promo = (hotel.promo && hotel.promo.trim()) ? await trh(hotel.promo) : "";
+    const desc = (hotel.desc && hotel.desc.trim()) ? await trh(hotel.desc.trim()) : "";
+    return {
+      name: hotel.name,
+      welcome,
+      desc,
+      promo,
+      address: hotel.address || "",
+      logo: hotel.logo ? (photoBase + "/fotos/" + hotel.logo) : "",
+      photos: Array.isArray(hotel.photos) ? hotel.photos.map(f => photoBase + "/fotos/" + f) : []
+    };
+  }
+  // Pas de categorielijst aan voor een hotelgast: andere hotels verbergen,
+  // categorie "hotels" wordt "Mijn Hotel" met alleen dit hotel.
+  // In demo-modus tonen we het fictieve Demo Hotel als enige in "Mijn Hotel".
+  async function applyHotelView(categories, hotel){
+    if(!hotel) return categories;
+    const mijnHotelTitle = await tr("Mijn Hotel");
+    const out = [];
+    for(const c of categories){
+      if(c.id !== "hotels"){ out.push(c); continue; }
+      if(hotel.__demo){
+        const demoItem = {
+          name: hotel.name,
+          desc: await tr("Een sfeervol en gastvrij voorbeeldhotel in het hart van de stad. Zo ziet uw eigen hotel er straks uit voor uw gasten."),
+          address: "",
+          promo: hotel.promo || "",
+          featured: true,
+          fields: {},
+          photos: [],
+          hotelCode: "demo"
+        };
+        out.push({ id: c.id, icon: "&#127976;", title: mijnHotelTitle, items: [demoItem] });
+        continue;
+      }
+      // Filter op de stabiele hotelcode (of merchant-id) van het gescande hotel.
+      // Zo verschijnt nooit per ongeluk een ander hotel met dezelfde naam, en
+      // verdwijnt het eigen hotel niet als de naam licht afwijkt of is gewijzigd.
+      const wantCode = (hotel.hotelCode || "").toLowerCase();
+      const wantId = String(hotel.id || "");
+      let mine = (c.items || []).filter(it => {
+        const ic = (it.hotelCode || "").toLowerCase();
+        const iid = String(it.merchantId || "");
+        if(wantCode && ic) return ic === wantCode;
+        if(wantId && iid) return iid === wantId;
+        return false;
+      });
+      // Veiligheidsnet: alleen terugvallen op de naam als de items echt geen
+      // stabiele code/id hebben (oude data). Hebben ze die wel, dan is een lege
+      // uitkomst correct (de code hoort simpelweg niet bij dit hotel).
+      if(!mine.length){
+        const itemsHaveStableId = (c.items || []).some(it => (it.hotelCode || it.merchantId));
+        if(!itemsHaveStableId){
+          mine = (c.items || []).filter(it => it.name === hotel.name);
+        }
+      }
+      out.push({ id: c.id, icon: "&#127976;", title: mijnHotelTitle, items: mine });
+    }
+    return out;
+  }
+
+  // Al eerder vertaald? Geef meteen terug (supersnel).
+  const cacheKey = code + ":" + lang;
+  if(cityCache.has(cacheKey)){
+    const hit = cityCache.get(cacheKey);
+    const hotel = findHotelByCode();
+    if(!hotel){
+      if(preview){
+        // Voorbeeldweergave: de echte gids (alle bedrijven), zonder hotelbanner
+        // en zonder de "Mijn Hotel"-categorie. Markeer als preview zodat de
+        // frontend de route-knop kan uitschakelen.
+        const catsPrev = (hit.categories || []).filter(c => c.id !== "hotels");
+        return res.json({ ok:true, found:true, preview:true, name: hit.name, categories: catsPrev });
+      }
+      return res.json({ ok:true, found:true, needHotel:true, name: hit.name });
+    }
+    countHotelScan(hotel);
+    const hotelBanner = await buildHotelBanner(hotel);
+    const cats2 = await applyHotelView(hit.categories, hotel);
+    return res.json({ ok:true, found:true, name: hit.name, categories: cats2, hotelBanner });
+  }
+
+  // Loopt er al een vertaling voor deze stad+taal? Wacht dan op DAT resultaat,
+  // in plaats van zelf opnieuw (duur) te vertalen. Zo doet maar 1 verzoek het werk.
+  if(cityCacheBuilding.has(cacheKey)){
+    try{
+      const built = await cityCacheBuilding.get(cacheKey);
+      const hotel = findHotelByCode();
+      if(!hotel){
+        if(preview){
+          const catsPrev = (built.categories || []).filter(c => c.id !== "hotels");
+          return res.json({ ok:true, found:true, preview:true, name: built.name, categories: catsPrev });
+        }
+        return res.json({ ok:true, found:true, needHotel:true, name: built.name });
+      }
+      countHotelScan(hotel);
+      const hotelBanner = await buildHotelBanner(hotel);
+      const cats2 = await applyHotelView(built.categories, hotel);
+      return res.json({ ok:true, found:true, name: built.name, categories: cats2, hotelBanner });
+    }catch(e){ /* val door naar normale opbouw als de gedeelde build faalde */ }
+  }
+
+  // We starten nu zelf de vertaling. Andere gelijktijdige verzoeken voor dezelfde
+  // stad+taal wachten op deze Promise (zie hierboven). We lossen hem op zodra de
+  // gids klaar is, en verwijderen de lock altijd (ook bij een fout).
+  let _resolveBuild, _rejectBuild;
+  const _buildPromise = new Promise((resolve, reject) => { _resolveBuild = resolve; _rejectBuild = reject; });
+  // Voorkom "unhandled rejection" als er toevallig geen ander verzoek meewacht.
+  _buildPromise.catch(() => {});
+  cityCacheBuilding.set(cacheKey, _buildPromise);
+
+  // helper: vertaal alleen als nodig (andere taal), met stille fallback naar origineel
+  // Verwerk items in kleine groepjes tegelijk (i.p.v. allemaal ineens),
+  // zodat we onder de OpenAI rate limit blijven. Anders worden bij veel
+  // ondernemers een deel van de vertalingen geweigerd en blijft de tekst
+  // in de brontaal staan. Resultaatvolgorde blijft gelijk aan de invoer.
+  async function mapLimit(items, limit, fn){
+    const results = new Array(items.length);
+    let i = 0;
+    async function worker(){
+      while(i < items.length){
+        const idx = i++;
+        results[idx] = await fn(items[idx], idx);
+      }
+    }
+    const workers = [];
+    const n = Math.min(limit, items.length);
+    for(let w = 0; w < n; w++) workers.push(worker());
+    await Promise.all(workers);
+    return results;
+  }
+  const TR_CONCURRENCY = 6;
+
+  async function tr(text){
+    if(!text || lang === src) return text;
+    try{ return await translateGuideText(text, src, lang); }catch(e){ return text; }
+  }
+
+  // Vang onverwachte fouten af zodat de lock nooit blijft hangen.
+  try{
+  const cats = [];
+  for(const c of (city.categories || [])){
+    // vertaal titel en alle beschrijvingen van deze categorie tegelijk (parallel)
+    const [title, descs] = await Promise.all([
+      tr(c.title || ""),
+      mapLimit((c.items || []), TR_CONCURRENCY, it => tr(it.desc || ""))
+    ]);
+    const items = (c.items || []).map((it, i) => ({
+      name: it.name,
+      desc: descs[i],
+      address: it.address || "",
+    }));
+    cats.push({ id: c.id, icon: c.icon || "", title, items });
+  }
+  // bewaar in het geheugen zodat volgende bezoekers in deze taal het direct krijgen
+  // Toon de online (actieve) ondernemers. Betaalde abonnees komen BOVENAAN,
+  // en wie een lopende dagactie heeft staat daar weer bovenaan.
+  const cityMerchants = (merchants.get(code) || []).filter(m => m.active);
+  const now = Date.now();
+  const hasPromo = (m) => !!(m.subscribed && m.promo && m.promo.trim());
+  // Sorteer: eerst betaalde abonnees met actie, dan betaalde abonnees, dan de rest
+  cityMerchants.sort((a, b) => {
+    const pa = hasPromo(a) ? 2 : (a.subscribed ? 1 : 0);
+    const pb = hasPromo(b) ? 2 : (b.subscribed ? 1 : 0);
+    if(pa !== pb) return pb - pa;
+    return (a.name || "").localeCompare(b.name || "");
+  });
+  const translatedDescs = await mapLimit(
+    cityMerchants, TR_CONCURRENCY, m => tr(m.desc || "")
+  );
+  const translatedPromos = await mapLimit(
+    cityMerchants, TR_CONCURRENCY, m => hasPromo(m) ? tr(m.promo) : Promise.resolve("")
+  );
+  // extra velden vertalen (alleen de ingevulde)
+  const fieldKeys = ["hours","phone","website","menu","drinks","mealtimes","schedule","prices","extra"];
+  const translatedFields = await mapLimit(cityMerchants, TR_CONCURRENCY, async (m) => {
+    const out = {};
+    if(m.fields){
+      for(const k of fieldKeys){
+        const v = (m.fields[k] || "").trim();
+        if(!v) continue;
+        // telefoon en website niet vertalen
+        out[k] = (k === "phone" || k === "website") ? v : await tr(v);
+      }
+    }
+    return out;
+  });
+  for(let mi = 0; mi < cityMerchants.length; mi++){
+    const m = cityMerchants[mi];
+    let cat = cats.find(c => c.id === m.categoryId);
+    if(!cat){
+      const def = (city.categories || []).find(c => c.id === m.categoryId);
+      const titleSrc = def ? def.title : categoryTitleSrc(m.categoryId);
+      cat = { id: m.categoryId, icon: def ? def.icon : "&#128205;", title: await tr(titleSrc), items: [] };
+      cats.push(cat);
+    }
+    cat.items.push({
+      name: m.name,
+      desc: translatedDescs[mi],
+      address: m.address || "",
+      promo: translatedPromos[mi],
+      featured: !!m.subscribed,
+      fields: translatedFields[mi],
+      photos: Array.isArray(m.photos) ? m.photos.map(f => photoBase + "/fotos/" + f) : [],
+      // Stabiele verwijzingen zodat "Mijn Hotel" op code/id kan filteren i.p.v. op naam.
+      // (taal-onafhankelijk, dus veilig om mee te cachen)
+      hotelCode: m.hotelCode || "",
+      merchantId: m.id || ""
+    });
+  }
+
+  cityCache.set(cacheKey, { name: city.name || "", categories: cats });
+  saveCityCache(); // nieuwe vertaling bewaren op disk (overleeft herstart/deploy)
+  // De gids is klaar: laat wachtende gelijktijdige verzoeken dit resultaat gebruiken.
+  _resolveBuild({ name: city.name || "", categories: cats });
+  const hotel = findHotelByCode();
+  if(!hotel){
+    if(preview){
+      const catsPrev = (cats || []).filter(c => c.id !== "hotels");
+      return res.json({ ok:true, found:true, preview:true, name: city.name || "", categories: catsPrev });
+    }
+    return res.json({ ok:true, found:true, needHotel:true, name: city.name || "" });
+  }
+  countHotelScan(hotel);
+  const hotelBanner = await buildHotelBanner(hotel);
+  const catsView = await applyHotelView(cats, hotel);
+  res.json({ ok:true, found:true, name: city.name || "", categories: catsView, hotelBanner });
+  }catch(buildErr){
+    // Vertaling mislukte: laat wachtende verzoeken de fout zien (zij vallen dan
+    // terug op hun eigen opbouw) en geef zelf een nette foutmelding.
+    try{ _rejectBuild(buildErr); }catch(e){}
+    if(!res.headersSent){
+      return jsonError(res, 500, "De gids kon niet worden opgebouwd. Probeer het opnieuw.");
+    }
+  }finally{
+    // Lock altijd opruimen, of het nu lukte of niet.
+    cityCacheBuilding.delete(cacheKey);
+  }
+});
+
+
+// ===== VERTAAL-CACHE VOORVERWARMEN (alle talen in een keer) =====
+// Bouwt voor een stad alle ondersteunde talen op en bewaart ze op de disk,
+// zodat de eerste gast (of hotelier/ondernemer die op de PDF-link klikt) nooit
+// hoeft te wachten. Handig na het invoeren van alle ondernemers voor een stad,
+// vlak voor een rollout. Beveiligd met het admin-wachtwoord.
+//
+// Gebruik (browser of fetch):
+//   /api/city/warmup?code=amsterdam&adminPass=UW_WACHTWOORD
+//
+// Optioneel een hotelcode meegeven om ook de hotelbanner (welkomsttekst, promo,
+// beschrijving) in alle talen voor te vertalen. Zo hoeft ook de eigenaar-preview
+// (?hotel=...&hpreview=1) nooit te wachten:
+//   /api/city/warmup?code=amsterdam&hotel=hm0lyb&adminPass=UW_WACHTWOORD
+//
+// De talen worden EEN VOOR EEN opgebouwd (niet tegelijk), zodat we de OpenAI
+// rate-limit niet raken. Talen die al in de gids-cache staan, worden voor de
+// gids overgeslagen; de hotelbanner heeft zijn eigen cache en wordt alleen
+// vertaald als hij nog niet bewaard is.
+app.get("/api/city/warmup", async (req, res) => {
+  if(!adminOk(req)){
+    return jsonError(res, 401, "Geen toegang. Admin-wachtwoord ontbreekt of is onjuist.");
+  }
+  const code = String(req.query && req.query.code ? req.query.code : "").trim().toLowerCase();
+  if(!code || !CITIES[code]){
+    return jsonError(res, 400, "Onbekende stad. Gebruik ?code=amsterdam (of een andere stadscode).");
+  }
+  const hotel = String(req.query && req.query.hotel ? req.query.hotel : "").trim().toLowerCase();
+  // Met &force=1 eerst de (mogelijk verouderde) cache van deze stad wissen,
+  // zodat alles opnieuw wordt opgebouwd en vertaald in plaats van overgeslagen.
+  const force = String(req.query && req.query.force ? req.query.force : "") === "1";
+  if(force){
+    dropCityFromCache(code);
+  }
+  const allLangs = Object.keys(LANG_NAMES);
+  const port = process.env.PORT || 10000;
+  const base = "http://127.0.0.1:" + port + "/api/city";
+
+  const done = [];
+  const skipped = [];
+  const failed = [];
+  const bannerBuilt = [];
+  const bannerFailed = [];
+
+  for(const lang of allLangs){
+    // 1) De stadsgids zelf (alle bedrijven). Al in de cache? Dan overslaan.
+    if(cityCache.has(code + ":" + lang)){
+      skipped.push(lang);
+    }else{
+      try{
+        const url = base + "?code=" + encodeURIComponent(code) +
+                    "&lang=" + encodeURIComponent(lang) + "&preview=1";
+        const r = await fetch(url);
+        const data = await r.json().catch(() => ({}));
+        if(data && data.ok && (data.found || data.preview)){
+          done.push(lang);
+        }else{
+          failed.push(lang);
+        }
+      }catch(e){
+        failed.push(lang);
+      }
+    }
+
+    // 2) Optioneel: de hotelbanner voor dit hotel (welkomsttekst, promo, desc).
+    // Deze roept dezelfde weg aan als de eigenaar-preview, zodat de losse
+    // gidstekst-vertalingen (die op de disk bewaard worden) alvast klaarstaan.
+    if(hotel){
+      try{
+        const url = base + "?code=" + encodeURIComponent(code) +
+                    "&lang=" + encodeURIComponent(lang) +
+                    "&hotel=" + encodeURIComponent(hotel) + "&hpreview=1";
+        const r = await fetch(url);
+        const data = await r.json().catch(() => ({}));
+        if(data && data.ok && data.found){
+          bannerBuilt.push(lang);
+        }else{
+          bannerFailed.push(lang);
+        }
+      }catch(e){
+        bannerFailed.push(lang);
+      }
+    }
+  }
+
+  const out = {
+    ok: true,
+    city: code,
+    totalLangs: allLangs.length,
+    built: done,            // gids nu nieuw opgebouwd en op disk bewaard
+    alreadyCached: skipped, // gids stond al in de cache
+    failed: failed,         // gids niet gelukt (bv. tijdelijke fout)
+    cacheSize: cityCache.size
+  };
+  if(hotel){
+    out.hotel = hotel;
+    out.bannerBuilt = bannerBuilt;   // hotelbanner in deze talen voorvertaald
+    out.bannerFailed = bannerFailed; // hotelbanner niet gelukt
+  }
+  return res.json(out);
+});
+
+
+
+
+// ===== ONDERNEMERS (stadsgids) =====
+// Per stad een lijst ondernemers. Bewaard op schijf, blijft staan na herstart.
+// Een ondernemer is alleen zichtbaar in de gids als active = true.
+const merchants = new Map(); // stadcode -> [ {merchant}, ... ]
+const MERCHANTS_FILE = path.join(DATA_DIR, "echo_merchants.json");
+const ADMIN_PASSWORD = process.env.ECHO_ADMIN_PASSWORD || "verander-dit-wachtwoord";
+if(!process.env.ECHO_ADMIN_PASSWORD){
+  console.warn("WAARSCHUWING: ECHO_ADMIN_PASSWORD is niet ingesteld in de Render Environment Variables. Het adminscherm gebruikt nu het onveilige standaardwachtwoord. Stel dit direct in.");
+}
+
+function loadMerchants(){
+  try{
+    if(!fs.existsSync(MERCHANTS_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(MERCHANTS_FILE, "utf8") || "{}");
+    Object.keys(data || {}).forEach(city => {
+      if(Array.isArray(data[city])) merchants.set(city, data[city]);
+    });
+    let total = 0; for(const v of merchants.values()) total += v.length;
+    console.log("Ondernemers geladen: " + total);
+  }catch(e){ rescueCorruptStore(MERCHANTS_FILE, e); }
+}
+function saveMerchants(clearCache){
+  try{
+    const data = {};
+    for(const [city, list] of merchants.entries()) data[city] = list;
+    safeWriteFileSync(MERCHANTS_FILE, JSON.stringify(data, null, 2));
+  }catch(e){}
+  // Bij puur tellen (scan-teller) geven we clearCache=false mee: dan blijft de
+  // cache staan, zodat gasten niet steeds opnieuw hoeven te wachten.
+  // Anders verversen we ALLEEN de stad die daadwerkelijk wijzigde (en bouwen
+  // die op de achtergrond opnieuw op). De rest van de gids - en alle andere
+  // steden - blijft onaangeroerd, zodat een advertentiewijziging van een
+  // betalende ondernemer nooit de hele cache raakt.
+  if(clearCache !== false){
+    invalidateChangedCities();
+  }
+}
+
+// Uitgestelde variant voor hoogfrequente tellers (zoals de scanteller): niet
+// bij elke gids-opening het hele bestand schrijven, maar kort verzamelen en
+// dan in een keer wegschrijven. De gids-cache wordt hierbij nooit geraakt.
+let _merchantsSaveTimer = null;
+function saveMerchantsSoon(){
+  if(_merchantsSaveTimer) return;
+  _merchantsSaveTimer = setTimeout(() => {
+    _merchantsSaveTimer = null;
+    try{ saveMerchants(false); }catch(e){}
+  }, 2000);
+}
+function adminOk(req){
+  const pass = (req.body && req.body.adminPass) || (req.query && req.query.adminPass) || "";
+  return String(pass) === ADMIN_PASSWORD;
+}
+function newMerchantId(){
+  return "m_" + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+}
+loadMerchants();
+// Beginsituatie vastleggen zodat we bij de eerste wijziging kunnen zien welke
+// stad veranderde (en alleen die verversen).
+snapshotAllCityHashes();
+
+// ====================================================================
+//  UITGESTELD PUBLICEREN (dagelijkse publicatie om 06:00 NL-tijd)
+// --------------------------------------------------------------------
+//  Wijzigingen van ondernemers/hoteliers via het portaal gaan NIET meteen live.
+//  Ze worden bewaard in m.pending en gaan pas de eerstvolgende ochtend om 06:00
+//  (Europe/Amsterdam) live. Zo kunnen 80 klanten tussen 09:00 en 10:00 rustig
+//  hun advertentie aanpassen: de gids wordt maar EEN keer per nacht opgebouwd,
+//  in plaats van bij elke losse wijziging. Tot 06:00 zien gasten de oude versie.
+//  De ondernemer ziet in zijn eigen portaal wel meteen zijn concept (pending).
+//
+//  Admin-acties van de eigenaar gaan WEL direct live: die schrijven rechtstreeks
+//  naar de live velden (deze module raakt ze niet).
+// ====================================================================
+
+// De velden die via het uitgesteld-publiceren lopen (de inhoud die de gast ziet).
+const PENDING_FIELDS = ["desc", "address", "promo", "fields", "photos", "welcome", "logo"];
+
+// Legt een wijziging klaar in m.pending in plaats van direct op het live veld.
+// Zo blijft de huidige (live) versie zichtbaar voor gasten tot 06:00.
+function stageMerchantChange(m, key, value){
+  if(!m.pending) m.pending = {};
+  m.pending[key] = value;
+  m.pendingAt = Date.now();
+}
+
+// Geeft de waarde die de ONDERNEMER in zijn portaal moet zien: het concept
+// (pending) als dat er is, anders de live waarde. Zo ziet hij zijn eigen
+// laatste wijziging meteen, ook al is die voor gasten nog niet live.
+function merchantFieldForPortal(m, key){
+  if(m.pending && Object.prototype.hasOwnProperty.call(m.pending, key)){
+    return m.pending[key];
+  }
+  return m[key];
+}
+
+// Heeft deze ondernemer een wijziging die nog gepubliceerd moet worden?
+function hasPendingChange(m){
+  return !!(m && m.pending && Object.keys(m.pending).length > 0);
+}
+
+// Nette uitlegtekst voor het portaal (de frontend kan deze tonen bij de advertentie).
+const PUBLISH_INFO_TEXT =
+  "Wijzigingen worden een keer per dag doorgevoerd. Alles wat u voor 06:00 uur " +
+  "opslaat, gaat diezelfde ochtend om 06:00 uur live. Bent u later, dan gaat uw " +
+  "wijziging de volgende ochtend om 06:00 uur mee. Tot die tijd blijft uw huidige " +
+  "advertentie zichtbaar voor gasten.";
+
+// Publiceert alle klaargezette wijzigingen: kopieer m.pending naar de live velden,
+// wis pending, en bouw daarna elke gewijzigde stad EEN keer opnieuw op.
+function publishPendingChanges(reason){
+  const changedCities = new Set();
+  let publishedCount = 0;
+  const filesToDelete = [];
+  for(const [cityCode, list] of merchants.entries()){
+    for(const m of (list || [])){
+      if(!hasPendingChange(m)) continue;
+      // Vervangen foto's/logo pas NU opruimen (waren tot nu toe nog live).
+      if(Object.prototype.hasOwnProperty.call(m.pending, "photos")){
+        const oldPhotos = Array.isArray(m.photos) ? m.photos : [];
+        const newPhotos = Array.isArray(m.pending.photos) ? m.pending.photos : [];
+        for(const f of oldPhotos){ if(f && !newPhotos.includes(f)) filesToDelete.push(f); }
+      }
+      if(Object.prototype.hasOwnProperty.call(m.pending, "logo")){
+        const oldLogo = m.logo || "";
+        const newLogo = m.pending.logo || "";
+        if(oldLogo && oldLogo !== newLogo) filesToDelete.push(oldLogo);
+      }
+      for(const key of PENDING_FIELDS){
+        if(Object.prototype.hasOwnProperty.call(m.pending, key)){
+          m[key] = m.pending[key];
+        }
+      }
+      delete m.pending;
+      delete m.pendingAt;
+      publishedCount++;
+      changedCities.add(cityCode);
+    }
+  }
+  // Verweesde bestanden opruimen (buiten de merchant-loop, veilig).
+  for(const f of filesToDelete){
+    try{ fs.unlinkSync(path.join(PHOTOS_DIR, f)); }catch(e){}
+  }
+  if(publishedCount > 0){
+    // Bewaar de nieuwe live-staat op disk. clearCache=false zodat saveMerchants
+    // niet zelf al invalidatie start; we doen dat hieronder gericht per stad.
+    try{ saveMerchants(false); }catch(e){}
+    // Vingerafdrukken bijwerken en alleen de gewijzigde steden opnieuw opbouwen.
+    for(const cityCode of changedCities){
+      cityHashes.set(cityCode, cityContentHash(cityCode));
+      dropCityFromCache(cityCode);
+      rebuildCityCacheSoon(cityCode);
+    }
+    console.log("Uitgesteld publiceren (" + (reason || "") + "): " + publishedCount +
+                " wijziging(en) live, steden: " + Array.from(changedCities).join(", "));
+  }
+  return { publishedCount, cities: Array.from(changedCities) };
+}
+
+// ---- Planner: draai publishPendingChanges elke dag om 06:00 Europe/Amsterdam ----
+// Render draait in UTC; we rekenen de NL-tijd zelf uit zodat het klopt in zomer-
+// en wintertijd. We checken elke minuut of het (in NL) net 06:00 is geworden.
+const PUBLISH_HOUR = 6;    // 06:00
+const PUBLISH_MINUTE = 0;
+let _lastPublishDayNL = "";
+function nlNow(){
+  // Huidige tijd in Europe/Amsterdam als losse onderdelen.
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Amsterdam",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false
+  }).formatToParts(new Date());
+  const get = (t) => (parts.find(p => p.type === t) || {}).value || "";
+  return {
+    day: get("year") + "-" + get("month") + "-" + get("day"),
+    hour: parseInt(get("hour"), 10),
+    minute: parseInt(get("minute"), 10)
+  };
+}
+function checkPublishSchedule(){
+  const t = nlNow();
+  // Precies om 06:00 NL, en hooguit een keer per dag (voorkomt dubbel draaien).
+  if(t.hour === PUBLISH_HOUR && t.minute === PUBLISH_MINUTE && _lastPublishDayNL !== t.day){
+    _lastPublishDayNL = t.day;
+    try{ publishPendingChanges("dagelijks 06:00"); }catch(e){ console.log("Publiceren mislukt: " + (e.message||e)); }
+  }
+}
+// Elke 30 seconden kijken of het publicatiemoment is aangebroken.
+setInterval(checkPublishSchedule, 30 * 1000);
+
+// Handmatig publiceren (voor de eigenaar): zet alle klaargezette wijzigingen
+// meteen live, zonder te wachten op 06:00. Handig om te testen of bij spoed.
+// Beveiligd met het admin-wachtwoord.
+//   /api/publish-now?adminPass=UW_WACHTWOORD
+app.get("/api/publish-now", (req, res) => {
+  if(!adminOk(req)){
+    return jsonError(res, 401, "Geen toegang. Admin-wachtwoord ontbreekt of is onjuist.");
+  }
+  const result = publishPendingChanges("handmatig");
+  return res.json({ ok:true, published: result.publishedCount, cities: result.cities });
+});
+
+
+// ============================================================
+//  GAST <-> HOTEL CHAT
+//  Eenvoudige berichtenlaag tussen een toerist en een hotel.
+//  Opslag: hotelChats = Map(hotelCode -> { convos: Map(convoId -> convo) })
+//  convo = { id, guestName, guestLang, city, hotelCode, createdAt, lastActive,
+//            lastGuestAt, messages:[ {id, from:"guest"|"hotel", text, srcLang, ts, read} ] }
+//  Berichten worden vertaald guest-taal <-> Nederlands (hotel leest NL).
+//  Gesprekken verdwijnen na CHAT_TTL_MS inactiviteit (privacy).
+// ============================================================
+const hotelChats = new Map();
+const CHAT_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 dagen
+const HOTEL_LANG = "nl"; // taal waarin de hotelier leest/schrijft
+const CHAT_TR_VERSION = 2; // ophogen dwingt herVertaling van oude (zwakke) chat-vertalingen
+const CHATS_FILE = path.join(DATA_DIR, "salve_hotel_chats.json");
+
+function loadHotelChats(){
+  try{
+    if(!fs.existsSync(CHATS_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(CHATS_FILE, "utf8") || "{}");
+    Object.keys(data || {}).forEach(code => {
+      const convos = new Map();
+      (data[code].convos || []).forEach(c => convos.set(c.id, c));
+      hotelChats.set(code, { convos });
+    });
+    let total = 0; for(const h of hotelChats.values()) total += h.convos.size;
+    console.log("Hotel-chats geladen: " + total);
+  }catch(e){
+    console.log("Hotel-chats laden mislukt: " + (e.message||e));
+    rescueCorruptStore(CHATS_FILE, e);
+  }
+}
+function saveHotelChats(){
+  try{
+    const data = {};
+    for(const [code, h] of hotelChats.entries()){
+      data[code] = { convos: Array.from(h.convos.values()) };
+    }
+    safeWriteFileSync(CHATS_FILE, JSON.stringify(data, null, 2));
+  }catch(e){ console.log("Hotel-chats opslaan mislukt: " + (e.message||e)); }
+}
+
+// Uitgestelde opslag voor de drukke chatpaden (bericht sturen, pollen, gelezen
+// markeren): een write per 1,5 seconde in plaats van een write per bericht.
+let _hotelChatsSaveTimer = null;
+function saveHotelChatsSoon(){
+  if(_hotelChatsSaveTimer) return;
+  _hotelChatsSaveTimer = setTimeout(() => {
+    _hotelChatsSaveTimer = null;
+    try{ saveHotelChats(); }catch(e){}
+  }, 1500);
+}
+function pruneHotelChats(){
+  const now = Date.now();
+  let changed = false;
+  for(const [code, h] of hotelChats.entries()){
+    for(const [id, c] of h.convos.entries()){
+      if(now - (c.lastActive || c.createdAt || 0) > CHAT_TTL_MS){
+        h.convos.delete(id); changed = true;
+      }
+    }
+    if(h.convos.size === 0){ hotelChats.delete(code); changed = true; }
+  }
+  if(changed) saveHotelChats();
+}
+setInterval(pruneHotelChats, 60 * 60 * 1000); // elk uur opruimen
+function newConvoId(){
+  return "c_" + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+}
+function newRoomId(){
+  // korte, leesbare unieke id voor een hotelkamer-chat
+  return "r" + Date.now().toString(36).slice(-5) + Math.random().toString(36).slice(2,5);
+}
+function getHotelRooms(m){
+  if(!Array.isArray(m.chatRooms)) m.chatRooms = [];
+  return m.chatRooms;
+}
+function findRoomInHotel(m, roomId){
+  if(!roomId) return null;
+  return (m.chatRooms || []).find(r => r.id === roomId) || null;
+}
+function getHotelByCode(hotelCode){
+  const code = String(hotelCode || "").trim().toLowerCase();
+  if(!code) return null;
+  for(const [city, list] of merchants.entries()){
+    const m = (list || []).find(x => (x.hotelCode || "").toLowerCase() === code && x.categoryId === "hotels");
+    if(m) return { m, city };
+  }
+  return null;
+}
+loadHotelChats();
+
+// --- GAST: hotel-info ophalen (naam + of de kamer geldig is) voor de chat-kop ---
+app.get("/api/hotelchat/info", (req, res) => {
+  const code = String(req.query && req.query.hotel ? req.query.hotel : "").trim().toLowerCase();
+  const roomId = String(req.query && req.query.room ? req.query.room : "").trim();
+  if(code === "demo"){ return res.json({ ok:true, hotelName: "Demo Hotel", demo:true, roomName: roomId ? "Voorbeeldkamer" : "" }); }
+  const hit = getHotelByCode(code);
+  if(!hit) return jsonError(res, 404, "Hotel niet gevonden");
+  let roomName = "";
+  if(roomId){
+    const r = findRoomInHotel(hit.m, roomId);
+    if(r) roomName = r.name || "";
+  }
+  res.json({ ok:true, hotelName: hit.m.name || "Hotel", roomName });
+});
+
+// --- GAST: nieuw bericht sturen (start desnoods een nieuw gesprek) ---
+app.post("/api/hotelchat/guest/send", async (req, res) => {
+  // Bescherming tegen misbruik: dit endpoint is publiek en elk bericht kost
+  // een AI-vertaling. Maximaal 30 berichten per minuut per IP-adres.
+  if(rateLimited("hcsend", clientIp(req), 30, 60 * 1000)){
+    return jsonError(res, 429, "Te veel berichten achter elkaar. Wacht heel even en probeer het opnieuw.");
+  }
+  const code = String(req.body && req.body.hotel ? req.body.hotel : "").trim().toLowerCase();
+  let convoId = String(req.body && req.body.convoId ? req.body.convoId : "").trim();
+  const roomId = String(req.body && req.body.room ? req.body.room : "").trim();
+  const manualRoom = String(req.body && req.body.manualRoom ? req.body.manualRoom : "").trim().slice(0,40);
+  const guestName = String(req.body && req.body.name ? req.body.name : "").trim().slice(0,60) || "Gast";
+  const guestLang = String(req.body && req.body.lang ? req.body.lang : "en").trim().slice(0,5) || "en";
+  const text = String(req.body && req.body.text ? req.body.text : "").trim().slice(0,2000);
+  if(!text) return jsonError(res, 400, "Leeg bericht");
+  if(code === "demo") return jsonError(res, 400, "Dit is een voorbeeldhotel; berichten worden niet verstuurd.");
+  const hit = getHotelByCode(code);
+  if(!hit) return jsonError(res, 404, "Hotel niet gevonden");
+
+  // kamernaam + kamersleutel bepalen
+  let roomName = "";
+  let roomKey = "";
+  if(roomId){
+    const r = findRoomInHotel(hit.m, roomId);
+    if(r){ roomName = r.name || ""; roomKey = "id:" + roomId; }
+  }
+  // geen QR-kamer maar wel handmatig ingevuld kamernummer? gebruik dat
+  if(!roomKey && manualRoom){
+    roomName = manualRoom;
+    roomKey = "num:" + manualRoom.toLowerCase().replace(/\s+/g, "");
+  }
+  // helemaal geen kamer bekend -> los gesprek (mag, maar zonder kamerbundeling)
+  if(!roomKey){ roomKey = "anon:" + (convoId || newConvoId()); }
+
+  if(!hotelChats.has(code)) hotelChats.set(code, { convos: new Map() });
+  const store = hotelChats.get(code);
+
+  // Zoek een BESTAANDE conversatie voor deze kamer (1 vaste chat per kamer)
+  let convo = null;
+  for(const c of store.convos.values()){
+    if(c.roomKey === roomKey){ convo = c; break; }
+  }
+  if(!convo){
+    convoId = newConvoId();
+    convo = { id: convoId, guestName, guestLang, city: hit.city, hotelCode: code,
+              roomId: roomId || "", roomName: roomName || "", roomKey: roomKey,
+              createdAt: Date.now(), lastActive: Date.now(), lastGuestAt: Date.now(),
+              notifiedAt: 0, messages: [] };
+    store.convos.set(convoId, convo);
+  }else{
+    convoId = convo.id;
+  }
+  convo.guestName = guestName || convo.guestName;
+  convo.guestLang = guestLang || convo.guestLang;
+  if(roomName && !convo.roomName){ convo.roomName = roomName; }
+  if(roomId && !convo.roomId){ convo.roomId = roomId; }
+
+  // Vertaal naar het Nederlands voor de hotelier (bewaar zowel origineel als NL)
+  let textNl = text;
+  try{ if(guestLang !== HOTEL_LANG) textNl = await translateChat(text, guestLang, HOTEL_LANG); }catch(e){}
+  const msg = { id: "g_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
+                from:"guest", text, textNl, srcLang: guestLang, ts: Date.now(), read:false };
+  convo.messages.push(msg);
+  // Nooit onbeperkt laten groeien: alleen de laatste 500 berichten bewaren.
+  if(convo.messages.length > 500) convo.messages = convo.messages.slice(convo.messages.length - 500);
+  convo.lastActive = Date.now();
+  convo.lastGuestAt = Date.now();
+  saveHotelChatsSoon();
+
+  // E-mailnotificatie naar het hotel (hoogstens eens per 15 min per gesprek)
+  // Naar het ingestelde notificatie-adres, anders het gewone inlog-adres.
+  const hotelEmail = (hit.m.notifyEmail && hit.m.notifyEmail.trim()) ? hit.m.notifyEmail.trim() : (hit.m.email || "");
+  // zorg dat het hotel een geheime chat-sleutel heeft (voor de receptie-link)
+  if(!hit.m.chatKey){
+    hit.m.chatKey = "k" + Date.now().toString(36) + Math.random().toString(36).slice(2,12);
+    saveMerchants();
+  }
+  if(hotelEmail && (Date.now() - (convo.notifiedAt||0) > 15*60*1000)){
+    convo.notifiedAt = Date.now();
+    const portalLink = "https://formforge.nl/receptie/?key=" + encodeURIComponent(hit.m.chatKey) + "&chat=" + encodeURIComponent(convo.id);
+    const subject = "Nieuw bericht" + (convo.roomName ? (" - " + (/^kamer\b/i.test(convo.roomName) ? convo.roomName : ("kamer " + convo.roomName))) : "") + " - Salve";
+    const body =
+      "U heeft een nieuw bericht ontvangen via uw Salve-vermelding.\n\n" +
+      (convo.roomName ? ("Kamer: " + convo.roomName + "\n") : "") +
+      "Van: " + convo.guestName + "\n" +
+      "Bericht: " + textNl + "\n\n" +
+      "Klik hier om direct in deze chat te antwoorden: " + portalLink + "\n\n" +
+      "Met vriendelijke groet,\nSalve - powered by FormForge";
+    const html =
+      "<p>U heeft een nieuw bericht ontvangen via uw Salve-vermelding.</p>" +
+      "<p>" + (convo.roomName ? ("<strong>Kamer:</strong> " + escHtmlServer(convo.roomName) + "<br>") : "") +
+      "<strong>Van:</strong> " + escHtmlServer(convo.guestName) + "<br>" +
+      "<strong>Bericht:</strong> " + escHtmlServer(textNl) + "</p>" +
+      "<table role='presentation' cellpadding='0' cellspacing='0' style='margin:18px 0;'><tr><td style='background:#c9a24b;border-radius:9px;'>" +
+      "<a href='" + portalLink + "' style='display:inline-block;padding:15px 30px;font-size:16px;font-weight:bold;color:#1e2d4f;text-decoration:none;font-family:Arial,Helvetica,sans-serif;'>Open de chat en antwoord &rarr;</a>" +
+      "</td></tr></table>" +
+      "<p>Met vriendelijke groet,<br>Salve - powered by FormForge</p>";
+    sendResendEmail({ to: hotelEmail, subject, text: body, html }).catch(()=>{});
+  }
+  res.json({ ok:true, convoId });
+});
+
+// --- GAST: eigen gesprek ophalen (berichten in gast-taal) ---
+app.post("/api/hotelchat/guest/poll", async (req, res) => {
+  // Ruim genoeg voor normaal pollen (elke 4 seconden), maar een rem op misbruik.
+  if(rateLimited("hcpoll", clientIp(req), 150, 60 * 1000)){
+    return jsonError(res, 429, "Te veel verzoeken. Wacht heel even.");
+  }
+  const code = String(req.body && req.body.hotel ? req.body.hotel : "").trim().toLowerCase();
+  const convoId = String(req.body && req.body.convoId ? req.body.convoId : "").trim();
+  const guestLang = String(req.body && req.body.lang ? req.body.lang : "en").trim().slice(0,5) || "en";
+  const store = hotelChats.get(code);
+  if(!store || !store.convos.get(convoId)) return res.json({ ok:true, messages: [] });
+  const convo = store.convos.get(convoId);
+  const out = [];
+  let addedTranslation = false;
+  for(const m of convo.messages){
+    let shown = m.text;
+    if(m.from === "guest"){
+      shown = m.text; // gast ziet zijn eigen tekst in eigen taal
+    }else{
+      if(guestLang === HOTEL_LANG){ shown = m.text; }
+      else if(m.tr && m.tr[guestLang] && m.trv === CHAT_TR_VERSION){ shown = m.tr[guestLang]; }
+      else {
+        try{
+          shown = await translateChat(m.text, HOTEL_LANG, guestLang);
+          if(!m.tr || m.trv !== CHAT_TR_VERSION){ m.tr = {}; m.trv = CHAT_TR_VERSION; }
+          m.tr[guestLang] = shown;
+          addedTranslation = true;
+        }
+        catch(e){ shown = m.text; }
+      }
+    }
+    out.push({ id:m.id, from:m.from, text: shown, ts:m.ts });
+  }
+  // Een keer opslaan na de hele lus, in plaats van per vertaald bericht.
+  if(addedTranslation) saveHotelChatsSoon();
+  res.json({ ok:true, messages: out });
+});
+
+// --- HOTEL (portaal): alle gesprekken ophalen ---
+app.post("/api/hotelchat/hotel/list", (req, res) => {
+  const email = String(req.body.email || "").trim();
+  const pin = String(req.body.pin || "").trim();
+  const found = findMerchantByLoginLimited(req, email, pin);
+  if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
+  if(found.m.categoryId !== "hotels") return jsonError(res, 403, "Alleen voor hotels.");
+  const code = (found.m.hotelCode || "").toLowerCase();
+  const store = hotelChats.get(code);
+  const convos = [];
+  if(store){
+    for(const c of store.convos.values()){
+      const unread = c.messages.filter(m => m.from === "guest" && !m.read).length;
+      const last = c.messages[c.messages.length-1];
+      convos.push({ id:c.id, guestName:c.guestName, roomName: c.roomName || "", lastActive:c.lastActive, unread,
+                    lastText: last ? (last.from==="guest" ? (last.textNl||last.text) : last.text) : "",
+                    lastFrom: last ? last.from : "" });
+    }
+    convos.sort((a,b)=> b.lastActive - a.lastActive);
+  }
+  res.json({ ok:true, convos });
+});
+
+// --- HOTEL (portaal): berichten van één gesprek (in NL) + markeer gelezen ---
+app.post("/api/hotelchat/hotel/messages", (req, res) => {
+  const email = String(req.body.email || "").trim();
+  const pin = String(req.body.pin || "").trim();
+  const convoId = String(req.body.convoId || "").trim();
+  const found = findMerchantByLoginLimited(req, email, pin);
+  if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
+  if(found.m.categoryId !== "hotels") return jsonError(res, 403, "Alleen voor hotels.");
+  const code = (found.m.hotelCode || "").toLowerCase();
+  const store = hotelChats.get(code);
+  if(!store || !store.convos.get(convoId)) return res.json({ ok:true, messages: [], guestName:"" });
+  const convo = store.convos.get(convoId);
+  let changed = false;
+  const out = convo.messages.map(m => {
+    if(m.from === "guest" && !m.read){ m.read = true; changed = true; }
+    return { id:m.id, from:m.from, text: (m.from==="guest" ? (m.textNl||m.text) : m.text), ts:m.ts };
+  });
+  if(changed) saveHotelChatsSoon();
+  res.json({ ok:true, messages: out, guestName: convo.guestName });
+});
+
+// --- HOTEL (portaal): antwoord sturen ---
+app.post("/api/hotelchat/hotel/send", (req, res) => {
+  const email = String(req.body.email || "").trim();
+  const pin = String(req.body.pin || "").trim();
+  const convoId = String(req.body.convoId || "").trim();
+  const text = String(req.body.text || "").trim().slice(0,2000);
+  if(!text) return jsonError(res, 400, "Leeg bericht");
+  const found = findMerchantByLoginLimited(req, email, pin);
+  if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
+  if(found.m.categoryId !== "hotels") return jsonError(res, 403, "Alleen voor hotels.");
+  const code = (found.m.hotelCode || "").toLowerCase();
+  const store = hotelChats.get(code);
+  if(!store || !store.convos.get(convoId)) return jsonError(res, 404, "Gesprek niet gevonden");
+  const convo = store.convos.get(convoId);
+  const msg = { id:"h_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
+                from:"hotel", text, srcLang: HOTEL_LANG, ts: Date.now(), tr:{} };
+  convo.messages.push(msg);
+  // Nooit onbeperkt laten groeien: alleen de laatste 500 berichten bewaren.
+  if(convo.messages.length > 500) convo.messages = convo.messages.slice(convo.messages.length - 500);
+  convo.lastActive = Date.now();
+  saveHotelChatsSoon();
+  res.json({ ok:true });
+});
+
+// --- HOTEL (portaal): gesprek sluiten en wissen (kamer weer leeg voor volgende gast) ---
+app.post("/api/hotelchat/hotel/close", (req, res) => {
+  const email = String(req.body.email || "").trim();
+  const pin = String(req.body.pin || "").trim();
+  const convoId = String(req.body.convoId || "").trim();
+  const found = findMerchantByLoginLimited(req, email, pin);
+  if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
+  if(found.m.categoryId !== "hotels") return jsonError(res, 403, "Alleen voor hotels.");
+  const code = (found.m.hotelCode || "").toLowerCase();
+  const store = hotelChats.get(code);
+  // Als het gesprek al weg is, is het einddoel bereikt: meld gewoon succes.
+  if(!store || !store.convos.get(convoId)) return res.json({ ok:true });
+  store.convos.delete(convoId);
+  saveHotelChats();
+  res.json({ ok:true });
+});
+
+// --- HOTEL (portaal): kamers + notificatie-e-mail beheren ---
+function hotelChatAuth(req){
+  const email = String(req.body.email || "").trim();
+  const pin = String(req.body.pin || "").trim();
+  const found = findMerchantByLoginLimited(req, email, pin);
+  if(!found) return { err:[401, "E-mail of pincode klopt niet."] };
+  if(found.m.categoryId !== "hotels") return { err:[403, "Alleen voor hotels."] };
+  // Zorg dat dit hotel een hotelcode heeft (nodig voor de QR-links en de chat).
+  if(!found.m.hotelCode){
+    found.m.hotelCode = (typeof makeHotelCode === "function") ? makeHotelCode()
+      : ("h" + Date.now().toString(36) + Math.random().toString(36).slice(2,6));
+    saveMerchants();
+  }
+  // Zorg dat dit hotel een geheime chat-sleutel heeft (voor de receptie-link).
+  if(!found.m.chatKey){
+    found.m.chatKey = "k" + Date.now().toString(36) + Math.random().toString(36).slice(2,12);
+    saveMerchants();
+  }
+  return { found };
+}
+// Vind een hotel op zijn geheime chat-sleutel (voor de receptie-pagina zonder inlog).
+function getHotelByChatKey(chatKey){
+  const key = String(chatKey || "").trim();
+  if(!key) return null;
+  for(const [city, list] of merchants.entries()){
+    const m = (list || []).find(x => x.chatKey === key && x.categoryId === "hotels");
+    if(m) return { m, city };
+  }
+  return null;
+}
+
+// Lijst van kamers + huidig notificatie-adres
+app.post("/api/hotelchat/rooms/list", (req, res) => {
+  const a = hotelChatAuth(req);
+  if(a.err) return jsonError(res, a.err[0], a.err[1]);
+  const m = a.found.m;
+  const rooms = getHotelRooms(m);
+  res.json({ ok:true,
+    hotelCode: m.hotelCode || "",
+    city: a.found.city,
+    notifyEmail: m.notifyEmail || "",
+    loginEmail: m.email || "",
+    rooms: rooms.map(r => ({ id:r.id, name:r.name }))
+  });
+});
+
+// Kamer aanmaken
+app.post("/api/hotelchat/rooms/create", (req, res) => {
+  const a = hotelChatAuth(req);
+  if(a.err) return jsonError(res, a.err[0], a.err[1]);
+  const m = a.found.m;
+  const name = String(req.body.name || "").trim().slice(0,40);
+  if(!name) return jsonError(res, 400, "Geef de kamer een naam of nummer.");
+  const rooms = getHotelRooms(m);
+  const room = { id: newRoomId(), name, createdAt: Date.now() };
+  rooms.push(room);
+  saveMerchants();
+  res.json({ ok:true, room: { id:room.id, name:room.name } });
+});
+
+// Kamer hernoemen
+app.post("/api/hotelchat/rooms/rename", (req, res) => {
+  const a = hotelChatAuth(req);
+  if(a.err) return jsonError(res, a.err[0], a.err[1]);
+  const m = a.found.m;
+  const roomId = String(req.body.roomId || "").trim();
+  const name = String(req.body.name || "").trim().slice(0,40);
+  if(!name) return jsonError(res, 400, "Naam ontbreekt.");
+  const r = findRoomInHotel(m, roomId);
+  if(!r) return jsonError(res, 404, "Kamer niet gevonden.");
+  r.name = name;
+  saveMerchants();
+  res.json({ ok:true });
+});
+
+// Kamer verwijderen
+app.post("/api/hotelchat/rooms/delete", (req, res) => {
+  const a = hotelChatAuth(req);
+  if(a.err) return jsonError(res, a.err[0], a.err[1]);
+  const m = a.found.m;
+  const roomId = String(req.body.roomId || "").trim();
+  m.chatRooms = (m.chatRooms || []).filter(r => r.id !== roomId);
+  saveMerchants();
+  res.json({ ok:true });
+});
+
+// Notificatie-e-mailadres instellen (waar gastberichten heen gaan)
+app.post("/api/hotelchat/notify-email", (req, res) => {
+  const a = hotelChatAuth(req);
+  if(a.err) return jsonError(res, a.err[0], a.err[1]);
+  const m = a.found.m;
+  const newEmail = String(req.body.notifyEmail || "").trim().slice(0,120);
+  // leeg = terugvallen op inlog-adres
+  if(newEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(newEmail)){
+    return jsonError(res, 400, "Vul een geldig e-mailadres in.");
+  }
+  m.notifyEmail = newEmail;
+  saveMerchants();
+  res.json({ ok:true, notifyEmail: m.notifyEmail });
+});
+
+// ============================================================
+//  RECEPTIE-PAGINA (kale chat, zonder inlog, via geheime chatKey)
+// ============================================================
+function chatKeyAuth(req, res){
+  const key = String((req.body && req.body.key) || (req.query && req.query.key) || "").trim();
+  const hit = getHotelByChatKey(key);
+  if(!hit){ jsonError(res, 401, "Ongeldige of verlopen link."); return null; }
+  return hit;
+}
+
+// Receptie: lijst van gesprekken (voor in de kale chatpagina)
+app.post("/api/reception/list", (req, res) => {
+  const hit = chatKeyAuth(req, res); if(!hit) return;
+  const code = (hit.m.hotelCode || "").toLowerCase();
+  const store = hotelChats.get(code);
+  const convos = [];
+  if(store){
+    for(const c of store.convos.values()){
+      const unread = c.messages.filter(m => m.from === "guest" && !m.read).length;
+      const last = c.messages[c.messages.length-1];
+      convos.push({ id:c.id, guestName:c.guestName, roomName:c.roomName||"", lastActive:c.lastActive, unread,
+                    lastText: last ? (last.from==="guest" ? (last.textNl||last.text) : last.text) : "" });
+    }
+    convos.sort((a,b)=> b.lastActive - a.lastActive);
+  }
+  res.json({ ok:true, hotelName: hit.m.name || "Hotel", convos });
+});
+
+// Receptie: berichten van één gesprek + markeer gelezen
+app.post("/api/reception/messages", (req, res) => {
+  const hit = chatKeyAuth(req, res); if(!hit) return;
+  const convoId = String(req.body.convoId || "").trim();
+  const code = (hit.m.hotelCode || "").toLowerCase();
+  const store = hotelChats.get(code);
+  if(!store || !store.convos.get(convoId)) return res.json({ ok:true, messages:[], roomName:"", guestName:"" });
+  const convo = store.convos.get(convoId);
+  let changed = false;
+  const out = convo.messages.map(m => {
+    if(m.from === "guest" && !m.read){ m.read = true; changed = true; }
+    return { id:m.id, from:m.from, text: (m.from==="guest" ? (m.textNl||m.text) : m.text), ts:m.ts };
+  });
+  if(changed) saveHotelChatsSoon();
+  res.json({ ok:true, messages: out, roomName: convo.roomName || "", guestName: convo.guestName || "" });
+});
+
+// Receptie: antwoord sturen
+app.post("/api/reception/send", (req, res) => {
+  const hit = chatKeyAuth(req, res); if(!hit) return;
+  const convoId = String(req.body.convoId || "").trim();
+  const text = String(req.body.text || "").trim().slice(0,2000);
+  if(!text) return jsonError(res, 400, "Leeg bericht");
+  const code = (hit.m.hotelCode || "").toLowerCase();
+  const store = hotelChats.get(code);
+  if(!store || !store.convos.get(convoId)) return jsonError(res, 404, "Gesprek niet gevonden");
+  const convo = store.convos.get(convoId);
+  const msg = { id:"h_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
+                from:"hotel", text, srcLang: HOTEL_LANG, ts: Date.now(), tr:{} };
+  convo.messages.push(msg);
+  // Nooit onbeperkt laten groeien: alleen de laatste 500 berichten bewaren.
+  if(convo.messages.length > 500) convo.messages = convo.messages.slice(convo.messages.length - 500);
+  convo.lastActive = Date.now();
+  saveHotelChatsSoon();
+  res.json({ ok:true });
+});
+
+// Receptie: gesprek sluiten en wissen (kamer weer leeg voor de volgende gast)
+app.post("/api/reception/close", (req, res) => {
+  const hit = chatKeyAuth(req, res); if(!hit) return;
+  const convoId = String(req.body.convoId || "").trim();
+  const code = (hit.m.hotelCode || "").toLowerCase();
+  const store = hotelChats.get(code);
+  // Als het gesprek al weg is, is het doel bereikt: meld gewoon succes.
+  if(!store || !store.convos.get(convoId)) return res.json({ ok:true });
+  store.convos.delete(convoId);
+  saveHotelChats();
+  res.json({ ok:true });
+});
+
+
+// ============================================================
+//  DIRECTE LIJN: chat tussen hoteleigenaren en FormForge
+// ------------------------------------------------------------
+//  De eigenaar maakt in het beheerportaal per hotel een kamer aan.
+//  Elke kamer krijgt een geheime sleutel; de link/QR met die sleutel
+//  gaat naar de hotelier, die daarmee direct kan chatten. Berichten
+//  van hoteliers geven de eigenaar een e-mail (max 1 per 15 min per
+//  kamer). Zelfde bouwstenen als de hotelchat: atomair opslaan,
+//  uitgestelde writes, berichtenlimiet en rate limiting.
+// ============================================================
+const directRooms = new Map(); // roomId -> kamer
+const DIRECT_STORE_FILE = path.join(DATA_DIR, "formforge_direct_chats.json");
+const DIRECT_NOTIFY_EMAIL = process.env.DIRECT_NOTIFY_EMAIL || "benwijnen1977@gmail.com";
+const DIRECT_ADMIN_URL = process.env.DIRECT_ADMIN_URL || "https://formforge.nl/directelijn-beheer/";
+
+function loadDirectChats(){
+  try{
+    if(!fs.existsSync(DIRECT_STORE_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(DIRECT_STORE_FILE, "utf8") || "{}");
+    Object.keys(data || {}).forEach(id => {
+      const r = data[id];
+      if(!id || !r || !r.key) return;
+      directRooms.set(id, {
+        id: r.id || id,
+        key: r.key,
+        name: r.name || "Hotel",
+        merchantId: r.merchantId || "",
+        createdAt: r.createdAt || Date.now(),
+        lastActive: r.lastActive || Date.now(),
+        notifiedAt: r.notifiedAt || 0,
+        messages: Array.isArray(r.messages) ? r.messages : []
+      });
+    });
+    console.log("Directe-lijn kamers geladen: " + directRooms.size);
+  }catch(e){
+    console.log("Directe-lijn laden mislukt: " + (e.message||e));
+    rescueCorruptStore(DIRECT_STORE_FILE, e);
+  }
+}
+function saveDirectChats(){
+  try{
+    const data = {};
+    for(const [id, r] of directRooms.entries()) data[id] = r;
+    safeWriteFileSync(DIRECT_STORE_FILE, JSON.stringify(data, null, 2));
+  }catch(e){ console.log("Directe-lijn opslaan mislukt: " + (e.message||e)); }
+}
+let _directSaveTimer = null;
+function saveDirectChatsSoon(){
+  if(_directSaveTimer) return;
+  _directSaveTimer = setTimeout(() => {
+    _directSaveTimer = null;
+    try{ saveDirectChats(); }catch(e){}
+  }, 1500);
+}
+loadDirectChats();
+
+function newDirectRoomId(){
+  return "d_" + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+}
+function newDirectKey(){
+  return "dk" + Date.now().toString(36) + Math.random().toString(36).slice(2,12);
+}
+function directRoomByKey(key){
+  const k = String(key || "").trim();
+  if(!k) return null;
+  for(const r of directRooms.values()){
+    if(r.key === k) return r;
+  }
+  return null;
+}
+// Pushmeldingen naar de eigen toestellen van de eigenaar. De abonnementen
+// worden apart bewaard zodat ze een herstart overleven. Dode abonnementen
+// (toestel verwijderd) worden automatisch opgeruimd.
+const DIRECT_PUSH_FILE = path.join(DATA_DIR, "formforge_direct_push.json");
+let directPushSubs = [];
+function loadDirectPush(){
+  try{
+    if(!fs.existsSync(DIRECT_PUSH_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(DIRECT_PUSH_FILE, "utf8") || "[]");
+    if(Array.isArray(data)) directPushSubs = data;
+    console.log("Directe-lijn pushabonnementen geladen: " + directPushSubs.length);
+  }catch(e){}
+}
+function saveDirectPush(){
+  try{ safeWriteFileSync(DIRECT_PUSH_FILE, JSON.stringify(directPushSubs)); }catch(e){}
+}
+loadDirectPush();
+
+async function notifyDirectPush(room, text){
+  if(!webpush || !VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
+  if(directPushSubs.length === 0) return;
+  const payload = JSON.stringify({
+    title: "Directe lijn - " + room.name,
+    body: String(text || "").slice(0, 140),
+    url: DIRECT_ADMIN_URL + "?room=" + encodeURIComponent(room.id)
+  });
+  let changed = false;
+  for(const sub of directPushSubs.slice()){
+    try{
+      await webpush.sendNotification(sub, payload);
+    }catch(err){
+      if(err && (err.statusCode === 404 || err.statusCode === 410)){
+        directPushSubs = directPushSubs.filter(s => s !== sub);
+        changed = true;
+      }
+    }
+  }
+  if(changed) saveDirectPush();
+}
+
+function directUnread(r){
+  let n = 0;
+  for(const m of r.messages){ if(m.from === "hotel" && !m.read) n++; }
+  return n;
+}
+
+// --- EIGENAAR (beheer, met adminwachtwoord) ---
+app.post("/api/direct/rooms/list", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist beheerwachtwoord.");
+  const rooms = [];
+  for(const r of directRooms.values()){
+    const last = r.messages[r.messages.length - 1];
+    rooms.push({ id: r.id, key: r.key, name: r.name, createdAt: r.createdAt,
+                 lastActive: r.lastActive, unread: directUnread(r),
+                 lastText: last ? last.text : "" });
+  }
+  rooms.sort((a,b) => b.lastActive - a.lastActive);
+  res.json({ ok:true, rooms });
+});
+
+app.post("/api/direct/rooms/create", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist beheerwachtwoord.");
+  const name = String(req.body && req.body.name ? req.body.name : "").trim().slice(0,80);
+  if(!name) return jsonError(res, 400, "Vul een hotelnaam in.");
+  const room = { id: newDirectRoomId(), key: newDirectKey(), name, merchantId: "",
+                 createdAt: Date.now(), lastActive: Date.now(), notifiedAt: 0, messages: [] };
+  directRooms.set(room.id, room);
+  saveDirectChats();
+  res.json({ ok:true, room: { id: room.id, key: room.key, name: room.name } });
+});
+
+app.post("/api/direct/rooms/clear", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist beheerwachtwoord.");
+  const id = String(req.body && req.body.id ? req.body.id : "").trim();
+  const room = directRooms.get(id);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden.");
+  room.messages = [];
+  room.lastActive = Date.now();
+  saveDirectChats();
+  res.json({ ok:true });
+});
+
+app.post("/api/direct/rooms/delete", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist beheerwachtwoord.");
+  const id = String(req.body && req.body.id ? req.body.id : "").trim();
+  if(!directRooms.has(id)) return res.json({ ok:true });
+  directRooms.delete(id);
+  saveDirectChats();
+  res.json({ ok:true });
+});
+
+app.post("/api/direct/messages", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist beheerwachtwoord.");
+  const id = String(req.body && req.body.id ? req.body.id : "").trim();
+  const room = directRooms.get(id);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden.");
+  let changed = false;
+  const out = room.messages.map(m => {
+    if(m.from === "hotel" && !m.read){ m.read = true; changed = true; }
+    return { id: m.id, from: m.from, text: m.text, ts: m.ts };
+  });
+  if(changed) saveDirectChatsSoon();
+  res.json({ ok:true, name: room.name, messages: out });
+});
+
+app.post("/api/direct/send", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist beheerwachtwoord.");
+  const id = String(req.body && req.body.id ? req.body.id : "").trim();
+  const text = String(req.body && req.body.text ? req.body.text : "").trim().slice(0,2000);
+  if(!text) return jsonError(res, 400, "Leeg bericht");
+  const room = directRooms.get(id);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden.");
+  const msg = { id: "f_" + Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+                from: "ff", text, ts: Date.now(), read: true };
+  room.messages.push(msg);
+  if(room.messages.length > 500) room.messages = room.messages.slice(room.messages.length - 500);
+  room.lastActive = Date.now();
+  saveDirectChatsSoon();
+  res.json({ ok:true });
+});
+
+app.post("/api/direct/push-key", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist beheerwachtwoord.");
+  if(!webpush || !VAPID_PUBLIC_KEY) return jsonError(res, 503, "Pushmeldingen zijn niet ingesteld op de server.");
+  res.json({ ok:true, publicKey: VAPID_PUBLIC_KEY });
+});
+
+app.post("/api/direct/push-subscribe", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist beheerwachtwoord.");
+  const sub = req.body && req.body.subscription;
+  if(!sub || !sub.endpoint) return jsonError(res, 400, "Geen geldig abonnement ontvangen.");
+  directPushSubs = directPushSubs.filter(s => s.endpoint !== sub.endpoint);
+  directPushSubs.push(sub);
+  if(directPushSubs.length > 10) directPushSubs = directPushSubs.slice(directPushSubs.length - 10);
+  saveDirectPush();
+  res.json({ ok:true, devices: directPushSubs.length });
+});
+
+app.post("/api/direct/push-test", async (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist beheerwachtwoord.");
+  await notifyDirectPush({ id: "", name: "Testmelding" }, "Pushmeldingen staan aan op dit toestel!");
+  res.json({ ok:true, devices: directPushSubs.length });
+});
+
+// --- HOTELIER (via geheime sleutel uit de link/QR) ---
+app.get("/api/direct/info", (req, res) => {
+  const room = directRoomByKey(req.query && req.query.key);
+  if(!room) return jsonError(res, 401, "Ongeldige of verlopen link.");
+  res.json({ ok:true, name: room.name });
+});
+
+app.post("/api/direct/hotel-poll", (req, res) => {
+  if(rateLimited("dirpoll", clientIp(req), 150, 60 * 1000)){
+    return jsonError(res, 429, "Te veel verzoeken. Wacht heel even.");
+  }
+  const room = directRoomByKey(req.body && req.body.key);
+  if(!room) return jsonError(res, 401, "Ongeldige of verlopen link.");
+  const out = room.messages.map(m => ({ id: m.id, from: m.from, text: m.text, ts: m.ts }));
+  res.json({ ok:true, name: room.name, messages: out });
+});
+
+app.post("/api/direct/hotel-send", (req, res) => {
+  if(rateLimited("dirsend", clientIp(req), 30, 60 * 1000)){
+    return jsonError(res, 429, "Te veel berichten achter elkaar. Wacht heel even.");
+  }
+  const room = directRoomByKey(req.body && req.body.key);
+  if(!room) return jsonError(res, 401, "Ongeldige of verlopen link.");
+  const text = String(req.body && req.body.text ? req.body.text : "").trim().slice(0,2000);
+  if(!text) return jsonError(res, 400, "Leeg bericht");
+  const msg = { id: "h_" + Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+                from: "hotel", text, ts: Date.now(), read: false };
+  room.messages.push(msg);
+  if(room.messages.length > 500) room.messages = room.messages.slice(room.messages.length - 500);
+  room.lastActive = Date.now();
+  saveDirectChatsSoon();
+  // Pushmelding naar de toestellen van de eigenaar, bij ELK bericht.
+  notifyDirectPush(room, text).catch(()=>{});
+  // E-mail naar de eigenaar, hoogstens eens per 15 minuten per kamer.
+  if(DIRECT_NOTIFY_EMAIL && (Date.now() - (room.notifiedAt || 0) > 15 * 60 * 1000)){
+    room.notifiedAt = Date.now();
+    const subject = "Directe lijn - nieuw bericht van " + room.name;
+    const chatLink = DIRECT_ADMIN_URL + "?room=" + encodeURIComponent(room.id);
+    const body =
+      "Er is een nieuw bericht binnengekomen via de directe lijn.\n\n" +
+      "Hotel: " + room.name + "\n" +
+      "Bericht: " + text + "\n\n" +
+      "Klik hier om direct in dit gesprek te antwoorden: " + chatLink + "\n\n" +
+      "Salve - powered by FormForge";
+    const html =
+      "<p>Er is een nieuw bericht binnengekomen via de directe lijn.</p>" +
+      "<p><strong>Hotel:</strong> " + escHtmlServer(room.name) + "<br>" +
+      "<strong>Bericht:</strong> " + escHtmlServer(text) + "</p>" +
+      "<table role='presentation' cellpadding='0' cellspacing='0' style='margin:18px 0;'><tr><td style='background:#c9a24b;border-radius:9px;'>" +
+      "<a href='" + chatLink + "' style='display:inline-block;padding:15px 30px;font-size:16px;font-weight:bold;color:#1e2d4f;text-decoration:none;font-family:Arial,Helvetica,sans-serif;'>Open de chat en antwoord &rarr;</a>" +
+      "</td></tr></table>" +
+      "<p>Salve - powered by FormForge</p>";
+    sendResendEmail({ to: DIRECT_NOTIFY_EMAIL, subject, text: body, html }).catch(()=>{});
+  }
+  res.json({ ok:true });
+});
+
+// --- HOTELIER (vanuit het portaal, met e-mail + pincode) ---
+// Geeft de chatsleutel van de directe-lijn kamer van dit hotel terug.
+// Bestaat die kamer nog niet, dan wordt hij automatisch aangemaakt en
+// verschijnt hij vanzelf in het beheerportaal van de eigenaar.
+app.post("/api/direct/portal-key", (req, res) => {
+  const email = String(req.body && req.body.email ? req.body.email : "").trim();
+  const pin = String(req.body && req.body.pin ? req.body.pin : "").trim();
+  const found = findMerchantByLoginLimited(req, email, pin);
+  if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
+  if(found.m.categoryId !== "hotels") return jsonError(res, 403, "Alleen voor hotels.");
+  const m = found.m;
+  let room = null;
+  for(const r of directRooms.values()){
+    if(r.merchantId && r.merchantId === m.id){ room = r; break; }
+  }
+  if(!room){
+    room = { id: newDirectRoomId(), key: newDirectKey(), name: m.name || "Hotel",
+             merchantId: m.id, createdAt: Date.now(), lastActive: Date.now(),
+             notifiedAt: 0, messages: [] };
+    directRooms.set(room.id, room);
+    saveDirectChats();
+  }else if(m.name && room.name !== m.name){
+    // hotelnaam actueel houden als die in het portaal is gewijzigd
+    room.name = m.name;
+    saveDirectChatsSoon();
+  }
+  res.json({ ok:true, key: room.key, name: room.name });
+});
+
+// Bedrijven van de eigenaar die ALTIJD online + betaald (uitgelicht) zijn,
+// zonder abonnement. Ze krijgen een vaste pincode zodat je altijd in het
+// portaal kunt. De pincode kun je in Render zetten (OWNER_MERCHANT_PIN),
+// anders wordt onderstaande standaard gebruikt.
+const OWNER_MERCHANT_PIN = String(process.env.OWNER_MERCHANT_PIN || "246810");
+const OWNER_MERCHANTS = [
+  { city: "valkenburg", name: "De Generaal", categoryId: "tattoo",
+    email: "info@generaalprojecten.nl",
+    desc: "Tattoo & piercing in Valkenburg.", address: "Rozenlaan 16, Valkenburg" }
+];
+function ensureOwnerMerchants(){
+  for(const o of OWNER_MERCHANTS){
+    const city = o.city.toLowerCase();
+    const list = merchants.get(city) || [];
+    // zoek op naam (hoofdletter-ongevoelig)
+    let m = list.find(x => (x.name||"").toLowerCase().trim() === o.name.toLowerCase().trim());
+    if(!m){
+      m = {
+        id: newMerchantId(), city, categoryId: o.categoryId, name: o.name,
+        desc: o.desc || "", address: o.address || "", email: o.email || "",
+        fields: {}, photos: [], promo: "", promoUntil: 0, stripeCustomerId: "", subscriptionId: ""
+      };
+      list.push(m);
+    }
+    // altijd: online, betaald (uitgelicht), vaste pincode, juiste e-mail
+    m.active = true;
+    m.subscribed = true;
+    m.isOwner = true;
+    m.pin = OWNER_MERCHANT_PIN;
+    if(o.email) m.email = o.email;
+    merchants.set(city, list);
+  }
+  saveMerchants();
+  console.log("Eigenaar-ondernemers gezet (altijd online + betaald).");
+}
+ensureOwnerMerchants();
+
+// --- BEHEER (alleen voor jou, met wachtwoord) ---
+
+// Geef elk hotel (categorie hotels) een korte, vaste code voor zijn QR.
+function makeHotelCode(){
+  return "h" + Math.random().toString(36).slice(2, 7); // bv. h3k9z
+}
+function ensureHotelCodes(city){
+  const list = merchants.get(city) || [];
+  let changed = false;
+  for(const m of list){
+    if(m.categoryId === "hotels" && !m.hotelCode){
+      m.hotelCode = makeHotelCode();
+      changed = true;
+    }
+  }
+  if(changed) saveMerchants();
+  return list;
+}
+
+app.post("/api/admin/merchants", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist wachtwoord");
+  const city = String(req.body.city || "").trim().toLowerCase();
+  const list = ensureHotelCodes(city);
+  res.json({ ok:true, merchants: list });
+});
+
+app.post("/api/admin/merchant-save", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist wachtwoord");
+  const city = String(req.body.city || "").trim().toLowerCase();
+  if(!city || !CITIES[city]) return jsonError(res, 400, "Onbekende stad");
+  const m = req.body.merchant || {};
+  const name = String(m.name || "").trim();
+  if(!name) return jsonError(res, 400, "Naam ontbreekt");
+  const list = merchants.get(city) || [];
+  let existing = m.id ? list.find(x => x.id === m.id) : null;
+  // Geen id meegegeven? Kijk of er al een ondernemer met dezelfde naam bestaat
+  // (hoofdletter-ongevoelig), zodat we geen dubbele toevoegen.
+  if(!existing && !m.id){
+    const norm = name.toLowerCase().replace(/\s+/g, " ").trim();
+    existing = list.find(x => (x.name || "").toLowerCase().replace(/\s+/g, " ").trim() === norm);
+  }
+  let wasDuplicate = false;
+  if(existing){
+    if(!m.id) wasDuplicate = true; // bestond al op naam
+    existing.categoryId = String(m.categoryId || existing.categoryId || "");
+    existing.name = name;
+    existing.desc = String(m.desc || existing.desc || "");
+    existing.address = String(m.address || existing.address || "");
+    existing.email = String(m.email || existing.email || "");
+    if(typeof m.active === "boolean") existing.active = m.active;
+  }else{
+    list.push({
+      id: newMerchantId(),
+      city,
+      categoryId: String(m.categoryId || ""),
+      name,
+      desc: String(m.desc || ""),
+      address: String(m.address || ""),
+      email: String(m.email || ""),
+      active: !!m.active,
+      promo: "", promoUntil: 0,
+      pin: "",
+      stripeCustomerId: ""
+    });
+  }
+  merchants.set(city, list);
+  saveMerchants();
+  res.json({ ok:true, merchants: list, duplicate: wasDuplicate });
+});
+
+app.post("/api/admin/merchant-toggle", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist wachtwoord");
+  const city = String(req.body.city || "").trim().toLowerCase();
+  const id = String(req.body.id || "");
+  const list = merchants.get(city) || [];
+  const m = list.find(x => x.id === id);
+  if(!m) return jsonError(res, 404, "Niet gevonden");
+  const wasActive = m.active;
+  m.active = !m.active;
+  // Bij handmatig AANZETTEN met e-mail: pincode maken en mailen (zelfde als bij betaling)
+  if(m.active && !wasActive && m.email){
+    if(!m.pin) m.pin = makePremiumPin();
+    sendMerchantPinEmail(m).catch(e => console.log("Ondernemer-pinmail mislukt: " + (e.message||e)));
+  }
+  saveMerchants();
+  res.json({ ok:true, active: m.active, merchants: list });
+});
+
+// Admin: zet 'betaald/bovenaan' (subscribed) aan of uit.
+// Voor hotels (gratis unlimited) of om te testen. Geeft ook recht op dagactie.
+app.post("/api/admin/merchant-subscribed", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist wachtwoord");
+  const city = String(req.body.city || "").trim().toLowerCase();
+  const id = String(req.body.id || "");
+  const list = merchants.get(city) || [];
+  const m = list.find(x => x.id === id);
+  if(!m) return jsonError(res, 404, "Niet gevonden");
+  m.subscribed = !m.subscribed;
+  // Een 'betaalde' (uitgelichte) ondernemer moet ook online staan
+  if(m.subscribed) m.active = true;
+  // pincode aanmaken/mailen zodat hij in zijn portaal een actie kan plaatsen
+  if(m.subscribed && m.email){
+    if(!m.pin) m.pin = makePremiumPin();
+    sendMerchantPinEmail(m).catch(e => console.log("Ondernemer-pinmail mislukt: " + (e.message||e)));
+  }
+  saveMerchants();
+  res.json({ ok:true, subscribed: m.subscribed, merchants: list });
+});
+
+app.post("/api/admin/merchant-delete", (req, res) => {
+  if(!adminOk(req)) return jsonError(res, 401, "Onjuist wachtwoord");
+  const city = String(req.body.city || "").trim().toLowerCase();
+  const id = String(req.body.id || "");
+  let list = merchants.get(city) || [];
+  list = list.filter(x => x.id !== id);
+  merchants.set(city, list);
+  saveMerchants();
+  res.json({ ok:true, merchants: list });
+});
+
+app.get("/api/admin/categories", (req, res) => {
+  const city = String(req.query.city || "").trim().toLowerCase();
+  const c = CITIES[city];
+  if(!c) return res.json({ ok:true, categories: [] });
+  res.json({ ok:true, categories: (c.categories || []).map(x => ({ id: x.id, title: x.title })) });
+});
+
+// --- ZOEKEN (voor de ondernemer zelf, openbaar) ---
+app.get("/api/merchant-search", (req, res) => {
+  const city = String(req.query.city || "").trim().toLowerCase();
+  const q = String(req.query.q || "").trim().toLowerCase();
+  if(!city || q.length < 2) return res.json({ ok:true, results: [] });
+  const list = merchants.get(city) || [];
+  const results = list
+    .filter(m => m.name.toLowerCase().includes(q))
+    .map(m => ({ id: m.id, name: m.name, address: m.address, active: m.active }));
+  res.json({ ok:true, results });
+});
+
+// --- ABONNEMENT AFSLUITEN (ondernemer betaalt -> komt automatisch online) ---
+app.post("/api/merchant-subscribe", async (req, res) => {
+  try{
+    const city = String(req.body.city || "").trim().toLowerCase();
+    const merchantId = String(req.body.merchantId || "").trim();
+    const email = String(req.body.email || "").trim();
+    const list = merchants.get(city) || [];
+    const m = list.find(x => x.id === merchantId);
+    if(!m) return jsonError(res, 404, "Onderneming niet gevonden");
+
+    const base = (req.body.baseUrl && String(req.body.baseUrl)) || "";
+    const successUrl = (base || STRIPE_SUCCESS_URL);
+    const cancelUrl = (base || STRIPE_CANCEL_URL);
+
+    const meta = { kind: "merchant", city, merchantId, merchantName: m.name, email };
+    const payload = {
+      mode: "subscription",
+      "line_items": [ { price: STRIPE_MERCHANT_PRICE_ID, quantity: 1 } ],
+      success_url: successUrlWithCheckoutSession(successUrl),
+      cancel_url: cancelUrl,
+      allow_promotion_codes: true,
+      billing_address_collection: "auto",
+      metadata: meta,
+      subscription_data: { metadata: meta }
+    };
+    if(email) payload.customer_email = email;
+
+    const session = await callStripe("/checkout/sessions", payload);
+    // koppel alvast de (toekomstige) klant zodat we later kunnen uitzetten
+    res.json({ ok:true, id: session.id, url: session.url });
+  }catch(err){
+    jsonError(res, 500, "Stripe checkout fout", err.message || String(err));
+  }
+});
+
+// Hulp voor de webhook: zet een onderneming aan/uit op basis van Stripe-metadata
+function setMerchantActiveFromMeta(meta, active, stripeCustomerId, subscriptionId){
+  if(!meta || meta.kind !== "merchant") return false;
+  const city = String(meta.city || "").toLowerCase();
+  const merchantId = String(meta.merchantId || "");
+  const list = merchants.get(city) || [];
+  const m = list.find(x => x.id === merchantId);
+  if(!m) return false;
+  if(active){
+    // BETALING binnen: ondernemer online + betaald (uitgelicht, mag dagactie)
+    const wasSubscribed = m.subscribed;
+    m.active = true;
+    m.subscribed = true;
+    if(stripeCustomerId) m.stripeCustomerId = stripeCustomerId;
+    if(subscriptionId) m.subscriptionId = subscriptionId;
+    if(meta.email && !m.email) m.email = String(meta.email);
+    if(!wasSubscribed){
+      if(!m.pin) m.pin = makePremiumPin();
+      if(m.email){
+        sendMerchantPinEmail(m).catch(e => console.log("Ondernemer-pinmail mislukt: " + (e.message||e)));
+      }
+    }
+    saveMerchants();
+    console.log("Ondernemer BETAALD/online: " + m.name + " (" + city + ")");
+  }else{
+    // OPZEGGEN / verlopen: alleen het BETAALDE deel vervalt.
+    // De ondernemer BLIJFT gratis zichtbaar (active blijft true).
+    if(m.isOwner){ return true; } // eigenaar-bedrijf blijft altijd betaald
+    m.subscribed = false;
+    m.promo = "";           // dagactie weg (was betaald)
+    m.cancelAtPeriodEnd = false;
+    m.visibleUntil = 0;
+    saveMerchants();
+    console.log("Ondernemer terug naar GRATIS (abonnement gestopt): " + m.name + " (" + city + ")");
+  }
+  return true;
+}
+
+// Pincode-mail voor de ondernemer (om in te loggen op het ondernemer-portaal)
+async function sendMerchantPinEmail(m){
+  const isHotel = m.categoryId === "hotels";
+  if(isHotel){
+    const subject = "Uw hotel spreekt vanaf nu elke taal ter wereld";
+    const text =
+      "Beste hotelier,\n\n" +
+      "Een gast uit Tokio wil weten hoe laat het ontbijt begint. Een Braziliaans stel wil 's avonds laat nog " +
+      "roomservice. Een Francaise vraagt naar een restaurant om de hoek. Normaal betekent dat handgebaren, " +
+      "een vertaalapp erbij, of een receptie die het antwoord schuldig blijft.\n\n" +
+      "Vanaf vandaag niet meer. Met Salve spreekt uw hotel 30 talen - zonder dat u ook maar een meertalige " +
+      "medewerker in dienst neemt.\n\n" +
+      "Zo eenvoudig werkt het. Uw gast scant een QR-code op de kamer en typt zijn vraag in zijn eigen taal. " +
+      "Uw receptie krijgt een e-mail met het bericht al vertaald naar het Nederlands, antwoordt gewoon in het " +
+      "Nederlands, en de gast leest het terug in zijn taal. Geen app om te downloaden, geen scherm dat de hele " +
+      "dag open moet, geen ingewikkeld systeem. De taalbarriere is simpelweg weg. Niet onbelangrijk: 64% van " +
+      "de hotelgasten stuurt liever een bericht dan dat ze bellen of aan de balie staan. Salve sluit daar " +
+      "naadloos op aan. (Stap voor stap uitgelegd in de bijlage, pagina 3.)\n\n" +
+      "En er is meer dan de chat. Diezelfde QR-code opent voor uw gast een persoonlijke stadsgids, in zijn " +
+      "eigen taal: de leukste restaurants, bezienswaardigheden en winkels in de buurt, met de route ernaartoe. " +
+      "Daarin staat uitsluitend uw hotel bovenaan, met uw welkom en uw logo. Geen andere hotels, geen " +
+      "concurrentie - alleen u. (Zie de bijlage, pagina 2.)\n\n" +
+      "Wat dat u oplevert: internationale gasten die zich vanaf de eerste minuut welkom voelen, een receptie " +
+      "die eindelijk elke gast kan helpen, en een hotel dat zich onderscheidt zonder dat het u tijd of moeite " +
+      "kost.\n\n" +
+      "Rustig uitproberen, zonder risico. De eerste 3 maanden gebruikt u Salve volledig kosteloos en onbeperkt. " +
+      "U zit nergens aan vast: geen verplichtingen, geen verborgen regels, geen kleine lettertjes. Na 3 maanden " +
+      "nemen wij persoonlijk contact met u op om te horen hoe het bevallen is.\n\n" +
+      "Liever eerst kennismaken? Dat kan. Salve is zo eenvoudig dat u binnen een paar minuten live staat, maar " +
+      "ik kom graag persoonlijk langs om het samen op locatie op te zetten en al uw vragen te beantwoorden. " +
+      "Ik combineer mijn bezoeken in de regio, zodat we snel een moment vinden dat u uitkomt. Stuur gerust een " +
+      "bericht en we plannen een kennismaking. (Meer over wie wij zijn: bijlage, pagina 5.)\n\n" +
+      "Uw abonnement staat al voor u klaar. U hoeft alleen maar in te loggen.\n\n" +
+      "Uw persoonlijke pincode is: " + m.pin + "\n\n" +
+      "Log in op https://formforge.nl/portaal/ met uw e-mailadres (" + m.email + ") en deze pincode. " +
+      "Pincode kwijt? Klik op 'Pincode vergeten?' voor een nieuwe.\n\n" +
+      "Met vriendelijke groet,\nBernard Wijnen\nSalve, powered by FormForge\n\n" +
+      "-----\n" +
+      "Waarom u deze e-mail ontvangt\n" +
+      "Wij begrijpen goed dat u deze e-mail misschien als ongevraagd ervaart, en daarvoor bieden wij onze " +
+      "excuses aan. Als kleine ondernemer is het voor ons simpelweg niet te doen om duizenden hotels in " +
+      "Nederland persoonlijk te bezoeken of per brief aan te schrijven. Wij nemen de wet serieus: ongevraagde " +
+      "e-mail hoort niet zomaar te kunnen. Maar van ondernemer naar ondernemer hopen wij op uw begrip, u stuurt " +
+      "uw eigen gasten immers ook wel eens een bericht. Daarom onze belofte: u ontvangt in totaal maar twee " +
+      "e-mails van ons. Deze, en over drie maanden nog een keer om te horen hoe het is bevallen. Meer niet. " +
+      "Wilt u helemaal geen e-mail meer ontvangen? Stuur dan een mail naar info@formforge.nl, dan halen wij u " +
+      "definitief uit onze lijst en zorgen we dat u er ook nooit meer in terechtkomt.";
+    const html =
+      '<div style="margin:0;padding:0;background:#eef1f6;">' +
+      '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef1f6;padding:24px 0;"><tr><td align="center">' +
+      '<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;box-shadow:0 8px 30px -12px rgba(30,45,79,.35);">' +
+      '<tr><td style="background:#1e2d4f;padding:34px 24px 26px;text-align:center;">' +
+        '<div style="font-size:11px;letter-spacing:6px;color:#c9a24b;font-weight:bold;margin-bottom:6px;">&#9650;&#9650;</div>' +
+        '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:38px;letter-spacing:8px;color:#ffffff;font-weight:bold;line-height:1;">SALVE</div>' +
+        '<div style="font-size:10px;letter-spacing:4px;color:#c9a24b;margin-top:8px;">POWERED BY FORMFORGE</div>' +
+        '<div style="height:2px;width:70px;background:#c9a24b;margin:16px auto 0;"></div>' +
+      '</td></tr>' +
+      '<tr><td style="background:#26365c;padding:16px 24px;text-align:center;">' +
+        '<div style="font-family:Georgia,serif;font-style:italic;font-size:17px;color:#ffffff;">Uw hotel spreekt vanaf nu elke taal ter wereld</div>' +
+      '</td></tr>' +
+      '<tr><td style="padding:30px 34px 10px;">' +
+        '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 16px;">Beste hotelier,</p>' +
+        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">Een gast uit Tokio wil weten hoe laat het ontbijt begint. Een Braziliaans stel wil &lsquo;s avonds laat nog roomservice. Een Fran&ccedil;aise vraagt naar een restaurant om de hoek. Normaal betekent dat handgebaren, een vertaalapp erbij, of een receptie die het antwoord schuldig blijft.</p>' +
+        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">Vanaf vandaag niet meer. Met Salve spreekt uw hotel <strong style="color:#1e2d4f;">30 talen</strong> &ndash; zonder dat u ook maar &eacute;&eacute;n meertalige medewerker in dienst neemt.</p>' +
+        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;"><strong style="color:#1e2d4f;">Zo eenvoudig werkt het.</strong> Uw gast scant een QR-code op de kamer en typt zijn vraag in zijn eigen taal. Uw receptie krijgt een e-mail met het bericht al vertaald naar het Nederlands, antwoordt gewoon in het Nederlands, en de gast leest het terug in zijn taal. Geen app om te downloaden, geen scherm dat de hele dag open moet, geen ingewikkeld systeem. De taalbarri&egrave;re is simpelweg weg. Niet onbelangrijk: 64% van de hotelgasten stuurt liever een bericht dan dat ze bellen of aan de balie staan. Salve sluit daar naadloos op aan. <span style="color:#5c5c5c;">(Stap voor stap uitgelegd in de bijlage, pagina 3.)</span></p>' +
+        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;"><strong style="color:#1e2d4f;">En er is meer dan de chat.</strong> Diezelfde QR-code opent voor uw gast een persoonlijke stadsgids, in zijn eigen taal: de leukste restaurants, bezienswaardigheden en winkels in de buurt, met de route ernaartoe. Daarin staat uitsluitend &uacute;w hotel bovenaan, met uw welkom en uw logo. Geen andere hotels, geen concurrentie &ndash; alleen u. <span style="color:#5c5c5c;">(Zie de bijlage, pagina 2.)</span></p>' +
+        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">Wat dat u oplevert: internationale gasten die zich vanaf de eerste minuut welkom voelen, een receptie die eindelijk &eacute;lke gast kan helpen, en een hotel dat zich onderscheidt zonder dat het u tijd of moeite kost.</p>' +
+        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 8px;"><strong style="color:#1e2d4f;">Rustig uitproberen, zonder risico.</strong> De eerste 3 maanden gebruikt u Salve volledig kosteloos en onbeperkt. U zit nergens aan vast: geen verplichtingen, geen verborgen regels, geen kleine lettertjes. Na 3 maanden nemen wij persoonlijk contact met u op om te horen hoe het bevallen is.</p>' +
+      '</td></tr>' +
+      '<tr><td style="padding:14px 34px 6px;">' +
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#1e2d4f;border-radius:12px;"><tr><td style="padding:20px 24px;text-align:center;">' +
+          '<div style="font-size:12px;letter-spacing:2px;color:#d8b866;font-weight:bold;text-transform:uppercase;margin-bottom:6px;">Uw persoonlijke pincode</div>' +
+          '<div style="font-size:34px;letter-spacing:8px;color:#ffffff;font-weight:bold;">' + m.pin + '</div>' +
+          '<div style="font-size:13px;color:#dfe4ee;margin-top:8px;">Log in met uw e-mailadres (' + m.email + ') en deze pincode.</div>' +
+        '</td></tr></table>' +
+      '</td></tr>' +
+      '<tr><td style="padding:18px 34px 6px;text-align:center;">' +
+        '<table role="presentation" cellpadding="0" cellspacing="0" align="center"><tr><td style="background:#c9a24b;border-radius:9px;">' +
+          '<a href="https://formforge.nl/portaal/" style="display:inline-block;padding:14px 34px;font-size:15px;font-weight:bold;color:#1e2d4f;text-decoration:none;">Inloggen op uw portaal &rarr;</a>' +
+        '</td></tr></table>' +
+        '<div style="font-size:12px;color:#5c5c5c;margin-top:10px;">Pincode kwijt? Klik op &lsquo;Pincode vergeten?&rsquo; voor een nieuwe.</div>' +
+      '</td></tr>' +
+      '<tr><td style="padding:18px 34px 4px;">' +
+        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;"><strong style="color:#1e2d4f;">Liever eerst kennismaken?</strong> Dat kan. Salve is zo eenvoudig dat u binnen een paar minuten live staat, maar ik kom graag persoonlijk langs om het samen op locatie op te zetten en al uw vragen te beantwoorden. Ik combineer mijn bezoeken in de regio, zodat we snel een moment vinden dat u uitkomt. Stuur gerust een bericht en we plannen een kennismaking.</p>' +
+        '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 20px;">&#128206; In de <strong>bijlage</strong> bij deze e-mail leest u in een paar minuten precies hoe Salve werkt, wat het uw gasten biedt en hoe eenvoudig u begint.</p>' +
+        '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 4px;">Met vriendelijke groet,</p>' +
+        '<p style="font-size:15px;line-height:1.4;color:#1e2d4f;font-weight:bold;margin:0;">Bernard Wijnen</p>' +
+        '<p style="font-size:13px;color:#5c5c5c;margin:2px 0 0;">Directeur FormForge</p>' +
+      '</td></tr>' +
+      // AFMELD-SECTIE
+      '<tr><td style="padding:6px 34px 22px;">' +
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f2ee;border:1px solid #e2ddd3;border-radius:12px;"><tr><td style="padding:16px 18px;">' +
+          '<div style="font-size:12.5px;font-weight:bold;color:#1e2d4f;margin-bottom:6px;">Waarom u deze e-mail ontvangt</div>' +
+          '<p style="font-size:12px;line-height:1.6;color:#5c5c5c;margin:0 0 8px;">Wij begrijpen goed dat u deze e-mail misschien als ongevraagd ervaart, en daarvoor bieden wij onze excuses aan. Als kleine ondernemer is het voor ons simpelweg niet te doen om duizenden hotels in Nederland persoonlijk te bezoeken of per brief aan te schrijven.</p>' +
+          '<p style="font-size:12px;line-height:1.6;color:#5c5c5c;margin:0 0 8px;">Wij nemen de wet serieus: ongevraagde e-mail hoort niet zomaar te kunnen. Maar van ondernemer naar ondernemer hopen wij op uw begrip &ndash; u stuurt uw eigen gasten immers ook wel eens een bericht.</p>' +
+          '<p style="font-size:12px;line-height:1.6;color:#5c5c5c;margin:0 0 12px;">Daarom onze belofte: u ontvangt in totaal <strong>maar twee e-mails</strong> van ons. Deze, en over drie maanden nog &eacute;&eacute;n keer om te horen hoe het is bevallen. Meer niet. Wilt u helemaal geen e-mail meer ontvangen? Dan halen wij u definitief uit onze lijst en zorgen we dat u er ook nooit meer in terechtkomt.</p>' +
+          '<table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="border:1.5px solid #b9b2a4;border-radius:8px;">' +
+            '<a href="mailto:info@formforge.nl?subject=Afmelden%20-%20geen%20e-mail%20meer%20van%20Salve&body=Beste%20FormForge%2C%0A%0AIk%20ontvang%20liever%20geen%20e-mail%20meer%20van%20Salve.%20Wilt%20u%20mij%20uit%20de%20lijst%20verwijderen%3F%0A%0AMet%20vriendelijke%20groet%2C" style="display:inline-block;padding:9px 20px;font-size:12.5px;font-weight:bold;color:#5c5c5c;text-decoration:none;font-family:Arial,Helvetica,sans-serif;">Afmelden &ndash; ik wil geen e-mail meer ontvangen</a>' +
+          '</td></tr></table>' +
+        '</td></tr></table>' +
+      '</td></tr>' +
+      '<tr><td style="background:#1e2d4f;padding:16px 24px;text-align:center;border-top:3px solid #c9a24b;">' +
+        '<div style="font-size:12px;color:#dfe4ee;">Salve &middot; powered by FormForge</div>' +
+        '<div style="font-size:12px;color:#c9a24b;margin-top:4px;"><a href="https://www.formforge.nl/salve" style="color:#c9a24b;text-decoration:none;">www.formforge.nl/salve</a> &nbsp;|&nbsp; <a href="mailto:info@formforge.nl" style="color:#c9a24b;text-decoration:none;">info@formforge.nl</a></div>' +
+      '</td></tr>' +
+      '</table></td></tr></table></div>';
+    const attachments = loadHotelPdfAttachment();
+    await sendResendEmail({ to: m.email, subject, text, html, attachments });
+    return;
+  }
+  const cityName = (m.city && CITIES[m.city] && CITIES[m.city].name) ? CITIES[m.city].name : "uw stad";
+  const subject = "U staat gratis in de gids die alle 180 hotels in " + cityName + " met hun gasten delen";
+  const text =
+    "Beste ondernemer,\n\n" +
+    "Er is iets veranderd in " + cityName + ". Alle 180 hotels en B&B's in de stad delen vanaf nu dezelfde " +
+    "meertalige stadsgids met hun gasten: Salve. Gasten scannen op hun kamer een QR-code, openen de gids in " +
+    "hun eigen taal en zien meteen de leukste plekken in de buurt, met de route ernaartoe.\n\n" +
+    "En het goede nieuws: uw onderneming \"" + m.name + "\" staat er volledig gratis in. U hoeft niets te doen om " +
+    "gevonden te worden. Duizenden hotelgasten die op zoek zijn naar een plek zoals die van u, komen u nu " +
+    "vanzelf tegen.\n\n" +
+    "Bij uw vermelding hoort een eigen portaal. Daar controleert u uw gegevens, vult u uw adres, openingstijden " +
+    "en foto's aan en ziet u uw vermelding precies zoals de gasten die zien. Dit portaal is en blijft gratis - " +
+    "er zijn geen kosten en geen verplichtingen. U logt in met de pincode hieronder.\n\n" +
+    "Uw persoonlijke pincode is: " + m.pin + "\n\n" +
+    "Log in op https://formforge.nl/portaal/ met uw e-mailadres (" + m.email + ") en deze pincode. " +
+    "Pincode kwijt? Klik op 'Pincode vergeten?' voor een nieuwe.\n\n" +
+    "Wilt u opvallen tussen de andere ondernemers? Met een uitgelicht abonnement van 29,95 euro per maand " +
+    "komt u bovenaan in uw categorie te staan en plaatst u eigen advertenties en acties (bijvoorbeeld een " +
+    "welkomstkorting voor hotelgasten). Zo bent u niet een van de vermeldingen, maar de eerste die de gast ziet.\n\n" +
+    "Open zeker even de bijlage. Daarin ziet u in een paar minuten hoe Salve werkt en hoe u meer gasten naar " +
+    "uw deur trekt.\n\n" +
+    "Met hartelijke groet,\nBen Wijnen\nDirecteur FormForge\n\n" +
+    "-----\n" +
+    "Waarom u deze e-mail ontvangt\n" +
+    "Wij begrijpen goed dat u deze e-mail misschien als ongevraagd ervaart, en daarvoor bieden wij onze " +
+    "excuses aan. Als kleine ondernemer is het voor ons simpelweg niet te doen om alle ondernemers in " +
+    "Nederland persoonlijk te bezoeken of per brief aan te schrijven. Wij nemen de wet serieus: ongevraagde " +
+    "e-mail hoort niet zomaar te kunnen. Maar van ondernemer naar ondernemer hopen wij op uw begrip, u stuurt " +
+    "uw eigen klanten immers ook wel eens een bericht. Daarom onze belofte: u ontvangt in totaal maar twee " +
+    "e-mails van ons. Deze, en over enige tijd nog een keer. Meer niet. Wilt u helemaal geen e-mail meer " +
+    "ontvangen? Stuur dan een mail naar info@formforge.nl, dan halen wij u definitief uit onze lijst en " +
+    "zorgen we dat u er ook nooit meer in terechtkomt.";
+  const html =
+    '<div style="margin:0;padding:0;background:#eef1f6;">' +
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef1f6;padding:24px 0;"><tr><td align="center">' +
+    '<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;box-shadow:0 8px 30px -12px rgba(30,45,79,.35);">' +
+    '<tr><td style="background:#1e2d4f;padding:34px 24px 26px;text-align:center;">' +
+      '<div style="font-size:11px;letter-spacing:6px;color:#c9a24b;font-weight:bold;margin-bottom:6px;">&#9650;&#9650;</div>' +
+      '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:38px;letter-spacing:8px;color:#ffffff;font-weight:bold;line-height:1;">SALVE</div>' +
+      '<div style="font-size:10px;letter-spacing:4px;color:#c9a24b;margin-top:8px;">POWERED BY FORMFORGE</div>' +
+      '<div style="height:2px;width:70px;background:#c9a24b;margin:16px auto 0;"></div>' +
+    '</td></tr>' +
+    '<tr><td style="background:#26365c;padding:16px 24px;text-align:center;">' +
+      '<div style="font-family:Georgia,serif;font-style:italic;font-size:17px;color:#ffffff;">Alle 180 hotels in ' + escapeHtml(cityName) + ' sturen hun gasten naar deze gids</div>' +
+    '</td></tr>' +
+    '<tr><td style="padding:30px 34px 10px;">' +
+      '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 16px;">Beste ondernemer,</p>' +
+      '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">Er is iets veranderd in ' + escapeHtml(cityName) + '. <strong style="color:#1e2d4f;">Alle 180 hotels en B&amp;B&#39;s</strong> in de stad delen vanaf nu dezelfde meertalige stadsgids met hun gasten: Salve. Gasten scannen op hun kamer een QR-code, openen de gids in hun eigen taal en zien meteen de leukste plekken in de buurt, met de route ernaartoe.</p>' +
+      '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">En het goede nieuws: uw onderneming <strong style="color:#1e2d4f;">' + escapeHtml(m.name) + '</strong> staat er <strong>volledig gratis</strong> in. U hoeft niets te doen om gevonden te worden. Duizenden hotelgasten die op zoek zijn naar een plek zoals die van u, komen u nu vanzelf tegen.</p>' +
+      '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 8px;">Bij uw vermelding hoort een <strong style="color:#1e2d4f;">eigen portaal</strong>. Daar controleert u uw gegevens, vult u uw adres, openingstijden en foto&#39;s aan en ziet u uw vermelding precies zoals de gasten die zien. Dit portaal is en blijft <strong>gratis</strong> &ndash; er zijn geen kosten en geen verplichtingen. U logt in met de pincode hieronder.</p>' +
+    '</td></tr>' +
+    '<tr><td style="padding:14px 34px 6px;">' +
+      '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#1e2d4f;border-radius:12px;"><tr><td style="padding:20px 24px;text-align:center;">' +
+        '<div style="font-size:12px;letter-spacing:2px;color:#d8b866;font-weight:bold;text-transform:uppercase;margin-bottom:6px;">Uw persoonlijke pincode</div>' +
+        '<div style="font-size:34px;letter-spacing:8px;color:#ffffff;font-weight:bold;">' + m.pin + '</div>' +
+        '<div style="font-size:13px;color:#dfe4ee;margin-top:8px;">Log in met uw e-mailadres (' + escapeHtml(m.email) + ') en deze pincode.</div>' +
+      '</td></tr></table>' +
+    '</td></tr>' +
+    '<tr><td style="padding:18px 34px 6px;text-align:center;">' +
+      '<table role="presentation" cellpadding="0" cellspacing="0" align="center"><tr><td style="background:#c9a24b;border-radius:9px;">' +
+        '<a href="https://formforge.nl/portaal/" style="display:inline-block;padding:14px 34px;font-size:15px;font-weight:bold;color:#1e2d4f;text-decoration:none;">Log in op uw portaal &rarr;</a>' +
+      '</td></tr></table>' +
+      '<div style="font-size:12px;color:#5c5c5c;margin-top:10px;">Pincode kwijt? Klik op &lsquo;Pincode vergeten?&rsquo; voor een nieuwe.</div>' +
+    '</td></tr>' +
+    '<tr><td style="padding:16px 34px 6px;">' +
+      '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f7f3ea;border:1px solid #e6dcc2;border-radius:12px;"><tr><td style="padding:20px 22px;">' +
+        '<div style="font-family:Georgia,serif;font-size:16px;color:#1e2d4f;font-weight:bold;margin-bottom:8px;">Wilt u opvallen tussen de rest?</div>' +
+        '<p style="font-size:14px;line-height:1.6;color:#2b2b2b;margin:0 0 10px;">Uw basisvermelding is en blijft gratis. Maar met een <strong style="color:#1e2d4f;">uitgelicht abonnement</strong> komt u <strong>bovenaan</strong> in uw categorie en plaatst u eigen <strong>advertenties en acties</strong>, zoals een welkomstkorting voor hotelgasten. Zo bent u niet <em>een</em> van de vermeldingen, maar de eerste die de gast ziet.</p>' +
+        '<div style="text-align:center;margin-top:6px;"><span style="font-size:30px;color:#1e2d4f;font-weight:bold;">&euro;29,95</span><span style="font-size:14px;color:#5c5c5c;"> per maand</span></div>' +
+      '</td></tr></table>' +
+    '</td></tr>' +
+    '<tr><td style="padding:16px 34px 4px;">' +
+      '<p style="font-size:15px;line-height:1.65;color:#2b2b2b;margin:0 0 16px;">&#128206; Open zeker even de <strong>bijlage</strong> bij deze e-mail. Daarin ziet u in een paar minuten hoe Salve werkt en hoe u meer gasten naar uw deur trekt.</p>' +
+      '<p style="font-size:15px;line-height:1.6;color:#2b2b2b;margin:0 0 4px;">Met hartelijke groet,</p>' +
+      '<p style="font-size:15px;line-height:1.4;color:#1e2d4f;font-weight:bold;margin:0;">Ben Wijnen</p>' +
+      '<p style="font-size:13px;color:#5c5c5c;margin:2px 0 0;">Directeur FormForge</p>' +
+    '</td></tr>' +
+    '<tr><td style="padding:6px 34px 22px;">' +
+      '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f2ee;border:1px solid #e2ddd3;border-radius:12px;"><tr><td style="padding:16px 18px;">' +
+        '<div style="font-size:12.5px;font-weight:bold;color:#1e2d4f;margin-bottom:6px;">Waarom u deze e-mail ontvangt</div>' +
+        '<p style="font-size:12px;line-height:1.6;color:#5c5c5c;margin:0 0 8px;">Wij begrijpen goed dat u deze e-mail misschien als ongevraagd ervaart, en daarvoor bieden wij onze excuses aan. Als kleine ondernemer is het voor ons simpelweg niet te doen om alle ondernemers in Nederland persoonlijk te bezoeken of per brief aan te schrijven.</p>' +
+        '<p style="font-size:12px;line-height:1.6;color:#5c5c5c;margin:0 0 8px;">Wij nemen de wet serieus: ongevraagde e-mail hoort niet zomaar te kunnen. Maar van ondernemer naar ondernemer hopen wij op uw begrip &ndash; u stuurt uw eigen klanten immers ook wel eens een bericht.</p>' +
+        '<p style="font-size:12px;line-height:1.6;color:#5c5c5c;margin:0 0 12px;">Daarom onze belofte: u ontvangt in totaal <strong>maar twee e-mails</strong> van ons. Deze, en over enige tijd nog &eacute;&eacute;n keer. Meer niet. Wilt u helemaal geen e-mail meer ontvangen? Dan halen wij u definitief uit onze lijst en zorgen we dat u er ook nooit meer in terechtkomt.</p>' +
+        '<table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="border:1.5px solid #b9b2a4;border-radius:8px;">' +
+          '<a href="mailto:info@formforge.nl?subject=Afmelden%20-%20geen%20e-mail%20meer%20van%20Salve&body=Beste%20FormForge%2C%0A%0AIk%20ontvang%20liever%20geen%20e-mail%20meer%20van%20Salve.%20Wilt%20u%20mij%20uit%20de%20lijst%20verwijderen%3F%0A%0AMet%20vriendelijke%20groet%2C" style="display:inline-block;padding:9px 20px;font-size:12.5px;font-weight:bold;color:#5c5c5c;text-decoration:none;font-family:Arial,Helvetica,sans-serif;">Afmelden &ndash; ik wil geen e-mail meer ontvangen</a>' +
+        '</td></tr></table>' +
+      '</td></tr></table>' +
+    '</td></tr>' +
+    '<tr><td style="background:#1e2d4f;padding:16px 24px;text-align:center;border-top:3px solid #c9a24b;">' +
+      '<div style="font-size:12px;color:#dfe4ee;">Salve &middot; powered by FormForge</div>' +
+      '<div style="font-size:12px;color:#c9a24b;margin-top:4px;"><a href="https://www.formforge.nl/salve" style="color:#c9a24b;text-decoration:none;">www.formforge.nl/salve</a> &nbsp;|&nbsp; <a href="mailto:info@formforge.nl" style="color:#c9a24b;text-decoration:none;">info@formforge.nl</a></div>' +
+    '</td></tr>' +
+    '</table></td></tr></table></div>';
+  const attachments = loadMerchantPdfAttachment();
+  await sendResendEmail({ to: m.email, subject, text, html, attachments });
+}
+
+// --- ONDERNEMER-PORTAAL (inloggen met e-mail + pincode) ---
+// Zelfde als findMerchantByLogin, maar met bescherming tegen het eindeloos
+// raden van pincodes: mislukte pogingen per IP worden geteld en na te veel
+// mislukkingen wordt het IP tijdelijk geweigerd. Geslaagde logins (zoals het
+// normale pollen van het portaal) tellen niet mee, dus hoteliers merken hier
+// niets van.
+function findMerchantByLoginLimited(req, email, pin){
+  const ip = clientIp(req);
+  if(loginBlocked(ip)) return null;
+  const found = findMerchantByLogin(email, pin);
+  if(!found) noteLoginFail(ip);
+  return found;
+}
+function findMerchantByLogin(email, pin){
+  email = String(email || "").trim().toLowerCase();
+  pin = String(pin || "").trim();
+  if(!email || !pin) return null;
+  for(const [city, list] of merchants.entries()){
+    for(const m of list){
+      if((m.email || "").trim().toLowerCase() === email && String(m.pin || "") === pin){
+        return { city, m };
+      }
+    }
+  }
+  return null;
+}
+
+app.post("/api/merchant/login", (req, res) => {
+  // Rem op inlogpogingen per IP, tegen het raden van pincodes.
+  if(rateLimited("mlogin", clientIp(req), 20, 10 * 60 * 1000)){
+    return jsonError(res, 429, "Te veel inlogpogingen. Probeer het over een paar minuten opnieuw.");
+  }
+  const email = String(req.body.email || "").trim();
+  const pin = String(req.body.pin || "").trim();
+  const found = findMerchantByLoginLimited(req, email, pin);
+  if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet, of uw vermelding is nog niet actief.");
+  if(!found.m.active) return jsonError(res, 403, "Uw vermelding is niet actief. Sluit eerst een abonnement af.");
+  const m = found.m;
+  // Registreer deze login: eerste keer, laatste keer, en teller. Zo ziet de
+  // eigenaar in het adminscherm of (en hoe vaak) een ondernemer/hotelier al
+  // heeft ingelogd. Veldnamen sluiten aan op wat het adminscherm verwacht.
+  const nowIso = new Date().toISOString();
+  if(!m.firstLoginAt) m.firstLoginAt = nowIso;
+  m.lastLoginAt = nowIso;
+  m.loginCount = (typeof m.loginCount === "number" ? m.loginCount : 0) + 1;
+  // Bewaren zonder de gids-cache te raken (login verandert de vermelding niet).
+  saveMerchants(false);
+  // Zorg dat een hotel altijd een hotelcode heeft (voor affiche-QR en chat-kamers).
+  if(m.categoryId === "hotels" && !m.hotelCode){
+    m.hotelCode = (typeof makeHotelCode === "function") ? makeHotelCode()
+      : ("h" + Date.now().toString(36) + Math.random().toString(36).slice(2,6));
+    saveMerchants(false);
+  }
+  const shownPromoL = merchantFieldForPortal(m, "promo") || "";
+  const promoActive = !!(shownPromoL && shownPromoL.trim());
+  res.json({ ok:true, hasPending: hasPendingChange(m), publishInfo: PUBLISH_INFO_TEXT, merchant: {
+    id: m.id, city: found.city, name: m.name, categoryId: m.categoryId,
+    desc: merchantFieldForPortal(m, "desc") || "", address: merchantFieldForPortal(m, "address") || "", email: m.email || "",
+    fields: merchantFieldForPortal(m, "fields") || {}, photos: merchantFieldForPortal(m, "photos") || [],
+    subscribed: !!m.subscribed,
+    promo: promoActive ? shownPromoL : "", promoUntil: m.promoUntil || 0,
+    cancelAtPeriodEnd: !!m.cancelAtPeriodEnd, visibleUntil: m.visibleUntil || 0,
+    isHotel: m.categoryId === "hotels",
+    welcome: merchantFieldForPortal(m, "welcome") || "",
+    logo: merchantFieldForPortal(m, "logo") || "",
+    hotelCode: m.hotelCode || "",
+    scans: m.scans || 0
+  }});
+});
+
+app.post("/api/merchant/update", (req, res) => {
+  const email = String(req.body.email || "").trim();
+  const pin = String(req.body.pin || "").trim();
+  const found = findMerchantByLoginLimited(req, email, pin);
+  if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
+  if(!found.m.active) return jsonError(res, 403, "Uw vermelding is niet actief.");
+  const m = found.m;
+  // Wijzigingen gaan NIET direct live: ze worden klaargezet in m.pending en gaan
+  // de eerstvolgende ochtend om 06:00 (NL-tijd) mee. Tot dan blijft de huidige
+  // (live) versie zichtbaar voor gasten. De ondernemer ziet zijn concept wel.
+  if(typeof req.body.desc === "string") stageMerchantChange(m, "desc", req.body.desc.slice(0, 1000));
+  if(typeof req.body.address === "string") stageMerchantChange(m, "address", req.body.address.slice(0, 120));
+  // Dagactie (alleen voor abonnees). Leeg = geen actie.
+  if(typeof req.body.promo === "string"){
+    if(m.active){
+      stageMerchantChange(m, "promo", req.body.promo.slice(0, 160).trim());
+    }
+  }
+  // Extra, optionele velden die de ondernemer zelf beheert.
+  // We stagen de HELE fields-set (samengevoegd met wat er al leeft/klaarstaat).
+  const allowed = ["hours","phone","website","menu","drinks","mealtimes","schedule","prices","extra"];
+  if(req.body.fields && typeof req.body.fields === "object"){
+    // Begin bij de huidige zichtbare set (pending als die er is, anders live).
+    const baseFields = Object.assign({}, merchantFieldForPortal(m, "fields") || {});
+    for(const k of allowed){
+      if(typeof req.body.fields[k] === "string"){
+        baseFields[k] = req.body.fields[k].slice(0, 500);
+      }
+    }
+    stageMerchantChange(m, "fields", baseFields);
+  }
+  // Foto's: maximaal 3. Nieuwe foto's schrijven we WEL meteen naar disk (het
+  // bestand mag bestaan), maar de VERWIJZING zetten we klaar in pending. Zo
+  // blijven de oude foto's zichtbaar tot 06:00. Oude, vervangen bestanden ruimen
+  // we hier NIET op (dat gebeurt bij publiceren), anders zou de live gids ze missen.
+  if(Array.isArray(req.body.photos)){
+    const saved = [];
+    for(let i = 0; i < Math.min(req.body.photos.length, 3); i++){
+      const p = req.body.photos[i];
+      if(typeof p !== "string") continue;
+      // bestaande bestandsnaam (al opgeslagen foto die behouden blijft)
+      if(/^[a-zA-Z0-9_.-]+\.(jpg|jpeg|png|webp)$/.test(p)){
+        saved.push(p);
+        continue;
+      }
+      // nieuwe foto als data-URL -> naar bestand schrijven
+      const mm = p.match(/^data:image\/(png|jpe?g|webp);base64,([A-Za-z0-9+/=]+)$/);
+      if(mm && p.length < 4000000){
+        const ext = mm[1] === "jpeg" ? "jpg" : mm[1];
+        const fname = m.id + "_" + Date.now() + "_" + i + "." + ext;
+        try{
+          fs.writeFileSync(path.join(PHOTOS_DIR, fname), Buffer.from(mm[2], "base64"));
+          saved.push(fname);
+        }catch(e){ console.log("Foto opslaan mislukt: " + (e.message||e)); }
+      }
+    }
+    stageMerchantChange(m, "photos", saved);
+  }
+  // Welkomsttekst van het hotel (leeg = standaardtekst).
+  if(typeof req.body.welcome === "string"){
+    stageMerchantChange(m, "welcome", req.body.welcome.slice(0, 300).trim());
+  }
+  // Logo van het hotel (1 afbeelding op disk). Nieuw bestand meteen wegschrijven,
+  // verwijzing in pending. Oud logo NIET meteen wissen (blijft live tot 06:00).
+  if(typeof req.body.logo === "string"){
+    const lg = req.body.logo;
+    if(/^[a-zA-Z0-9_.-]+\.(jpg|jpeg|png|webp)$/.test(lg)){
+      stageMerchantChange(m, "logo", lg);
+    }else if(lg === ""){
+      stageMerchantChange(m, "logo", "");
+    }else{
+      const mm = lg.match(/^data:image\/(png|jpe?g|webp);base64,([A-Za-z0-9+/=]+)$/);
+      if(mm && lg.length < 3000000){
+        const ext = mm[1] === "jpeg" ? "jpg" : mm[1];
+        const fname = m.id + "_logo_" + Date.now() + "." + ext;
+        try{
+          fs.writeFileSync(path.join(PHOTOS_DIR, fname), Buffer.from(mm[2], "base64"));
+          stageMerchantChange(m, "logo", fname);
+        }catch(e){ console.log("Logo opslaan mislukt: " + (e.message||e)); }
+      }
+    }
+  }
+  // Bewaar op disk (pending inbegrepen), maar raak de gids-cache NIET: de
+  // wijziging is immers nog niet live. Publiceren gebeurt om 06:00.
+  saveMerchants(false);
+  // Het portaal toont het concept (pending over live) plus de publicatie-uitleg.
+  const shownPromo = merchantFieldForPortal(m, "promo") || "";
+  const promoActive2 = !!(shownPromo && shownPromo.trim());
+  res.json({ ok:true, hasPending: hasPendingChange(m), publishInfo: PUBLISH_INFO_TEXT, merchant: {
+    id: m.id, city: found.city, name: m.name, categoryId: m.categoryId,
+    desc: merchantFieldForPortal(m, "desc") || "", address: merchantFieldForPortal(m, "address") || "", email: m.email || "",
+    fields: merchantFieldForPortal(m, "fields") || {}, photos: merchantFieldForPortal(m, "photos") || [],
+    subscribed: !!m.subscribed,
+    promo: promoActive2 ? shownPromo : "", promoUntil: m.promoUntil || 0,
+    isHotel: m.categoryId === "hotels",
+    welcome: merchantFieldForPortal(m, "welcome") || "",
+    logo: merchantFieldForPortal(m, "logo") || ""
+  }});
+});
+
+// Ondernemer zegt zelf op (vanuit het portaal, met e-mail + pincode)
+app.post("/api/merchant/cancel", async (req, res) => {
+  const email = String(req.body.email || "").trim();
+  const pin = String(req.body.pin || "").trim();
+  const found = findMerchantByLoginLimited(req, email, pin);
+  if(!found) return jsonError(res, 401, "E-mail of pincode klopt niet.");
+  const m = found.m;
+  if(m.isOwner){
+    return res.json({ ok:true, immediate:false, message:"Dit is een vast eigenaar-bedrijf en blijft altijd actief." });
+  }
+  if(!m.subscriptionId){
+    // Geen Stripe-abonnement (bv. handmatig op betaald gezet): alleen het
+    // betaalde deel vervalt. De ondernemer BLIJFT gratis zichtbaar.
+    m.subscribed = false;
+    m.promo = "";
+    m.cancelAtPeriodEnd = false;
+    m.visibleUntil = 0;
+    saveMerchants();
+    return res.json({ ok:true, immediate:true, message:"Uw abonnement is gestopt. Uw gratis vermelding blijft zichtbaar." });
+  }
+  try{
+    // Zeg op AAN HET EIND van de betaalde periode (betaalde voordelen blijven tot dan).
+    const sub = await callStripe("/subscriptions/" + encodeURIComponent(m.subscriptionId), { cancel_at_period_end: true });
+    const until = sub && sub.current_period_end ? sub.current_period_end * 1000 : 0;
+    m.cancelAtPeriodEnd = true;
+    m.visibleUntil = until;
+    saveMerchants();
+    res.json({ ok:true, immediate:false, visibleUntil: until, message:"Uw abonnement is opgezegd. Uw uitgelichte vermelding blijft tot het einde van de betaalde periode, daarna blijft uw gratis vermelding gewoon staan." });
+  }catch(err){
+    jsonError(res, 500, "Opzeggen mislukt: " + (err.message || String(err)));
+  }
+});
+
+// Pincode opnieuw aanvragen: stuur de pincode naar het bekende e-mailadres
+app.post("/api/merchant/forgot-pin", async (req, res) => {
+  const email = String(req.body.email || "").trim().toLowerCase();
+  if(!email) return jsonError(res, 400, "Vul uw e-mailadres in.");
+  // zoek een actieve vermelding met dit e-mailadres
+  let target = null;
+  for(const [city, list] of merchants.entries()){
+    for(const m of list){
+      if((m.email || "").trim().toLowerCase() === email && m.active){ target = m; break; }
+    }
+    if(target) break;
+  }
+  // Altijd hetzelfde antwoord geven (geen info lekken of een e-mail wel/niet bestaat)
+  if(target){
+    if(!target.pin) target.pin = makePremiumPin();
+    saveMerchants();
+    sendMerchantPinEmail(target).catch(e => console.log("Pin-herstuur mislukt: " + (e.message||e)));
+  }
+  res.json({ ok:true, message:"Als dit e-mailadres bij een actieve vermelding hoort, is de pincode opnieuw verstuurd." });
+});
+
+// Gast registreert/voegt huidige kamer toe aan zijn gast-account
+app.post("/api/guest/save-room", (req, res) => {
+  const name = String(req.body && req.body.name ? req.body.name : "").trim();
+  const pin = String(req.body && req.body.pin ? req.body.pin : "").trim();
+  const code = String(req.body && req.body.code ? req.body.code : "").trim();
+  const reconnect = String(req.body && req.body.reconnect ? req.body.reconnect : "").trim();
+  const label = String(req.body && req.body.label ? req.body.label : "").trim();
+  const lang = String(req.body && req.body.lang ? req.body.lang : "").trim();
+  if(!name || !pin) return jsonError(res, 400, "Naam en pincode zijn nodig.");
+  if(pin.length < 4) return jsonError(res, 400, "Kies een pincode van minstens 4 cijfers.");
+  if(!code) return jsonError(res, 400, "Kamercode ontbreekt.");
+  const acc = upsertGuestRoom(name, pin, { code, reconnect, label, lang, ts: Date.now() });
+  res.json({ ok:true, rooms: acc.rooms });
+});
+
+// Gast haalt zijn kamers op met naam + pincode (werkt op elk toestel)
+app.post("/api/guest/my-rooms", (req, res) => {
+  const name = String(req.body && req.body.name ? req.body.name : "").trim();
+  const pin = String(req.body && req.body.pin ? req.body.pin : "").trim();
+  if(!name || !pin) return jsonError(res, 400, "Naam en pincode zijn nodig.");
+  let acc = getGuestAccount(name, pin);
+  if(!acc) return res.json({ ok:true, found:false, rooms:[] });
+  acc = cleanGuestRooms(acc);
+  res.json({ ok:true, found:true, rooms: acc.rooms || [] });
+});
+
+
+function pruneBans(room){
+  if(!room || !room.banAt) return;
+  const now = Date.now();
+  for(const [key, ts] of Array.from(room.banAt.entries())){
+    if(now - ts > ROOM_BAN_MS){
+      room.banAt.delete(key);
+      if(room.banned) room.banned.delete(key);
+    }
+  }
+}
+
+/* Hoeveel regels blijven er in een GRATIS kamer staan? Eentje: zodra de
+   volgende persoon iets verstuurt, is de vorige regel weg. Dat is het verschil
+   met een betaalde kamer, waar de host zelf een bewaartijd kiest. */
+const WORLDCHAT_GRATIS_REGELS = Math.max(1, Number(process.env.WORLDCHAT_GRATIS_REGELS || 1));
+
+/* Hoe lang berichten in een GRATIS kamer blijven staan. Standaard 24 uur, net
+   als de langste keuze in een betaalde kamer. */
+const WORLDCHAT_GRATIS_BEWAAR_MS = Math.max(60, Number(process.env.WORLDCHAT_GRATIS_BEWAAR_SEC || 86400)) * 1000;
+
+/* Hoeveel gratis kamers mag iemand tegelijk open hebben staan? Met credits of
+   een abonnement is er geen grens: elke vertaalde regel wordt dan betaald.
+     WORLDCHAT_GRATIS_MAX_KAMERS   standaard 3
+     WORLDCHAT_GRATIS_KAMER_UREN   een stille gratis kamer wordt na zoveel uur
+                                   opgeruimd, zodat de teller weer ruimte geeft
+                                   (standaard 24; er wordt in zo'n kamer toch
+                                   niets bewaard) */
+const WORLDCHAT_GRATIS_MAX_KAMERS = Math.max(1, Number(process.env.WORLDCHAT_GRATIS_MAX_KAMERS || 3));
+const WORLDCHAT_GRATIS_KAMER_UREN = Math.max(1, Number(process.env.WORLDCHAT_GRATIS_KAMER_UREN || 24));
+
+/* Hoeveel gratis kamers staan er nu open op naam van dit adres? */
+function wcGratisKamersVan(ip){
+  let n = 0;
+  try{
+    for(const r of rooms.values()){
+      if(r && r.freeMode && r.makerIp && r.makerIp === ip) n++;
+    }
+  }catch(e){}
+  return n;
+}
+
+function pruneRoom(room){
+  /* Gratis kamers bewaren hun berichten 24 uur, net als de langste keuze in een
+     betaalde kamer. Eerder bleef hier alleen de laatste regel staan; dat werd
+     als kapot ervaren zodra er meer dan twee mensen meepraatten. Het verschil
+     tussen gratis en betaald zit nu in het vertalen, niet in de bewaartijd. */
+  if(room.freeMode && !room.msgTtlMs){
+    room.msgTtlMs = WORLDCHAT_GRATIS_BEWAAR_MS;
+  }
+  // Als de host een bewaartijd heeft ingesteld (msgTtlMs > 0): verwijder berichten
+  // die ouder zijn dan die tijd. Media telt vanaf het moment van ophalen (firstSeenAt),
+  // tekst vanaf verzendtijd. msgTtlMs = 0 betekent permanent (blijft staan).
+  if(room.msgTtlMs && room.msgTtlMs > 0){
+    const now = Date.now();
+    room.messages = room.messages.filter((m) => {
+      if(m.media){
+        if(!m.media.firstSeenAt) return (now - m.ts) < Math.max(room.msgTtlMs, 120000);
+        return (now - m.media.firstSeenAt) < room.msgTtlMs;
+      }
+      return (now - m.ts) < room.msgTtlMs;
+    });
+  }
+  // Veiligheidsklep: bij extreem veel berichten bewaren we alleen de laatste 5000,
+  // zodat de server nooit volloopt. In normaal gebruik merkt niemand dit.
+  const MAX_MESSAGES = 5000;
+  if(room.messages.length > MAX_MESSAGES){
+    room.messages = room.messages.slice(room.messages.length - MAX_MESSAGES);
+  }
+  // Deelnemers blijven in de kamer staan (ook als hun scherm uit staat of de app
+  // op de achtergrond draait). Ze verdwijnen alleen als ze zelf weggaan of worden
+  // verwijderd door de host. Geen automatische opruiming op stilte.
+}
+
+function cleanupRooms(){
+  for(const [code,room] of rooms.entries()){
+    pruneRoom(room);
+    // Permanente kamers NIET verwijderen, ook niet als ze leeg/stil zijn.
+  }
+}
+setInterval(cleanupRooms, 5000);
+
+// Eenvoudige vertaalcache: sleutel = van|naar|tekst  -> { text, ts }
+const roomTransCache = new Map();
+const ROOM_TRANS_TTL_MS = 24 * 60 * 60 * 1000;
+const ROOM_TRANS_MAX = 5000;
+function transCacheKey(from,to,text){ return from+"|"+to+"|"+text; }
+function getCachedTranslation(from,to,text){
+  const k=transCacheKey(from,to,text);
+  const hit=roomTransCache.get(k);
+  /* Een dag geldig in plaats van een minuut. Dezelfde zin ("goedemorgen",
+     "hoe laat is het ontbijt") wordt zo nog maar een keer per dag betaald in
+     plaats van elke minuut opnieuw. Blijft in het geheugen: chatzinnen van
+     gasten horen niet blijvend op de schijf. */
+  if(hit && (Date.now()-hit.ts) < ROOM_TRANS_TTL_MS) return hit.text;
+  return null;
+}
+function setCachedTranslation(from,to,text,translated){
+  roomTransCache.set(transCacheKey(from,to,text), { text: translated, ts: Date.now() });
+  if(roomTransCache.size > ROOM_TRANS_MAX){
+    // simpele opschoning
+    const firstKey = roomTransCache.keys().next().value;
+    roomTransCache.delete(firstKey);
+  }
+}
+
+// Volledige taalnamen zodat het AI-model precies weet naar welke taal vertaald moet worden
+// (kale codes als "de"/"nl" leidden tot verkeerde of Engelse vertalingen)
+const LANG_NAMES = {
+  en: "English", nl: "Dutch", de: "German", fr: "French", es: "Spanish",
+  it: "Italian", pt: "Portuguese", pl: "Polish", tr: "Turkish", ar: "Arabic",
+  uk: "Ukrainian", ru: "Russian", zh: "Chinese", ja: "Japanese", ko: "Korean",
+  hi: "Hindi", id: "Indonesian", th: "Thai", vi: "Vietnamese", ro: "Romanian",
+  cs: "Czech", sv: "Swedish",
+  hu: "Hungarian", el: "Greek", da: "Danish", fi: "Finnish", no: "Norwegian",
+  sk: "Slovak", hr: "Croatian", bg: "Bulgarian"
+};
+function langName(code){
+  return LANG_NAMES[String(code || "").toLowerCase()] || String(code || "");
+}
+
+async function translateText(text, from, to){
+  if(!text) return "";
+  if(from === to) return text;
+  const cached = getCachedTranslation(from,to,text);
+  if(cached !== null) return cached;
+  const fromName = langName(from);
+  const toName = langName(to);
+  const out = await callOpenAI([
+    { role:"system", content:"You are a professional translation engine for a hotel guest chat. Translate the ENTIRE message into " + toName + ". Every single word must end up in " + toName + " - never leave any word in the original language or any other language. Auto-detect the source language yourself; the sender may have mislabeled it. Do not add explanations, notes, quotes or the original text. Keep only proper names, numbers, emoji and links unchanged. Output nothing but the finished " + toName + " translation." },
+    { role:"user", content:"Translate this into " + toName + " (detect the source language automatically). Return only the full " + toName + " translation:\n\n" + text }
+  ], 0.1);
+  setCachedTranslation(from,to,text,out);
+  return out;
+}
+
+// ===== STADSGIDS-VERTALING (aparte, hogere kwaliteit) =====
+// Eigen cache met lange bewaartijd. De versie-tag (v2) zorgt dat oude, slechte
+// vertalingen niet meer worden hergebruikt: verhoog het nummer om alles te
+// verversen na een promptwijziging.
+const GUIDE_TRANS_VERSION = "v2";
+const guideTransCache = new Map();
+
+// ==== Gidstekst-vertalingen op de persistente disk ====
+// De losse gidsteksten (hotelbanner, beschrijvingen, openingstijden, menu, enz.)
+// zijn duur om te vertalen (AI). We bewaren ze op de disk zodat ze een herstart
+// of nieuwe deploy overleven; anders zou de eerste bezoeker per taal na elke
+// herstart opnieuw 10-15 seconden moeten wachten.
+const GUIDETRANS_FILE = path.join(DATA_DIR, "salve_guide_trans.json");
+function loadGuideTransCache(){
+  try{
+    if(!fs.existsSync(GUIDETRANS_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(GUIDETRANS_FILE, "utf8") || "{}");
+    Object.keys(data || {}).forEach(key => guideTransCache.set(key, data[key]));
+    console.log("Gidstekst-vertaalcache geladen: " + guideTransCache.size + " items");
+  }catch(e){ console.log("Gidstekst-vertaalcache laden mislukt: " + (e.message||e)); }
+}
+// Debounced opslaan: niet bij elke vertaling naar de disk schrijven, maar kort
+// verzamelen en dan in een keer wegschrijven. Dat spaart de disk bij een warm-up
+// die snel achter elkaar veel teksten vertaalt.
+const GIDS_CACHE_MAX = Math.max(50000, Number(process.env.GIDS_CACHE_MAX || 200000));
+let _guideTransSaveTimer = null;
+function saveGuideTransCacheNow(){
+  try{
+    const data = {};
+    for(const [k, v] of guideTransCache.entries()) data[k] = v;
+    safeWriteFileSync(GUIDETRANS_FILE, JSON.stringify(data));
+  }catch(e){ console.log("Gidstekst-vertaalcache opslaan mislukt: " + (e.message||e)); }
+}
+function saveGuideTransCacheSoon(){
+  if(_guideTransSaveTimer) return;
+  _guideTransSaveTimer = setTimeout(() => {
+    _guideTransSaveTimer = null;
+    saveGuideTransCacheNow();
+  }, 8000);
+}
+
+function guideCacheKey(from,to,text){ return GUIDE_TRANS_VERSION+"|"+from+"|"+to+"|"+text; }
+/* GEEN vervaltijd meer. De cachesleutel IS de brontekst: wijzigt een ondernemer
+   zijn tekst, dan ontstaat vanzelf een nieuwe sleutel en wordt die ene tekst
+   opnieuw vertaald. Een vertaling na een week laten vervallen betekende dus
+   alleen dat je precies dezelfde vertaling nog een keer betaalde. */
+function getGuideTranslation(from,to,text){
+  const hit = guideTransCache.get(guideCacheKey(from,to,text));
+  if(hit && typeof hit.text === "string") return hit.text;
+  return null;
+}
+function setGuideTranslation(from,to,text,translated){
+  guideTransCache.set(guideCacheKey(from,to,text), { text: translated, ts: Date.now() });
+  /* Bovengrens ruim genoeg voor alle ondernemers maal alle talen. Zat hij te
+     laag, dan gooide hij de oudste vertalingen weg die daarna opnieuw betaald
+     moesten worden. */
+  while(guideTransCache.size > GIDS_CACHE_MAX){
+    const firstKey = guideTransCache.keys().next().value;
+    guideTransCache.delete(firstKey);
+  }
+  saveGuideTransCacheSoon();
+}
+loadGuideTransCache();
+
+// Vertaalt één stuk gidstekst (beschrijving, openingstijden, menu, enz.) naar de
+// taal van de toerist. Gebruikt een prompt die past bij een reis-/stadsgids en
+// een sterker model voor natuurlijker resultaat. Valt bij fouten stil terug op
+// de gewone chatvertaling, en daarna op de originele tekst.
+// Speciale vertaler voor de gast<->hotel chat: sterk model (gpt-4o),
+// met een prompt die past bij korte chatberichten (geen brochure-toon).
+// Deduplicatie van gelijktijdige identieke chatvertalingen: als twee polls
+// precies dezelfde tekst naar dezelfde taal vragen terwijl de eerste vertaling
+// nog loopt, wachten ze op dezelfde OpenAI-aanroep in plaats van dubbel te
+// betalen voor hetzelfde resultaat.
+const _chatTransInflight = new Map();
+function translateChat(text, from, to){
+  if(!text) return Promise.resolve("");
+  if(from === to) return Promise.resolve(String(text));
+  const key = from + "|" + to + "|" + String(text);
+  const running = _chatTransInflight.get(key);
+  if(running) return running;
+  const p = translateChatNow(text, from, to);
+  _chatTransInflight.set(key, p);
+  const cleanup = () => { _chatTransInflight.delete(key); };
+  p.then(cleanup, cleanup);
+  return p;
+}
+
+async function translateChatNow(text, from, to){
+  if(!text) return "";
+  if(from === to) return text;
+  const src = String(text);
+  const fromName = langName(from);
+  const toName = langName(to);
+  try{
+    const out = await callOpenAI([
+      { role:"system", content:
+        "You translate short chat messages between a hotel guest and the hotel reception. " +
+        "Translate the message from " + fromName + " into natural, everyday, polite " + toName + ". " +
+        "Translate the WHOLE message; never leave any word in the source language or a third language. " +
+        "Auto-detect the real source language if it differs from what is stated. " +
+        "Keep the tone natural and conversational, as a person would actually write in a chat. " +
+        "Preserve names, numbers, prices, times, phone numbers, URLs and emoji exactly. " +
+        "Output ONLY the translation in " + toName + " - no quotes, no notes, no explanation, no other language." },
+      { role:"user", content: src }
+    ], 0.2, OPENAI_CHAT_MODEL);
+    const clean = String(out || "").trim();
+    if(clean) return clean;
+  }catch(e){}
+  return src;
+}
+
+async function translateGuideText(text, from, to){
+  if(!text) return "";
+  if(from === to) return text;
+  const src = String(text);
+  const cached = getGuideTranslation(from,to,src);
+  if(cached !== null) return cached;
+  const fromName = langName(from);
+  const toName = langName(to);
+  try{
+    const out = await callOpenAI([
+      { role:"system", content:
+        "You are a professional translator for a tourist city guide. " +
+        "Translate the text from " + fromName + " into natural, fluent, native-sounding " + toName + ", " +
+        "as a local tourism brochure would read. Keep the original meaning and tone (friendly and inviting). " +
+        "Preserve proper names (restaurants, streets, towns, dishes), numbers, prices, times, phone numbers, " +
+        "URLs and emoji exactly as they are. Do not translate brand or place names. " +
+        "Adapt opening hours, days and units to how they are normally written in " + toName + ". " +
+        "Output ONLY the translation in " + toName + " - no quotes, no notes, no other language." },
+      { role:"user", content: src }
+    ], 0.2, OPENAI_GUIDE_MODEL);
+    const clean = String(out || "").trim();
+    if(clean){
+      setGuideTranslation(from,to,src,clean);
+      return clean;
+    }
+  }catch(e){
+    // sterker model niet bereikbaar? probeer de gewone vertaler
+    try{ return await translateText(src, from, to); }catch(e2){}
+  }
+  return src;
+}
+
+// Kamer maken
+app.post("/api/room/create", (req, res) => {
+  const wantFree = !!(req.body && (req.body.freeRoom === true || req.body.freeRoom === "true"));
+
+  let gate = { ok:true, accountKey:"", email:"", plan:"", saldo:-1 };
+
+  /* Geblokkeerd? Dan ook geen gratis kamer meer. Anders is een blokkade een
+     lege huls: de gratis kant is juist waar misbruik zit. */
+  const blokMail = (req.body && (req.body.email || req.body.mail)) || "";
+  if(blokMail && wcGeblokkeerd(blokMail)){
+    return res.status(403).json({ error: "Dit account is geblokkeerd. Neem contact op via info@formforge.nl." });
+  }
+
+  if(!wantFree){
+    /* Vertaalkamer: Unlimited of credits met saldo. */
+    gate = requireChatTegoed(req);
+    if(!gate.ok) return res.status(gate.status || 403).json({ error: gate.error, creditsOp: !!gate.creditsOp });
+    /* Bij afrekenen per kamer gaat de credit er meteen af. */
+    if(WORLDCHAT_CREDIT_PER === "kamer" && gate.plan !== "pro"){
+      if(!wcNeemCredit(gate.accountKey)){
+        return res.status(402).json({ error:"Je credits zijn op.", creditsOp:true });
+      }
+    }
+  }
+  // Gratis kamer: iedereen mag er een aanmaken, geen abonnement nodig.
+
+  const name = String(req.body && req.body.name ? req.body.name : "").trim().slice(0,40);
+  const lang = String(req.body && req.body.lang ? req.body.lang : "").trim() || "en";
+  if(!name) return jsonError(res, 400, "Naam ontbreekt");
+
+  /* Gratis kamers zijn begrensd. Wie betaalt mag er zoveel openen als hij wil,
+     want daar staat verbruik tegenover. */
+  const makerIp = clientIp(req);
+  if(wantFree){
+    const open = wcGratisKamersVan(makerIp);
+    if(open >= WORLDCHAT_GRATIS_MAX_KAMERS){
+      return res.status(403).json({
+        error: "Je hebt al " + open + " gratis kamers open staan. Sluit er een of neem credits.",
+        gratisMax: WORLDCHAT_GRATIS_MAX_KAMERS
+      });
+    }
+  }
+  const code = makeRoomCode();
+  const memberId = "m_" + Date.now() + "_" + Math.random().toString(36).slice(2,8);
+  // Bewaartijd voor berichten: 0 = permanent, anders milliseconden tot verdwijnen.
+  let msgTtlMs = 0;
+  /* Een gratis kamer krijgt vast 24 uur; daar valt niets te kiezen. */
+  if(wantFree) msgTtlMs = WORLDCHAT_GRATIS_BEWAAR_MS;
+  const rawTtl = req.body && req.body.msgTtlSec;
+  if(!wantFree && rawTtl !== undefined && rawTtl !== null && rawTtl !== ""){
+    const sec = parseInt(rawTtl, 10);
+    if(!isNaN(sec) && sec > 0){
+      msgTtlMs = Math.min(sec, 30*24*60*60) * 1000; // max 30 dagen
+    }else if(sec === 0){
+      /* Permanent bewaren. Alleen voor Unlimited: bij credits zou een kamer
+         eindeloos blijven groeien op een tegoed dat opraakt. Heeft de klant
+         geen Unlimited, dan valt hij terug op 24 uur. */
+      msgTtlMs = (wcSaldo(gate.accountKey) === -1) ? 0 : (24 * 60 * 60 * 1000);
+    }
+  }
+  /* De host mag zijn kamer een naam geven, bijvoorbeeld "Receptie" of
+     "Familie". Laat hij het leeg, dan blijft de kamercode de aanduiding. */
+  const kamerNaam = String((req.body && req.body.roomName) || "").trim().slice(0, 60);
+
+  const room = { naam: kamerNaam, code, createdAt: Date.now(), lastActive: Date.now(), members: new Map(), messages: [], translationsToday: 0, translationDay: roomToday(), hostName: name, hostLang: lang, hostKey: gate.accountKey || "", hostEmail: gate.email || "", banned: new Set(), banAt: new Map(), persistent: true, freeMode: wantFree, roomLang: wantFree ? lang : "", msgTtlMs: msgTtlMs, makerIp: makerIp };
+  room.members.set(memberId, { id: memberId, name, lang, lastSeen: Date.now(), isHost: true });
+  rooms.set(code, room);
+  saveRooms();
+  const reconnect = issueReconnectToken(code, name, lang, true);
+  res.json({ ok:true, code, memberId, name, lang, isHost:true, reconnect, naam: room.naam || "", freeMode: !!room.freeMode });
+});
+
+// Kamer joinen
+app.post("/api/room/join", (req, res) => {
+  const code = String(req.body && req.body.code ? req.body.code : "").trim();
+  const name = String(req.body && req.body.name ? req.body.name : "").trim().slice(0,40);
+  const lang = String(req.body && req.body.lang ? req.body.lang : "").trim() || "en";
+  const token = String(req.body && req.body.token ? req.body.token : "").trim();
+  if(!name) return jsonError(res, 400, "Naam ontbreekt");
+  const room = rooms.get(code);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden. Controleer de code.");
+  // Verwijderde personen even buiten houden
+  pruneBans(room);
+  const banKey = name.toLowerCase();
+  if(room.banned && room.banned.has(banKey)){
+    return jsonError(res, 403, "Je bent uit deze kamer verwijderd.");
+  }
+
+  // Gasten hebben een geldige, eenmalige uitnodiging nodig.
+  // (Dit voorkomt dat een doorgestuurde link of kale code werkt.)
+  const inv = token ? roomInvites.get(token) : null;
+  const now = Date.now();
+  if(!inv || inv.code !== code || inv.expiresAt <= now || inv.uses >= inv.maxUses){
+    return jsonError(res, 403, "Deze uitnodiging is ongeldig of verlopen. Vraag de host om een nieuwe link.");
+  }
+
+  // Directe lijn: is er al een gast aanwezig, dan is de lijn bezet. Dit staat
+  // voor het verbruiken van de uitnodiging, zodat die geldig blijft.
+  const directeLijn = isDirecteLijn(code);
+  if(directeLijn && directeLijnBezet(room)){
+    return jsonError(res, 409, DIRECTE_LIJN_BEZET);
+  }
+  // Token verbruiken
+  inv.uses += 1;
+  if(inv.uses >= inv.maxUses) roomInvites.delete(token);
+  saveInvites();
+
+  // Verwijder oude versies van dezelfde gast (zelfde naam, niet-host) zodat er
+  // geen dubbele leden ontstaan bij opnieuw joinen.
+  const joinName = String(name || "").trim().toLowerCase();
+  for(const [mid, mem] of Array.from(room.members.entries())){
+    if(!mem.isHost && String(mem.name || "").trim().toLowerCase() === joinName){
+      room.members.delete(mid);
+      removeRoomPush(code, mid);
+    }
+  }
+
+  /* Ook in een gratis kamer mag iedereen zijn eigen taal kiezen. Er wordt in
+     zo'n kamer niets vertaald, dus die keuze bepaalt alleen wat er bij zijn
+     naam staat en in welke taal hij zelf typt. Vroeger werd de keuze hier
+     overschreven met de kamertaal, waardoor het leek alsof kiezen niet kon. */
+  const useLang = lang;
+
+  // Directe lijn: nieuw gesprek, dus de berichten van de vorige gast weg.
+  if(directeLijn){ room.messages = []; room.dlLaatsteGast = Date.now(); }
+
+  const memberId = "m_" + Date.now() + "_" + Math.random().toString(36).slice(2,8);
+  room.members.set(memberId, { id: memberId, name, lang: useLang, lastSeen: Date.now() });
+  room.lastActive = Date.now();
+  const reconnect = issueReconnectToken(code, name, useLang, false);
+  res.json({ ok:true, code, memberId, name, lang: useLang, reconnect, freeMode: !!room.freeMode, naam: room.naam || "" });
+});
+
+// Bestaand lid herverbindt (na korte stilte of herstart) zonder nieuwe uitnodiging
+app.post("/api/room/rejoin", (req, res) => {
+  const rcToken = String(req.body && req.body.reconnect ? req.body.reconnect : "").trim();
+  const r = rcToken ? reconnectTokens.get(rcToken) : null;
+  if(!r || r.expiresAt <= Date.now()) return jsonError(res, 403, "Sessie verlopen. Vraag de host om een nieuwe link.");
+  const room = rooms.get(r.code);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden.");
+  // geband? dan ook geen reconnect
+  pruneBans(room);
+  if(room.banned && room.banned.has(String(r.name||"").toLowerCase())){
+    reconnectTokens.delete(rcToken);
+    return jsonError(res, 403, "Je bent uit deze kamer verwijderd.");
+  }
+  // Directe lijn: een gast die later terugkomt terwijl er al een andere gast
+  // in gesprek is, krijgt de melding dat de lijn bezet is.
+  const sameName = String(r.name || "").trim().toLowerCase();
+  const wantHost = !!r.isHost;
+  if(!wantHost && isDirecteLijn(r.code)){
+    directeLijnActieveGasten(room);
+    for(const mem of room.members.values()){
+      if(!mem.isHost && String(mem.name || "").trim().toLowerCase() !== sameName){
+        return jsonError(res, 409, DIRECTE_LIJN_BEZET);
+      }
+    }
+  }
+
+  // Verwijder eerst eventuele oude versies van DEZELFDE persoon (zelfde naam +
+  // host-status). Anders stapelen oude "geesten" zich op nu leden niet meer
+  // automatisch op stilte worden opgeruimd.
+  for(const [mid, mem] of Array.from(room.members.entries())){
+    if(String(mem.name || "").trim().toLowerCase() === sameName && !!mem.isHost === wantHost){
+      room.members.delete(mid);
+      removeRoomPush(r.code, mid);
+    }
+  }
+
+  const memberId = "m_" + Date.now() + "_" + Math.random().toString(36).slice(2,8);
+  const isHost = !!r.isHost;
+  room.members.set(memberId, { id: memberId, name: r.name, lang: r.lang, lastSeen: Date.now(), isHost });
+  room.lastActive = Date.now();
+  res.json({ ok:true, code: r.code, memberId, name: r.name, lang: r.lang, isHost, naam: room.naam || "", freeMode: !!room.freeMode });
+});
+
+// Host maakt een eenmalige / verlopende uitnodiging aan
+app.post("/api/room/invite", (req, res) => {
+  const code = String(req.body && req.body.code ? req.body.code : "").trim();
+  const memberId = String(req.body && req.body.memberId ? req.body.memberId : "").trim();
+  const room = rooms.get(code);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden");
+  const me = room.members.get(memberId);
+  if(!me || !me.isHost) return jsonError(res, 403, "Alleen de host kan een uitnodiging maken.");
+
+  const kind = String(req.body && req.body.kind ? req.body.kind : "single").toLowerCase();
+
+  let maxUses, ttlMs;
+  if(kind === "company"){
+    // Blijvende, herbruikbare bedrijfscode voor een gedrukte brief/QR.
+    maxUses = INVITE_MAX_USES_CAP;      // effectief onbeperkt aantal mensen
+    ttlMs = INVITE_MAX_TTL_MS;          // jarenlang geldig
+  }else{
+    // Eén persoon: geen tijdsdruk, vervalt zodra hij gebruikt is.
+    maxUses = 1;
+    ttlMs = INVITE_MAX_TTL_MS;          // geen 10-minuten-limiet meer; vervalt op gebruik
+  }
+
+  // host mag desgewenst zelf maxUses/ttl meegeven (binnen de caps)
+  const reqUses = parseInt(req.body && req.body.maxUses, 10);
+  if(Number.isFinite(reqUses) && reqUses >= 1) maxUses = Math.min(reqUses, INVITE_MAX_USES_CAP);
+  const reqTtl = parseInt(req.body && req.body.ttlMs, 10);
+  if(Number.isFinite(reqTtl) && reqTtl >= 30000) ttlMs = Math.min(reqTtl, INVITE_MAX_TTL_MS);
+
+  const token = makeInviteToken();
+  const expiresAt = Date.now() + ttlMs;
+  roomInvites.set(token, { code, maxUses, uses: 0, expiresAt, kind });
+  saveInvites();
+  res.json({ ok:true, token, maxUses, expiresAt, ttlMs, kind });
+});
+
+// Bericht sturen
+app.post("/api/room/send", (req, res) => {
+  const code = String(req.body && req.body.code ? req.body.code : "").trim();
+  const memberId = String(req.body && req.body.memberId ? req.body.memberId : "").trim();
+  const text = String(req.body && req.body.text ? req.body.text : "").trim().slice(0,2000);
+  const room = rooms.get(code);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden");
+  const member = room.members.get(memberId);
+  if(!member) return jsonError(res, 403, "Je zit niet (meer) in deze kamer. Join opnieuw.");
+  if(!text) return jsonError(res, 400, "Leeg bericht");
+  member.lastSeen = Date.now();
+  room.lastActive = Date.now();
+  const msg = {
+    id: "rm_" + Date.now() + "_" + Math.random().toString(36).slice(2,8),
+    senderId: member.id,
+    senderName: member.name,
+    srcLang: member.lang,
+    text,
+    ts: Date.now(),
+    translations: {} // wordt gevuld bij ophalen per lezer-taal
+  };
+  room.messages.push(msg);
+  if(room.freeMode) pruneRoom(room);   /* gratis: alleen de laatste regel blijft */
+
+  // Stuur een pushmelding naar alle ANDERE leden van de kamer
+  notifyRoom(code, member.id, {
+    title: member.name + " in kamer " + code,
+    body: text.slice(0, 120),
+    code: code,
+    tag: "room-" + code
+  }).catch(()=>{});
+
+  res.json({ ok:true, id: msg.id });
+});
+
+// Berichten ophalen, vertaald naar de taal van de lezer
+app.post("/api/room/poll", async (req, res) => {
+  const code = String(req.body && req.body.code ? req.body.code : "").trim();
+  const memberId = String(req.body && req.body.memberId ? req.body.memberId : "").trim();
+  const room = rooms.get(code);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden");
+  const member = room.members.get(memberId);
+  if(!member) return jsonError(res, 403, "Je zit niet (meer) in deze kamer. Join opnieuw.");
+  member.lastSeen = Date.now();
+  pruneRoom(room);
+  const now = Date.now();
+  const myLang = member.lang;
+  let limitReached = false;
+  let creditsOp = false;
+
+  // Vertaal elk bericht naar de taal van deze lezer (met cache)
+  const out = [];
+  for(const m of room.messages){
+    let shown = m.text;
+    let translated = false;
+    if(!room.freeMode && m.srcLang !== myLang){
+      if(m.translations[myLang]){
+        // Al eerder vertaald: gratis uit cache, telt niet mee
+        shown = m.translations[myLang];
+        translated = true;
+      }else if(roomTranslationsLeft(room) > 0 && wcMagVertalen(room)){
+        try{
+          shown = await translateText(m.text, m.srcLang, myLang);
+          m.translations[myLang] = shown;
+          room.translationsToday += 1; // alleen ECHTE vertalingen tellen mee
+          wcAfboeken(room);            // en alleen die kosten een credit
+          translated = true;
+        }catch(e){
+          shown = m.text; // bij fout: toon origineel
+          translated = false;
+        }
+      }else if(!wcMagVertalen(room)){
+        shown = m.text;
+        translated = false;
+        creditsOp = true;
+      }else{
+        // Dagelijkse vertaallimiet bereikt: toon origineel, blijf chatten
+        shown = m.text;
+        translated = false;
+        limitReached = true;
+      }
+    }
+    // Verloop-tijd op basis van de door de host ingestelde bewaartijd.
+    // msgTtlMs = 0 betekent permanent: dan sturen we geen expiresAt (0).
+    let expiresAt = 0;
+    if(room.msgTtlMs && room.msgTtlMs > 0){
+      if(m.media){
+        expiresAt = m.media.firstSeenAt ? (m.media.firstSeenAt + room.msgTtlMs) : (now + room.msgTtlMs);
+      }else{
+        expiresAt = m.ts + room.msgTtlMs;
+      }
+    }
+    out.push({
+      id: m.id,
+      senderId: m.senderId,
+      senderName: m.senderName,
+      srcLang: m.srcLang,
+      mine: m.senderId === member.id,
+      text: shown,
+      original: m.text,
+      translated,
+      ts: m.ts,
+      media: m.media ? {
+        kind: m.media.kind,
+        mime: m.media.mime,
+        name: m.media.name,
+        size: m.media.size,
+        url: "/api/room/media/" + code + "/" + m.id
+      } : null,
+      expiresAt,
+      remainingMs: Math.max(0, expiresAt - now)
+    });
+  }
+
+  const members = Array.from(room.members.values()).map((x) => ({ id: x.id, name: x.name, lang: x.lang, isHost: !!x.isHost }));
+  const iAmHost = !!(member && member.isHost);
+  res.json({
+    ok:true,
+    ttl: ROOM_TTL_MS,
+    serverTime: now,
+    messages: out,
+    members,
+    iAmHost,
+    myId: member.id,
+    naam: room.naam || "",
+    freeMode: !!room.freeMode,
+    msgTtlMs: room.msgTtlMs || 0,
+    limitReached,
+    creditsOp,
+    creditsOver: room.hostKey ? wcSaldo(room.hostKey) : -1,
+    creditPer: WORLDCHAT_CREDIT_PER,
+    translationsToday: room.translationsToday,
+    dailyLimit: ROOM_DAILY_TRANSLATION_LIMIT,
+    translationsLeft: roomTranslationsLeft(room)
+  });
+});
+
+/* De host geeft de kamer een naam of wijzigt hem. Leeg maken mag ook: dan
+   is de kamercode weer de aanduiding. */
+app.post("/api/room/set-name", (req, res) => {
+  const code = String(req.body && req.body.code ? req.body.code : "").trim();
+  const memberId = String(req.body && req.body.memberId ? req.body.memberId : "").trim();
+  const naam = String(req.body && req.body.naam ? req.body.naam : "").trim().slice(0, 60);
+  const room = rooms.get(code);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden");
+  const me = room.members.get(memberId);
+  if(!me || !me.isHost) return jsonError(res, 403, "Alleen de host kan de naam wijzigen.");
+  room.naam = naam;
+  room.lastActive = Date.now();
+  saveRooms();
+  res.json({ ok:true, naam: room.naam });
+});
+
+// Host verwijdert een ander lid uit de kamer
+app.post("/api/room/kick", (req, res) => {
+  const code = String(req.body && req.body.code ? req.body.code : "").trim();
+  const memberId = String(req.body && req.body.memberId ? req.body.memberId : "").trim();
+  const targetId = String(req.body && req.body.targetId ? req.body.targetId : "").trim();
+  const room = rooms.get(code);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden");
+  const me = room.members.get(memberId);
+  if(!me || !me.isHost) return jsonError(res, 403, "Alleen de host kan iemand verwijderen.");
+  if(targetId === memberId) return jsonError(res, 400, "Je kunt jezelf niet verwijderen; gebruik 'verlaten'.");
+  const target = room.members.get(targetId);
+  if(!target) return jsonError(res, 404, "Persoon zit niet (meer) in de kamer.");
+
+  // verwijderen + kort weren zodat de persoon niet meteen terug polt
+  directeLijnGastWeg(room, target);
+  room.members.delete(targetId);
+  removeRoomPush(code, targetId);
+  if(!room.banned) room.banned = new Set();
+  if(!room.banAt) room.banAt = new Map();
+  const banKey = String(target.name || "").toLowerCase();
+  if(banKey){ room.banned.add(banKey); room.banAt.set(banKey, Date.now()); }
+  room.lastActive = Date.now();
+  res.json({ ok:true, removed: target.name });
+});
+
+// App meldt zich aan voor pushmeldingen in deze kamer
+app.post("/api/room/push-subscribe", (req, res) => {
+  const code = String(req.body && req.body.code ? req.body.code : "").trim();
+  const memberId = String(req.body && req.body.memberId ? req.body.memberId : "").trim();
+  const subscription = req.body && req.body.subscription;
+  const room = rooms.get(code);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden");
+  if(!room.members.get(memberId)) return jsonError(res, 403, "Je zit niet in deze kamer");
+  if(!subscription || !subscription.endpoint) return jsonError(res, 400, "Ongeldige aanmelding");
+  addRoomPush(code, memberId, subscription);
+  res.json({ ok:true });
+});
+
+// Publieke VAPID-sleutel ophalen (heeft de app nodig om zich aan te melden)
+/* Een proefmelding naar jezelf, om te zien waar het stukloopt. Geeft precies
+   terug wat er misging in plaats van stil te blijven. */
+app.post("/api/room/push-test", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const code = String(req.body && req.body.code ? req.body.code : "").trim();
+  const memberId = String(req.body && req.body.memberId ? req.body.memberId : "").trim();
+  if(!webpush) return res.status(500).json({ error: "web-push is niet geladen op de server." });
+  if(!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return res.status(500).json({ error: "De VAPID-sleutels staan niet in Render." });
+  const room = rooms.get(code);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden");
+  if(!room.members.get(memberId)) return jsonError(res, 403, "Je zit niet in deze kamer");
+  const m = roomPushSubs.get(code);
+  const sub = m ? m.get(memberId) : null;
+  if(!sub) return res.status(404).json({ error: "Dit toestel is niet aangemeld voor meldingen." });
+  try{
+    await webpush.sendNotification(sub, JSON.stringify({
+      title: "Worldchat United",
+      body: "Dit is een proefmelding. Werkt dit, dan werkt alles.",
+      code: code, tag: "wcu-test"
+    }));
+    return res.json({ ok: true });
+  }catch(err){
+    return res.status(500).json({ error: "Versturen mislukt (" + (err && err.statusCode ? err.statusCode : "?") + "): " + ((err && err.body) || (err && err.message) || "onbekend") });
+  }
+});
+
+app.get("/api/room/push-key", (req, res) => {
+  res.json({ ok:true, publicKey: VAPID_PUBLIC_KEY });
+});
+
+// Media versturen (foto/video/bestand). Blijft in geheugen, verdwijnt na 15s.
+app.post("/api/room/send-media", roomMediaUpload.single("file"), (req, res) => {
+  const code = String(req.body && req.body.code ? req.body.code : "").trim();
+  const memberId = String(req.body && req.body.memberId ? req.body.memberId : "").trim();
+  const room = rooms.get(code);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden");
+  const member = room.members.get(memberId);
+  if(!member) return jsonError(res, 403, "Je zit niet (meer) in deze kamer. Join opnieuw.");
+  if(!req.file || !req.file.buffer) return jsonError(res, 400, "Geen bestand ontvangen");
+
+  member.lastSeen = Date.now();
+  room.lastActive = Date.now();
+
+  const mime = req.file.mimetype || "application/octet-stream";
+  let kind = "file";
+  if(mime.startsWith("image/")) kind = "image";
+  else if(mime.startsWith("video/")) kind = "video";
+
+  const caption = String(req.body && req.body.caption ? req.body.caption : "").trim().slice(0,500);
+
+  const msg = {
+    id: "rm_" + Date.now() + "_" + Math.random().toString(36).slice(2,8),
+    senderId: member.id,
+    senderName: member.name,
+    srcLang: member.lang,
+    text: caption,            // optioneel bijschrift (wordt vertaald zoals gewone tekst)
+    ts: Date.now(),
+    translations: {},
+    media: {
+      kind,                                  // "image" | "video" | "file"
+      mime,
+      name: String(req.file.originalname || "bestand").slice(0,120),
+      size: req.file.size || (req.file.buffer ? req.file.buffer.length : 0),
+      buffer: req.file.buffer,               // ruwe bytes in geheugen
+      firstSeenAt: 0                         // 15s-klok start bij eerste ophalen
+    }
+  };
+  room.messages.push(msg);
+  if(room.freeMode) pruneRoom(room);   /* gratis: alleen de laatste regel blijft */
+
+  notifyRoom(code, member.id, {
+    title: member.name + " in kamer " + code,
+    body: kind === "image" ? "Foto" : (kind === "video" ? "Video" : "Bestand"),
+    code: code,
+    tag: "room-" + code
+  }).catch(()=>{});
+
+  res.json({ ok:true, id: msg.id });
+});
+
+// Media-bytes serveren zolang het bericht leeft. Start de 15s-klok bij eerste ophalen.
+app.get("/api/room/media/:code/:id", (req, res) => {
+  const code = String(req.params.code || "").trim();
+  const id = String(req.params.id || "").trim();
+  const room = rooms.get(code);
+  if(!room) return res.status(404).end();
+  const msg = room.messages.find((m) => m.id === id && m.media);
+  if(!msg) return res.status(404).end();
+
+  // start de vluchtige klok bij de eerste echte aflevering
+  if(!msg.media.firstSeenAt) msg.media.firstSeenAt = Date.now();
+
+  res.setHeader("Content-Type", msg.media.mime || "application/octet-stream");
+  res.setHeader("Cache-Control", "no-store");
+  if(msg.media.kind === "file"){
+    res.setHeader("Content-Disposition", "attachment; filename=\"" + encodeURIComponent(msg.media.name) + "\"");
+  }
+  res.end(msg.media.buffer);
+});
+
+// Kamer verlaten
+/* De host sluit zijn kamer definitief. Bewijs dat hij de host is levert hij met
+   zijn terugkeersleutel; daar staat in of hij de host was. Zo werkt het ook als
+   hij op dat moment niet in de kamer zit, bijvoorbeeld vanuit zijn overzicht.
+   De kamer verdwijnt daarmee voor iedereen. */
+/* Jezelf uit een kamer halen zonder dat je er op dat moment in zit. Je bewijst
+   met je terugkeersleutel wie je bent. Nodig voor "Weggaan" in het overzicht:
+   anders blijf je meldingen krijgen uit een kamer die je net hebt weggehaald. */
+app.post("/api/room/afmelden", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const rcToken = String(req.body && req.body.reconnect ? req.body.reconnect : "").trim();
+  const r = rcToken ? reconnectTokens.get(rcToken) : null;
+  if(!r) return res.json({ ok: true, alWeg: true });
+  const room = rooms.get(r.code);
+  if(room){
+    const naam = String(r.name || "").trim().toLowerCase();
+    for(const [mid, mem] of Array.from(room.members.entries())){
+      if(String(mem.name || "").trim().toLowerCase() === naam && !!mem.isHost === !!r.isHost){
+        directeLijnGastWeg(room, mem);
+        room.members.delete(mid);
+        removeRoomPush(r.code, mid);
+      }
+    }
+  }
+  reconnectTokens.delete(rcToken);
+  try{ saveReconnect(); }catch(e){}
+  res.json({ ok: true });
+});
+
+app.post("/api/room/close", (req, res) => {
+  const rcToken = String(req.body && req.body.reconnect ? req.body.reconnect : "").trim();
+  const r = rcToken ? reconnectTokens.get(rcToken) : null;
+  if(!r) return jsonError(res, 403, "Sessie verlopen. Open de kamer eerst opnieuw.");
+  if(!r.isHost) return jsonError(res, 403, "Alleen de host kan een kamer verwijderen.");
+  const code = String(r.code || "").trim();
+  const room = rooms.get(code);
+  if(!room) return res.json({ ok: true, alWeg: true });
+
+  rooms.delete(code);
+  roomPushSubs.delete(code);
+  for(const [t, rec] of Array.from(reconnectTokens.entries())){
+    if(rec && rec.code === code) reconnectTokens.delete(t);
+  }
+  saveRooms();
+  try{ saveReconnect(); }catch(e){}
+  console.log("Worldchat: kamer " + code + " is door de host verwijderd.");
+  res.json({ ok: true });
+});
+
+app.post("/api/room/leave", (req, res) => {
+  const code = String(req.body && req.body.code ? req.body.code : "").trim();
+  const memberId = String(req.body && req.body.memberId ? req.body.memberId : "").trim();
+  const room = rooms.get(code);
+  if(room){ directeLijnGastWeg(room, room.members.get(memberId)); room.members.delete(memberId); }
+  removeRoomPush(code, memberId);
+  res.json({ ok:true });
+});
+
+// Taal van een lid wijzigen (kan op elk moment, ook midden in de chat)
+app.post("/api/room/set-lang", (req, res) => {
+  const code = String(req.body && req.body.code ? req.body.code : "").trim();
+  const memberId = String(req.body && req.body.memberId ? req.body.memberId : "").trim();
+  const lang = String(req.body && req.body.lang ? req.body.lang : "").trim();
+  const room = rooms.get(code);
+  if(!room) return jsonError(res, 404, "Kamer niet gevonden");
+  const mem = room.members.get(memberId);
+  if(!mem) return jsonError(res, 403, "Je zit niet meer in deze kamer");
+  if(!lang) return jsonError(res, 400, "Taal ontbreekt");
+  mem.lang = lang;
+  mem.lastSeen = Date.now();
+  // bestaande vertaalcache mag blijven; nieuwe berichten worden in de nieuwe taal vertaald
+  res.json({ ok:true, lang });
+});
+
+
+/* ============================================================
+   DIRECTE BERICHTEN TUSSEN UNLIMITED-GEBRUIKERS
+   - elke Unlimited-gebruiker krijgt een uniek Echo-ID
+   - je voegt iemand toe via diens Echo-ID (privacy: niemand
+     ziet je zonder dat ID)
+   - berichten blijven bewaard tot de ander ze gelezen heeft
+   ============================================================ */
+
+const DM_STORE_FILE = path.join(DATA_DIR, "echo_directmsg.json");
+const DM_MSG_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // vangnet: ongelezen berichten max 30 dagen
+const DM_PRESENCE_MS = 25 * 1000;                   // "online" als <25s geleden gezien
+
+// dmUsers: echoId -> { echoId, accountKey, email, name, lang, contacts:[echoId], lastSeen }
+const dmUsers = new Map();
+// snelle index: accountKey -> echoId
+const dmByAccount = new Map();
+// dmThreads: threadKey -> [ {id, from, to, srcLang, text, ts, readBy:{}, translations:{}} ]
+const dmThreads = new Map();
+// push-aanmeldingen per echoId
+const dmPush = new Map();
+
+function dmThreadKey(a, b){ return [a, b].sort().join("__"); }
+
+function makeEchoId(){
+  let id;
+  do{
+    const block = () => String(Math.floor(1000 + Math.random()*9000));
+    id = "ECHO-" + block() + "-" + block();
+  }while(dmUsers.has(id));
+  return id;
+}
+
+function loadDM(){
+  try{
+    if(!fs.existsSync(DM_STORE_FILE)) return;
+    const raw = fs.readFileSync(DM_STORE_FILE, "utf8");
+    const data = JSON.parse(raw || "{}");
+    (data.users || []).forEach((u) => {
+      if(!u || !u.echoId) return;
+      dmUsers.set(u.echoId, {
+        echoId: u.echoId,
+        accountKey: u.accountKey || "",
+        email: u.email || "",
+        name: u.name || "",
+        lang: u.lang || "en",
+        contacts: Array.isArray(u.contacts) ? u.contacts : [],
+        lastSeen: 0
+      });
+      if(u.accountKey) dmByAccount.set(u.accountKey, u.echoId);
+    });
+    Object.keys(data.threads || {}).forEach((k) => {
+      dmThreads.set(k, Array.isArray(data.threads[k]) ? data.threads[k] : []);
+    });
+    // push-aanmeldingen herstellen zodat meldingen een herstart overleven
+    Object.keys(data.push || {}).forEach((echoId) => {
+      if(Array.isArray(data.push[echoId])) dmPush.set(echoId, data.push[echoId]);
+    });
+    console.log("Direct-messages geladen: " + dmUsers.size + " gebruikers");
+  }catch(err){
+    console.warn("Direct-messages konden niet worden geladen:", err.message || String(err));
+    rescueCorruptStore(DM_STORE_FILE, err);
+  }
+}
+
+let dmSaveTimer = null;
+function saveDMNow(){
+    try{
+      const users = Array.from(dmUsers.values()).map((u) => ({
+        echoId: u.echoId, accountKey: u.accountKey, email: u.email,
+        name: u.name, lang: u.lang, contacts: u.contacts
+      }));
+      const threads = {};
+      for(const [k, list] of dmThreads.entries()){
+        if(list && list.length) threads[k] = list;
+      }
+      const push = {};
+      for(const [echoId, list] of dmPush.entries()){
+        if(list && list.length) push[echoId] = list;
+      }
+      safeWriteFileSync(DM_STORE_FILE, JSON.stringify({ users, threads, push }, null, 2));
+    }catch(err){
+      console.warn("Direct-messages konden niet worden opgeslagen:", err.message || String(err));
+    }
+}
+function saveDM(){
+  // licht uitgesteld opslaan zodat snelle bursts niet telkens schrijven
+  if(dmSaveTimer) return;
+  dmSaveTimer = setTimeout(() => {
+    dmSaveTimer = null;
+    saveDMNow();
+  }, 800);
+}
+
+function pruneDM(){
+  const cutoff = Date.now() - DM_MSG_MAX_AGE_MS;
+  let changed = false;
+  for(const [k, list] of dmThreads.entries()){
+    const kept = list.filter((m) => m.ts > cutoff);
+    if(kept.length !== list.length){ changed = true; }
+    if(kept.length) dmThreads.set(k, kept); else dmThreads.delete(k);
+  }
+  if(changed) saveDM();
+}
+setInterval(pruneDM, 60 * 60 * 1000); // elk uur opschonen
+
+// Zorg dat de ingelogde Unlimited-gebruiker een Echo-ID heeft (maakt aan indien nodig)
+function ensureDmUser(accountKey, email, name, lang){
+  let echoId = dmByAccount.get(accountKey);
+  let user = echoId ? dmUsers.get(echoId) : null;
+  if(!user){
+    echoId = makeEchoId();
+    user = { echoId, accountKey, email: email || "", name: name || "", lang: lang || "en", contacts: [], lastSeen: Date.now() };
+    dmUsers.set(echoId, user);
+    dmByAccount.set(accountKey, echoId);
+    saveDM();
+  }else{
+    // naam/taal bijwerken als meegegeven
+    if(name && user.name !== name){ user.name = name; saveDM(); }
+    if(lang && user.lang !== lang){ user.lang = lang; saveDM(); }
+    if(email && !user.email){ user.email = email; }
+  }
+  user.lastSeen = Date.now();
+  return user;
+}
+
+function dmPublicContact(echoId){
+  const u = dmUsers.get(echoId);
+  if(!u) return { echoId, name: "(onbekend)", lang: "en", online: false };
+  return {
+    echoId: u.echoId,
+    name: u.name || u.echoId,
+    lang: u.lang || "en",
+    online: (Date.now() - (u.lastSeen || 0)) < DM_PRESENCE_MS
+  };
+}
+
+async function dmTranslate(text, from, to){
+  if(!text || from === to) return text;
+  try{ return await translateText(text, from, to); }catch(e){ return text; }
+}
+
+function dmAddPush(echoId, subscription){
+  if(!echoId || !subscription || !subscription.endpoint) return;
+  const list = dmPush.get(echoId) || [];
+  const filtered = list.filter((s) => s.endpoint !== subscription.endpoint);
+  filtered.push(subscription);
+  dmPush.set(echoId, filtered);
+  saveDM();
+}
+
+async function dmNotify(echoId, payload){
+  if(!webpush || !VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
+  const list = dmPush.get(echoId) || [];
+  if(!list.length) return;
+  const valid = [];
+  for(const sub of list){
+    try{ await webpush.sendNotification(sub, JSON.stringify(payload)); valid.push(sub); }
+    catch(err){ if(err.statusCode !== 404 && err.statusCode !== 410) valid.push(sub); }
+  }
+  dmPush.set(echoId, valid);
+}
+
+// --- Inloggen op het direct-message systeem: geeft je eigen Echo-ID terug ---
+// Bepaal de DM-identiteit. Werkt voor IEDEREEN (gratis), via naam + pincode.
+// Een Unlimited-account werkt ook (dan gebruiken we de accountKey daarvan).
+// Geeft { accountKey, email, name, lang } terug, of { error } bij ongeldige invoer.
+function resolveDmIdentity(req){
+  const b = req.body || {};
+  const name = String(b.name || "").trim().slice(0,40);
+  const lang = String(b.lang || "").trim() || "en";
+  // 1) Heeft de persoon een geldig Unlimited-account? Gebruik dat (zoals voorheen).
+  const gate = requireUnlimited(req);
+  if(gate.ok){
+    return { accountKey: gate.accountKey, email: gate.email || "", name, lang, unlimited: true };
+  }
+  // 2) Anders: gratis identiteit via naam + pincode.
+  const pin = String(b.pin || "").trim();
+  if(!name) return { error: "Voer je naam in." };
+  if(!pin || pin.length < 4) return { error: "Kies een pincode van minstens 4 cijfers." };
+  // accountKey voor gratis DM-gebruikers: "dmfree:" + naam-lowercase + ":" + pin
+  const accountKey = "dmfree:" + name.toLowerCase() + ":" + pin;
+  return { accountKey, email: "", name, lang, unlimited: false };
+}
+
+app.post("/api/dm/me", (req, res) => {
+  const id = resolveDmIdentity(req);
+  if(id.error) return jsonError(res, 400, id.error);
+  const user = ensureDmUser(id.accountKey, id.email, id.name, id.lang);
+  res.json({ ok:true, echoId: user.echoId, name: user.name, lang: user.lang });
+});
+
+// --- Contact toevoegen via diens Echo-ID ---
+app.post("/api/dm/add-contact", (req, res) => {
+  const id = resolveDmIdentity(req);
+  if(id.error) return jsonError(res, 400, id.error);
+  const me = ensureDmUser(id.accountKey, id.email, id.name, id.lang);
+  const targetId = String(req.body && req.body.contactId ? req.body.contactId : "").trim().toUpperCase();
+  if(!targetId) return jsonError(res, 400, "Voer een Echo-ID in.");
+  if(targetId === me.echoId) return jsonError(res, 400, "Dat is je eigen ID.");
+  const target = dmUsers.get(targetId);
+  if(!target) return jsonError(res, 404, "Geen gebruiker met dit Echo-ID gevonden.");
+  // wederzijds toevoegen
+  if(!me.contacts.includes(targetId)) me.contacts.push(targetId);
+  if(!target.contacts.includes(me.echoId)) target.contacts.push(me.echoId);
+  saveDM();
+  res.json({ ok:true, contact: dmPublicContact(targetId) });
+});
+
+// --- Contact verwijderen ---
+app.post("/api/dm/remove-contact", (req, res) => {
+  const id = resolveDmIdentity(req);
+  if(id.error) return jsonError(res, 400, id.error);
+  const me = ensureDmUser(id.accountKey, id.email, id.name, id.lang);
+  const targetId = String(req.body && req.body.contactId ? req.body.contactId : "").trim().toUpperCase();
+  me.contacts = me.contacts.filter((c) => c !== targetId);
+  saveDM();
+  res.json({ ok:true });
+});
+
+// --- Contactenlijst ophalen (met online-status en aantal ongelezen) ---
+app.post("/api/dm/contacts", (req, res) => {
+  const id = resolveDmIdentity(req);
+  if(id.error) return jsonError(res, 400, id.error);
+  const me = ensureDmUser(id.accountKey, id.email, id.name, id.lang);
+  const contacts = me.contacts.map((cid) => {
+    const pub = dmPublicContact(cid);
+    const key = dmThreadKey(me.echoId, cid);
+    const list = dmThreads.get(key) || [];
+    const unread = list.filter((m) => m.to === me.echoId && !(m.readBy && m.readBy[me.echoId])).length;
+    return Object.assign(pub, { unread });
+  });
+  res.json({ ok:true, echoId: me.echoId, name: me.name, lang: me.lang, contacts });
+});
+
+// --- Bericht sturen naar een contact ---
+app.post("/api/dm/send", (req, res) => {
+  const id = resolveDmIdentity(req);
+  if(id.error) return jsonError(res, 400, id.error);
+  const me = ensureDmUser(id.accountKey, id.email, id.name, id.lang);
+  const toId = String(req.body && req.body.to ? req.body.to : "").trim().toUpperCase();
+  const text = String(req.body && req.body.text ? req.body.text : "").trim().slice(0,2000);
+  if(!toId || !text) return jsonError(res, 400, "Ontvanger of tekst ontbreekt.");
+  const target = dmUsers.get(toId);
+  if(!target) return jsonError(res, 404, "Contact niet gevonden.");
+  if(!me.contacts.includes(toId)) return jsonError(res, 403, "Deze persoon staat niet in je contacten.");
+
+  const key = dmThreadKey(me.echoId, toId);
+  const list = dmThreads.get(key) || [];
+  const msg = {
+    id: "dm_" + Date.now() + "_" + Math.random().toString(36).slice(2,8),
+    from: me.echoId, to: toId,
+    srcLang: me.lang || "en",
+    text, ts: Date.now(),
+    readBy: {}, translations: {}
+  };
+  list.push(msg);
+  dmThreads.set(key, list);
+  saveDM();
+
+  dmNotify(toId, {
+    title: (me.name || me.echoId),
+    body: text.slice(0, 120),
+    dm: me.echoId,
+    tag: "dm-" + me.echoId
+  }).catch(()=>{});
+
+  res.json({ ok:true, id: msg.id });
+});
+
+// --- Gesprek ophalen met een contact (vertaalt naar jouw taal, markeert als gelezen) ---
+app.post("/api/dm/thread", async (req, res) => {
+  const id = resolveDmIdentity(req);
+  if(id.error) return jsonError(res, 400, id.error);
+  const me = ensureDmUser(id.accountKey, id.email, id.name, id.lang);
+  const otherId = String(req.body && req.body.with ? req.body.with : "").trim().toUpperCase();
+  if(!otherId) return jsonError(res, 400, "Geen contact opgegeven.");
+  const key = dmThreadKey(me.echoId, otherId);
+  const list = dmThreads.get(key) || [];
+  const myLang = me.lang || "en";
+
+  const out = [];
+  let needUpgrade = false; // zijn er berichten die vertaling nodig hebben maar gratis is?
+  for(const m of list){
+    let shown = m.text;
+    let translated = false;
+    let needsTranslation = (m.srcLang !== myLang);
+    if(needsTranslation){
+      if(id.unlimited){
+        // Betaald: vertaal (gratis als al in cache)
+        if(m.translations[myLang]){ shown = m.translations[myLang]; translated = true; }
+        else{
+          const t = await dmTranslate(m.text, m.srcLang, myLang);
+          if(t && t !== m.text){ m.translations[myLang] = t; shown = t; translated = true; }
+        }
+      }else{
+        // Gratis gebruiker + andere taal: toon origineel, markeer dat vertaling Unlimited vereist.
+        // (Eerder gemaakte vertaling in cache tonen we niet gratis.)
+        shown = m.text;
+        translated = false;
+        needUpgrade = true;
+      }
+    }
+    // markeer berichten aan mij als gelezen
+    if(m.to === me.echoId && !(m.readBy && m.readBy[me.echoId])){
+      m.readBy = m.readBy || {};
+      m.readBy[me.echoId] = Date.now();
+    }
+    out.push({
+      id: m.id,
+      mine: m.from === me.echoId,
+      from: m.from,
+      text: shown,
+      original: m.text,
+      translated,
+      needsTranslation: needsTranslation && !translated, // andere taal maar (nog) niet vertaald
+      ts: m.ts,
+      read: !!(m.readBy && m.readBy[otherId]) // is door de ander gelezen?
+    });
+  }
+  saveDM();
+  res.json({ ok:true, echoId: me.echoId, withUser: dmPublicContact(otherId), messages: out, needUpgrade });
+});
+
+// --- Push-aanmelding voor directe berichten ---
+app.post("/api/dm/push-subscribe", (req, res) => {
+  const id = resolveDmIdentity(req);
+  if(id.error) return jsonError(res, 400, id.error);
+  const me = ensureDmUser(id.accountKey, id.email, id.name, id.lang);
+  const subscription = req.body && req.body.subscription;
+  if(!subscription || !subscription.endpoint) return jsonError(res, 400, "Ongeldige aanmelding");
+  dmAddPush(me.echoId, subscription);
+  res.json({ ok:true });
+});
+
+loadDM();
+
+
+/* ==========================================================================
+   ZZP WEEKMARKETING  -  zelfstandig blok voor server.js
+   --------------------------------------------------------------------------
+   PLAATSEN: knip dit hele blok en plak het in server.js VLAK BOVEN de regel
+             app.listen(PORT, () => {
+             Verander verder NIETS in server.js.
+
+   Dit blok gebruikt alleen bestaande dingen en leest ze alleen:
+     app, express, fs, path, crypto, multer, DATA_DIR,
+     safeWriteFileSync, callOpenAI, normalizePremiumKey
+   Alle eigen namen beginnen met zzp of ZZP, dus botsingen zijn uitgesloten.
+
+   Eigen opslag: DATA_DIR/zzp_marketing.json en DATA_DIR/zzp_fotos/
+   Eigen routes: alles onder /api/zzp/
+   ========================================================================== */
+
+const ZZP_STORE_FILE = path.join(DATA_DIR, "zzp_marketing.json");
+const ZZP_PHOTOS_DIR = path.join(DATA_DIR, "zzp_fotos");
+const ZZP_MAX_FOTO_BYTES = 12 * 1024 * 1024;
+const ZZP_MAX_ITEMS_PER_ACCOUNT = 60;
+const ZZP_GRATIS_WEKEN_PER_DAG = Number(process.env.ZZP_GRATIS_WEKEN_PER_DAG || 2);
+
+try{
+  if(!fs.existsSync(ZZP_PHOTOS_DIR)) fs.mkdirSync(ZZP_PHOTOS_DIR, { recursive: true });
+}catch(err){
+  console.warn("ZZP: fotomap kon niet worden aangemaakt:", err.message || String(err));
+}
+
+const zzpUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: ZZP_MAX_FOTO_BYTES }
+});
+
+/* ---------- opslag ---------- */
+
+let zzpAccounts = new Map();
+
+function zzpLoadStore(){
+  try{
+    if(!fs.existsSync(ZZP_STORE_FILE)) return;
+    const raw = fs.readFileSync(ZZP_STORE_FILE, "utf8");
+    const data = JSON.parse(raw || "{}");
+    Object.keys(data).forEach((key) => zzpAccounts.set(key, data[key]));
+    console.log("ZZP weekmarketing: " + zzpAccounts.size + " accounts geladen.");
+  }catch(err){
+    console.error("ZZP: opslag onleesbaar, bestand bewaard als .corrupt:", err.message || String(err));
+    try{ fs.renameSync(ZZP_STORE_FILE, ZZP_STORE_FILE + ".corrupt." + Date.now()); }catch(e){}
+  }
+}
+zzpLoadStore();
+
+let zzpDirty = false;
+function zzpMarkDirty(){ zzpDirty = true; }
+function zzpSaveNow(){
+  try{
+    const plain = {};
+    zzpAccounts.forEach((value, key) => { plain[key] = value; });
+    safeWriteFileSync(ZZP_STORE_FILE, JSON.stringify(plain));
+    zzpDirty = false;
+  }catch(err){
+    console.error("ZZP: opslaan mislukt:", err.message || String(err));
+  }
+}
+setInterval(() => { if(zzpDirty) zzpSaveNow(); }, 15000);
+
+function zzpGetAccount(email){
+  const key = normalizePremiumKey(email);
+  if(!key) return null;
+  if(!zzpAccounts.has(key)){
+    zzpAccounts.set(key, { profiel: {}, items: [], weken: [], weekDatum: "", weekAantal: 0 });
+    zzpMarkDirty();
+  }
+  return zzpAccounts.get(key);
+}
+
+/* ---------- hulpjes ---------- */
+
+function zzpVandaag(){ return new Date().toISOString().slice(0, 10); }
+
+function zzpSchoon(value, max){
+  const s = String(value == null ? "" : value).trim();
+  return s.length > (max || 400) ? s.slice(0, max || 400) : s;
+}
+
+function zzpExtensie(mimetype){
+  const m = String(mimetype || "").toLowerCase();
+  if(m.indexOf("png") >= 0) return ".png";
+  if(m.indexOf("webp") >= 0) return ".webp";
+  if(m.indexOf("heic") >= 0) return ".heic";
+  return ".jpg";
+}
+
+function zzpVolgendeMaandag(){
+  const d = new Date();
+  const dag = d.getDay();
+  const erbij = dag === 0 ? 1 : (8 - dag);
+  d.setDate(d.getDate() + erbij);
+  return d.toISOString().slice(0, 10);
+}
+
+function zzpDatumPlus(startDatum, dagen){
+  const d = new Date(startDatum + "T09:00:00");
+  d.setDate(d.getDate() + dagen);
+  return d.toISOString().slice(0, 16);
+}
+
+function zzpParseJson(tekst){
+  let s = String(tekst || "").trim();
+  s = s.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+  const start = s.indexOf("[");
+  const eind = s.lastIndexOf("]");
+  if(start >= 0 && eind > start) s = s.slice(start, eind + 1);
+  return JSON.parse(s);
+}
+
+/* ---------- de vijf soorten berichten ---------- */
+
+const ZZP_SOORTEN = [
+  { id: "klus",           naam: "De klus van deze week",   uitleg: "Laat zien wat je hebt gedaan. Concreet, met de plaats erbij." },
+  { id: "tip",            naam: "Een tip uit het vak",     uitleg: "Een praktische tip die past bij het werk dat je doet." },
+  { id: "voorna",         naam: "Voor en na",              uitleg: "Beschrijf het verschil tussen de situatie vooraf en het resultaat." },
+  { id: "beschikbaar",    naam: "Ruimte in de agenda",     uitleg: "Nodig mensen uit om contact op te nemen, zonder opdringerig te zijn." },
+  { id: "vraag",          naam: "Vraag aan je volgers",    uitleg: "Stel een korte vraag over het vak waar mensen op kunnen reageren." }
+];
+
+/* ---------- routes ---------- */
+
+/* 1. Foto met tekstje toevoegen. Gratis, kost geen credit. */
+app.post("/api/zzp/item", zzpUpload.single("foto"), (req, res) => {
+  try{
+    const email = normalizePremiumKey(req.body && req.body.email);
+    if(!email) return res.status(400).json({ ok: false, error: "E-mailadres ontbreekt" });
+
+    const account = zzpGetAccount(email);
+    if(!account) return res.status(400).json({ ok: false, error: "Account kon niet worden gelezen" });
+
+    const tekst = zzpSchoon(req.body && req.body.tekst, 2200);
+    if(!tekst && !req.file) return res.status(400).json({ ok: false, error: "Geef een foto of een tekstje mee" });
+
+    if(account.items.length >= ZZP_MAX_ITEMS_PER_ACCOUNT){
+      return res.status(409).json({ ok: false, error: "Je hebt het maximum aantal bewaarde items bereikt. Maak eerst een week aan of verwijder er een paar." });
+    }
+
+    let fotoNaam = "";
+    if(req.file && req.file.buffer && req.file.buffer.length > 0){
+      fotoNaam = "zzp_" + crypto.randomBytes(10).toString("hex") + zzpExtensie(req.file.mimetype);
+      fs.writeFileSync(path.join(ZZP_PHOTOS_DIR, fotoNaam), req.file.buffer);
+    }
+
+    const item = {
+      id: crypto.randomBytes(8).toString("hex"),
+      tekst,
+      foto: fotoNaam,
+      gemaaktOp: new Date().toISOString(),
+      gebruikt: false
+    };
+    account.items.push(item);
+    zzpMarkDirty();
+
+    return res.json({ ok: true, item, aantal: account.items.filter((i) => !i.gebruikt).length });
+  }catch(err){
+    console.error("ZZP item toevoegen mislukt:", err.message || String(err));
+    return res.status(500).json({ ok: false, error: "Toevoegen mislukt" });
+  }
+});
+
+/* 2. Alles ophalen wat er deze week in de bak zit. */
+app.get("/api/zzp/items", (req, res) => {
+  const email = normalizePremiumKey(req.query && req.query.email);
+  if(!email) return res.status(400).json({ ok: false, error: "E-mailadres ontbreekt" });
+  const account = zzpGetAccount(email);
+  const open = account.items.filter((i) => !i.gebruikt);
+  return res.json({ ok: true, profiel: account.profiel || {}, items: open, aantal: open.length });
+});
+
+/* 3. Een item weghalen. */
+app.delete("/api/zzp/item", (req, res) => {
+  const email = normalizePremiumKey((req.query && req.query.email) || (req.body && req.body.email));
+  const id = zzpSchoon((req.query && req.query.id) || (req.body && req.body.id), 40);
+  if(!email || !id) return res.status(400).json({ ok: false, error: "E-mailadres of id ontbreekt" });
+
+  const account = zzpGetAccount(email);
+  const index = account.items.findIndex((i) => i.id === id);
+  if(index < 0) return res.status(404).json({ ok: false, error: "Item niet gevonden" });
+
+  const weg = account.items[index];
+  if(weg.foto){
+    try{ fs.unlinkSync(path.join(ZZP_PHOTOS_DIR, weg.foto)); }catch(e){}
+  }
+  account.items.splice(index, 1);
+  zzpMarkDirty();
+  return res.json({ ok: true });
+});
+
+/* 4. Het beroep en de plaats onthouden, zodat hij dat niet elke week invult. */
+app.post("/api/zzp/profiel", express.json({ limit: "100kb" }), (req, res) => {
+  const email = normalizePremiumKey(req.body && req.body.email);
+  if(!email) return res.status(400).json({ ok: false, error: "E-mailadres ontbreekt" });
+  const account = zzpGetAccount(email);
+  account.profiel = {
+    beroep: zzpSchoon(req.body && req.body.beroep, 60),
+    bedrijf: zzpSchoon(req.body && req.body.bedrijf, 80),
+    plaats: zzpSchoon(req.body && req.body.plaats, 60),
+    toon: zzpSchoon(req.body && req.body.toon, 40)
+  };
+  zzpMarkDirty();
+  return res.json({ ok: true, profiel: account.profiel });
+});
+
+/* 5. De week maken: vijf berichten plus een kalender. */
+app.post("/api/zzp/week", express.json({ limit: "200kb" }), async (req, res) => {
+  try{
+    const email = normalizePremiumKey(req.body && req.body.email);
+    if(!email) return res.status(400).json({ ok: false, error: "E-mailadres ontbreekt" });
+
+    const account = zzpGetAccount(email);
+
+    /* eenvoudige rem tegen misbruik, los van het creditsysteem */
+    const vandaag = zzpVandaag();
+    if(account.weekDatum !== vandaag){
+      account.weekDatum = vandaag;
+      account.weekAantal = 0;
+    }
+    if(account.weekAantal >= ZZP_GRATIS_WEKEN_PER_DAG){
+      return res.status(429).json({ ok: false, error: "Je hebt vandaag al genoeg weken aangemaakt. Probeer het morgen opnieuw." });
+    }
+
+    const profiel = account.profiel || {};
+    const beroep = zzpSchoon((req.body && req.body.beroep) || profiel.beroep, 60) || "zelfstandig ondernemer";
+    const plaats = zzpSchoon((req.body && req.body.plaats) || profiel.plaats, 60);
+    const bedrijf = zzpSchoon((req.body && req.body.bedrijf) || profiel.bedrijf, 80);
+    const startDatum = zzpSchoon(req.body && req.body.startDatum, 10) || zzpVolgendeMaandag();
+
+    const open = account.items.filter((i) => !i.gebruikt);
+    if(open.length === 0){
+      return res.status(400).json({ ok: false, error: "Er staan nog geen foto's of tekstjes klaar. Voeg er eerst een paar toe." });
+    }
+
+    const aantekeningen = open.map((i, n) => {
+      return (n + 1) + ". " + (i.tekst || "(alleen een foto, geen tekst)");
+    }).join("\n");
+
+    const soortenUitleg = ZZP_SOORTEN.map((s) => "- " + s.id + " (" + s.naam + "): " + s.uitleg).join("\n");
+
+    const systeem = [
+      "Je schrijft socialmediaberichten voor een Nederlandse zzp'er.",
+      "Schrijf zoals de ondernemer zelf zou praten: gewoon, kort en concreet.",
+      "Verboden: marketingtaal, uitroeptekens aan elk eind, meer dan twee emoji per bericht,",
+      "rijtjes hashtags, en woorden als 'ontzorgen', 'passie', 'trots om te delen'.",
+      "Elk bericht maximaal 60 woorden. Nederlands. Geen koppen of opmaak, alleen lopende tekst."
+    ].join(" ");
+
+    const opdracht = [
+      "Beroep: " + beroep,
+      bedrijf ? "Bedrijf: " + bedrijf : "",
+      plaats ? "Plaats: " + plaats : "",
+      "",
+      "Aantekeningen van deze week:",
+      aantekeningen,
+      "",
+      "Maak precies vijf berichten, een van elk van deze soorten:",
+      soortenUitleg,
+      "",
+      "Gebruik de aantekeningen waar ze passen. Verzin geen klantnamen, geen bedragen en geen resultaten die er niet staan.",
+      "Citeer nooit een klant en verzin nooit een reactie, review of aanbeveling. Ook niet als voorbeeld.",
+      "Als er te weinig informatie is voor een soort, houd dat bericht dan algemeen maar wel passend bij het beroep.",
+      "",
+      "Antwoord uitsluitend met JSON: een array van vijf objecten met de velden \"soort\" en \"tekst\". Geen uitleg eromheen."
+    ].filter(Boolean).join("\n");
+
+    const antwoord = await callOpenAI([
+      { role: "system", content: systeem },
+      { role: "user", content: opdracht }
+    ], 0.7);
+
+    let ruw;
+    try{
+      ruw = zzpParseJson(antwoord);
+    }catch(err){
+      console.error("ZZP: antwoord was geen geldige JSON:", antwoord.slice(0, 300));
+      return res.status(502).json({ ok: false, error: "Het opstellen ging mis. Probeer het nog een keer." });
+    }
+    if(!Array.isArray(ruw) || ruw.length === 0){
+      return res.status(502).json({ ok: false, error: "Het opstellen ging mis. Probeer het nog een keer." });
+    }
+
+    const berichten = ZZP_SOORTEN.map((soort, index) => {
+      const gevonden = ruw.find((r) => String(r && r.soort || "").toLowerCase() === soort.id) || ruw[index] || {};
+      const bijItem = open[index] || null;
+      return {
+        id: crypto.randomBytes(6).toString("hex"),
+        soort: soort.id,
+        soortNaam: soort.naam,
+        tekst: zzpSchoon(gevonden.tekst, 2200),
+        foto: bijItem ? bijItem.foto : "",
+        wanneer: zzpDatumPlus(startDatum, index),
+        geplaatst: false
+      };
+    }).filter((b) => b.tekst);
+
+    if(berichten.length === 0){
+      return res.status(502).json({ ok: false, error: "Er kwam geen bruikbare tekst uit. Probeer het nog een keer." });
+    }
+
+    open.forEach((i) => { i.gebruikt = true; });
+
+    const week = {
+      id: crypto.randomBytes(8).toString("hex"),
+      gemaaktOp: new Date().toISOString(),
+      startDatum,
+      berichten
+    };
+    account.weken.unshift(week);
+    if(account.weken.length > 20) account.weken.length = 20;
+    account.items = account.items.filter((i) => !i.gebruikt);
+    account.weekAantal = account.weekAantal + 1;
+    zzpMarkDirty();
+
+    return res.json({ ok: true, week });
+  }catch(err){
+    console.error("ZZP week maken mislukt:", err.message || String(err));
+    return res.status(500).json({ ok: false, error: "Het maken van de week is mislukt" });
+  }
+});
+
+/* 5b. De week maken van je EIGEN teksten. Geen AI, niets wordt herschreven. */
+app.post("/api/zzp/week-eigen", express.json({ limit: "100kb" }), (req, res) => {
+  try{
+    const email = normalizePremiumKey(req.body && req.body.email);
+    if(!email) return res.status(400).json({ ok: false, error: "E-mailadres ontbreekt" });
+
+    const account = zzpGetAccount(email);
+    const startDatum = zzpSchoon(req.body && req.body.startDatum, 10) || zzpVolgendeMaandag();
+    const open = account.items.filter((i) => !i.gebruikt);
+    if(open.length === 0){
+      return res.status(400).json({ ok: false, error: "Er staan nog geen foto's of teksten klaar. Voeg er eerst een paar toe." });
+    }
+
+    const berichten = open.map((item, index) => ({
+      id: crypto.randomBytes(6).toString("hex"),
+      soort: "eigen",
+      soortNaam: "Eigen bericht",
+      tekst: item.tekst || "",
+      foto: item.foto || "",
+      wanneer: zzpDatumPlus(startDatum, index),
+      geplaatst: false
+    })).filter((b) => b.tekst || b.foto);
+
+    open.forEach((i) => { i.gebruikt = true; });
+
+    const week = {
+      id: crypto.randomBytes(8).toString("hex"),
+      gemaaktOp: new Date().toISOString(),
+      startDatum,
+      eigen: true,
+      berichten
+    };
+    account.weken.unshift(week);
+    if(account.weken.length > 20) account.weken.length = 20;
+    account.items = account.items.filter((i) => !i.gebruikt);
+    zzpMarkDirty();
+    zzpSaveNow();
+
+    return res.json({ ok: true, week });
+  }catch(err){
+    console.error("ZZP eigen week mislukt:", err.message || String(err));
+    return res.status(500).json({ ok: false, error: "Het maken van de week is mislukt" });
+  }
+});
+
+/* 6. De laatst gemaakte week ophalen. */
+app.get("/api/zzp/week", (req, res) => {
+  const email = normalizePremiumKey(req.query && req.query.email);
+  if(!email) return res.status(400).json({ ok: false, error: "E-mailadres ontbreekt" });
+  const account = zzpGetAccount(email);
+  return res.json({ ok: true, week: account.weken[0] || null, geschiedenis: account.weken.length });
+});
+
+/* 7. Een bericht bijwerken of afvinken als geplaatst. */
+app.post("/api/zzp/bericht", express.json({ limit: "100kb" }), (req, res) => {
+  const email = normalizePremiumKey(req.body && req.body.email);
+  const weekId = zzpSchoon(req.body && req.body.weekId, 40);
+  const berichtId = zzpSchoon(req.body && req.body.berichtId, 40);
+  if(!email || !weekId || !berichtId) return res.status(400).json({ ok: false, error: "Gegevens ontbreken" });
+
+  const account = zzpGetAccount(email);
+  const week = account.weken.find((w) => w.id === weekId);
+  if(!week) return res.status(404).json({ ok: false, error: "Week niet gevonden" });
+  const bericht = week.berichten.find((b) => b.id === berichtId);
+  if(!bericht) return res.status(404).json({ ok: false, error: "Bericht niet gevonden" });
+
+  if(typeof req.body.tekst === "string") bericht.tekst = zzpSchoon(req.body.tekst, 2200);
+  if(typeof req.body.wanneer === "string") bericht.wanneer = zzpSchoon(req.body.wanneer, 16);
+  if(typeof req.body.geplaatst === "boolean") bericht.geplaatst = req.body.geplaatst;
+  zzpMarkDirty();
+
+  return res.json({ ok: true, bericht });
+});
+
+/* 7b. De foto bij een bericht vervangen. */
+app.post("/api/zzp/bericht-foto", zzpUpload.single("foto"), (req, res) => {
+  try{
+    const email = normalizePremiumKey(req.body && req.body.email);
+    const weekId = zzpSchoon(req.body && req.body.weekId, 40);
+    const berichtId = zzpSchoon(req.body && req.body.berichtId, 40);
+    if(!email || !weekId || !berichtId) return res.status(400).json({ ok: false, error: "Gegevens ontbreken" });
+    if(!req.file || !req.file.buffer || req.file.buffer.length === 0){
+      return res.status(400).json({ ok: false, error: "Geen foto ontvangen" });
+    }
+
+    const account = zzpGetAccount(email);
+    const week = (account.weken || []).find((w) => w.id === weekId);
+    if(!week) return res.status(404).json({ ok: false, error: "Week niet gevonden" });
+    const bericht = week.berichten.find((b) => b.id === berichtId);
+    if(!bericht) return res.status(404).json({ ok: false, error: "Bericht niet gevonden" });
+
+    const fotoNaam = "zzp_" + crypto.randomBytes(10).toString("hex") + zzpExtensie(req.file.mimetype);
+    fs.writeFileSync(path.join(ZZP_PHOTOS_DIR, fotoNaam), req.file.buffer);
+
+    const oud = bericht.foto;
+    bericht.foto = fotoNaam;
+    zzpMarkDirty();
+    zzpSaveNow();
+
+    /* de oude foto opruimen, tenzij een ander bericht hem ook gebruikt */
+    if(oud && oud !== fotoNaam){
+      let nogInGebruik = false;
+      (account.weken || []).forEach((w) => {
+        (w.berichten || []).forEach((b) => { if(b.foto === oud) nogInGebruik = true; });
+      });
+      if(!nogInGebruik){
+        try{ fs.unlinkSync(path.join(ZZP_PHOTOS_DIR, oud)); }catch(e){}
+      }
+    }
+
+    return res.json({ ok: true, foto: fotoNaam });
+  }catch(err){
+    console.error("ZZP foto vervangen mislukt:", err.message || String(err));
+    return res.status(500).json({ ok: false, error: "Foto vervangen mislukt" });
+  }
+});
+
+/* 7c en 7d: bericht verwijderen en los bericht toevoegen. */
+const ZZP_MAX_BERICHTEN_PER_WEEK = 60;
+
+/* 7c. Een bericht verwijderen. */
+app.delete("/api/zzp/bericht", express.json({ limit: "20kb" }), (req, res) => {
+  try{
+    const email = normalizePremiumKey((req.query && req.query.email) || (req.body && req.body.email));
+    const weekId = zzpSchoon((req.query && req.query.weekId) || (req.body && req.body.weekId), 40);
+    const berichtId = zzpSchoon((req.query && req.query.berichtId) || (req.body && req.body.berichtId), 40);
+    if(!email || !weekId || !berichtId) return res.status(400).json({ ok: false, error: "Gegevens ontbreken" });
+
+    const account = zzpGetAccount(email);
+    const week = (account.weken || []).find((w) => w.id === weekId);
+    if(!week) return res.status(404).json({ ok: false, error: "Week niet gevonden" });
+
+    const index = (week.berichten || []).findIndex((b) => b.id === berichtId);
+    if(index < 0) return res.status(404).json({ ok: false, error: "Bericht niet gevonden" });
+
+    const weg = week.berichten[index];
+    week.berichten.splice(index, 1);
+
+    /* de foto pas weggooien als geen enkel ander bericht of item hem nog gebruikt */
+    if(weg.foto){
+      let nogInGebruik = false;
+      (account.weken || []).forEach((w) => {
+        (w.berichten || []).forEach((b) => { if(b.foto === weg.foto) nogInGebruik = true; });
+      });
+      (account.items || []).forEach((i) => { if(i.foto === weg.foto) nogInGebruik = true; });
+      if(!nogInGebruik){
+        try{ fs.unlinkSync(path.join(ZZP_PHOTOS_DIR, weg.foto)); }catch(e){}
+      }
+    }
+
+    zzpMarkDirty();
+    zzpSaveNow();
+
+    return res.json({ ok: true, week });
+  }catch(err){
+    console.error("ZZP bericht verwijderen mislukt:", err.message || String(err));
+    return res.status(500).json({ ok: false, error: "Verwijderen mislukt" });
+  }
+});
+
+/* 7d. Een los bericht toevoegen, zonder een hele week te maken.
+       Het bericht komt in de bovenste week te staan. Bestaat die nog niet,
+       dan wordt er een lege week aangemaakt om het in te bewaren. */
+app.post("/api/zzp/bericht-nieuw", zzpUpload.single("foto"), (req, res) => {
+  try{
+    const email = normalizePremiumKey(req.body && req.body.email);
+    if(!email) return res.status(400).json({ ok: false, error: "E-mailadres ontbreekt" });
+
+    const account = zzpGetAccount(email);
+    const tekst = zzpSchoon(req.body && req.body.tekst, 2200);
+    const wanneer = zzpSchoon(req.body && req.body.wanneer, 16);
+    const heeftFoto = !!(req.file && req.file.buffer && req.file.buffer.length > 0);
+
+    if(!tekst && !heeftFoto){
+      return res.status(400).json({ ok: false, error: "Geef een tekst of een foto mee" });
+    }
+
+    if(!Array.isArray(account.weken)) account.weken = [];
+    let week = account.weken[0];
+    if(!week){
+      week = {
+        id: crypto.randomBytes(8).toString("hex"),
+        gemaaktOp: new Date().toISOString(),
+        startDatum: zzpVandaag(),
+        eigen: true,
+        los: true,
+        berichten: []
+      };
+      account.weken.unshift(week);
+    }
+    if(!Array.isArray(week.berichten)) week.berichten = [];
+
+    if(week.berichten.length >= ZZP_MAX_BERICHTEN_PER_WEEK){
+      return res.status(409).json({ ok: false, error: "Deze lijst zit vol. Verwijder eerst een paar berichten." });
+    }
+
+    let fotoNaam = "";
+    if(heeftFoto){
+      fotoNaam = "zzp_" + crypto.randomBytes(10).toString("hex") + zzpExtensie(req.file.mimetype);
+      fs.writeFileSync(path.join(ZZP_PHOTOS_DIR, fotoNaam), req.file.buffer);
+    }
+
+    const bericht = {
+      id: crypto.randomBytes(6).toString("hex"),
+      soort: "los",
+      soortNaam: "Los bericht",
+      tekst,
+      foto: fotoNaam,
+      wanneer,
+      geplaatst: false
+    };
+
+    week.berichten.unshift(bericht);
+    zzpMarkDirty();
+    zzpSaveNow();
+
+    return res.json({ ok: true, bericht, week });
+  }catch(err){
+    console.error("ZZP los bericht mislukt:", err.message || String(err));
+    return res.status(500).json({ ok: false, error: "Toevoegen mislukt" });
+  }
+});
+
+/* 8. Een foto uitserveren. */
+app.get("/api/zzp/foto/:naam", (req, res) => {
+  const naam = String(req.params.naam || "");
+  if(!/^zzp_[a-f0-9]+\.(jpg|png|webp|heic)$/i.test(naam)){
+    return res.status(400).send("Ongeldige naam");
+  }
+  const bestand = path.join(ZZP_PHOTOS_DIR, naam);
+  if(!fs.existsSync(bestand)) return res.status(404).send("Niet gevonden");
+  return res.sendFile(bestand);
+});
+
+/* 9. Statuscontrole. */
+app.get("/api/zzp/status", (req, res) => {
+  return res.json({
+    ok: true,
+    module: "zzp-weekmarketing",
+    accounts: zzpAccounts.size,
+    openai: OPENAI_API_KEY ? true : false,
+    opslag: ZZP_STORE_FILE
+  });
+});
+
+/* Bij afsluiten meteen wegschrijven. Dit hangt naast de bestaande afhandeling
+   en raakt die niet aan. */
+process.on("SIGTERM", () => { try{ zzpSaveNow(); }catch(e){} });
+process.on("SIGINT", () => { try{ zzpSaveNow(); }catch(e){} });
+
+/* ==================== EINDE ZZP WEEKMARKETING ==================== */
+
+/* ==========================================================================
+   ZZP KOPPELEN EN PLAATSEN  -  tweede blok, hoort achter het weekmarketingblok
+   --------------------------------------------------------------------------
+   PLAATSEN: direct onder het blok ZZP WEEKMARKETING, dus nog steeds VOOR
+             app.use((req, res) => { res.status(404) ... })
+
+   Wat dit doet:
+     - bewaart de eigen Meta-app-sleutels van een gebruiker (versleuteld)
+     - regelt het toestemmingsscherm van Facebook en haalt de tokens op
+     - zoekt de Facebook-pagina en het gekoppelde Instagram-account
+     - plaatst geplande berichten vanzelf op het juiste moment
+     - vernieuwt tokens voordat ze verlopen
+
+   OMGEVINGSVARIABELEN die je op Render moet zetten:
+     ZZP_CRYPTO_KEY      verplicht. Lange willekeurige reeks, minimaal 32 tekens.
+                         Verlies je hem, dan moeten alle gebruikers opnieuw koppelen.
+     ZZP_PUBLIC_URL      standaard https://formforge-sync-1.onrender.com
+     ZZP_TOOL_URL        waar de gebruiker naartoe gaat na het koppelen
+     META_API_VERSION    standaard v21.0. LET OP: Meta laat versies na ongeveer
+                         twee jaar vervallen. Kijk in de Meta-documentatie welke
+                         versie nu actueel is en zet die hier. Ik kan dat niet
+                         voor je controleren.
+   ========================================================================== */
+
+const ZZP2_CRYPTO_KEY = process.env.ZZP_CRYPTO_KEY || "";
+const ZZP2_PUBLIC_URL = (process.env.ZZP_PUBLIC_URL || "https://formforge-sync-1.onrender.com").replace(/\/+$/, "");
+const ZZP2_TOOL_URL = process.env.ZZP_TOOL_URL || "https://www.formforge.nl/marketingtool/";
+const ZZP2_API = "https://graph.facebook.com/" + (process.env.META_API_VERSION || "v21.0");
+const ZZP2_DIALOG = "https://www.facebook.com/" + (process.env.META_API_VERSION || "v21.0") + "/dialog/oauth";
+const ZZP2_REDIRECT = ZZP2_PUBLIC_URL + "/api/zzp/koppel/terug";
+const ZZP2_SCOPES = [
+  "pages_show_list",
+  "pages_read_engagement",
+  "instagram_basic",
+  "instagram_content_publish",
+  "business_management"
+].join(",");
+
+if(!ZZP2_CRYPTO_KEY){
+  console.warn("ZZP: ZZP_CRYPTO_KEY ontbreekt. Koppelen is uitgeschakeld tot die is ingesteld.");
+}
+
+/* ---------- versleutelen ---------- */
+
+function zzp2Sleutel(){
+  return crypto.createHash("sha256").update(String(ZZP2_CRYPTO_KEY)).digest();
+}
+
+function zzp2Versleutel(tekst){
+  if(!ZZP2_CRYPTO_KEY) return "";
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", zzp2Sleutel(), iv);
+  const deel1 = cipher.update(String(tekst), "utf8");
+  const deel2 = cipher.final();
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([iv, tag, deel1, deel2]).toString("base64");
+}
+
+function zzp2Ontsleutel(pakket){
+  if(!ZZP2_CRYPTO_KEY || !pakket) return "";
+  try{
+    const buf = Buffer.from(String(pakket), "base64");
+    const iv = buf.slice(0, 12);
+    const tag = buf.slice(12, 28);
+    const rest = buf.slice(28);
+    const decipher = crypto.createDecipheriv("aes-256-gcm", zzp2Sleutel(), iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(rest), decipher.final()]).toString("utf8");
+  }catch(err){
+    console.error("ZZP: ontsleutelen mislukt:", err.message || String(err));
+    return "";
+  }
+}
+
+/* ---------- ondertekende state, zodat niemand met de terugkomst kan knoeien ---------- */
+
+function zzp2MaakState(email){
+  const nonce = crypto.randomBytes(8).toString("hex");
+  const basis = Buffer.from(email + "|" + nonce).toString("base64url");
+  const hmac = crypto.createHmac("sha256", String(ZZP2_CRYPTO_KEY)).update(basis).digest("hex").slice(0, 24);
+  return basis + "." + hmac;
+}
+
+function zzp2LeesState(state){
+  const delen = String(state || "").split(".");
+  if(delen.length !== 2) return "";
+  const hmac = crypto.createHmac("sha256", String(ZZP2_CRYPTO_KEY)).update(delen[0]).digest("hex").slice(0, 24);
+  if(hmac !== delen[1]) return "";
+  try{
+    return Buffer.from(delen[0], "base64url").toString("utf8").split("|")[0];
+  }catch(err){
+    return "";
+  }
+}
+
+/* ---------- Graph API ---------- */
+
+async function zzp2Graph(pad, params, methode){
+  const url = new URL(ZZP2_API + pad);
+  if(methode !== "POST"){
+    Object.keys(params || {}).forEach((k) => url.searchParams.set(k, params[k]));
+  }
+  const opties = { method: methode || "GET" };
+  if(methode === "POST"){
+    const body = new URLSearchParams();
+    Object.keys(params || {}).forEach((k) => body.append(k, params[k]));
+    opties.body = body;
+    opties.headers = { "Content-Type": "application/x-www-form-urlencoded" };
+  }
+  const response = await fetch(url.toString(), opties);
+  const data = await response.json().catch(() => ({}));
+  if(!response.ok || (data && data.error)){
+    const melding = data && data.error && data.error.message ? data.error.message : "Meta gaf een fout terug";
+    const fout = new Error(melding);
+    fout.details = data && data.error ? data.error : null;
+    throw fout;
+  }
+  return data;
+}
+
+/* ---------- tijd: een moment zonder tijdzone lezen als Nederlandse tijd ---------- */
+
+function zzp2NlOffsetMinuten(datum){
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Europe/Amsterdam",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
+  });
+  const d = {};
+  dtf.formatToParts(datum).forEach((p) => { d[p.type] = p.value; });
+  const alsUtc = Date.UTC(Number(d.year), Number(d.month) - 1, Number(d.day),
+                          Number(d.hour), Number(d.minute), Number(d.second));
+  return (alsUtc - datum.getTime()) / 60000;
+}
+
+/* Zet "2026-08-04T21:30" (Nederlandse tijd) om naar een echt tijdstip.
+   Staat er wel een tijdzone in de tekst, dan wordt die gewoon gebruikt. */
+function zzp2Moment(tekst){
+  const s = String(tekst || "").trim();
+  if(!s) return NaN;
+  if(/Z$|[+-]\d{2}:?\d{2}$/.test(s)) return new Date(s).getTime();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+  if(!m) return new Date(s).getTime();
+  const gok = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]));
+  const offset = zzp2NlOffsetMinuten(new Date(gok));
+  return gok - offset * 60000;
+}
+
+/* ---------- koppeling in de opslag ---------- */
+
+function zzp2Koppeling(account){
+  if(!account.koppeling) account.koppeling = {};
+  return account.koppeling;
+}
+
+function zzp2Status(account){
+  const k = account && account.koppeling ? account.koppeling : {};
+  return {
+    sleutels: k.appId ? true : false,
+    facebook: k.pageId ? true : false,
+    instagram: k.igUserId ? true : false,
+    paginaNaam: k.pageNaam || "",
+    verlooptOp: k.tokenVerlooptOp || ""
+  };
+}
+
+/* ---------- 1. sleutels bewaren ---------- */
+
+app.post("/api/zzp/koppel/sleutels", express.json({ limit: "50kb" }), (req, res) => {
+  if(!ZZP2_CRYPTO_KEY) return res.status(503).json({ ok: false, error: "Koppelen staat nog uit op de server" });
+
+  const email = normalizePremiumKey(req.body && req.body.email);
+  const appId = zzpSchoon(req.body && req.body.appId, 60);
+  const appSecret = zzpSchoon(req.body && req.body.appSecret, 120);
+  if(!email || !appId || !appSecret) return res.status(400).json({ ok: false, error: "Vul je e-mailadres, App ID en App Secret in" });
+  if(!/^[0-9]{6,}$/.test(appId)) return res.status(400).json({ ok: false, error: "Het App ID bestaat alleen uit cijfers. Kijk of je de goede waarde hebt gekopieerd." });
+
+  const account = zzpGetAccount(email);
+  const k = zzp2Koppeling(account);
+  k.appId = appId;
+  k.appSecret = zzp2Versleutel(appSecret);
+  zzpMarkDirty();
+
+  return res.json({ ok: true, status: zzp2Status(account) });
+});
+
+/* ---------- 2. naar het toestemmingsscherm ---------- */
+
+app.get("/api/zzp/koppel/start", (req, res) => {
+  const email = normalizePremiumKey(req.query && req.query.email);
+  if(!email) return res.status(400).send("E-mailadres ontbreekt");
+
+  const account = zzpGetAccount(email);
+  const k = zzp2Koppeling(account);
+  if(!k.appId) return res.status(400).send("Vul eerst je App ID en App Secret in bij stap 8.");
+
+  const url = new URL(ZZP2_DIALOG);
+  url.searchParams.set("client_id", k.appId);
+  url.searchParams.set("redirect_uri", ZZP2_REDIRECT);
+  url.searchParams.set("scope", ZZP2_SCOPES);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("state", zzp2MaakState(email));
+  return res.redirect(url.toString());
+});
+
+/* ---------- 3. terug van Facebook ---------- */
+
+app.get("/api/zzp/koppel/terug", async (req, res) => {
+  function terugNaarTool(melding, gelukt){
+    const scheiding = ZZP2_TOOL_URL.indexOf("?") >= 0 ? "&" : "?";
+    return res.redirect(ZZP2_TOOL_URL + scheiding + (gelukt ? "gekoppeld=1" : "fout=" + encodeURIComponent(melding)));
+  }
+
+  try{
+    if(req.query && req.query.error){
+      return terugNaarTool(String(req.query.error_description || req.query.error), false);
+    }
+    const email = zzp2LeesState(req.query && req.query.state);
+    const code = zzpSchoon(req.query && req.query.code, 600);
+    if(!email || !code) return terugNaarTool("De koppeling is onderbroken. Probeer het opnieuw.", false);
+
+    const account = zzpGetAccount(email);
+    const k = zzp2Koppeling(account);
+    const secret = zzp2Ontsleutel(k.appSecret);
+    if(!k.appId || !secret) return terugNaarTool("Je app-sleutels ontbreken. Doe stap 8 opnieuw.", false);
+
+    /* korte token ophalen */
+    const kort = await zzp2Graph("/oauth/access_token", {
+      client_id: k.appId,
+      client_secret: secret,
+      redirect_uri: ZZP2_REDIRECT,
+      code: code
+    });
+
+    /* omzetten naar een langlevende token (ongeveer 60 dagen) */
+    const lang = await zzp2Graph("/oauth/access_token", {
+      grant_type: "fb_exchange_token",
+      client_id: k.appId,
+      client_secret: secret,
+      fb_exchange_token: kort.access_token
+    });
+
+    const gebruikerToken = lang.access_token || kort.access_token;
+    const seconden = Number(lang.expires_in || 5184000);
+
+    /* pagina's en het gekoppelde Instagram-account zoeken */
+    const paginas = await zzp2Graph("/me/accounts", {
+      fields: "id,name,access_token,instagram_business_account{id,username}",
+      access_token: gebruikerToken
+    });
+
+    const lijst = (paginas && paginas.data) || [];
+    if(lijst.length === 0){
+      return terugNaarTool("We vinden geen Facebook-pagina bij je account. Controleer stap 2 en 3.", false);
+    }
+    const metInstagram = lijst.find((p) => p.instagram_business_account && p.instagram_business_account.id);
+    const gekozen = metInstagram || lijst[0];
+
+    k.userToken = zzp2Versleutel(gebruikerToken);
+    k.tokenVerlooptOp = new Date(Date.now() + seconden * 1000).toISOString();
+    k.pageId = gekozen.id;
+    k.pageNaam = gekozen.name || "";
+    k.pageToken = zzp2Versleutel(gekozen.access_token || "");
+    k.igUserId = metInstagram ? metInstagram.instagram_business_account.id : "";
+    k.igNaam = metInstagram && metInstagram.instagram_business_account.username ? metInstagram.instagram_business_account.username : "";
+    k.gekoppeldOp = new Date().toISOString();
+    zzpMarkDirty();
+    zzpSaveNow();
+
+    if(!k.igUserId){
+      return terugNaarTool("Facebook is gekoppeld, maar er hangt nog geen Instagram aan je pagina. Doe stap 3 opnieuw.", false);
+    }
+    return terugNaarTool("", true);
+  }catch(err){
+    console.error("ZZP koppelen mislukt:", err.message || String(err));
+    return terugNaarTool(err.message || "Koppelen mislukt", false);
+  }
+});
+
+/* ---------- 4. status en loskoppelen ---------- */
+
+app.get("/api/zzp/koppel/status", (req, res) => {
+  const email = normalizePremiumKey(req.query && req.query.email);
+  if(!email) return res.status(400).json({ ok: false, error: "E-mailadres ontbreekt" });
+  const account = zzpGetAccount(email);
+  return res.json({ ok: true, status: zzp2Status(account), startUrl: ZZP2_PUBLIC_URL + "/api/zzp/koppel/start?email=" + encodeURIComponent(email) });
+});
+
+app.post("/api/zzp/koppel/los", express.json({ limit: "20kb" }), (req, res) => {
+  const email = normalizePremiumKey(req.body && req.body.email);
+  if(!email) return res.status(400).json({ ok: false, error: "E-mailadres ontbreekt" });
+  const account = zzpGetAccount(email);
+  account.koppeling = {};
+  zzpMarkDirty();
+  return res.json({ ok: true, status: zzp2Status(account) });
+});
+
+/* ---------- 5. plaatsen ---------- */
+
+function zzp2FotoUrl(naam){
+  return ZZP2_PUBLIC_URL + "/api/zzp/foto/" + encodeURIComponent(naam);
+}
+
+function zzp2IsJpeg(naam){
+  return /\.jpe?g$/i.test(String(naam || ""));
+}
+
+async function zzp2WachtOpFoto(containerId, token){
+  for(let poging = 0; poging < 20; poging++){
+    await new Promise((klaar) => setTimeout(klaar, 2000));
+    let status;
+    try{
+      status = await zzp2Graph("/" + containerId, {
+        fields: "status_code,status",
+        access_token: token
+      });
+    }catch(err){
+      continue; /* nog niet leesbaar, gewoon opnieuw proberen */
+    }
+    const code = String(status && status.status_code ? status.status_code : "").toUpperCase();
+    if(code === "FINISHED") return true;
+    if(code === "ERROR" || code === "EXPIRED"){
+      throw new Error("Instagram kon de foto niet verwerken: " + (status.status || code));
+    }
+  }
+  throw new Error("Instagram is nog bezig met de foto. Probeer het over een minuut opnieuw.");
+}
+
+async function zzp2PlaatsInstagram(k, tekst, fotoNaam){
+  const igToken = zzp2Ontsleutel(k.pageToken) || zzp2Ontsleutel(k.userToken);
+  if(!k.igUserId || !igToken) throw new Error("Instagram is niet gekoppeld");
+  if(!fotoNaam) throw new Error("Instagram vraagt altijd een foto");
+  if(!zzp2IsJpeg(fotoNaam)) throw new Error("Instagram accepteert alleen JPEG. Deze foto staat in een ander formaat.");
+
+  const container = await zzp2Graph("/" + k.igUserId + "/media", {
+    image_url: zzp2FotoUrl(fotoNaam),
+    caption: String(tekst || "").slice(0, 2200),
+    access_token: igToken
+  }, "POST");
+
+  if(!container || !container.id) throw new Error("Instagram maakte geen bericht aan");
+
+  /* Instagram haalt de foto zelf op en verwerkt hem. Dat duurt een paar
+     seconden. Publiceren voordat dat klaar is geeft "Media ID is not
+     available", dus we wachten tot de status FINISHED is. */
+  await zzp2WachtOpFoto(container.id, igToken);
+
+  const geplaatst = await zzp2Graph("/" + k.igUserId + "/media_publish", {
+    creation_id: container.id,
+    access_token: igToken
+  }, "POST");
+
+  return geplaatst && geplaatst.id ? geplaatst.id : "";
+}
+
+async function zzp2PlaatsFacebook(k, tekst, fotoNaam){
+  const pageToken = zzp2Ontsleutel(k.pageToken);
+  if(!k.pageId || !pageToken) throw new Error("Facebook-pagina is niet gekoppeld");
+
+  if(fotoNaam){
+    const resultaat = await zzp2Graph("/" + k.pageId + "/photos", {
+      url: zzp2FotoUrl(fotoNaam),
+      caption: String(tekst || "").slice(0, 5000),
+      published: "true",
+      access_token: pageToken
+    }, "POST");
+    return resultaat && (resultaat.post_id || resultaat.id) ? (resultaat.post_id || resultaat.id) : "";
+  }
+
+  const resultaat = await zzp2Graph("/" + k.pageId + "/feed", {
+    message: String(tekst || "").slice(0, 5000),
+    access_token: pageToken
+  }, "POST");
+  return resultaat && resultaat.id ? resultaat.id : "";
+}
+
+/* Een bericht nu plaatsen, met de kanalen die de gebruiker heeft gekoppeld. */
+async function zzp2PlaatsBericht(account, bericht){
+  const k = account.koppeling || {};
+  const uitkomst = { instagram: "", facebook: "", fouten: [] };
+
+  if(k.igUserId){
+    try{
+      uitkomst.instagram = await zzp2PlaatsInstagram(k, bericht.tekst, bericht.foto);
+    }catch(err){
+      uitkomst.fouten.push("Instagram: " + (err.message || String(err)));
+    }
+  }
+  if(k.pageId){
+    try{
+      uitkomst.facebook = await zzp2PlaatsFacebook(k, bericht.tekst, bericht.foto);
+    }catch(err){
+      uitkomst.fouten.push("Facebook: " + (err.message || String(err)));
+    }
+  }
+  if(!k.igUserId && !k.pageId){
+    uitkomst.fouten.push("Er is nog geen enkel kanaal gekoppeld");
+  }
+  return uitkomst;
+}
+
+/* Handmatig nu plaatsen, bijvoorbeeld voor het eerste gratis bericht. */
+app.post("/api/zzp/plaats-nu", express.json({ limit: "50kb" }), async (req, res) => {
+  const email = normalizePremiumKey(req.body && req.body.email);
+  const weekId = zzpSchoon(req.body && req.body.weekId, 40);
+  const berichtId = zzpSchoon(req.body && req.body.berichtId, 40);
+  if(!email || !weekId || !berichtId) return res.status(400).json({ ok: false, error: "Gegevens ontbreken" });
+
+  const account = zzpGetAccount(email);
+  const week = (account.weken || []).find((w) => w.id === weekId);
+  if(!week) return res.status(404).json({ ok: false, error: "Week niet gevonden" });
+  const bericht = week.berichten.find((b) => b.id === berichtId);
+  if(!bericht) return res.status(404).json({ ok: false, error: "Bericht niet gevonden" });
+  if(bericht.geplaatst) return res.json({ ok: true, alGeplaatst: true });
+
+  try{
+    const uitkomst = await zzp2PlaatsBericht(account, bericht);
+    if(uitkomst.instagram || uitkomst.facebook){
+      bericht.geplaatst = true;
+      bericht.geplaatstOp = new Date().toISOString();
+      bericht.resultaat = uitkomst;
+      bericht.fout = uitkomst.fouten.length ? uitkomst.fouten.join(" | ") : "";
+      zzpMarkDirty();
+      return res.json({ ok: true, uitkomst });
+    }
+    bericht.fout = uitkomst.fouten.join(" | ");
+    zzpMarkDirty();
+    return res.status(502).json({ ok: false, error: bericht.fout || "Plaatsen mislukt" });
+  }catch(err){
+    return res.status(500).json({ ok: false, error: err.message || "Plaatsen mislukt" });
+  }
+});
+
+/* ---------- 6. de planner: elke vijf minuten kijken wat aan de beurt is ---------- */
+
+let zzp2Bezig = false;
+
+async function zzp2LoopPlanning(){
+  if(zzp2Bezig) return;
+  zzp2Bezig = true;
+  try{
+    const nu = Date.now();
+    const emails = [];
+    zzpAccounts.forEach((account, key) => {
+      if(account && account.koppeling && (account.koppeling.igUserId || account.koppeling.pageId)) emails.push(key);
+    });
+
+    for(const key of emails){
+      const account = zzpAccounts.get(key);
+      if(!account || !Array.isArray(account.weken)) continue;
+
+      for(const week of account.weken){
+        for(const bericht of (week.berichten || [])){
+          if(bericht.geplaatst) continue;
+          if(!bericht.wanneer) continue;
+          if(Number(bericht.pogingen || 0) >= 3) continue;
+
+          const moment = zzp2Moment(bericht.wanneer);
+          if(isNaN(moment) || moment > nu) continue;
+          /* niets meer plaatsen dat langer dan twee dagen te laat is */
+          if(nu - moment > 48 * 3600 * 1000){
+            bericht.pogingen = 3;
+            bericht.fout = "Te lang geleden gepland, overgeslagen";
+            zzpMarkDirty();
+            continue;
+          }
+
+          bericht.pogingen = Number(bericht.pogingen || 0) + 1;
+          try{
+            const uitkomst = await zzp2PlaatsBericht(account, bericht);
+            if(uitkomst.instagram || uitkomst.facebook){
+              bericht.geplaatst = true;
+              bericht.geplaatstOp = new Date().toISOString();
+              bericht.resultaat = uitkomst;
+              bericht.fout = uitkomst.fouten.length ? uitkomst.fouten.join(" | ") : "";
+              console.log("ZZP: bericht geplaatst voor " + key);
+            }else{
+              bericht.fout = uitkomst.fouten.join(" | ");
+              console.warn("ZZP: plaatsen mislukt voor " + key + ": " + bericht.fout);
+            }
+          }catch(err){
+            bericht.fout = err.message || String(err);
+            console.error("ZZP: plaatsen gaf een fout voor " + key + ":", bericht.fout);
+          }
+          zzpMarkDirty();
+        }
+      }
+    }
+    if(zzpDirty) zzpSaveNow();
+  }catch(err){
+    console.error("ZZP planner fout:", err.message || String(err));
+  }finally{
+    zzp2Bezig = false;
+  }
+}
+
+setInterval(zzp2LoopPlanning, 5 * 60 * 1000);
+setTimeout(zzp2LoopPlanning, 60 * 1000);
+
+/* ---------- 7. tokens vernieuwen voordat ze verlopen ---------- */
+
+async function zzp2VernieuwTokens(){
+  const grens = Date.now() + 10 * 24 * 3600 * 1000; /* tien dagen van tevoren */
+  const werk = [];
+  zzpAccounts.forEach((account, key) => {
+    const k = account && account.koppeling ? account.koppeling : null;
+    if(!k || !k.userToken || !k.tokenVerlooptOp) return;
+    const verloopt = new Date(k.tokenVerlooptOp).getTime();
+    if(!isNaN(verloopt) && verloopt < grens) werk.push(key);
+  });
+
+  for(const key of werk){
+    const account = zzpAccounts.get(key);
+    const k = account.koppeling;
+    try{
+      const secret = zzp2Ontsleutel(k.appSecret);
+      const huidig = zzp2Ontsleutel(k.userToken);
+      if(!secret || !huidig) continue;
+
+      const nieuw = await zzp2Graph("/oauth/access_token", {
+        grant_type: "fb_exchange_token",
+        client_id: k.appId,
+        client_secret: secret,
+        fb_exchange_token: huidig
+      });
+      if(nieuw && nieuw.access_token){
+        k.userToken = zzp2Versleutel(nieuw.access_token);
+        k.tokenVerlooptOp = new Date(Date.now() + Number(nieuw.expires_in || 5184000) * 1000).toISOString();
+
+        /* paginatoken opnieuw ophalen, die hangt aan de gebruikerstoken */
+        const paginas = await zzp2Graph("/me/accounts", {
+          fields: "id,name,access_token,instagram_business_account{id,username}",
+          access_token: nieuw.access_token
+        });
+        const gevonden = ((paginas && paginas.data) || []).find((p) => p.id === k.pageId);
+        if(gevonden && gevonden.access_token) k.pageToken = zzp2Versleutel(gevonden.access_token);
+        zzpMarkDirty();
+        console.log("ZZP: token vernieuwd voor " + key);
+      }
+    }catch(err){
+      k.tokenFout = err.message || String(err);
+      zzpMarkDirty();
+      console.error("ZZP: token vernieuwen mislukt voor " + key + ":", k.tokenFout);
+    }
+  }
+  if(zzpDirty) zzpSaveNow();
+}
+
+setInterval(zzp2VernieuwTokens, 12 * 3600 * 1000);
+setTimeout(zzp2VernieuwTokens, 5 * 60 * 1000);
+
+/* ---------- 8. status van dit blok ---------- */
+
+app.get("/api/zzp/koppel/systeem", (req, res) => {
+  let gekoppeld = 0;
+  zzpAccounts.forEach((a) => {
+    if(a && a.koppeling && (a.koppeling.igUserId || a.koppeling.pageId)) gekoppeld++;
+  });
+  return res.json({
+    ok: true,
+    versleuteling: ZZP2_CRYPTO_KEY ? true : false,
+    apiVersie: ZZP2_API,
+    redirectUri: ZZP2_REDIRECT,
+    gekoppeldeAccounts: gekoppeld
+  });
+});
+
+/* ================ EINDE ZZP KOPPELEN EN PLAATSEN ================ */
+
+
+/* ==========================================================================
+   WACHTER  -  zelfstandig blok voor server.js
+   --------------------------------------------------------------------------
+   PLAATSEN: dit blok staat VLAK BOVEN de regel app.listen(PORT, () => {
+             en vervangt het vorige WACHTER-blok volledig.
+             Het kleine stukje bovenaan (de verzoekmeter, vlak onder
+             app.use(cors(...))) blijft ongewijzigd staan.
+
+   Wat dit blok doet:
+     1. Opvangen  - crashes, mislukte verzoeken, trage verzoeken en alles wat
+                    via console.error wordt gemeld, komen in een logboek op de
+                    schijf (DATA_DIR/wachter_log.json, maximaal 500 regels).
+     2. Meten     - verzoeken per route, AI-aanroepen, verstuurde mail, en een
+                    dagelijkse momentopname van hotels, ondernemers, scans,
+                    chats, Guesttalk-verbruik en abonnementen.
+     3. Herstellen- een vaste, korte lijst met toegestane herstelacties. Meer
+                    mag de wachter niet. Hij past NOOIT zelf code aan.
+     4. Melden    - bij een kritieke fout meteen een mail, en ELKE DAG een
+                    volledig rapport als PDF-bijlage, ook als alles goed ging.
+
+   Gebruikt alleen bestaande dingen: app, fs, path, crypto, DATA_DIR,
+   safeWriteFileSync, rescueCorruptStore, clientIp, rateLimited, callOpenAI,
+   sendResendEmail, guesttalkAuthOk, escHtmlServer, jsonError, fetchWithTimeout,
+   OPENAI_API_KEY, RESEND_API_KEY, PORT. De opslagvariabelen die in het rapport
+   worden geteld (merchants, hotelChats, rooms, guesttalkUsage, premiumAccounts,
+   opzegVerzoeken, pdfStudioDocuments, directRooms, zzpAccounts, cityCache,
+   guideTransCache, CITIES) worden alleen gelezen en altijd achter een
+   typeof-controle, zodat een ontbrekende variabele nooit een fout geeft.
+   Alle eigen namen beginnen met wd of WACHTER, dus botsingen zijn uitgesloten.
+
+   Instellingen (Render Environment Variables, allemaal optioneel):
+     WACHTER_AAN              0 = helemaal uit                (standaard aan)
+     WACHTER_MAIL             adres voor de meldingen         (standaard bernardwijnen@gmail.com)
+     WACHTER_AI               0 = geen AI-samenvatting        (standaard aan)
+     WACHTER_TRAAG_MS         grens voor "traag verzoek"      (standaard 10000)
+     WACHTER_RAPPORT_UUR      uur van het dagrapport, NL-tijd (standaard 7)
+     WACHTER_PDF              0 = geen PDF-bijlage            (standaard aan)
+     WACHTER_ALLEEN_BIJ_FOUTEN  1 = alleen mailen als er iets te melden is
+                              (standaard nee: er gaat ELKE dag een rapport uit)
+     WACHTER_HERSTART_BIJ_CRASH  1 = na een crash netjes afsluiten zodat
+                              Render opnieuw start            (standaard nee)
+   ========================================================================== */
+
+const WACHTER_AAN = String(process.env.WACHTER_AAN || "1") !== "0";
+const WACHTER_MAIL = String(process.env.WACHTER_MAIL || "bernardwijnen@gmail.com").trim();
+const WACHTER_AI = String(process.env.WACHTER_AI || "1") !== "0";
+const WACHTER_TRAAG_MS = Number(process.env.WACHTER_TRAAG_MS || 10000);
+const WACHTER_RAPPORT_UUR = Number(process.env.WACHTER_RAPPORT_UUR || 7);
+const WACHTER_PDF = String(process.env.WACHTER_PDF || "1") !== "0";
+const WACHTER_ALLEEN_BIJ_FOUTEN = String(process.env.WACHTER_ALLEEN_BIJ_FOUTEN || "0") === "1";
+const WACHTER_HERSTART_BIJ_CRASH = String(process.env.WACHTER_HERSTART_BIJ_CRASH || "0") === "1";
+
+const WD_LOG_FILE = path.join(DATA_DIR, "wachter_log.json");
+const WD_MAX_MELDINGEN = 500;
+const WD_BEWAARDAGEN = 14;
+const WD_SAMENVOEG_MS = 24 * 60 * 60 * 1000;   // zelfde fout binnen een dag = optellen
+const WD_MAIL_REM_MS = 15 * 60 * 1000;         // per fout hoogstens 1 directe mail per kwartier
+const WD_MAIL_MAX_PER_UUR = 10;
+const WD_MAX_ROUTES = 300;                     // bovengrens op de routeteller
+
+/* De originele console-functies vasthouden, anders krijg je een oneindige lus
+   zodra de wachter zelf iets logt. */
+const wdConsoleError = console.error.bind(console);
+const wdConsoleLog = console.log.bind(console);
+
+let wdMeldingen = [];           // [{ sleutel, type, ernst, waar, tekst, stack, aantal, eerst, laatst, hersteld }]
+let wdVuil = false;
+let wdBezig = false;            // recursierem
+const wdMailRem = new Map();    // sleutel -> tijdstip laatste mail
+let wdMailsDitUur = 0;
+let wdMailUurStart = Date.now();
+let wdLaatsteRapportDag = "";
+let wdVorigeStand = null;       // momentopname van het vorige rapport
+let wdGestartOp = Date.now();
+
+function wdNieuweTellers(){
+  return {
+    vanaf: new Date().toISOString(),
+    verzoeken: 0,
+    fout4xx: 0,
+    fout5xx: 0,
+    traag: 0,
+    herstelGelukt: 0,
+    herstelMislukt: 0,
+    aiAanroepen: 0,
+    aiFouten: 0,
+    aiMs: 0,
+    mailVerstuurd: 0,
+    mailMislukt: 0,
+    routes: {},               // "GET /api/city" -> { n, f4, f5, ms, traagste }
+    traagsteVerzoek: null     // { waar, ms, tijd }
+  };
+}
+
+let wdTellers = wdNieuweTellers();
+
+/* ---------------- opslag ---------------- */
+
+function wdLaad(){
+  try{
+    if(!fs.existsSync(WD_LOG_FILE)) return;
+    const ruw = JSON.parse(fs.readFileSync(WD_LOG_FILE, "utf8"));
+    if(ruw && Array.isArray(ruw.meldingen)) wdMeldingen = ruw.meldingen;
+    if(ruw && ruw.tellers) wdTellers = Object.assign(wdNieuweTellers(), ruw.tellers);
+    if(!wdTellers.routes || typeof wdTellers.routes !== "object") wdTellers.routes = {};
+    if(ruw && ruw.laatsteRapportDag) wdLaatsteRapportDag = String(ruw.laatsteRapportDag);
+    if(ruw && ruw.vorigeStand) wdVorigeStand = ruw.vorigeStand;
+  }catch(e){
+    try{ rescueCorruptStore(WD_LOG_FILE, e); }catch(e2){}
+    wdMeldingen = [];
+  }
+}
+
+function wdBewaarNu(){
+  try{
+    safeWriteFileSync(WD_LOG_FILE, JSON.stringify({
+      meldingen: wdMeldingen,
+      tellers: wdTellers,
+      laatsteRapportDag: wdLaatsteRapportDag,
+      vorigeStand: wdVorigeStand
+    }));
+    wdVuil = false;
+  }catch(e){
+    wdConsoleError("WACHTER: logboek kon niet worden weggeschreven: " + (e && e.message ? e.message : e));
+  }
+}
+
+/* ---------------- meldingen ---------------- */
+
+function wdTekstVan(waarde){
+  if(waarde instanceof Error) return String(waarde.message || waarde);
+  if(typeof waarde === "string") return waarde;
+  try{ return JSON.stringify(waarde); }catch(e){ return String(waarde); }
+}
+
+/* Vingerafdruk: cijfers, tijden en id's eruit, zodat 40 keer dezelfde fout
+   ook echt als een fout wordt geteld en niet als 40 losse regels. */
+function wdSleutel(type, waar, tekst){
+  const kaal = String(tekst || "")
+    .replace(/[0-9a-f]{8,}/gi, "#")
+    .replace(/\d+/g, "#")
+    .slice(0, 120);
+  return type + "|" + String(waar || "") + "|" + kaal;
+}
+
+function wdMeld(gegevens){
+  if(!WACHTER_AAN) return null;
+  if(wdBezig) return null;
+  wdBezig = true;
+  try{
+    const nu = Date.now();
+    const type = String(gegevens.type || "onbekend");
+    const ernst = String(gegevens.ernst || "waarschuwing");   // kritiek | waarschuwing | info
+    const waar = String(gegevens.waar || "");
+    const tekst = wdTekstVan(gegevens.tekst).slice(0, 500);
+    const sleutel = wdSleutel(type, waar, tekst);
+
+    let melding = null;
+    for(let i = wdMeldingen.length - 1; i >= 0; i--){
+      const m = wdMeldingen[i];
+      if(m.sleutel === sleutel && (nu - new Date(m.laatst).getTime()) < WD_SAMENVOEG_MS){ melding = m; break; }
+    }
+
+    if(melding){
+      melding.aantal += 1;
+      melding.laatst = new Date(nu).toISOString();
+      melding.aantal24 = (melding.aantal24 || 0) + 1;
+      if(gegevens.hersteld) melding.hersteld = gegevens.hersteld;
+    }else{
+      melding = {
+        sleutel: sleutel,
+        type: type,
+        ernst: ernst,
+        waar: waar,
+        tekst: tekst,
+        stack: gegevens.stack ? String(gegevens.stack).split("\n").slice(0, 6).join("\n") : "",
+        aantal: 1,
+        aantal24: 1,
+        eerst: new Date(nu).toISOString(),
+        laatst: new Date(nu).toISOString(),
+        hersteld: gegevens.hersteld || null
+      };
+      wdMeldingen.push(melding);
+      if(wdMeldingen.length > WD_MAX_MELDINGEN) wdMeldingen = wdMeldingen.slice(-WD_MAX_MELDINGEN);
+    }
+
+    wdVuil = true;
+    if(ernst === "kritiek") wdDirecteMail(melding);
+    return melding;
+  }catch(e){
+    return null;
+  }finally{
+    wdBezig = false;
+  }
+}
+
+/* console.error wordt meegenomen, zodat bestaande foutmeldingen (inclusief
+   rescueCorruptStore) vanzelf in het logboek komen. console.log en
+   console.warn blijven met rust, anders loopt het logboek vol met opstartruis. */
+console.error = function(){
+  const args = Array.prototype.slice.call(arguments);
+  wdConsoleError.apply(null, args);
+  try{
+    wdMeld({
+      type: "console",
+      ernst: "waarschuwing",
+      waar: "console.error",
+      tekst: args.map(wdTekstVan).join(" ")
+    });
+  }catch(e){}
+};
+
+/* ---------------- verzoeken tellen ---------------- */
+
+/* Losse id's en nummers uit het pad halen, anders krijg je duizend losse
+   regels voor dezelfde route. Per padstuk, want alleen dan herken je een
+   id als m_mf3k2a9x1q of een lange sleutel betrouwbaar. */
+function wdRouteStuk(stuk){
+  if(!stuk) return stuk;
+  if(/^\d+$/.test(stuk)) return ":n";
+  if(/^[0-9a-f]{12,}$/i.test(stuk)) return ":id";
+  /* Bestandsnamen en routes met streepjes blijven staan: die zijn geen id. */
+  if(stuk.indexOf(".") >= 0 || stuk.indexOf("-") >= 0) return stuk;
+  if(stuk.length >= 10 && /\d/.test(stuk) && /[A-Za-z]/.test(stuk)) return ":id";
+  if(stuk.length >= 24) return ":id";
+  return stuk;
+}
+
+function wdRouteNaam(req){
+  const p = String((req && req.path) || "/").slice(0, 120);
+  const schoon = p.split("/").map(wdRouteStuk).join("/").slice(0, 90);
+  return String((req && req.method) || "") + " " + schoon;
+}
+
+function wdVerzoekKlaar(req, res, duurMs){
+  if(!WACHTER_AAN) return;
+  wdTellers.verzoeken += 1;
+  const code = res.statusCode || 0;
+  const naam = wdRouteNaam(req);
+  const waar = String(req.method || "") + " " + String(req.path || "").slice(0, 80);
+
+  if(!wdTellers.routes) wdTellers.routes = {};
+  let r = wdTellers.routes[naam];
+  if(!r){
+    if(Object.keys(wdTellers.routes).length >= WD_MAX_ROUTES){
+      r = wdTellers.routes["overig"] || (wdTellers.routes["overig"] = { n: 0, f4: 0, f5: 0, ms: 0, traagste: 0 });
+    }else{
+      r = wdTellers.routes[naam] = { n: 0, f4: 0, f5: 0, ms: 0, traagste: 0 };
+    }
+  }
+  r.n += 1;
+  r.ms += Math.max(0, Math.round(duurMs));
+  if(duurMs > r.traagste) r.traagste = Math.round(duurMs);
+
+  if(code >= 500){
+    wdTellers.fout5xx += 1;
+    r.f5 += 1;
+    // Is de fout al door de foutafhandelaar gemeld (met melding en stack),
+    // dan hoeft hij hier niet nog een keer in het logboek.
+    if(!res._wdAlGemeld){
+      wdMeld({ type: "http500", ernst: "waarschuwing", waar: waar, tekst: "Serverfout " + code });
+    }
+  }else if(code >= 400){
+    wdTellers.fout4xx += 1;
+    r.f4 += 1;
+  }
+
+  if(duurMs > WACHTER_TRAAG_MS){
+    wdTellers.traag += 1;
+    wdMeld({ type: "traag", ernst: "info", waar: waar, tekst: "Verzoek duurde " + Math.round(duurMs / 1000) + " seconden" });
+  }
+
+  if(!wdTellers.traagsteVerzoek || duurMs > wdTellers.traagsteVerzoek.ms){
+    wdTellers.traagsteVerzoek = { waar: naam, ms: Math.round(duurMs), tijd: new Date().toISOString() };
+  }
+}
+
+/* ---------------- AI en mail meetellen ----------------
+   De bestaande functies blijven precies hetzelfde werken; er komt alleen een
+   teller omheen. Zo hoeft er nergens anders in server.js iets te wijzigen. */
+
+/* Dagalarm. Blokkeert NIETS: bij overschrijding krijg je een mail, de server
+   blijft gewoon werken. Zet OPENAI_DAG_ALARM op bijvoorbeeld 500 zodra je uit
+   het dagrapport weet wat een normale dag is. 0 = uit. */
+const OPENAI_DAG_ALARM = Math.max(0, Number(process.env.OPENAI_DAG_ALARM || 0));
+let wdAiDag = "";
+let wdAiDagAantal = 0;
+
+function wdAiTelDag(){
+  const vandaag = new Date().toISOString().slice(0, 10);
+  if(wdAiDag !== vandaag){ wdAiDag = vandaag; wdAiDagAantal = 0; }
+  wdAiDagAantal += 1;
+  if(OPENAI_DAG_ALARM > 0 && wdAiDagAantal === OPENAI_DAG_ALARM){
+    wdMeld({
+      type: "aikosten", ernst: "kritiek", waar: "OpenAI",
+      tekst: "Er zijn vandaag " + wdAiDagAantal + " AI-aanroepen gedaan, dat is de grens die je hebt ingesteld. De server blijft gewoon werken; dit is alleen een seintje."
+    });
+  }
+}
+
+if(typeof callOpenAI === "function"){
+  const wdOrigCallOpenAI = callOpenAI;
+  callOpenAI = async function(){
+    const start = Date.now();
+    wdTellers.aiAanroepen += 1;
+    try{ wdAiTelDag(); }catch(e){}
+    try{
+      const uit = await wdOrigCallOpenAI.apply(this, arguments);
+      wdTellers.aiMs += (Date.now() - start);
+      return uit;
+    }catch(e){
+      wdTellers.aiMs += (Date.now() - start);
+      wdTellers.aiFouten += 1;
+      throw e;
+    }
+  };
+}
+
+if(typeof sendResendEmail === "function"){
+  const wdOrigSendResendEmail = sendResendEmail;
+  sendResendEmail = async function(){
+    try{
+      const uit = await wdOrigSendResendEmail.apply(this, arguments);
+      wdTellers.mailVerstuurd += 1;
+      return uit;
+    }catch(e){
+      wdTellers.mailMislukt += 1;
+      throw e;
+    }
+  };
+}
+
+/* ---------------- herstelacties ----------------
+   Dit is de VOLLEDIGE lijst van wat de wachter zelf mag doen. Staat een
+   handeling hier niet in, dan gebeurt hij niet. Codewijzigingen staan er
+   bewust niet in en horen er ook niet in. */
+async function wdHerstel(actie){
+  try{
+    if(actie === "mapAanmaken"){
+      if(!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+      if(typeof PHOTOS_DIR === "string" && !fs.existsSync(PHOTOS_DIR)) fs.mkdirSync(PHOTOS_DIR, { recursive: true });
+      return { actie: actie, gelukt: true };
+    }
+    if(actie === "schijfTest"){
+      const proef = path.join(DATA_DIR, "wachter_schijftest.tmp");
+      fs.writeFileSync(proef, String(Date.now()));
+      fs.readFileSync(proef, "utf8");
+      fs.unlinkSync(proef);
+      return { actie: actie, gelukt: true };
+    }
+    if(actie === "logOpschonen"){
+      const grens = Date.now() - WD_BEWAARDAGEN * 24 * 60 * 60 * 1000;
+      wdMeldingen = wdMeldingen.filter((m) => new Date(m.laatst).getTime() >= grens);
+      if(wdMeldingen.length > WD_MAX_MELDINGEN) wdMeldingen = wdMeldingen.slice(-WD_MAX_MELDINGEN);
+      wdVuil = true;
+      return { actie: actie, gelukt: true };
+    }
+    return { actie: actie, gelukt: false, reden: "onbekende actie" };
+  }catch(e){
+    return { actie: actie, gelukt: false, reden: e && e.message ? e.message : String(e) };
+  }
+}
+
+/* Hulpmiddel om een wankele aanroep opnieuw te proberen. Deze functie wordt
+   nergens automatisch toegepast: je kunt hem later zelf om een aanroep heen
+   zetten, bijvoorbeeld wdProbeerOpnieuw("vertaling", () => callOpenAI(...), 3, 1500). */
+async function wdProbeerOpnieuw(naam, functie, pogingen, wachtMs){
+  const max = Number(pogingen || 3);
+  const wacht = Number(wachtMs || 1000);
+  let laatsteFout = null;
+  for(let poging = 1; poging <= max; poging++){
+    try{
+      const uitkomst = await functie();
+      if(poging > 1){
+        wdTellers.herstelGelukt += 1;
+        wdMeld({
+          type: "herstel", ernst: "info", waar: String(naam),
+          tekst: "Gelukt na poging " + poging + " van " + max,
+          hersteld: { actie: "opnieuwProberen", gelukt: true }
+        });
+      }
+      return uitkomst;
+    }catch(e){
+      laatsteFout = e;
+      if(poging < max) await new Promise((r) => setTimeout(r, wacht * poging));
+    }
+  }
+  wdTellers.herstelMislukt += 1;
+  wdMeld({
+    type: "herstel", ernst: "kritiek", waar: String(naam),
+    tekst: "Na " + max + " pogingen nog steeds mislukt: " + (laatsteFout && laatsteFout.message ? laatsteFout.message : String(laatsteFout)),
+    hersteld: { actie: "opnieuwProberen", gelukt: false }
+  });
+  throw laatsteFout;
+}
+
+/* ---------------- zelftest ---------------- */
+
+let wdLaatsteZelftest = null;
+let wdGrootControle = 0;   // wanneer de grote bestanden voor het laatst zijn nagekeken
+
+async function wdZelftest(){
+  if(!WACHTER_AAN) return;
+  const uitslag = { tijd: new Date().toISOString(), health: "onbekend", schijf: "onbekend", geheugenMb: 0 };
+
+  // 1. Antwoordt de server zelf nog?
+  try{
+    const antwoord = await fetchWithTimeout("http://127.0.0.1:" + PORT + "/api/health", {}, 10000);
+    if(!antwoord.ok){
+      uitslag.health = "status " + antwoord.status;
+      wdMeld({ type: "zelftest", ernst: "kritiek", waar: "/api/health", tekst: "Eigen gezondheidscontrole gaf status " + antwoord.status });
+    }else{
+      uitslag.health = "goed";
+    }
+  }catch(e){
+    uitslag.health = "geen antwoord";
+    wdMeld({ type: "zelftest", ernst: "kritiek", waar: "/api/health", tekst: "Eigen gezondheidscontrole antwoordde niet: " + (e && e.message ? e.message : e) });
+  }
+
+  // 2. Kan er naar de schijf geschreven worden? Zo nee: mappen aanmaken en opnieuw proberen.
+  let schijf = await wdHerstel("schijfTest");
+  if(!schijf.gelukt){
+    const maak = await wdHerstel("mapAanmaken");
+    schijf = await wdHerstel("schijfTest");
+    if(schijf.gelukt){
+      uitslag.schijf = "hersteld";
+      wdTellers.herstelGelukt += 1;
+      wdMeld({
+        type: "schijf", ernst: "waarschuwing", waar: DATA_DIR,
+        tekst: "Schijf was niet beschrijfbaar, de datamap is opnieuw aangemaakt en daarna werkte het weer",
+        hersteld: { actie: "mapAanmaken", gelukt: true }
+      });
+    }else{
+      uitslag.schijf = "niet beschrijfbaar";
+      wdTellers.herstelMislukt += 1;
+      wdMeld({
+        type: "schijf", ernst: "kritiek", waar: DATA_DIR,
+        tekst: "Kan niet naar de schijf schrijven: " + (schijf.reden || "onbekend") + (maak.gelukt ? "" : " (map aanmaken lukte ook niet)"),
+        hersteld: { actie: "mapAanmaken", gelukt: false }
+      });
+    }
+  }else{
+    uitslag.schijf = "goed";
+  }
+
+  // 3. Geheugengebruik in de gaten houden.
+  try{
+    const rss = Math.round(process.memoryUsage().rss / (1024 * 1024));
+    uitslag.geheugenMb = rss;
+    if(rss > 450){
+      wdMeld({ type: "geheugen", ernst: "waarschuwing", waar: "proces", tekst: "Geheugengebruik is " + rss + " MB" });
+    }
+  }catch(e){}
+
+  wdLaatsteZelftest = uitslag;
+  if(wdVuil) wdBewaarNu();
+}
+
+/* Een keer per uur: zijn alle opslagbestanden nog leesbaar? Bij een corrupt
+   bestand wordt het origineel veiliggesteld en gemeld. De wachter schrijft
+   het NIET zelf opnieuw, want dan zou hij data kunnen wissen. */
+async function wdControleerBestanden(){
+  if(!WACHTER_AAN) return;
+  let groteGedaan = false;
+  try{
+    const bestanden = fs.readdirSync(DATA_DIR).filter((n) => n.toLowerCase().endsWith(".json"));
+    for(const naam of bestanden){
+      const volledig = path.join(DATA_DIR, naam);
+      try{
+        const info = fs.statSync(volledig);
+        /* Kleine bestanden elk uur. Grote bestanden kosten tijd en geheugen om
+           te lezen, dus die gaan een keer per dag mee. Ze helemaal overslaan
+           zou betekenen dat juist je grootste bestand nooit gecontroleerd wordt. */
+        if(info.size > 5 * 1024 * 1024){
+          if(info.size > 128 * 1024 * 1024) continue;
+          if(Date.now() - wdGrootControle < 24 * 60 * 60 * 1000) continue;
+          groteGedaan = true;
+        }
+        JSON.parse(fs.readFileSync(volledig, "utf8"));
+      }catch(e){
+        wdMeld({
+          type: "bestand", ernst: "kritiek", waar: naam,
+          tekst: "Opslagbestand is onleesbaar of corrupt: " + (e && e.message ? e.message : e)
+        });
+        try{ rescueCorruptStore(volledig, e); }catch(e2){}
+      }
+    }
+  }catch(e){}
+  if(groteGedaan) wdGrootControle = Date.now();
+  await wdHerstel("logOpschonen");
+  if(wdVuil) wdBewaarNu();
+}
+
+/* ---------------- crashes ---------------- */
+
+process.on("uncaughtException", (err) => {
+  try{
+    wdMeld({
+      type: "crash", ernst: "kritiek", waar: "uncaughtException",
+      tekst: err && err.message ? err.message : String(err),
+      stack: err && err.stack ? err.stack : ""
+    });
+    wdBewaarNu();
+  }catch(e){}
+  wdConsoleError("WACHTER: onafgevangen fout: " + (err && err.stack ? err.stack : err));
+  if(WACHTER_HERSTART_BIJ_CRASH){
+    setTimeout(() => { try{ process.exit(1); }catch(e){} }, 3000);
+  }
+});
+
+process.on("unhandledRejection", (reden) => {
+  try{
+    wdMeld({
+      type: "crash", ernst: "kritiek", waar: "unhandledRejection",
+      tekst: reden && reden.message ? reden.message : String(reden),
+      stack: reden && reden.stack ? reden.stack : ""
+    });
+    wdBewaarNu();
+  }catch(e){}
+  wdConsoleError("WACHTER: niet afgehandelde promise: " + (reden && reden.stack ? reden.stack : reden));
+});
+
+/* ---------------- mail ---------------- */
+
+function wdMagMailen(sleutel){
+  const nu = Date.now();
+  if(nu - wdMailUurStart > 60 * 60 * 1000){ wdMailUurStart = nu; wdMailsDitUur = 0; }
+  if(wdMailsDitUur >= WD_MAIL_MAX_PER_UUR) return false;
+  const vorige = wdMailRem.get(sleutel) || 0;
+  if(nu - vorige < WD_MAIL_REM_MS) return false;
+  wdMailRem.set(sleutel, nu);
+  wdMailsDitUur += 1;
+  return true;
+}
+
+async function wdMail(onderwerp, tekst, bijlagen){
+  if(!RESEND_API_KEY){
+    wdConsoleError("WACHTER: geen RESEND_API_KEY, mail kon niet worden verstuurd");
+    return false;
+  }
+  if(!WACHTER_MAIL){
+    wdConsoleError("WACHTER: geen ontvanger ingesteld (WACHTER_MAIL), mail kon niet worden verstuurd");
+    return false;
+  }
+  try{
+    const bericht = {
+      to: WACHTER_MAIL,
+      subject: onderwerp,
+      text: tekst,
+      html: "<pre style=\"font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;white-space:pre-wrap\">" + escHtmlServer(tekst) + "</pre>"
+    };
+    if(Array.isArray(bijlagen) && bijlagen.length) bericht.attachments = bijlagen;
+    await sendResendEmail(bericht);
+    return true;
+  }catch(e){
+    wdConsoleError("WACHTER: mail versturen mislukt: " + (e && e.message ? e.message : e));
+    return false;
+  }
+}
+
+function wdDirecteMail(melding){
+  if(!melding || !wdMagMailen(melding.sleutel)) return;
+  const tekst = [
+    "Er is een kritieke fout opgetreden op de Salve-server.",
+    "",
+    "Tijd:   " + melding.laatst,
+    "Waar:   " + (melding.waar || "onbekend"),
+    "Soort:  " + melding.type,
+    "Aantal: " + melding.aantal + " keer",
+    "",
+    "Melding:",
+    melding.tekst,
+    melding.stack ? "\nTechnische regels:\n" + melding.stack : "",
+    "",
+    "Het volledige logboek staat in het beheer via /api/wachter/log."
+  ].join("\n");
+  wdMail("Salve wachter: kritieke fout (" + melding.type + ")", tekst).catch(() => {});
+}
+
+/* ==========================================================================
+   MOMENTOPNAME  -  wat staat er op dit moment in de server?
+   Alles achter een typeof-controle: ontbreekt een variabele, dan blijft het
+   veld gewoon leeg en gaat het rapport door.
+   ========================================================================== */
+
+function wdGetal(v){ return (typeof v === "number" && isFinite(v)) ? v : 0; }
+
+function wdMomentopname(){
+  const s = {
+    tijd: new Date().toISOString(),
+    hotels: 0, ondernemers: 0, ondernemersActief: 0, ondernemersUitgelicht: 0,
+    ondernemersMetLogin: 0, wijzigingenInWacht: 0, scansTotaal: 0, stedenMetInhoud: 0,
+    chatGesprekken: 0, chatBerichten: 0, chatGesprekkenActief24u: 0,
+    wereldchatKamers: 0, wereldchatDeelnemers: 0,
+    directeLijnKamers: 0,
+    guesttalkCodes: 0, guesttalkActief: 0, guesttalkMinutenGebruikt: 0,
+    guesttalkMinutenBundel: 0, guesttalkAanvragenOpen: 0,
+    premiumAccounts: 0, pdfStudioDocumenten: 0, zzpAccounts: 0,
+    opzegTotaal: 0, opzegBevestigd: 0, opzegOpenstaand: 0,
+    vertaalcacheItems: 0, tekstcacheItems: 0, stedenInServer: 0
+  };
+  const extra = { hotelsPerStad: [], drukkeHotels: [], guesttalkTop: [], nieuweOpzeggingen: [] };
+
+  try{
+    if(typeof CITIES === "object" && CITIES) s.stedenInServer = Object.keys(CITIES).length;
+  }catch(e){}
+
+  try{
+    if(typeof merchants !== "undefined" && merchants && typeof merchants.forEach === "function"){
+      merchants.forEach((lijst, stad) => {
+        if(!Array.isArray(lijst)) return;
+        let hotelsHier = 0;
+        for(const m of lijst){
+          if(!m) continue;
+          s.ondernemers += 1;
+          if(m.active) s.ondernemersActief += 1;
+          if(m.subscribed) s.ondernemersUitgelicht += 1;
+          if(m.loginCount) s.ondernemersMetLogin += 1;
+          if(m.pending && Object.keys(m.pending).length) s.wijzigingenInWacht += 1;
+          if(m.categoryId === "hotels"){
+            s.hotels += 1;
+            hotelsHier += 1;
+            const scans = wdGetal(m.scans);
+            s.scansTotaal += scans;
+            if(scans > 0) extra.drukkeHotels.push({ naam: String(m.name || "?"), stad: String(stad || "?"), scans: scans });
+          }
+        }
+        if(lijst.length) s.stedenMetInhoud += 1;
+        if(hotelsHier) extra.hotelsPerStad.push({ stad: String(stad || "?"), hotels: hotelsHier, ondernemers: lijst.length });
+      });
+    }
+  }catch(e){}
+
+  try{
+    if(typeof hotelChats !== "undefined" && hotelChats && typeof hotelChats.forEach === "function"){
+      const grens = Date.now() - 24 * 60 * 60 * 1000;
+      hotelChats.forEach((h) => {
+        if(!h || !h.convos || typeof h.convos.forEach !== "function") return;
+        h.convos.forEach((c) => {
+          if(!c) return;
+          s.chatGesprekken += 1;
+          if(Array.isArray(c.messages)) s.chatBerichten += c.messages.length;
+          if(wdGetal(c.lastActive) >= grens) s.chatGesprekkenActief24u += 1;
+        });
+      });
+    }
+  }catch(e){}
+
+  try{
+    if(typeof rooms !== "undefined" && rooms && typeof rooms.forEach === "function"){
+      rooms.forEach((r) => {
+        if(!r) return;
+        s.wereldchatKamers += 1;
+        if(r.members && typeof r.members.size === "number") s.wereldchatDeelnemers += r.members.size;
+      });
+    }
+  }catch(e){}
+
+  try{
+    if(typeof directRooms !== "undefined" && directRooms && typeof directRooms.size === "number"){
+      s.directeLijnKamers = directRooms.size;
+    }
+  }catch(e){}
+
+  try{
+    if(typeof guesttalkUsage === "object" && guesttalkUsage && guesttalkUsage.codes){
+      const codes = guesttalkUsage.codes;
+      for(const sleutel of Object.keys(codes)){
+        const rec = codes[sleutel];
+        if(!rec) continue;
+        s.guesttalkCodes += 1;
+        if(rec.active !== false) s.guesttalkActief += 1;
+        const gebruikt = Math.round(wdGetal(rec.secondsUsed) / 60);
+        const bundel = wdGetal(rec.limitMinutes) + wdGetal(rec.bonusMinutes);
+        s.guesttalkMinutenGebruikt += gebruikt;
+        s.guesttalkMinutenBundel += bundel;
+        if(Array.isArray(rec.requests)) s.guesttalkAanvragenOpen += rec.requests.filter(v => v && !v.afgehandeld && !v.handled).length;
+        if(gebruikt > 0 || bundel > 0){
+          extra.guesttalkTop.push({
+            code: String(sleutel), label: String(rec.label || ""), tier: String(rec.tier || ""),
+            gebruikt: gebruikt, bundel: bundel, actief: rec.active !== false
+          });
+        }
+      }
+    }
+  }catch(e){}
+
+  try{
+    if(typeof premiumAccounts !== "undefined" && premiumAccounts && typeof premiumAccounts.size === "number") s.premiumAccounts = premiumAccounts.size;
+  }catch(e){}
+  try{
+    if(typeof pdfStudioDocuments !== "undefined" && pdfStudioDocuments && typeof pdfStudioDocuments.size === "number") s.pdfStudioDocumenten = pdfStudioDocuments.size;
+  }catch(e){}
+  try{
+    if(typeof zzpAccounts !== "undefined" && zzpAccounts && typeof zzpAccounts.size === "number") s.zzpAccounts = zzpAccounts.size;
+  }catch(e){}
+  try{
+    if(typeof cityCache !== "undefined" && cityCache && typeof cityCache.size === "number") s.vertaalcacheItems = cityCache.size;
+  }catch(e){}
+  try{
+    if(typeof guideTransCache !== "undefined" && guideTransCache && typeof guideTransCache.size === "number") s.tekstcacheItems = guideTransCache.size;
+  }catch(e){}
+
+  try{
+    if(typeof opzegVerzoeken !== "undefined" && Array.isArray(opzegVerzoeken)){
+      const grens = Date.now() - 24 * 60 * 60 * 1000;
+      s.opzegTotaal = opzegVerzoeken.length;
+      for(const v of opzegVerzoeken){
+        if(!v) continue;
+        if(v.bevestigd) s.opzegBevestigd += 1;
+        if(v.bevestigd && !v.afgehandeld) s.opzegOpenstaand += 1;
+        const t = Date.parse(v.t || "");
+        if(isFinite(t) && t >= grens){
+          extra.nieuweOpzeggingen.push({
+            product: String(v.product || "?"), bedrijf: String(v.bedrijf || v.naam || "?"),
+            bevestigd: !!v.bevestigd, tijd: String(v.t || "")
+          });
+        }
+      }
+    }
+  }catch(e){}
+
+  extra.drukkeHotels.sort((a, b) => b.scans - a.scans);
+  extra.hotelsPerStad.sort((a, b) => b.ondernemers - a.ondernemers);
+  extra.guesttalkTop.sort((a, b) => b.gebruikt - a.gebruikt);
+
+  return { stand: s, extra: extra };
+}
+
+/* Bestanden op de schijf, zodat je ziet of iets ongemerkt groeit. */
+function wdSchijfOverzicht(){
+  const uit = { bestanden: [], totaalBytes: 0 };
+  try{
+    const namen = fs.readdirSync(DATA_DIR);
+    for(const naam of namen){
+      try{
+        const info = fs.statSync(path.join(DATA_DIR, naam));
+        if(!info.isFile()) continue;
+        uit.bestanden.push({ naam: naam, bytes: info.size, gewijzigd: info.mtime.toISOString() });
+        uit.totaalBytes += info.size;
+      }catch(e){}
+    }
+  }catch(e){}
+  uit.bestanden.sort((a, b) => b.bytes - a.bytes);
+  return uit;
+}
+
+/* ---------------- opmaakhulpjes ---------------- */
+
+function wdMv(aantal, enkelvoud, meervoud){
+  const n = wdGetal(aantal);
+  return n + " " + (n === 1 ? enkelvoud : meervoud);
+}
+
+function wdMb(bytes){
+  const b = wdGetal(bytes);
+  if(b >= 1024 * 1024) return (b / (1024 * 1024)).toFixed(1) + " MB";
+  if(b >= 1024) return Math.round(b / 1024) + " kB";
+  return b + " B";
+}
+
+function wdDuur(ms){
+  const sec = Math.floor(wdGetal(ms) / 1000);
+  const d = Math.floor(sec / 86400);
+  const u = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if(d > 0) return d + " dagen, " + u + " uur";
+  if(u > 0) return u + " uur, " + m + " minuten";
+  return m + " minuten";
+}
+
+function wdVerschil(nu, eerder){
+  if(typeof eerder !== "number") return "";
+  const d = wdGetal(nu) - eerder;
+  if(d === 0) return " (gelijk)";
+  return d > 0 ? " (+" + d + ")" : " (" + d + ")";
+}
+
+function wdNlDatum(){
+  try{
+    return new Intl.DateTimeFormat("nl-NL", {
+      timeZone: "Europe/Amsterdam", weekday: "long", day: "numeric", month: "long", year: "numeric"
+    }).format(new Date());
+  }catch(e){
+    return new Date().toLocaleDateString("nl-NL");
+  }
+}
+
+/* ==========================================================================
+   PDF  -  eenvoudige, ingebouwde PDF-maker. Geen extra bibliotheek nodig,
+   dus er verandert niets aan package.json en de deploy kan er niet op stuk.
+   Alleen tekst, lettertype Helvetica, automatische pagina's.
+   ========================================================================== */
+
+function wdPdfTekst(s){
+  let uit = "";
+  const ruw = String(s === undefined || s === null ? "" : s);
+  for(let i = 0; i < ruw.length; i++){
+    const c = ruw.charCodeAt(i);
+    const teken = ruw[i];
+    if(teken === "(" || teken === ")" || teken === "\\"){ uit += "\\" + teken; continue; }
+    if(c < 32){ uit += " "; continue; }
+    if(c > 255){ uit += "?"; continue; }
+    uit += teken;
+  }
+  return uit;
+}
+
+function wdPdfBreek(tekst, maxTekens){
+  const woorden = String(tekst === undefined || tekst === null ? "" : tekst).split(/\s+/).filter(Boolean);
+  const regels = [];
+  let huidig = "";
+  for(const w of woorden){
+    if(!huidig.length){ huidig = w; }
+    else if((huidig.length + 1 + w.length) <= maxTekens){ huidig += " " + w; }
+    else { regels.push(huidig); huidig = w; }
+    while(huidig.length > maxTekens){
+      regels.push(huidig.slice(0, maxTekens));
+      huidig = huidig.slice(maxTekens);
+    }
+  }
+  if(huidig.length) regels.push(huidig);
+  if(!regels.length) regels.push("");
+  return regels;
+}
+
+function wdPdfMaak(titel, blokken){
+  const BREEDTE = 595, HOOGTE = 842;
+  const MARGE = 40, ONDER = 46;
+  const GROOTTE = 9, REGELHOOGTE = 11.5;
+  const MAXTEKENS = 104;
+
+  const paginas = [];
+  let regels = [];
+  let y = HOOGTE - MARGE - 26;
+
+  function nieuwePagina(){
+    if(regels.length) paginas.push(regels);
+    regels = [];
+    y = HOOGTE - MARGE - 26;
+  }
+
+  function zet(soort, tekst){
+    const isKop = soort === "h1" || soort === "h2";
+    const hoogte = soort === "h1" ? REGELHOOGTE + 8 : (soort === "h2" ? REGELHOOGTE + 6 : REGELHOOGTE);
+    if(y - hoogte < ONDER) nieuwePagina();
+    y -= hoogte;
+    regels.push({
+      font: isKop ? "F2" : "F1",
+      grootte: soort === "h1" ? 13 : (soort === "h2" ? 10.5 : GROOTTE),
+      x: MARGE, y: y, tekst: tekst
+    });
+  }
+
+  for(const blok of (blokken || [])){
+    const soort = (blok && blok.soort) ? blok.soort : "tekst";
+    if(soort === "leeg"){ if(y - REGELHOOGTE >= ONDER){ y -= REGELHOOGTE; } continue; }
+    if(soort === "paginabreuk"){ nieuwePagina(); continue; }
+    const stukken = wdPdfBreek(blok.tekst, soort === "h1" ? 72 : (soort === "h2" ? 88 : MAXTEKENS));
+    stukken.forEach((r, i) => zet(soort, (i === 0 ? "" : "   ") + r));
+  }
+  if(regels.length) paginas.push(regels);
+  if(!paginas.length) paginas.push([]);
+
+  const objecten = [];
+  function obj(inhoud){ objecten.push(inhoud); return objecten.length; }
+
+  const catalogusNr = 1, pagesNr = 2, fontNr = 3, fontVetNr = 4;
+  objecten.push(null, null, null, null);
+
+  const paginaNrs = [];
+  paginas.forEach((paginaRegels, index) => {
+    let stroom = "";
+    for(const r of paginaRegels){
+      stroom += "BT /" + r.font + " " + r.grootte + " Tf 1 0 0 1 " + r.x.toFixed(2) + " " + r.y.toFixed(2) + " Tm (" + wdPdfTekst(r.tekst) + ") Tj ET\n";
+    }
+    stroom += "BT /F1 7.5 Tf 1 0 0 1 " + MARGE + " 28 Tm (" + wdPdfTekst(titel + "  |  pagina " + (index + 1) + " van " + paginas.length) + ") Tj ET\n";
+    const stroomNr = obj("<< /Length " + Buffer.byteLength(stroom, "latin1") + " >>\nstream\n" + stroom + "endstream");
+    const paginaNr = obj("<< /Type /Page /Parent " + pagesNr + " 0 R /MediaBox [0 0 " + BREEDTE + " " + HOOGTE + "] /Resources << /Font << /F1 " + fontNr + " 0 R /F2 " + fontVetNr + " 0 R >> >> /Contents " + stroomNr + " 0 R >>");
+    paginaNrs.push(paginaNr);
+  });
+
+  objecten[catalogusNr - 1] = "<< /Type /Catalog /Pages " + pagesNr + " 0 R >>";
+  objecten[pagesNr - 1] = "<< /Type /Pages /Count " + paginaNrs.length + " /Kids [" + paginaNrs.map(n => n + " 0 R").join(" ") + "] >>";
+  objecten[fontNr - 1] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>";
+  objecten[fontVetNr - 1] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>";
+
+  let pdf = "%PDF-1.4\n";
+  const posities = [];
+  objecten.forEach((inhoud, i) => {
+    posities.push(Buffer.byteLength(pdf, "latin1"));
+    pdf += (i + 1) + " 0 obj\n" + inhoud + "\nendobj\n";
+  });
+  const xrefPos = Buffer.byteLength(pdf, "latin1");
+  pdf += "xref\n0 " + (objecten.length + 1) + "\n0000000000 65535 f \n";
+  for(const p of posities){
+    pdf += String(p).padStart(10, "0") + " 00000 n \n";
+  }
+  pdf += "trailer\n<< /Size " + (objecten.length + 1) + " /Root " + catalogusNr + " 0 R >>\nstartxref\n" + xrefPos + "\n%%EOF\n";
+
+  return Buffer.from(pdf, "latin1");
+}
+
+/* ==========================================================================
+   HET RAPPORT
+   ========================================================================== */
+
+function wdMeldingen24(){
+  const grens = Date.now() - 24 * 60 * 60 * 1000;
+  return wdMeldingen.filter((m) => new Date(m.laatst).getTime() >= grens);
+}
+
+/* Bouwt het volledige rapport op als een lijst blokken. Diezelfde lijst wordt
+   gebruikt voor de PDF en (platgeslagen) voor de tekst in de mail. */
+function wdRapportBlokken(momentopname, schijf){
+  const B = [];
+  const kop = (t) => B.push({ soort: "h1", tekst: t });
+  const sub = (t) => B.push({ soort: "h2", tekst: t });
+  const r = (t) => B.push({ soort: "tekst", tekst: t });
+  const leeg = () => B.push({ soort: "leeg" });
+
+  const s = momentopname.stand;
+  const x = momentopname.extra;
+  const v = wdVorigeStand && wdVorigeStand.stand ? wdVorigeStand.stand : null;
+  const meldingen = wdMeldingen24();
+  const kritiek = meldingen.filter(m => m.ernst === "kritiek");
+  const waarschuwing = meldingen.filter(m => m.ernst === "waarschuwing");
+  const info = meldingen.filter(m => m.ernst === "info");
+
+  kop("Salve dagrapport - " + wdNlDatum());
+  r("Opgemaakt: " + new Date().toISOString() + " | Server draait al: " + wdDuur(Date.now() - wdGestartOp) + " | Node " + process.version);
+  r("Meetperiode van de cijfers: vanaf " + wdTellers.vanaf);
+  if(v) r("Vergeleken met de stand van: " + (wdVorigeStand.stand ? wdVorigeStand.tijd : "onbekend"));
+  else r("Dit is het eerste rapport, er is nog geen vorige stand om mee te vergelijken.");
+  leeg();
+
+  /* ---- In het kort ---- */
+  sub("In het kort");
+  if(!kritiek.length && !waarschuwing.length){
+    r("Geen fouten of waarschuwingen in deze meetperiode. De server heeft " + wdTellers.verzoeken + " verzoeken afgehandeld.");
+  }else{
+    r("Aandacht nodig: " + wdMv(kritiek.length, "kritieke melding", "kritieke meldingen") + " en " + wdMv(waarschuwing.length, "waarschuwing", "waarschuwingen") + " in de afgelopen 24 uur.");
+    for(const m of kritiek.slice(0, 5)) r("  Kritiek: " + m.type + " bij " + (m.waar || "-") + " (" + ((typeof m.aantal24 === "number") ? m.aantal24 : m.aantal) + "x) - " + m.tekst);
+  }
+  if(wdTellers.traag > 0){
+    r("Let op: " + wdMv(wdTellers.traag, "verzoek duurde", "verzoeken duurden") + " langer dan " + Math.round(WACHTER_TRAAG_MS / 1000) + " seconden. Dat wijst meestal op een gids die live opgebouwd moest worden.");
+  }
+  r("Gasten: " + s.scansTotaal + " gidsopeningen in totaal" + (v ? wdVerschil(s.scansTotaal, v.scansTotaal) + " sinds het vorige rapport" : "") + ".");
+  r("Klanten: " + s.hotels + " hotels" + (v ? wdVerschil(s.hotels, v.hotels) : "") + ", " + s.ondernemers + " ondernemers" + (v ? wdVerschil(s.ondernemers, v.ondernemers) : "") + ", " + s.guesttalkActief + " actieve Guesttalk-codes" + (v ? wdVerschil(s.guesttalkActief, v.guesttalkActief) : "") + ".");
+  if(s.wijzigingenInWacht) r("Let op: " + wdMv(s.wijzigingenInWacht, "ondernemerswijziging staat", "ondernemerswijzigingen staan") + " klaar om vannacht om 06:00 live te gaan.");
+  if(s.guesttalkAanvragenOpen) r("Let op: " + wdMv(s.guesttalkAanvragenOpen, "openstaande Guesttalk-aanvraag", "openstaande Guesttalk-aanvragen") + " in het beheer.");
+  if(s.opzegOpenstaand) r("Let op: " + wdMv(s.opzegOpenstaand, "bevestigde opzegging is", "bevestigde opzeggingen zijn") + " nog niet afgehandeld.");
+  leeg();
+
+  /* ---- 1. Techniek ---- */
+  sub("1. Techniek");
+  r("Verzoeken: " + wdTellers.verzoeken + " | client-fouten (4xx): " + wdTellers.fout4xx + " | serverfouten (5xx): " + wdTellers.fout5xx + " | trager dan " + Math.round(WACHTER_TRAAG_MS / 1000) + " sec: " + wdTellers.traag);
+  r("Automatisch hersteld: " + wdTellers.herstelGelukt + " | herstel mislukt: " + wdTellers.herstelMislukt);
+  r("AI-aanroepen (OpenAI): " + wdTellers.aiAanroepen + " | daarvan mislukt: " + wdTellers.aiFouten + " | gemiddeld " + (wdTellers.aiAanroepen ? Math.round(wdTellers.aiMs / wdTellers.aiAanroepen) : 0) + " ms per aanroep");
+  r("AI-aanroepen vandaag: " + wdAiDagAantal + (OPENAI_DAG_ALARM > 0 ? (" van de ingestelde grens " + OPENAI_DAG_ALARM) : " (geen dagalarm ingesteld)") + " | chatmodel: " + OPENAI_CHAT_MODEL + " | gidsmodel: " + OPENAI_GUIDE_MODEL);
+  r("Verstuurde mail vanuit de hele server: " + wdTellers.mailVerstuurd + " gelukt, " + wdTellers.mailMislukt + " mislukt");
+  if(wdLaatsteZelftest){
+    r("Laatste zelftest (" + wdLaatsteZelftest.tijd + "): gezondheidscontrole " + wdLaatsteZelftest.health + ", schijf " + wdLaatsteZelftest.schijf + ", geheugen " + wdLaatsteZelftest.geheugenMb + " MB");
+  }
+  try{
+    const mu = process.memoryUsage();
+    r("Geheugen nu: " + Math.round(mu.rss / (1024 * 1024)) + " MB werkgeheugen, " + Math.round(mu.heapUsed / (1024 * 1024)) + " MB in gebruik door JavaScript");
+  }catch(e){}
+  if(wdTellers.traagsteVerzoek){
+    r("Traagste verzoek deze periode: " + wdTellers.traagsteVerzoek.waar + " met " + wdTellers.traagsteVerzoek.ms + " ms op " + wdTellers.traagsteVerzoek.tijd);
+  }
+  leeg();
+
+  const routes = Object.keys(wdTellers.routes || {}).map(k => Object.assign({ naam: k }, wdTellers.routes[k]));
+  routes.sort((a, b) => b.n - a.n);
+  if(routes.length){
+    r("Drukste routes (aantal, gemiddelde tijd, traagste, fouten):");
+    for(const rt of routes.slice(0, 20)){
+      r("  " + rt.naam + " - " + rt.n + "x, gem. " + Math.round(rt.ms / Math.max(1, rt.n)) + " ms, traagst " + rt.traagste + " ms, 4xx " + rt.f4 + ", 5xx " + rt.f5);
+    }
+    const metFouten = routes.filter(rt => (rt.f4 + rt.f5) > 0).sort((a, b) => (b.f5 * 100 + b.f4) - (a.f5 * 100 + a.f4));
+    if(metFouten.length){
+      leeg();
+      r("Routes met fouten:");
+      for(const rt of metFouten.slice(0, 15)) r("  " + rt.naam + " - " + rt.f5 + " serverfouten, " + rt.f4 + " client-fouten op " + rt.n + " verzoeken");
+    }
+  }else{
+    r("Er zijn deze periode geen verzoeken geteld.");
+  }
+  leeg();
+
+  /* ---- 2. Gebruik ---- */
+  sub("2. Gebruik door gasten en hotels");
+  r("Gidsopeningen (QR-scans) totaal: " + s.scansTotaal + (v ? wdVerschil(s.scansTotaal, v.scansTotaal) : ""));
+  r("Gastenchats: " + wdMv(s.chatGesprekken, "gesprek", "gesprekken") + (v ? wdVerschil(s.chatGesprekken, v.chatGesprekken) : "") + ", " + wdMv(s.chatBerichten, "bericht", "berichten") + (v ? wdVerschil(s.chatBerichten, v.chatBerichten) : "") + ", " + s.chatGesprekkenActief24u + " actief in de laatste 24 uur");
+  r("Wereldchat: " + wdMv(s.wereldchatKamers, "kamer", "kamers") + " open, " + wdMv(s.wereldchatDeelnemers, "deelnemer", "deelnemers"));
+  r("Directe lijn: " + wdMv(s.directeLijnKamers, "kamer", "kamers") + (v ? wdVerschil(s.directeLijnKamers, v.directeLijnKamers) : ""));
+  r("Guesttalk: " + s.guesttalkMinutenGebruikt + " minuten gebruikt deze maand" + (v ? wdVerschil(s.guesttalkMinutenGebruikt, v.guesttalkMinutenGebruikt) : "") + " van " + s.guesttalkMinutenBundel + " minuten aan bundels");
+  r("Vertaalcache: " + s.vertaalcacheItems + " gids-items" + (v ? wdVerschil(s.vertaalcacheItems, v.vertaalcacheItems) : "") + ", " + s.tekstcacheItems + " losse teksten" + (v ? wdVerschil(s.tekstcacheItems, v.tekstcacheItems) : ""));
+  r("PDF Studio: " + wdMv(s.pdfStudioDocumenten, "document", "documenten") + (v ? wdVerschil(s.pdfStudioDocumenten, v.pdfStudioDocumenten) : "") + " | ZZP-module: " + wdMv(s.zzpAccounts, "account", "accounts") + (v ? wdVerschil(s.zzpAccounts, v.zzpAccounts) : ""));
+  leeg();
+  if(x.drukkeHotels.length){
+    r("Meest gescande hotels (totaal sinds de start):");
+    for(const h of x.drukkeHotels.slice(0, 15)) r("  " + h.scans + "x - " + h.naam + " (" + h.stad + ")");
+  }else{
+    r("Er is nog geen enkel hotel gescand.");
+  }
+  leeg();
+
+  /* ---- 3. Klanten ---- */
+  sub("3. Klanten en abonnementen");
+  r("Hotels: " + s.hotels + (v ? wdVerschil(s.hotels, v.hotels) : ""));
+  r("Ondernemers: " + s.ondernemers + (v ? wdVerschil(s.ondernemers, v.ondernemers) : "") + ", waarvan " + s.ondernemersActief + " online en " + s.ondernemersUitgelicht + " met een uitgelicht-abonnement" + (v ? wdVerschil(s.ondernemersUitgelicht, v.ondernemersUitgelicht) : ""));
+  r("Ondernemers die ooit hebben ingelogd: " + s.ondernemersMetLogin + (v ? wdVerschil(s.ondernemersMetLogin, v.ondernemersMetLogin) : "") + " van " + s.ondernemers);
+  r("Steden met inhoud: " + s.stedenMetInhoud + " van " + s.stedenInServer + " in de server");
+  r("Guesttalk-codes: " + s.guesttalkCodes + " totaal" + (v ? wdVerschil(s.guesttalkCodes, v.guesttalkCodes) : "") + ", " + s.guesttalkActief + " actief, " + wdMv(s.guesttalkAanvragenOpen, "openstaande aanvraag", "openstaande aanvragen"));
+  r("FormForge premium-accounts: " + s.premiumAccounts + (v ? wdVerschil(s.premiumAccounts, v.premiumAccounts) : ""));
+  r("Opzegverzoeken: " + s.opzegTotaal + " in het logboek, " + s.opzegBevestigd + " bevestigd, " + s.opzegOpenstaand + " nog af te handelen");
+  leeg();
+  if(x.guesttalkTop.length){
+    r("Guesttalk per klant (code, verbruik van bundel):");
+    for(const g of x.guesttalkTop.slice(0, 20)){
+      const pct = g.bundel ? Math.round((g.gebruikt / g.bundel) * 100) : 0;
+      r("  " + g.code + (g.label ? " (" + g.label + ")" : "") + " - " + g.gebruikt + " van " + g.bundel + " min (" + pct + "%), pakket " + g.tier + (g.actief ? "" : ", NIET actief"));
+    }
+  }
+  if(x.nieuweOpzeggingen.length){
+    leeg();
+    r("Opzegverzoeken van de afgelopen 24 uur:");
+    for(const o of x.nieuweOpzeggingen) r("  " + o.tijd + " - " + o.product + " - " + o.bedrijf + (o.bevestigd ? " (bevestigd)" : " (nog niet bevestigd)"));
+  }
+  leeg();
+
+  /* ---- 4. Wijzigingen ---- */
+  sub("4. Wat is er veranderd sinds het vorige rapport");
+  if(!v){
+    r("Er is nog geen vorige stand opgeslagen. Vanaf het volgende rapport staan de verschillen hier.");
+  }else{
+    const velden = [
+      ["Hotels", "hotels"], ["Ondernemers", "ondernemers"], ["Uitgelicht (betaald)", "ondernemersUitgelicht"],
+      ["Gidsopeningen", "scansTotaal"], ["Gastenchats", "chatGesprekken"], ["Chatberichten", "chatBerichten"],
+      ["Guesttalk-codes", "guesttalkCodes"], ["Guesttalk-minuten gebruikt", "guesttalkMinutenGebruikt"],
+      ["Premium-accounts", "premiumAccounts"], ["PDF Studio documenten", "pdfStudioDocumenten"],
+      ["ZZP-accounts", "zzpAccounts"], ["Opzegverzoeken", "opzegTotaal"],
+      ["Vertaalcache items", "vertaalcacheItems"], ["Losse tekstvertalingen", "tekstcacheItems"]
+    ];
+    let iets = false;
+    for(const [label, sleutel] of velden){
+      const d = wdGetal(s[sleutel]) - wdGetal(v[sleutel]);
+      if(d !== 0){ iets = true; r("  " + label + ": " + (d > 0 ? "+" : "") + d + " (nu " + s[sleutel] + ")"); }
+    }
+    if(!iets) r("Er is niets veranderd in de aantallen sinds het vorige rapport.");
+  }
+  r("Ondernemerswijzigingen die nog in de wacht staan voor de publicatie van 06:00: " + s.wijzigingenInWacht);
+  leeg();
+
+  /* ---- 5. Meldingen ---- */
+  sub("5. Alle meldingen van de afgelopen 24 uur");
+  if(!meldingen.length){
+    r("Geen enkele melding. Er zijn geen crashes, fouten of trage verzoeken vastgelegd.");
+  }else{
+    r("Totaal " + meldingen.length + " soorten: " + kritiek.length + " kritiek, " + waarschuwing.length + " waarschuwing, " + info.length + " informatief.");
+    const rang = { kritiek: 0, waarschuwing: 1, info: 2 };
+    const gesorteerd = meldingen.slice().sort((a, b) => {
+      const d = (rang[a.ernst] === undefined ? 3 : rang[a.ernst]) - (rang[b.ernst] === undefined ? 3 : rang[b.ernst]);
+      return d !== 0 ? d : b.aantal - a.aantal;
+    });
+    for(const m of gesorteerd){
+      leeg();
+      const in24 = (typeof m.aantal24 === "number") ? m.aantal24 : m.aantal;
+      r("[" + m.ernst.toUpperCase() + "] " + m.type + " bij " + (m.waar || "-"));
+      r("  " + in24 + "x in deze meetperiode (" + m.aantal + "x sinds " + m.eerst + "), voor het laatst " + m.laatst);
+      r("  " + m.tekst);
+      if(m.hersteld) r("  Herstelactie: " + m.hersteld.actie + " -> " + (m.hersteld.gelukt ? "gelukt" : "mislukt"));
+      if(m.stack) r("  Technisch: " + m.stack.split("\n").slice(0, 3).join(" | "));
+    }
+  }
+  leeg();
+
+  /* ---- 6. Opslag ---- */
+  sub("6. Opslag op de schijf");
+  r("Datamap: " + DATA_DIR + " | totaal " + wdMb(schijf.totaalBytes) + " in " + schijf.bestanden.length + " bestanden");
+  for(const b of schijf.bestanden.slice(0, 25)){
+    r("  " + wdMb(b.bytes).padStart(9, " ") + "  " + b.naam + "  (gewijzigd " + b.gewijzigd + ")");
+  }
+  leeg();
+
+  /* ---- 7. Instellingen ---- */
+  sub("7. Instellingen van de wachter");
+  r("Rapport-uur: " + WACHTER_RAPPORT_UUR + ":00 NL-tijd | mail naar: " + (WACHTER_MAIL || "niet ingesteld"));
+  r("Dagelijks rapport ook zonder meldingen: " + (WACHTER_ALLEEN_BIJ_FOUTEN ? "nee" : "ja") + " | PDF-bijlage: " + (WACHTER_PDF ? "ja" : "nee") + " | AI-samenvatting: " + ((WACHTER_AI && OPENAI_API_KEY) ? "ja" : "nee"));
+  r("Grens voor traag verzoek: " + WACHTER_TRAAG_MS + " ms | herstart na crash: " + (WACHTER_HERSTART_BIJ_CRASH ? "ja" : "nee"));
+  r("Logboek: " + wdMeldingen.length + " meldingen bewaard, " + WD_BEWAARDAGEN + " dagen historie, maximaal " + WD_MAX_MELDINGEN + " regels.");
+
+  return B;
+}
+
+/* Blokken omzetten naar platte tekst voor de mail zelf. */
+function wdBlokkenNaarTekst(blokken){
+  const uit = [];
+  for(const b of blokken){
+    if(b.soort === "leeg" || b.soort === "paginabreuk"){ uit.push(""); continue; }
+    if(b.soort === "h1"){ uit.push(""); uit.push(String(b.tekst).toUpperCase()); uit.push("=".repeat(Math.min(80, String(b.tekst).length))); continue; }
+    if(b.soort === "h2"){ uit.push(""); uit.push(String(b.tekst)); uit.push("-".repeat(Math.min(80, String(b.tekst).length))); continue; }
+    uit.push(String(b.tekst));
+  }
+  return uit.join("\n");
+}
+
+/* De AI-samenvatting bovenaan de mail. Faalt dit, dan gaat het rapport
+   gewoon zonder samenvatting de deur uit. */
+async function wdSamenvatting(ruweTekst){
+  if(!WACHTER_AI || !OPENAI_API_KEY) return "";
+  try{
+    return await callOpenAI([
+      {
+        role: "system",
+        content: [
+          "Je bent de wachter van een Node.js/Express server (Salve, een meertalige hotelgids met chat, Guesttalk-vertaler, PDF Studio en een ondernemersportaal).",
+          "Je krijgt het volledige dagrapport. Schrijf er een korte samenvatting bij in het Nederlands voor de eigenaar, die geen ontwikkelaar is.",
+          "Regels: gewone taal, geen jargon zonder uitleg. Begin met of alles goed gaat of niet.",
+          "Zet daarna wat er echt aandacht nodig heeft, wat vanzelf is opgelost, en wat er opvalt aan het gebruik en de klanten.",
+          "Benoem een mogelijke oorzaak altijd als vermoeden, nooit als vaststaand feit.",
+          "Geef bij een terugkerende fout een voorstel voor wat er onderzocht kan worden, en zeg erbij dat dit met de hand gecontroleerd moet worden.",
+          "Verzin geen bestandsnamen, regelnummers, functienamen of cijfers die niet in het rapport staan.",
+          "Maximaal 350 woorden. Gebruik gewone streepjes, geen lange streepjes."
+        ].join(" ")
+      },
+      { role: "user", content: String(ruweTekst).slice(0, 12000) }
+    ], 0.2);
+  }catch(e){
+    wdConsoleError("WACHTER: samenvatting door het model mislukt, het rapport wordt zonder samenvatting gemaild: " + (e && e.message ? e.message : e));
+    return "";
+  }
+}
+
+/* Bouwt het rapport op en levert alles terug. Verstuurt niets.
+   Zo kan dezelfde functie gebruikt worden voor de dagelijkse mail en voor
+   het bekijken/downloaden via de beheerroute. */
+async function wdBouwRapport(){
+  const moment = wdMomentopname();
+  const schijf = wdSchijfOverzicht();
+  const blokken = wdRapportBlokken(moment, schijf);
+  const ruw = wdBlokkenNaarTekst(blokken);
+  const samenvatting = await wdSamenvatting(ruw);
+
+  const pdfBlokken = [];
+  if(samenvatting){
+    pdfBlokken.push({ soort: "h1", tekst: "Samenvatting" });
+    for(const regel of samenvatting.split("\n")){
+      if(!regel.trim()) pdfBlokken.push({ soort: "leeg" });
+      else pdfBlokken.push({ soort: "tekst", tekst: regel.trim() });
+    }
+    pdfBlokken.push({ soort: "paginabreuk" });
+  }
+  for(const b of blokken) pdfBlokken.push(b);
+
+  let pdf = null;
+  if(WACHTER_PDF){
+    try{
+      pdf = wdPdfMaak("Salve dagrapport " + new Date().toISOString().slice(0, 10), pdfBlokken);
+    }catch(e){
+      wdConsoleError("WACHTER: PDF maken mislukt, het rapport gaat als tekst mee: " + (e && e.message ? e.message : e));
+    }
+  }
+
+  const tekst = (samenvatting ? (samenvatting + "\n\n" + "=".repeat(60) + "\n") : "") +
+    (pdf ? "Het volledige rapport zit als PDF bij deze mail.\n" : "") + ruw;
+
+  return { moment: moment, blokken: blokken, ruw: ruw, samenvatting: samenvatting, tekst: tekst, pdf: pdf };
+}
+
+/* Het echte dagrapport: bouwen, mailen, en pas daarna de tellers doorschuiven.
+   handmatig = true betekent: alleen kijken, niets resetten. */
+async function wdDagrapport(handmatig){
+  if(!WACHTER_AAN) return { verstuurd: false, reden: "wachter staat uit" };
+
+  const meldingen = wdMeldingen24();
+  if(!handmatig && WACHTER_ALLEEN_BIJ_FOUTEN && !meldingen.length){
+    return { verstuurd: false, reden: "niets te melden en WACHTER_ALLEEN_BIJ_FOUTEN staat aan" };
+  }
+
+  const rapport = await wdBouwRapport();
+
+  const bijlagen = [];
+  if(rapport.pdf){
+    bijlagen.push({
+      filename: "salve-dagrapport-" + new Date().toISOString().slice(0, 10) + ".pdf",
+      content: rapport.pdf.toString("base64")
+    });
+  }
+
+  const kritiek = meldingen.filter(m => m.ernst === "kritiek").length;
+  const onderwerp = "Salve dagrapport " + new Date().toLocaleDateString("nl-NL") +
+    (kritiek ? (" - " + kritiek + " kritieke melding" + (kritiek === 1 ? "" : "en")) : " - alles in orde");
+
+  const gelukt = await wdMail(onderwerp, rapport.tekst, bijlagen);
+
+  if(handmatig){
+    return { verstuurd: gelukt, handmatig: true, meldingen: meldingen.length, paginaBytes: rapport.pdf ? rapport.pdf.length : 0 };
+  }
+
+  /* De stand van vandaag wordt de vergelijkingsbasis voor morgen. Dit gebeurt
+     ook als de mail mislukte, anders zou het verschil morgen over twee dagen
+     gaan zonder dat dat ergens uit blijkt. */
+  wdVorigeStand = { tijd: new Date().toISOString(), stand: rapport.moment.stand };
+
+  /* De tellers gaan alleen op nul als de mail echt verstuurd is. Mislukt de
+     mail, dan blijven de cijfers staan en zitten ze morgen alsnog in het
+     rapport, met de juiste meetperiode erbij. */
+  if(gelukt){
+    wdTellers = wdNieuweTellers();
+    for(const m of wdMeldingen) m.aantal24 = 0;
+  }
+
+  wdBewaarNu();
+  return { verstuurd: gelukt, meldingen: meldingen.length, pdfBytes: rapport.pdf ? rapport.pdf.length : 0 };
+}
+
+/* Elke minuut kijken of het tijd is voor het dagrapport (Nederlandse tijd,
+   dus zomer- en wintertijd gaan vanzelf goed). hourCycle h23 zodat middernacht
+   als 0 wordt gelezen en niet als 24. */
+function wdRapportKlok(){
+  if(!WACHTER_AAN) return;
+  try{
+    const nl = new Intl.DateTimeFormat("nl-NL", {
+      timeZone: "Europe/Amsterdam",
+      year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23"
+    }).formatToParts(new Date());
+    /* formatToParts geeft een ARRAY terug, niet een object met .parts erin.
+       Daar liep het op stuk: elke minuut een fout die door de lege catch werd
+       opgeslokt, dus het rapport ging nooit vanzelf de deur uit. */
+    const deel = {};
+    for(const p of nl) deel[p.type] = p.value;
+    const dag = deel.year + "-" + deel.month + "-" + deel.day;
+    const uur = Number(deel.hour) % 24;
+
+    /* Het uur mag ook gemist worden, bijvoorbeeld door een herstart of doordat
+       de server even zwaar belast was. Is het later op de dag en ging het
+       rapport nog niet, dan gaat het alsnog. */
+    const opTijd = (uur === WACHTER_RAPPORT_UUR);
+    const gemist = (uur > WACHTER_RAPPORT_UUR);
+    if((opTijd || gemist) && wdLaatsteRapportDag !== dag){
+      wdLaatsteRapportDag = dag;
+      wdBewaarNu();
+      wdConsoleLog("Dagrapport wordt verstuurd" + (gemist ? " (het uur was al voorbij)" : "") + ".");
+      wdDagrapport(false).catch(() => {});
+    }
+  }catch(e){
+    /* Niet meer stil wegkijken: als hier iets misgaat, wil je dat zien. */
+    wdConsoleLog("Rapportklok gaf een fout: " + ((e && e.message) || e));
+  }
+}
+
+/* ---------------- beheerroutes ---------------- */
+
+app.get("/api/wachter/log", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const ip = clientIp(req);
+  if(rateLimited("wachter", ip, 60, 5 * 60 * 1000)) return jsonError(res, 429, "Te veel verzoeken");
+  if(!guesttalkAuthOk(req.query.adminPass)) return jsonError(res, 403, "Geen toegang");
+  res.json({
+    ok: true,
+    aan: WACHTER_AAN,
+    mailNaar: WACHTER_MAIL,
+    aiSamenvatting: WACHTER_AI && !!OPENAI_API_KEY,
+    pdfBijlage: WACHTER_PDF,
+    elkeDag: !WACHTER_ALLEEN_BIJ_FOUTEN,
+    rapportUur: WACHTER_RAPPORT_UUR,
+    laatsteRapportDag: wdLaatsteRapportDag,
+    tellers: wdTellers,
+    laatsteZelftest: wdLaatsteZelftest,
+    vorigeStand: wdVorigeStand,
+    meldingen: wdMeldingen.slice(-200).reverse()
+  });
+});
+
+/* Rapport nu maken. Zonder parameters wordt het gemaild.
+   Met &download=1 krijg je de PDF meteen in de browser en gaat er geen mail.
+   Met &tekst=1 zie je de platte tekst. In alle gevallen worden de tellers
+   NIET gereset, want dit is bedoeld om even te kijken. */
+app.get("/api/wachter/rapport", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const ip = clientIp(req);
+  if(rateLimited("wachter", ip, 60, 5 * 60 * 1000)) return jsonError(res, 429, "Te veel verzoeken");
+  if(!guesttalkAuthOk(req.query.adminPass)) return jsonError(res, 403, "Geen toegang");
+  try{
+    if(String(req.query.download || "") === "1" || String(req.query.tekst || "") === "1"){
+      const rapport = await wdBouwRapport();
+      if(String(req.query.tekst || "") === "1"){
+        res.set("Content-Type", "text/plain; charset=utf-8");
+        return res.send(rapport.tekst);
+      }
+      if(!rapport.pdf) return jsonError(res, 500, "PDF maken lukte niet");
+      res.set("Content-Type", "application/pdf");
+      res.set("Content-Disposition", "inline; filename=\"salve-dagrapport-" + new Date().toISOString().slice(0, 10) + ".pdf\"");
+      return res.send(rapport.pdf);
+    }
+    const uitkomst = await wdDagrapport(true);
+    res.json({ ok: true, uitkomst: uitkomst });
+  }catch(e){
+    jsonError(res, 500, "Rapport maken mislukt", e && e.message ? e.message : String(e));
+  }
+});
+
+app.get("/api/wachter/wis", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const ip = clientIp(req);
+  if(rateLimited("wachter", ip, 60, 5 * 60 * 1000)) return jsonError(res, 429, "Te veel verzoeken");
+  if(!guesttalkAuthOk(req.query.adminPass)) return jsonError(res, 403, "Geen toegang");
+  wdMeldingen = [];
+  wdBewaarNu();
+  res.json({ ok: true, gewist: true });
+});
+
+/* ---------------- starten ---------------- */
+
+wdLaad();
+if(WACHTER_AAN){
+  setInterval(() => { if(wdVuil) wdBewaarNu(); }, 30 * 1000);
+  setInterval(() => { wdZelftest().catch(() => {}); }, 15 * 60 * 1000);
+  setInterval(() => { wdControleerBestanden().catch(() => {}); }, 60 * 60 * 1000);
+  setInterval(wdRapportKlok, 60 * 1000);
+  setTimeout(() => { wdZelftest().catch(() => {}); }, 60 * 1000);
+  wdConsoleLog("Wachter actief. Dagrapport om " + WACHTER_RAPPORT_UUR + ":00 NL-tijd naar: " + (WACHTER_MAIL || "geen adres ingesteld") +
+    " | elke dag: " + (WACHTER_ALLEEN_BIJ_FOUTEN ? "nee" : "ja") +
+    " | PDF: " + (WACHTER_PDF ? "ja" : "nee") +
+    " | AI-samenvatting: " + (WACHTER_AI && OPENAI_API_KEY ? "ja" : "nee"));
+}else{
+  wdConsoleLog("Wachter staat uit (WACHTER_AAN=0).");
+}
+
+/* ======================= EINDE WACHTER ======================= */
+
+
+/* ---------- Tolk voor hulpdiensten (zorg en politie) ----------
+   De code staat in tolk.js. Staat bewust hier: na alle middleware en VOOR het
+   404-vangnet hieronder. Gaat het laden mis, dan draait de rest van de server
+   gewoon door en staat er een melding in de log. */
+let bewaarTolkCache = function(){};
+try{
+  ({ bewaarTolkCache } = require("./tolk.js")({
+    app, fs, path, DATA_DIR, safeWriteFileSync, OPENAI_API_KEY, TOLK_MODEL, callOpenAI
+  }));
+  console.log("Tolk geladen uit tolk.js.");
+}catch(err){
+  console.error("Tolk laden mislukt (tolk.js):", (err && err.message) || err);
+}
+
+/* ---------- Website voor 1 euro per maand (verkoop + installatie) ----------
+   De code staat in websitemodel.js. Gaat het laden mis, dan draait de rest
+   van de server gewoon door en staat er een melding in de log. */
+try{
+  require("./websitemodel.js")({
+    app, fs, path, crypto, DATA_DIR, safeWriteFileSync, callStripe, callStripeGet, sendResendEmail, FROM_EMAIL
+  });
+}catch(err){
+  console.error("Websitemodel laden mislukt (websitemodel.js):", (err && err.message) || err);
+}
+
+app.use((req, res) => {
+  res.status(404).json({ error: "Route niet gevonden", path: req.path });
+});
+
+
+
+
+
+
+// ==== Nette afsluiting: bij een herstart of deploy (SIGTERM van Render) ====
+// eerst alle data naar de disk schrijven, zodat uitgestelde saves en verse
+// wijzigingen nooit verloren gaan.
+let _shuttingDown = false;
+function flushAllStoresAndExit(signal){
+  if(_shuttingDown) return;
+  _shuttingDown = true;
+  console.log("Signaal " + signal + " ontvangen: alle data wordt weggeschreven voor het afsluiten...");
+  try{ saveMerchants(false); }catch(e){}
+  try{ saveHotelChats(); }catch(e){}
+  try{ saveRooms(); }catch(e){}
+  try{ saveCityCache(); }catch(e){}
+  try{ bewaarTolkCache(); }catch(e){}
+  try{ saveGuideTransCacheNow(); }catch(e){}
+  try{ saveGuesttalkUsageNow(); }catch(e){}
+  try{ saveDMNow(); }catch(e){}
+  try{ saveDirectChats(); }catch(e){}
+  try{ wdBewaarNu(); }catch(e){}
+  console.log("Alle data is weggeschreven. Server sluit af.");
+  process.exit(0);
+}
+process.on("SIGTERM", () => flushAllStoresAndExit("SIGTERM"));
+process.on("SIGINT", () => flushAllStoresAndExit("SIGINT"));
+
+
+/* ---------------- foutafhandeling van routes ----------------
+   Deze middleware heeft VIER parameters. Daaraan herkent Express hem als
+   foutafhandelaar. Hij moet onder alle routes staan. */
+
+app.use((err, req, res, next) => {
+  try{
+    res._wdAlGemeld = true;
+    wdMeld({
+      type: "route", ernst: "kritiek",
+      waar: String(req.method || "") + " " + String(req.path || ""),
+      tekst: err && err.message ? err.message : String(err),
+      stack: err && err.stack ? err.stack : ""
+    });
+  }catch(e){}
+  if(res.headersSent) return next(err);
+  res.status(500).json({ error: "Er ging iets mis op de server" });
+});
+
+
+app.listen(PORT, () => {
+  console.log("ECHO Central Server draait op poort " + PORT);
+  console.log("OpenAI actief: " + (OPENAI_API_KEY ? "ja" : "nee"));
+  console.log("Stripe actief: " + (STRIPE_SECRET_KEY ? "ja" : "nee"));
+  console.log("Stripe webhook secret actief: " + (STRIPE_WEBHOOK_SECRET ? "ja" : "nee"));
+  console.log("Resend actief: " + (RESEND_API_KEY ? "ja" : "nee"));
+  console.log("From email: " + FROM_EMAIL);
+  console.log("ECHO Premium credits per maand: " + UNLIMITED_FAIR_USE_CREDITS);
+  console.log("Premium accounts geladen: " + premiumAccounts.size);
+});  
