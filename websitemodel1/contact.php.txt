@@ -1,0 +1,123 @@
+<?php
+/* ===========================================================
+   Websitemodel 1 - contactformulier verwerken
+   - Leest bedrijfsnaam, e-mail en diensten uit data/settings.json (ingesteld in de admin)
+   - Weert spam (verborgen veld + tijdcontrole + maximum per uur)
+   - Bewaart elke aanvraag in data/aanvragen.json (zichtbaar in de admin)
+   - Mailt de aanvraag naar het e-mailadres uit de instellingen
+   - Stuurt de bezoeker daarna door naar /bedankt/
+   =========================================================== */
+
+define('ROOT', __DIR__);
+define('DATA_DIR', ROOT . '/data');
+define('SETTINGS_FILE', DATA_DIR . '/settings.json');
+define('AANVRAGEN_FILE', DATA_DIR . '/aanvragen.json');
+define('LIMIET_FILE', DATA_DIR . '/aanvragen-limiet.json');
+define('MAX_PER_UUR', 5);
+
+$ST = file_exists(SETTINGS_FILE) ? (json_decode(file_get_contents(SETTINGS_FILE), true) ?: []) : [];
+$BEDRIJF = trim($ST['naam'] ?? '') !== '' ? trim($ST['naam']) : 'Website';
+$ONTVANGER = filter_var($ST['email'] ?? '', FILTER_VALIDATE_EMAIL) ? $ST['email'] : '';
+
+$DIENSTEN = [];
+foreach (($ST['diensten'] ?? []) as $d) {
+    if (!empty($d['key']) && trim($d['naam'] ?? '') !== '') { $DIENSTEN[$d['key']] = trim($d['naam']); }
+}
+$DIENSTEN['anders'] = 'Iets anders / weet ik nog niet';
+
+function terug($code) {
+    header('Location: /contact/?fout=' . rawurlencode($code) . '#formulier', true, 303);
+    exit;
+}
+function schoon($s, $max) {
+    $s = trim(str_replace(["\r", "\n", "\0"], ' ', (string)$s));
+    return function_exists('mb_substr') ? mb_substr($s, 0, $max) : substr($s, 0, $max);
+}
+
+if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+    header('Location: /contact/', true, 303);
+    exit;
+}
+
+// Spam: verborgen veld moet leeg zijn, en het formulier moet minstens 3 seconden open hebben gestaan.
+if (trim($_POST['website'] ?? '') !== '') { header('Location: /bedankt/', true, 303); exit; }
+$t = (int)($_POST['t'] ?? 0);
+if ($t <= 0 || (time() - $t) < 3 || (time() - $t) > 86400) { terug('tijd'); }
+
+$naam     = schoon($_POST['naam'] ?? '', 80);
+$telefoon = schoon($_POST['telefoon'] ?? '', 30);
+$email    = schoon($_POST['email'] ?? '', 120);
+$plaats   = schoon($_POST['plaats'] ?? '', 80);
+$dienst   = (string)($_POST['dienst'] ?? '');
+$bericht  = trim(str_replace("\0", '', (string)($_POST['bericht'] ?? '')));
+$bericht  = function_exists('mb_substr') ? mb_substr($bericht, 0, 3000) : substr($bericht, 0, 3000);
+
+if ($naam === '') { terug('naam'); }
+if ($email === '' && $telefoon === '') { terug('contact'); }
+if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) { terug('email'); }
+if ($telefoon !== '' && !preg_match('/^[0-9 +()\-]{6,30}$/', $telefoon)) { terug('telefoon'); }
+if (!isset($DIENSTEN[$dienst])) { $dienst = 'anders'; }
+if ($bericht === '') { terug('bericht'); }
+
+if (!is_dir(DATA_DIR)) { mkdir(DATA_DIR, 0755, true); }
+if (!file_exists(DATA_DIR . '/.htaccess')) { file_put_contents(DATA_DIR . '/.htaccess', "Require all denied\n"); }
+
+// Maximum aantal aanvragen per uur per bezoeker
+$ip = hash('sha256', ($_SERVER['REMOTE_ADDR'] ?? '') . 'ff-model1');
+$limiet = file_exists(LIMIET_FILE) ? (json_decode(file_get_contents(LIMIET_FILE), true) ?: []) : [];
+$nu = time();
+foreach ($limiet as $k => $tijden) {
+    $limiet[$k] = array_values(array_filter((array)$tijden, function($x) use ($nu) { return $nu - (int)$x < 3600; }));
+    if (empty($limiet[$k])) unset($limiet[$k]);
+}
+if (count($limiet[$ip] ?? []) >= MAX_PER_UUR) { terug('limiet'); }
+$limiet[$ip][] = $nu;
+file_put_contents(LIMIET_FILE, json_encode($limiet), LOCK_EX);
+
+// Bewaren (ook als de mail niet aankomt, staat de aanvraag in de admin)
+$aanvraag = [
+    'id'       => date('Ymd-His') . '-' . bin2hex(random_bytes(3)),
+    'datum'    => date('Y-m-d H:i'),
+    'naam'     => $naam,
+    'telefoon' => $telefoon,
+    'email'    => $email,
+    'plaats'   => $plaats,
+    'dienst'   => $DIENSTEN[$dienst],
+    'bericht'  => $bericht,
+];
+$lijst = file_exists(AANVRAGEN_FILE) ? (json_decode(file_get_contents(AANVRAGEN_FILE), true) ?: []) : [];
+array_unshift($lijst, $aanvraag);
+$lijst = array_slice($lijst, 0, 500);
+file_put_contents(AANVRAGEN_FILE, json_encode($lijst, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
+
+// Mail versturen (alleen als er een e-mailadres in de instellingen staat)
+if ($ONTVANGER !== '') {
+    $host = preg_replace('/^www\./', '', strtolower((string)($_SERVER['HTTP_HOST'] ?? '')));
+    $host = preg_replace('/:\d+$/', '', $host);
+    $ontvangerDomein = strtolower(substr(strrchr($ONTVANGER, '@'), 1));
+    // Afzender op het eigen domein, anders weigeren mailservers het bericht vaak.
+    if ($ontvangerDomein === $host) { $afzender = $ONTVANGER; }
+    elseif (preg_match('/^[a-z0-9.-]+\.[a-z]{2,}$/', $host)) { $afzender = 'noreply@' . $host; }
+    else { $afzender = $ONTVANGER; }
+
+    $onderwerp = 'Nieuwe aanvraag via de website: ' . $DIENSTEN[$dienst] . ' - ' . $naam;
+    $tekst  = "Nieuwe aanvraag via de website van " . $BEDRIJF . "\r\n\r\n";
+    $tekst .= "Naam:     " . $naam . "\r\n";
+    $tekst .= "Telefoon: " . ($telefoon !== '' ? $telefoon : '-') . "\r\n";
+    $tekst .= "E-mail:   " . ($email !== '' ? $email : '-') . "\r\n";
+    $tekst .= "Plaats:   " . ($plaats !== '' ? $plaats : '-') . "\r\n";
+    $tekst .= "Onderwerp: " . $DIENSTEN[$dienst] . "\r\n\r\n";
+    $tekst .= "Bericht:\r\n" . str_replace(["\r\n", "\r", "\n"], "\r\n", $bericht) . "\r\n\r\n";
+    $tekst .= "Ontvangen op " . $aanvraag['datum'] . ". Deze aanvraag staat ook in je admin onder Aanvragen.\r\n";
+
+    $enc = function($s) { return '=?UTF-8?B?' . base64_encode($s) . '?='; };
+    $headers  = 'From: ' . $enc($BEDRIJF . ' website') . ' <' . $afzender . ">\r\n";
+    if ($email !== '') { $headers .= 'Reply-To: ' . $email . "\r\n"; }
+    $headers .= "MIME-Version: 1.0\r\n";
+    $headers .= "Content-Type: text/plain; charset=UTF-8\r\n";
+    $headers .= "Content-Transfer-Encoding: 8bit\r\n";
+    @mail($ONTVANGER, $enc($onderwerp), $tekst, $headers, '-f' . $afzender);
+}
+
+header('Location: /bedankt/', true, 303);
+exit;
