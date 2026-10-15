@@ -1049,6 +1049,8 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
         catch(e){ console.error("Guesttalk sub activeren mislukt:", (e && e.message) || e); }
       }else if(metadata.kind === "merchant"){
         setMerchantActiveFromMeta(metadata, true, object.customer || "", object.subscription || "");
+      }else if(metadata.kind === "website_model1"){
+        // Website voor 1 euro per maand: wordt afgehandeld in websitemodel.js, geen ECHO-premium.
       }else if(mode === "payment" && packageType === "credits" && packageCredits > 0){
         addCreditsToAccount(email, packageCredits, "checkout.session.completed.credit_pack", object.id || "");
       }else{
@@ -1101,7 +1103,8 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
       if(invMeta){
         setMerchantActiveFromMeta(invMeta, true, inv.customer || "", invSubId);
       }
-      setPremiumForStripeData({
+      const invIsWebsite = invOwnMeta.kind === "website_model1" || (invSubMeta && invSubMeta.kind === "website_model1");
+      if(!invIsWebsite) setPremiumForStripeData({
         email: inv.customer_email || invOwnMeta.email || "",
         clientReferenceId: invOwnMeta.clientReferenceId || "",
         customerId: inv.customer || "",
@@ -1125,7 +1128,8 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
       if(failOwnMeta.kind === "merchant" || (failSubMeta && failSubMeta.kind === "merchant")){
         setMerchantActiveFromMeta(failOwnMeta.kind === "merchant" ? failOwnMeta : failSubMeta, false, object.customer || "");
       }
-      setPremiumForStripeData({
+      const failIsWebsite = failOwnMeta.kind === "website_model1" || (failSubMeta && failSubMeta.kind === "website_model1");
+      if(!failIsWebsite) setPremiumForStripeData({
         email: object.customer_email || failOwnMeta.email || "",
         clientReferenceId: failOwnMeta.clientReferenceId || "",
         customerId: object.customer || "",
@@ -1144,7 +1148,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
       if(object.metadata?.kind === "merchant"){
         setMerchantActiveFromMeta(object.metadata, false, object.customer || "");
       }
-      setPremiumForStripeData({
+      if(object.metadata?.kind !== "website_model1") setPremiumForStripeData({
         email: object.customer_email || object.metadata?.email || "",
         clientReferenceId: object.metadata?.clientReferenceId || "",
         customerId: object.customer || "",
@@ -14571,6 +14575,17 @@ try{
   console.log("Tolk geladen uit tolk.js.");
 }catch(err){
   console.error("Tolk laden mislukt (tolk.js):", (err && err.message) || err);
+}
+
+/* ---------- Website voor 1 euro per maand (verkoop + installatie) ----------
+   De code staat in websitemodel.js. Gaat het laden mis, dan draait de rest
+   van de server gewoon door en staat er een melding in de log. */
+try{
+  require("./websitemodel.js")({
+    app, fs, path, crypto, DATA_DIR, safeWriteFileSync, callStripe, callStripeGet, sendResendEmail, FROM_EMAIL
+  });
+}catch(err){
+  console.error("Websitemodel laden mislukt (websitemodel.js):", (err && err.message) || err);
 }
 
 app.use((req, res) => {
