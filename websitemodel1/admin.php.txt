@@ -2135,7 +2135,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
   .hulp{display:inline-grid;place-items:center;width:20px;height:20px;margin-left:8px;border-radius:50%;border:0;background:#2f6bff;color:#fff;font:700 12px/1 inherit;font-family:inherit;cursor:pointer;vertical-align:middle;padding:0;}
   .hulp:hover{background:#1f55e0;}
   .hulp[aria-expanded="true"]{background:#fff;color:#2f6bff;box-shadow:inset 0 0 0 2px #2f6bff;}
-  .hulpbox{margin:6px 0 10px;padding:10px 14px;border-radius:10px;background:rgba(47,107,255,.12);border:1px solid rgba(47,107,255,.35);font-size:14px;font-weight:400;line-height:1.5;letter-spacing:0;text-transform:none;}
+  .hulpbox{white-space:pre-line;margin:6px 0 10px;padding:10px 14px;border-radius:10px;background:rgba(47,107,255,.12);border:1px solid rgba(47,107,255,.35);font-size:14px;font-weight:400;line-height:1.5;letter-spacing:0;text-transform:none;}
   h1 + .hulpbox, h2 + .hulpbox{font-size:15px;max-width:70ch;}
   .hulpwrap{display:inline-block;margin-left:4px;}
   .opbouw{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:4px 18px;}
@@ -2602,7 +2602,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     "f:dn": "De naam van de dienst, kort en duidelijk, bijvoorbeeld: Binnenschilderwerk. Leeg = deze dienst staat niet op je website.",
     "f:dk": "Een zin over deze dienst. Die staat in het blokje op de voorpagina.",
     "f:dt": "Het hele verhaal over deze dienst, op een eigen pagina. Vertel wat je doet, hoe je werkt en voor wie. Een lege regel begint een nieuwe alinea.",
-    "f:logo": "Je logo staat bovenaan elke pagina en groot op de voorpagina. Het beste is een png-bestand met een doorzichtige achtergrond.",
+    "f:logo": "Je logo staat bovenaan elke pagina en groot op de voorpagina. Het is ook het icoontje in het tabblad van de browser.\n\nNog geen logo? Laat er een maken door AI, bijvoorbeeld ChatGPT. Vraag bijvoorbeeld: Maak een simpel, modern logo voor mijn schildersbedrijf Jansen. Lever het aan als PNG-bestand met een transparante (doorzichtige) achtergrond.\n\nBelangrijk: kies PNG, niet JPG of JPEG. Een PNG kan een doorzichtige achtergrond hebben, zodat je logo mooi op de gekleurde balk van je website staat. Een JPG heeft altijd een wit of gekleurd blok achter je logo.\n\nControleer na het downloaden of de naam van het bestand eindigt op .png. Zie je bij het openen een grijs-wit geblokt patroon achter je logo? Dan is dat patroon onderdeel van het plaatje en is de achtergrond niet echt doorzichtig. Vraag de AI dan opnieuw om een echte transparante achtergrond.\n\nTip: kies een logo in lichte kleuren of wit, want het staat op de donkere kleur van je website. Maximaal 8 MB.",
     "lbl:Stijl van de website": "Kies hoe je hele website eruitziet. Klik op een stijl en daarna onderaan op Opslaan. Je kunt altijd wisselen, en nieuwe stijlen verschijnen hier vanzelf. Feest- en seizoensstijlen kun je bijvoorbeeld een paar weken per jaar aanzetten.",
     "f:kd": "De donkere kleur van je website: het menu, de bovenkant en de onderkant. Kies een donkere kleur, want daar staat witte tekst op.",
     "f:ka": "De opvallende kleur voor knoppen en accenten. Vaak de kleur van je logo.",
@@ -2622,7 +2622,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     "f:display_title": "Een andere, kortere naam voor op de voorpagina. Leeg laten = de gewone titel.",
     "f:desc": "Een zin over het project. Die staat op de kaart in het overzicht.",
     "f:text": "Het verhaal van het project: wat was de vraag, wat heb je gedaan, wat was het resultaat? Een lege regel begint een nieuwe alinea.",
-    "f:photos": "Kies een of meer foto's van je telefoon of computer. Ze worden vanzelf kleiner gemaakt. De eerste foto wordt de grote foto.",
+    "f:photos": "Kies een of meer foto's van je telefoon of computer. De eerste foto wordt de grote foto van het project.\n\nHoeveel foto's? Er is geen maximum: je kunt zoveel projecten en foto's toevoegen als je wilt. Wel geldt:\n- Per foto maximaal 8 MB. Een gewone foto van een telefoon past daar ruim in.\n- Per keer kun je ongeveer 20 foto's tegelijk uploaden. Hoeveel MB er per keer mag, staat onder het vakje. Wil je meer foto's? Sla op en voeg daarna de volgende foto's toe.\n- Foto's (jpg) worden vanzelf kleiner gemaakt, tot ongeveer 0,5 tot 1 MB. Er is ruimte voor duizenden foto's.",
     "lbl:Huidige foto's": "De foto's die al bij dit project staan. Vink Verwijderen aan om een foto weg te halen en klik daarna op Opslaan.",
     "f:f-": "Kies waar dit project staat: Uitgelicht (groot op de voorpagina en in het overzicht), Projecten (alleen in het overzicht) of Verborgen (niet zichtbaar op de website).",
     "f:aem": "Het e-mailadres waarmee je inlogt. Hier komt ook de mail naartoe als je je wachtwoord vergeten bent.",
