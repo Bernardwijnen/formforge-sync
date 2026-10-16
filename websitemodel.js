@@ -322,9 +322,102 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
       else if(!rec.probleemSinds){ rec.probleemSinds = new Date().toISOString(); }
       rec.stripeCheck = new Date().toISOString();
       save();
+      await opzegMeldingen(rec, sub);
     }catch(e){
       // Stripe niet bereikbaar: niets veranderen, de vorige status blijft gelden.
       console.error("Websitemodel: Stripe-status ophalen mislukt:", (e && e.message) || e);
+    }
+  }
+  /* Opzeggen: een mail aan de klant (bevestiging) en aan FormForge.
+     We zien het bij de gewone statuscontrole, dus hooguit een paar uur later.
+     - Opgezegd per einde termijn: site werkt tot de einddatum, daarna respijt.
+     - Direct beeindigd: het respijt loopt al.
+     - Opzegging teruggedraaid: alleen een melding aan FormForge.
+     Een mislukte betaling is geen opzegging; daarvoor gaat er hier niets uit. */
+  function nlDatum(d){
+    const maanden = ["januari","februari","maart","april","mei","juni","juli","augustus","september","oktober","november","december"];
+    const x = new Date(d.getTime() + 2 * 3600 * 1000); // ongeveer Nederlandse tijd, alleen voor de datum
+    return x.getUTCDate() + " " + maanden[x.getUTCMonth()] + " " + x.getUTCFullYear();
+  }
+  function periodeEinde(sub){
+    const item = sub && sub.items && Array.isArray(sub.items.data) && sub.items.data[0];
+    const s = Number(sub.cancel_at || sub.current_period_end || (item && item.current_period_end) || 0);
+    return s > 0 ? new Date(s * 1000) : null;
+  }
+  async function stuurOpzegMails(rec, onderwerpKlant, tekstKlant, onderwerpFF, tekstFF){
+    if(rec.email){
+      try{
+        await sendResendEmail({
+          to: rec.email, subject: onderwerpKlant,
+          text: tekstKlant.join("\r\n\r\n") + "\r\n\r\nFormForge",
+          html: tekstKlant.map(p => "<p>" + esc(p) + "</p>").join("") + "<p>FormForge</p>"
+        });
+      }catch(e){ console.error("Websitemodel: opzegmail naar klant mislukt:", (e && e.message) || e); }
+    }
+    try{
+      await sendResendEmail({ to: NOTIFY_EMAIL, subject: onderwerpFF, text: tekstFF.join("\r\n") + "\r\n" });
+    }catch(e){ console.error("Websitemodel: opzegmelding naar FormForge mislukt:", (e && e.message) || e); }
+  }
+  async function opzegMeldingen(rec, sub){
+    const perEinde = !!(sub.cancel_at_period_end || sub.cancel_at) && GOED.includes(rec.stripeStatus);
+    const beeindigd = rec.stripeStatus === "canceled";
+    const basisFF = ["Domein: " + rec.domein, "Klant: " + (rec.email || "onbekend"), "Abonnement: " + (rec.subscriptionId || "")];
+
+    if(perEinde && !rec.opzegGemeld){
+      const einde = periodeEinde(sub);
+      const eindTekst = einde ? nlDatum(einde) : "het einde van je betaalde jaar";
+      const offTekst = einde ? nlDatum(new Date(einde.getTime() + RESPIJT_DAGEN * 86400 * 1000)) : "";
+      rec.opzegGemeld = new Date().toISOString(); rec.opzegEinde = einde ? einde.toISOString() : "";
+      save();
+      await stuurOpzegMails(rec,
+        "Je opzegging is ontvangen: " + rec.domein,
+        [
+          "We hebben je opzegging voor de website " + rec.domein + " ontvangen.",
+          "Je website blijft gewoon werken tot " + eindTekst + ". Je wordt daarna niet meer afgeschreven.",
+          "Na die datum heb je nog " + RESPIJT_DAGEN + " dagen" + (offTekst ? " (tot " + offTekst + ")" : "") + ". Daarna gaat je website offline en kun je niet meer inloggen op je beheerpagina.",
+          "Je domeinnaam en hosting bij WebReus zijn van jou en lopen gewoon door. Wil je die ook stoppen, regel dat dan zelf bij WebReus.",
+          "Toch van gedachten veranderd? Via deze link zet je je abonnement weer aan, dan verandert er niets: " + (rec.licentie ? SERVER_URL + "/api/website/betalen?key=" + rec.licentie : "antwoord op deze mail.")
+        ],
+        "Website opgezegd (per einde termijn): " + rec.domein,
+        basisFF.concat(["Werkt tot: " + eindTekst, "Offline op: " + (offTekst || "onbekend")])
+      );
+      return;
+    }
+
+    if(!perEinde && GOED.includes(rec.stripeStatus) && rec.opzegGemeld){
+      // De klant heeft de opzegging teruggedraaid
+      rec.opzegGemeld = ""; rec.opzegEinde = "";
+      save();
+      try{
+        await sendResendEmail({ to: NOTIFY_EMAIL, subject: "Opzegging ingetrokken: " + rec.domein, text: basisFF.join("\r\n") + "\r\nHet abonnement loopt weer gewoon door.\r\n" });
+      }catch(e){ console.error("Websitemodel: melding ingetrokken opzegging mislukt:", (e && e.message) || e); }
+      return;
+    }
+
+    if(beeindigd && !rec.beeindigdGemeld){
+      rec.beeindigdGemeld = new Date().toISOString();
+      const alGemeld = !!rec.opzegGemeld;
+      save();
+      const start = rec.probleemSinds ? Date.parse(rec.probleemSinds) : Date.now();
+      const offTekst = nlDatum(new Date(start + RESPIJT_DAGEN * 86400 * 1000));
+      if(alGemeld){
+        // Klant kreeg de bevestiging al; alleen FormForge laten weten dat het nu echt gestopt is
+        try{
+          await sendResendEmail({ to: NOTIFY_EMAIL, subject: "Abonnement gestopt: " + rec.domein, text: basisFF.join("\r\n") + "\r\nOffline op: " + offTekst + "\r\n" });
+        }catch(e){ console.error("Websitemodel: melding gestopt mislukt:", (e && e.message) || e); }
+        return;
+      }
+      await stuurOpzegMails(rec,
+        "Je abonnement is beeindigd: " + rec.domein,
+        [
+          "Het abonnement voor je website " + rec.domein + " is beeindigd.",
+          "Je website blijft nog online tot " + offTekst + ". Daarna gaat hij offline en kun je niet meer inloggen op je beheerpagina.",
+          "Je domeinnaam en hosting bij WebReus zijn van jou en lopen gewoon door. Wil je die ook stoppen, regel dat dan zelf bij WebReus.",
+          "Is dit een vergissing? Antwoord op deze mail of mail naar " + NOTIFY_EMAIL + ", dan zetten we het samen weer aan."
+        ],
+        "Website beeindigd (direct): " + rec.domein,
+        basisFF.concat(["Offline op: " + offTekst])
+      );
     }
   }
   function licentieAntwoord(rec){
