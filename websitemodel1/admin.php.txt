@@ -2132,6 +2132,12 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
   .dienst{border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:12px;background:#141c29;}
   .dienst h3{margin:0 0 12px;font-size:15px;color:var(--mut);font-weight:600;}
   .colors{display:flex;gap:28px;flex-wrap:wrap;}
+  .hulp{display:inline-grid;place-items:center;width:20px;height:20px;margin-left:8px;border-radius:50%;border:0;background:#2f6bff;color:#fff;font:700 12px/1 inherit;font-family:inherit;cursor:pointer;vertical-align:middle;padding:0;}
+  .hulp:hover{background:#1f55e0;}
+  .hulp[aria-expanded="true"]{background:#fff;color:#2f6bff;box-shadow:inset 0 0 0 2px #2f6bff;}
+  .hulpbox{margin:6px 0 10px;padding:10px 14px;border-radius:10px;background:rgba(47,107,255,.12);border:1px solid rgba(47,107,255,.35);font-size:14px;font-weight:400;line-height:1.5;letter-spacing:0;text-transform:none;}
+  h1 + .hulpbox, h2 + .hulpbox{font-size:15px;max-width:70ch;}
+  .hulpwrap{display:inline-block;margin-left:4px;}
   .opbouw{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:4px 18px;}
   .opbouw select{width:100%;}
   .extra-kleuren{display:grid;gap:10px;}
@@ -2556,5 +2562,112 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     </div>
   </main>
 <?php endif; ?>
+<script>
+/* Hulp bij elk onderdeel: een rond vraagtekentje opent een korte uitleg */
+(function () {
+  var H = {
+    "h1:Projecten": "Hier staan al je projecten: het werk dat je wilt laten zien. Klik op + Nieuw project om er een toe te voegen. Met Alle pagina's bijwerken bouw je de hele website opnieuw op, bijvoorbeeld na het wisselen van stijl of als er iets niet klopt.",
+    "h1:Aanvragen": "Hier komen de berichten binnen die bezoekers via het contactformulier van je website sturen. Ze komen ook in je mail, op het adres dat je bij Instellingen hebt ingevuld.",
+    "h1:Instellingen": "Hier stel je alles van je website in: je bedrijfsgegevens, de teksten op de voorpagina, je diensten en het uiterlijk. Klik helemaal onderaan op Opslaan en website bijwerken, dan staat het meteen online.",
+    "h1:Inloggegevens": "Hier verander je het e-mailadres en wachtwoord waarmee je inlogt op deze beheerpagina.",
+    "h1:Nieuw project": "Vul een titel, een korte omschrijving en wat tekst in en voeg foto's toe. Na opslaan staat het project meteen op je website.",
+    "h1:Project bewerken": "Pas de teksten of foto's aan en klik op Opslaan. De pagina van dit project wordt meteen bijgewerkt.",
+    "h2:Bedrijf": "Je contactgegevens. Ze staan onderaan elke pagina en op de contactpagina, en Google gebruikt ze om je bedrijf goed te tonen.",
+    "h2:Voorpagina": "De teksten die bezoekers als eerste zien, bovenaan je voorpagina. Houd ze kort en duidelijk: wat doe je en waarom kiezen klanten voor jou?",
+    "h2:Diensten": "Wat je aanbiedt. Elke dienst krijgt een eigen pagina op je website. Een dienst met een lege naam staat niet op de site.",
+    "h2:Uiterlijk": "Hoe je website eruitziet: je logo, de stijl en je kleuren. Je teksten blijven altijd hetzelfde.",
+    "h2:Opbouw en details": "Hiermee maak je je website echt eigen: hoe de blokken op de voorpagina eruitzien, welk lettertype je gebruikt en hoe rond de knoppen zijn. Probeer gerust iets uit, je kunt het altijd terugzetten.",
+    "h2:Extra": "Extra instellingen. Die heb je meestal niet nodig, maar ze kunnen handig zijn.",
+    "h3:Extra kleuren (optioneel)": "Wil je nog meer eigen kleuren? Vink een kleur aan en kies hem. Uitgevinkt gebruikt je website de kleur van de stijl. Let op dat tekst goed leesbaar blijft.",
+    "f:naam": "De naam van je bedrijf. Die staat bovenaan elke pagina en in Google.",
+    "f:straat": "Je adres, voor onderaan de website en voor Google. Werk je vanuit huis en wil je dat niet laten zien? Laat het dan leeg.",
+    "f:postcode": "Je postcode. Die helpt Google om je in de buurt te laten zien.",
+    "f:plaats": "De plaats van je bedrijf. Die staat ook in de tekst die Google laat zien.",
+    "f:provincie": "Je provincie, bijvoorbeeld Limburg. Mag leeg blijven.",
+    "f:tel": "Je telefoonnummer. Op de telefoon kunnen bezoekers er direct op tikken om te bellen.",
+    "f:tel2": "Een tweede nummer, bijvoorbeeld van een collega. Mag leeg blijven.",
+    "f:email": "Het e-mailadres van je bedrijf. Het staat op je website en hier komen ook de berichten van het contactformulier binnen.",
+    "f:kvk": "Je KvK-nummer. Het staat onderaan je website en geeft klanten vertrouwen.",
+    "f:tijden": "Wanneer je bereikbaar bent, bijvoorbeeld: Maandag tot en met vrijdag 08:00 tot 17:00. Elke regel komt op een eigen regel.",
+    "f:werkgebied": "Waar je werkt, bijvoorbeeld: Zuid-Limburg of Sittard-Geleen en omgeving. Dit helpt bij Google.",
+    "f:slogan": "Een korte zin in een gekleurde balk helemaal bovenaan je website, bijvoorbeeld een actie of: Wij zijn met vakantie tot 18 augustus. Leeg laten = geen balk.",
+    "f:eyebrow": "Een klein regeltje boven de grote titel, bijvoorbeeld wat je doet of waar je zit.",
+    "f:hero_titel": "De grote kop bovenaan je voorpagina. Dit is het eerste wat bezoekers lezen, dus maak hem krachtig en kort.",
+    "f:hero_tekst": "Een of twee zinnen onder de grote titel. Vertel wat je doet en waarom klanten voor jou kiezen.",
+    "f:knop_tekst": "De tekst op de opvallende knop bovenaan, bijvoorbeeld: Offerte aanvragen of Bel ons. De knop gaat naar je contactpagina.",
+    "f:cta_titel": "De titel van de gekleurde balk onderaan de pagina's, die bezoekers aanspoort om contact op te nemen.",
+    "f:cta_tekst": "Een korte zin in die balk onderaan, bijvoorbeeld: Vertel ons wat je zoekt, wij bellen je terug.",
+    "f:diensten_titel": "Het kopje boven je diensten op de voorpagina, bijvoorbeeld: Wat wij doen.",
+    "f:diensten_intro": "Een korte zin onder dat kopje. Mag leeg blijven.",
+    "f:dn": "De naam van de dienst, kort en duidelijk, bijvoorbeeld: Binnenschilderwerk. Leeg = deze dienst staat niet op je website.",
+    "f:dk": "Een zin over deze dienst. Die staat in het blokje op de voorpagina.",
+    "f:dt": "Het hele verhaal over deze dienst, op een eigen pagina. Vertel wat je doet, hoe je werkt en voor wie. Een lege regel begint een nieuwe alinea.",
+    "f:logo": "Je logo staat bovenaan elke pagina en groot op de voorpagina. Het beste is een png-bestand met een doorzichtige achtergrond.",
+    "lbl:Stijl van de website": "Kies hoe je hele website eruitziet. Klik op een stijl en daarna onderaan op Opslaan. Je kunt altijd wisselen, en nieuwe stijlen verschijnen hier vanzelf. Feest- en seizoensstijlen kun je bijvoorbeeld een paar weken per jaar aanzetten.",
+    "f:kd": "De donkere kleur van je website: het menu, de bovenkant en de onderkant. Kies een donkere kleur, want daar staat witte tekst op.",
+    "f:ka": "De opvallende kleur voor knoppen en accenten. Vaak de kleur van je logo.",
+    "chk:feest_kleuren": "Aangevinkt: feeststijlen zoals Kerst gebruiken hun eigen feestkleuren. Uitgevinkt: je website houdt je eigen kleuren en krijgt alleen de versiering, zoals sneeuw.",
+    "f:op_hero": "Hoe de bovenkant van je voorpagina eruitziet. Met Grote foto komt de foto van je nieuwste project als achtergrond.",
+    "f:op_diensten": "Hoe je diensten op de voorpagina staan: als tegels naast elkaar, als lijst onder elkaar, of als tegels op een donker vlak.",
+    "f:op_projecten": "Hoe je uitgelichte projecten op de voorpagina staan: als mappen, als kaarten met foto, of met grote foto's.",
+    "f:lettertype": "De letter van je website. Zoals de stijl = de letter die bij je gekozen stijl hoort.",
+    "f:vorm": "Of knoppen en blokken hoekig, licht afgerond of helemaal rond zijn.",
+    "f:chat_url": "Heb je een chat, bijvoorbeeld WhatsApp? Zet hier de link, dan komt er rechtsonder op elke pagina een chatknop.",
+    "f:seo_titel": "De titel die Google laat zien in de zoekresultaten. Leeg laten is prima, dan maken we hem zelf.",
+    "f:seo_omschrijving": "Het stukje tekst onder je titel in Google. Leeg laten is prima, dan maken we het zelf.",
+    "f:site_url": "Het adres van je website. Meestal hoef je hier niets in te vullen.",
+    "f:title": "De naam van het project, bijvoorbeeld: Nieuwe badkamer in Geleen. Die bepaalt ook het webadres van de projectpagina.",
+    "f:folder": "Uitgelicht = groot op de voorpagina én in het overzicht. Alleen in projecten = alleen in het overzicht. Verborgen = niet zichtbaar op de website.",
+    "lbl:Diensten": "Vink aan bij welke dienst dit project hoort. Dan staat het ook op de pagina van die dienst.",
+    "f:display_title": "Een andere, kortere naam voor op de voorpagina. Leeg laten = de gewone titel.",
+    "f:desc": "Een zin over het project. Die staat op de kaart in het overzicht.",
+    "f:text": "Het verhaal van het project: wat was de vraag, wat heb je gedaan, wat was het resultaat? Een lege regel begint een nieuwe alinea.",
+    "f:photos": "Kies een of meer foto's van je telefoon of computer. Ze worden vanzelf kleiner gemaakt. De eerste foto wordt de grote foto.",
+    "lbl:Huidige foto's": "De foto's die al bij dit project staan. Vink Verwijderen aan om een foto weg te halen en klik daarna op Opslaan.",
+    "f:f-": "Kies waar dit project staat: Uitgelicht (groot op de voorpagina en in het overzicht), Projecten (alleen in het overzicht) of Verborgen (niet zichtbaar op de website).",
+    "f:aem": "Het e-mailadres waarmee je inlogt. Hier komt ook de mail naartoe als je je wachtwoord vergeten bent.",
+    "f:cur": "Ter controle: je huidige wachtwoord.",
+    "f:npw": "Je nieuwe wachtwoord, minimaal 10 tekens. Kies iets wat je nergens anders gebruikt."
+  };
+  var nr = 0;
+  function voegToe(el, tekst) {
+    if (!el || !tekst || el.querySelector(".hulp")) return;
+    nr++;
+    var id = "hulp" + nr;
+    var b = document.createElement("button");
+    b.type = "button"; b.className = "hulp"; b.textContent = "?";
+    b.setAttribute("aria-expanded", "false"); b.setAttribute("aria-controls", id);
+    b.setAttribute("aria-label", "Uitleg");
+    var box = document.createElement("div");
+    box.className = "hulpbox"; box.id = id; box.hidden = true; box.textContent = tekst;
+    b.addEventListener("click", function (e) {
+      e.preventDefault(); e.stopPropagation();
+      box.hidden = !box.hidden;
+      b.setAttribute("aria-expanded", box.hidden ? "false" : "true");
+    });
+    el.appendChild(b);
+    el.insertAdjacentElement("afterend", box);
+  }
+  document.querySelectorAll("h1, h2, h3").forEach(function (h) {
+    var t = (h.childNodes[0] && h.childNodes[0].nodeType === 3 ? h.childNodes[0].nodeValue : h.textContent).trim();
+    voegToe(h, H[h.tagName.toLowerCase() + ":" + t]);
+  });
+  document.querySelectorAll("label[for]").forEach(function (l) {
+    var id = l.getAttribute("for");
+    voegToe(l, H["f:" + id] || H["f:" + id.replace(/\d+$/, "")] || (id.indexOf("f-") === 0 ? H["f:f-"] : ""));
+  });
+  document.querySelectorAll("label:not([for])").forEach(function (l) {
+    if (l.querySelector("input")) return;
+    voegToe(l, H["lbl:" + l.textContent.trim()]);
+  });
+  var fk = document.querySelector('input[name="feest_kleuren"]');
+  if (fk) {
+    var lab = fk.closest("label");
+    var wrap = document.createElement("span"); wrap.className = "hulpwrap";
+    lab.parentNode.insertBefore(wrap, lab.nextSibling);
+    voegToe(wrap, H["chk:feest_kleuren"]);
+  }
+})();
+</script>
 </body>
 </html>
