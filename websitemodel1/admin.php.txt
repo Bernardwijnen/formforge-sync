@@ -64,6 +64,15 @@ function default_settings() {
         'chat_url'         => '',
         'logo'             => '',
         'stijl'            => 'stoer',
+        'opbouw_hero'      => 'standaard',
+        'opbouw_diensten'  => 'standaard',
+        'opbouw_projecten' => 'standaard',
+        'kleur_achtergrond'=> '',
+        'kleur_vlak'       => '',
+        'kleur_tekst'      => '',
+        'lettertype'       => '',
+        'vorm'             => '',
+        'feest_kleuren'    => '1',
         'diensten'         => [
             ['key' => 'd1', 'slug' => 'dienst-1', 'naam' => 'Dienst 1', 'kort' => 'Korte omschrijving van deze dienst.', 'tekst' => "Vertel hier uitgebreid over deze dienst.\n\nEen lege regel begint een nieuwe alinea."],
             ['key' => 'd2', 'slug' => 'dienst-2', 'naam' => 'Dienst 2', 'kort' => 'Korte omschrijving van deze dienst.', 'tekst' => 'Vertel hier uitgebreid over deze dienst.'],
@@ -332,12 +341,128 @@ function stijl_grote_foto() {
     $s = stijl();
     return !empty($alle[$s]['grote_foto']);
 }
+/* ---------- Eigen opbouw, kleuren, letter en vormen ----------
+   Komt na de stijl, zodat de keuzes van de klant altijd winnen. */
+$OPBOUW = [
+    'hero' => ['standaard' => 'Tekst links, logo rechts', 'rechts' => 'Logo links, tekst rechts', 'midden' => 'Alles in het midden', 'foto' => 'Grote foto als achtergrond'],
+    'diensten' => ['standaard' => 'Tegels', 'lijst' => 'Lijst onder elkaar', 'donker' => 'Tegels op een donker vlak'],
+    'projecten' => ['standaard' => 'Mappen', 'kaarten' => 'Kaarten met foto', 'foto' => 'Grote foto\'s'],
+];
+$LETTERS = [
+    ''          => ['naam' => 'Zoals de stijl', 'fonts' => '', 'kop' => '', 'tekst' => ''],
+    'modern'    => ['naam' => 'Modern (Inter)', 'fonts' => 'family=Inter:wght@400;600;700;800', 'kop' => "'Inter',sans-serif", 'tekst' => "'Inter',sans-serif"],
+    'rond'      => ['naam' => 'Rond en vriendelijk (Nunito)', 'fonts' => 'family=Nunito:wght@400;600;700;800', 'kop' => "'Nunito',sans-serif", 'tekst' => "'Nunito',sans-serif"],
+    'strak'     => ['naam' => 'Strak en stevig (Archivo)', 'fonts' => 'family=Archivo:wght@400;600;700;800', 'kop' => "'Archivo',sans-serif", 'tekst' => "'Archivo',sans-serif"],
+    'klassiek'  => ['naam' => 'Klassiek (Playfair Display)', 'fonts' => 'family=Playfair+Display:wght@600;700&family=Poppins:wght@400;500;600', 'kop' => "'Playfair Display',Georgia,serif", 'tekst' => "'Poppins',sans-serif"],
+    'verhalend' => ['naam' => 'Verhalend (Lora)', 'fonts' => 'family=Lora:wght@400;600;700', 'kop' => "'Lora',Georgia,serif", 'tekst' => "'Lora',Georgia,serif"],
+    'speels'    => ['naam' => 'Speels (Quicksand)', 'fonts' => 'family=Quicksand:wght@500;600;700&family=Nunito:wght@400;600', 'kop' => "'Quicksand',sans-serif", 'tekst' => "'Nunito',sans-serif"],
+    'zakelijk'  => ['naam' => 'Zakelijk (Merriweather)', 'fonts' => 'family=Merriweather:wght@700&family=Inter:wght@400;600', 'kop' => "'Merriweather',Georgia,serif", 'tekst' => "'Inter',sans-serif"],
+];
+$VORMEN = ['' => 'Zoals de stijl', 'hoekig' => 'Hoekig', 'afgerond' => 'Licht afgerond', 'rond' => 'Rond'];
+function opbouw($deel) {
+    global $OPBOUW;
+    $v = st('opbouw_' . $deel);
+    return isset($OPBOUW[$deel][$v]) ? $v : 'standaard';
+}
+function body_klassen($s) {
+    return 't-' . $s . ' l-hero-' . opbouw('hero') . ' l-dienst-' . opbouw('diensten') . ' l-proj-' . opbouw('projecten');
+}
+function maatwerk_css() {
+    global $LETTERS;
+    $css = '';
+    // Feeststijl met eigen kleuren: de eigen kleuren nog een keer, na de stijl
+    if (st('feest_kleuren') === '0') { $css .= theme_css(); }
+    $bg = valid_color(st('kleur_achtergrond'), '');
+    $vl = valid_color(st('kleur_vlak'), '');
+    $tx = valid_color(st('kleur_tekst'), '');
+    if ($bg !== '') { $css .= "body,.section,.sec{background:{$bg};}\n"; }
+    if ($vl !== '') { $css .= ":root{--sky:{$vl};} .section.sky,.sec.sky,.cwrap{background:{$vl};}\n"; }
+    if ($tx !== '') { $css .= "body,.section,.sec,.card,.service{color:{$tx};}\n"; }
+    $l = $LETTERS[st('lettertype')] ?? null;
+    $link = '';
+    if ($l && $l['fonts'] !== '') {
+        $link = '<link href="https://fonts.googleapis.com/css2?' . h($l['fonts']) . '&display=swap" rel="stylesheet" />' . "\n";
+        $css .= "body{font-family:{$l['tekst']};} h1,h2,h3{font-family:{$l['kop']};}\n";
+    }
+    switch (st('vorm')) {
+        case 'hoekig':
+            $css .= ".btn,.menu a,.menu a.cta,.chatfab,.filters a{border-radius:3px !important;} .service,.card,.card .img,.cform,.cside,.others a,.gallery .ph,.photo-sheet,.photo-sheet img,.empty{border-radius:3px !important;} .folder .tab{border-radius:3px 3px 0 0 !important;} .folder .body{border-radius:0 4px 4px 4px !important;} .service .num{border-radius:3px !important;}\n";
+            break;
+        case 'afgerond':
+            $css .= ".btn,.menu a,.menu a.cta,.filters a{border-radius:10px !important;} .service,.card,.cform,.cside,.empty{border-radius:14px !important;} .service .num{border-radius:12px !important;}\n";
+            break;
+        case 'rond':
+            $css .= ".btn,.menu a,.menu a.cta,.chatfab,.filters a,.others a{border-radius:999px !important;} .service,.card,.cform,.cside,.empty{border-radius:28px !important;} .card .img{border-radius:28px 28px 0 0;} .gallery .ph,.photo-sheet,.photo-sheet img{border-radius:20px !important;} .folder .tab{border-radius:24px 24px 0 0 !important;} .folder .body{border-radius:0 30px 30px 30px !important;} .service .num{border-radius:50% !important;}\n";
+            break;
+    }
+    $css .= <<<'CSS'
+/* opbouw: bovenkant */
+.l-hero-rechts .hero .wrap{grid-template-columns:.75fr 1.25fr;}
+.l-hero-rechts .hero .emblem{order:-1;}
+.l-hero-midden .hero .wrap{grid-template-columns:1fr;text-align:center;justify-items:center;}
+.l-hero-midden .hero .emblem{order:-1;justify-content:center;}
+.l-hero-midden .hero .emblem img{max-width:190px;max-height:150px;}
+.l-hero-midden .hero h1,.l-hero-midden .hero .lead{margin-left:auto;margin-right:auto;}
+.l-hero-midden .eyebrow,.l-hero-midden .actions{justify-content:center;}
+.hero.has-photo{background-color:#000;background-size:cover;background-position:center;min-height:min(80vh,720px);display:flex;align-items:flex-end;color:#fff;}
+.hero.has-photo::after{display:none;}
+.hero.has-photo::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.82) 0%,rgba(0,0,0,.58) 45%,rgba(0,0,0,.2) 100%),linear-gradient(180deg,rgba(0,0,0,0) 40%,rgba(0,0,0,.6) 100%);}
+.hero.has-photo .wrap{grid-template-columns:1fr;width:100%;}
+.hero.has-photo .emblem{display:none;}
+.hero.has-photo .lead{color:rgba(255,255,255,.88);}
+.hero.has-photo .eyebrow{color:rgba(255,255,255,.8);}
+.hero.has-photo .btn.quiet{color:#fff;box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.6);}
+@media (max-width:860px){.l-hero-rechts .hero .wrap{grid-template-columns:1fr;}}
+/* opbouw: diensten */
+.l-dienst-lijst .services{grid-template-columns:1fr;gap:0;border-top:1px solid var(--line);}
+.l-dienst-lijst .service{display:grid;grid-template-columns:auto 1fr auto;grid-template-areas:"n t g" "n p g";column-gap:24px;align-items:center;background:transparent;border:0;border-bottom:1px solid var(--line);border-radius:0 !important;padding:24px 4px;box-shadow:none;transform:none;}
+.l-dienst-lijst .service:hover{transform:none;box-shadow:none;background:var(--sky);}
+.l-dienst-lijst .service .num{grid-area:n;margin:0;}
+.l-dienst-lijst .service h3{grid-area:t;}
+.l-dienst-lijst .service p{grid-area:p;margin-top:4px;}
+.l-dienst-lijst .service .go{grid-area:g;margin:0;}
+@media (max-width:640px){.l-dienst-lijst .service{grid-template-columns:auto 1fr;grid-template-areas:"n t" "n p" "n g";}.l-dienst-lijst .service .go{margin-top:10px;}}
+.l-dienst-donker #diensten{background:var(--navy);color:#fff;}
+.l-dienst-donker #diensten .head h2{color:#fff;}
+.l-dienst-donker #diensten .head p{color:rgba(255,255,255,.75);}
+.l-dienst-donker .service{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.14);color:#fff;}
+.l-dienst-donker .service:hover{border-color:var(--blue);}
+.l-dienst-donker .service p,.l-dienst-donker .go .n{color:rgba(255,255,255,.75);}
+.l-dienst-donker .service .num{background:var(--blue);color:#fff;}
+.l-dienst-donker .go{color:#fff;}
+.l-dienst-donker .servicebar{background:var(--navy);border-top:1px solid rgba(255,255,255,.1);border-bottom:1px solid rgba(255,255,255,.1);}
+/* opbouw: projecten */
+.l-proj-kaarten .folder{padding-top:0;color:var(--navy);}
+.l-proj-kaarten .folder .tab{display:none;}
+.l-proj-kaarten .folder .body{background:#fff !important;border:1px solid var(--line);border-radius:16px;min-height:0;padding:0;justify-content:flex-start;}
+.l-proj-kaarten .folder .body::before{display:none;}
+.l-proj-kaarten .folder .photo-sheet{position:relative;inset:auto;top:auto;left:auto;right:auto;height:280px;transform:none !important;border-radius:0;padding:0;box-shadow:none;}
+.l-proj-kaarten .folder .photo-sheet img{border-radius:0;}
+.l-proj-kaarten .folder .front{padding:22px 26px 24px;}
+.l-proj-kaarten .folder .desc{color:var(--muted);}
+.l-proj-kaarten .folder .meta{justify-content:flex-start;color:var(--blue);}
+.l-proj-kaarten .folder:hover .body{border-color:var(--blue);}
+.l-proj-foto .folder{padding-top:0;color:#fff;}
+.l-proj-foto .folder .tab{display:none;}
+.l-proj-foto .folder .body{border-radius:14px;min-height:540px;background:#000 !important;}
+.l-proj-foto .folder .body::before{content:"";position:absolute;inset:0;z-index:1;background:linear-gradient(180deg,rgba(0,0,0,0) 35%,rgba(0,0,0,.85) 100%);}
+.l-proj-foto .folder .photo-sheet{inset:0;top:0;left:0;right:0;height:auto;transform:none !important;border-radius:0;padding:0;box-shadow:none;}
+.l-proj-foto .folder .photo-sheet img{border-radius:0;transition:transform .5s ease;}
+.l-proj-foto .folder:hover .photo-sheet img{transform:scale(1.04);}
+.l-proj-foto .folder .front{z-index:2;}
+.l-proj-foto .folder .desc{color:rgba(255,255,255,.85);}
+CSS;
+    return $link . "<style id=\"ff-maatwerk\">\n" . $css . "\n</style>\n";
+}
+/* Grote foto bovenaan: bij de stijl Etalage, of als de klant dat kiest */
+function hero_met_foto() {
+    return stijl_grote_foto() || opbouw('hero') === 'foto';
+}
 /* Zet de gekozen stijl in een gemaakte pagina */
 function stijl_pagina($html) {
     $s = stijl();
     $css = stijl_css($s);
     $kiezer = file_exists(DATA_DIR . '/demo-aan.txt');
-    if ($css === '' && !$kiezer) return $html;
     if ($kiezer) {
         // Voorbeeldsite: de stijl staat in een eigen blok, zodat de stijlkiezer hem kan wisselen
         $alle = alle_stijlen();
@@ -345,10 +470,11 @@ function stijl_pagina($html) {
         $css = '<link id="ff-fonts" rel="stylesheet" href="' . ($f !== '' ? 'https://fonts.googleapis.com/css2?' . h($f) . '&display=swap' : 'data:text/css,') . '" />' . "\n"
              . '<style id="ff-stijl">' . "\n" . ($alle[$s]['css'] ?? '') . "\n</style>\n";
     }
+    $css .= maatwerk_css();
     $pos = strpos($html, '</head>');
     if ($pos !== false) { $html = substr($html, 0, $pos) . $css . substr($html, $pos); }
     $pos = strpos($html, '<body>');
-    if ($pos !== false) { $html = substr($html, 0, $pos) . '<body class="t-' . $s . '">' . ($kiezer ? stijl_kiezer($s) : '') . substr($html, $pos + 6); }
+    if ($pos !== false) { $html = substr($html, 0, $pos) . '<body class="' . body_klassen($s) . '">' . ($kiezer ? stijl_kiezer($s) : '') . substr($html, $pos + 6); }
     return $html;
 }
 /* Stijlkiezer voor de voorbeeldsite (alleen met data/demo-aan.txt).
@@ -360,12 +486,12 @@ function stijl_kiezer($huidig) {
         $data[$k] = ['naam' => $v['naam'], 'fonts' => $v['fonts'], 'css' => $v['css'], 'foto' => !empty($v['grote_foto'])];
     }
     $foto = hero_foto(load_pages());
-    $json = json_encode(['stijlen' => $data, 'standaard' => $huidig, 'foto' => $foto], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $json = json_encode(['stijlen' => $data, 'standaard' => $huidig, 'foto' => $foto, 'vasteFoto' => opbouw('hero') === 'foto'], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     return <<<HTML
 <style>
-.ffk{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9999;display:flex;align-items:center;gap:6px;max-width:calc(100vw - 24px);padding:7px;border-radius:999px;background:rgba(17,24,39,.94);color:#fff;font:600 14px/1 'Segoe UI',Arial,sans-serif;letter-spacing:0;box-shadow:0 14px 40px -12px rgba(0,0,0,.55);backdrop-filter:blur(8px);}
+.ffk{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9999;display:flex;align-items:center;gap:6px;width:max-content;max-width:calc(100vw - 24px);padding:7px;border-radius:22px;background:rgba(17,24,39,.94);color:#fff;font:600 14px/1 'Segoe UI',Arial,sans-serif;letter-spacing:0;box-shadow:0 14px 40px -12px rgba(0,0,0,.55);backdrop-filter:blur(8px);}
 .ffk span{padding:0 8px 0 10px;white-space:nowrap;opacity:.8;font-weight:500;}
-.ffk .ffk-k{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;}
+.ffk .ffk-k{display:flex;flex-wrap:wrap;gap:4px;}
 .ffk .ffk-k::-webkit-scrollbar{display:none;}
 .ffk button{all:unset;cursor:pointer;white-space:nowrap;padding:10px 14px;border-radius:999px;color:#fff;font:600 14px/1 'Segoe UI',Arial,sans-serif;}
 .ffk button:hover{background:rgba(255,255,255,.14);}
@@ -385,10 +511,10 @@ body{padding-bottom:84px;}
     var s = D.stijlen[k]; if (!s) return;
     document.getElementById('ff-stijl').textContent = s.css;
     document.getElementById('ff-fonts').href = s.fonts ? 'https://fonts.googleapis.com/css2?' + s.fonts + '&display=swap' : 'data:text/css,';
-    document.body.className = 't-' + k;
+    document.body.className = (document.body.className.replace(/(^|\s)t-[a-z0-9-]+/g, ' ') + ' t-' + k).replace(/\s+/g, ' ').trim();
     var hero = document.querySelector('.hero');
     if (hero) {
-      if (s.foto && D.foto) { hero.classList.add('has-photo'); hero.style.backgroundImage = "url('" + D.foto + "')"; }
+      if ((s.foto || D.vasteFoto) && D.foto) { hero.classList.add('has-photo'); hero.style.backgroundImage = "url('" + D.foto + "')"; }
       else { hero.classList.remove('has-photo'); hero.style.backgroundImage = ''; }
     }
     var knoppen = balk.querySelectorAll('button');
@@ -901,7 +1027,7 @@ CSS;
     $out .= site_header();
 
     $logo = logo_url();
-    $foto = stijl_grote_foto() ? hero_foto($pages) : '';
+    $foto = hero_met_foto() ? hero_foto($pages) : '';
     $heroAttr = $foto !== '' ? ' class="hero has-photo" style="background-image:url(\'' . h($foto) . '\')"' : ' class="hero"';
     $out .= '<main id="home" class="view"><section' . $heroAttr . '><div class="wrap' . ($logo === '' ? ' solo' : '') . '"><div>';
     if (st('eyebrow') !== '') $out .= '<div class="eyebrow">' . h(st('eyebrow')) . '</div>';
@@ -1838,6 +1964,16 @@ if ($logged_in && isset($_POST['action'])) {
         $new['kleur_donker'] = valid_color($_POST['kleur_donker'] ?? '', '#0b1f3a');
         $new['kleur_accent'] = valid_color($_POST['kleur_accent'] ?? '', '#1d4ed8');
         $new['stijl'] = array_key_exists((string)($_POST['stijl'] ?? ''), alle_stijlen()) ? $_POST['stijl'] : 'stoer';
+        foreach (['hero', 'diensten', 'projecten'] as $deel) {
+            $v = (string)($_POST['opbouw_' . $deel] ?? '');
+            $new['opbouw_' . $deel] = isset($OPBOUW[$deel][$v]) ? $v : 'standaard';
+        }
+        foreach (['kleur_achtergrond', 'kleur_vlak', 'kleur_tekst'] as $kk) {
+            $new[$kk] = !empty($_POST[$kk . '_aan']) ? valid_color($_POST[$kk] ?? '', '') : '';
+        }
+        $new['lettertype'] = array_key_exists((string)($_POST['lettertype'] ?? ''), $LETTERS) ? (string)$_POST['lettertype'] : '';
+        $new['vorm'] = array_key_exists((string)($_POST['vorm'] ?? ''), $VORMEN) ? (string)$_POST['vorm'] : '';
+        $new['feest_kleuren'] = !empty($_POST['feest_kleuren']) ? '1' : '0';
 
         $msgs = [];
         if ($mail !== '' && $new['email'] === '') { $msgs[] = 'Het e-mailadres klopt niet en is leeggelaten.'; }
@@ -1996,6 +2132,13 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
   .dienst{border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:12px;background:#141c29;}
   .dienst h3{margin:0 0 12px;font-size:15px;color:var(--mut);font-weight:600;}
   .colors{display:flex;gap:28px;flex-wrap:wrap;}
+  .opbouw{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:4px 18px;}
+  .opbouw select{width:100%;}
+  .extra-kleuren{display:grid;gap:10px;}
+  .ek{display:flex;align-items:center;gap:10px;font-weight:500;}
+  .ek input[type=checkbox]{width:18px;height:18px;accent-color:#2f6bff;}
+  .check{display:flex;align-items:flex-start;gap:10px;font-weight:500;}
+  .check input{width:18px;height:18px;margin-top:3px;accent-color:#2f6bff;flex:none;}
   .colors .field{display:flex;align-items:center;gap:12px;margin:0;}
   .colors .field label{margin:0;}
   .logo-now{display:flex;align-items:center;gap:16px;margin-bottom:12px;}
@@ -2208,6 +2351,41 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
               <div class="field"><input type="color" id="ka" name="kleur_accent" value="<?= h(valid_color(st('kleur_accent'), '#1d4ed8')) ?>" /><label for="ka">Accentkleur (knoppen)</label></div>
             </div>
             <div class="hint" style="margin-top:12px">Op beide kleuren staat witte tekst, dus kies geen hele lichte kleuren.</div>
+            <label class="check" style="margin-top:14px"><input type="checkbox" name="feest_kleuren" value="1" <?= st('feest_kleuren') !== '0' ? 'checked' : '' ?> /> Bij feeststijlen (zoals Kerst, Halloween en Vakantie) de feestkleuren gebruiken</label>
+            <div class="hint">Uitgevinkt houdt je website je eigen kleuren, en krijg je alleen de versiering, zoals sneeuw of vleermuizen.</div>
+          </div>
+
+          <div class="formcard">
+            <h2>Opbouw en details</h2>
+            <p class="hint" style="margin:-4px 0 16px">Hiermee maak je je website echt eigen. Je teksten en foto's blijven gewoon staan.</p>
+            <div class="opbouw">
+              <?php $OPN = ['hero' => 'Bovenkant van de voorpagina', 'diensten' => 'Diensten', 'projecten' => 'Uitgelichte projecten']; ?>
+              <?php foreach ($OPBOUW as $deel => $keuzes): ?>
+                <div class="field"><label for="op_<?= h($deel) ?>"><?= h($OPN[$deel]) ?></label>
+                  <select id="op_<?= h($deel) ?>" name="opbouw_<?= h($deel) ?>">
+                    <?php foreach ($keuzes as $kk => $kn): ?><option value="<?= h($kk) ?>" <?= opbouw($deel) === $kk ? 'selected' : '' ?>><?= h($kn) ?></option><?php endforeach; ?>
+                  </select>
+                </div>
+              <?php endforeach; ?>
+              <div class="field"><label for="lettertype">Lettertype</label>
+                <select id="lettertype" name="lettertype">
+                  <?php foreach ($LETTERS as $kk => $lv): ?><option value="<?= h($kk) ?>" <?= st('lettertype') === (string)$kk ? 'selected' : '' ?>><?= h($lv['naam']) ?></option><?php endforeach; ?>
+                </select>
+              </div>
+              <div class="field"><label for="vorm">Vorm van knoppen en blokken</label>
+                <select id="vorm" name="vorm">
+                  <?php foreach ($VORMEN as $kk => $vn): ?><option value="<?= h($kk) ?>" <?= st('vorm') === (string)$kk ? 'selected' : '' ?>><?= h($vn) ?></option><?php endforeach; ?>
+                </select>
+              </div>
+            </div>
+            <div class="hint">Kies je bij de bovenkant "Grote foto", dan komt de foto van je nieuwste project groot bovenaan.</div>
+            <h3 style="margin:22px 0 10px;font-size:16px">Extra kleuren (optioneel)</h3>
+            <div class="extra-kleuren">
+              <?php foreach (['kleur_achtergrond' => ['Achtergrond van de pagina', '#ffffff'], 'kleur_vlak' => ['Lichte vlakken (om en om)', '#f3f5f9'], 'kleur_tekst' => ['Kleur van de tekst', '#1f2937']] as $kk => $kv): $val = valid_color(st($kk), ''); ?>
+                <label class="ek"><input type="checkbox" name="<?= h($kk) ?>_aan" value="1" <?= $val !== '' ? 'checked' : '' ?> /><input type="color" name="<?= h($kk) ?>" value="<?= h($val !== '' ? $val : $kv[1]) ?>" /><span><?= h($kv[0]) ?></span></label>
+              <?php endforeach; ?>
+            </div>
+            <div class="hint">Vink een kleur aan om hem te gebruiken. Uitgevinkt = de kleur van de stijl. Zorg dat de tekst goed leesbaar blijft op de achtergrond.</div>
           </div>
 
           <div class="formcard">
