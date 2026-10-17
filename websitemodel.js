@@ -490,6 +490,136 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
   });
 
   /* ===========================================================
+     Aanvraag "wij regelen het voor je" en pakketten met service.
+     De klant vult zijn gegevens in; FormForge vraagt daarmee op
+     naam van de klant het pakket en de domeinnaam aan bij WebReus.
+     De klant betaalt WebReus zelf. FormForge krijgt een mail met
+     alle gegevens, de klant een bevestiging met de volgende stappen.
+     =========================================================== */
+  const AANVRAAG_FILE = path.join(DATA_DIR, "websitemodel_aanvragen.json");
+  const PAKKETTEN = {
+    zelf: "Zelf doen, met aanvraag en installatie door FormForge (49 euro eenmalig excl. btw)",
+    basis: "Basis (9,95 euro per maand excl. btw, 1 aanpassing per maand)",
+    premium: "Premium (29,95 euro per maand excl. btw, 5 aanpassingen per maand)",
+    unlimited: "Unlimited (79 euro per maand excl. btw, 12 maanden, website door ons ingevuld)",
+    titanium: "Titanium (op maat, op aanvraag)"
+  };
+  const aanvraagTeller = new Map();
+  function veld(v, max){ return String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max || 120); }
+  function tekstveld(v, max){ return String(v == null ? "" : v).replace(/\r\n?/g, "\n").replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, " ").trim().slice(0, max || 3000); }
+  app.post("/api/website/aanvraag", async (req, res) => {
+    const b = req.body || {};
+    if(veld(b.website, 50) !== "") return res.json({ ok: true }); // spamval: onzichtbaar veld
+    const ip = String(req.headers["x-forwarded-for"] || req.ip || "").split(",")[0].trim() || "onbekend";
+    const nu = Date.now();
+    const lijst = (aanvraagTeller.get(ip) || []).filter(t => nu - t < 3600 * 1000);
+    if(lijst.length >= 6) return res.status(429).json({ error: "Te veel aanvragen achter elkaar. Probeer het over een uur opnieuw of mail naar info@formforge.nl." });
+
+    const pakket = String(b.pakket || "");
+    if(!PAKKETTEN[pakket]) return res.status(400).json({ error: "Kies een pakket." });
+    const titanium = pakket === "titanium";
+    const a = {
+      pakket,
+      bedrijf: veld(b.bedrijf), aanhef: ["Dhr.", "Mevr."].includes(b.aanhef) ? b.aanhef : "",
+      voorletters: veld(b.voorletters, 20), tussenvoegsel: veld(b.tussenvoegsel, 20), achternaam: veld(b.achternaam, 80),
+      straat: veld(b.straat, 100), huisnummer: veld(b.huisnummer, 10), toevoeging: veld(b.toevoeging, 10),
+      postcode: veld(b.postcode, 10).toUpperCase(), plaats: veld(b.plaats, 80),
+      land: ["Nederland", "Belgie"].includes(b.land) ? b.land : "Nederland",
+      telefoon: veld(b.telefoon, 30), email: cleanEmail(b.email),
+      domein: cleanDomain(b.domein), domein2: cleanDomain(b.domein2), domein3: cleanDomain(b.domein3),
+      heeftDomein: b.heeftDomein === true || b.heeftDomein === "1",
+      wensen: tekstveld(b.wensen, 3000)
+    };
+    if(!a.achternaam) return res.status(400).json({ error: "Vul je achternaam in." });
+    if(!a.email) return res.status(400).json({ error: "Vul een geldig e-mailadres in." });
+    if(a.telefoon.replace(/[^0-9]/g, "").length < 9) return res.status(400).json({ error: "Vul een geldig telefoonnummer in." });
+    if(titanium){
+      if(a.wensen.length < 10) return res.status(400).json({ error: "Vertel kort wat je wilt laten maken." });
+      if(b.akkoordContact !== true) return res.status(400).json({ error: "Geef aan dat we contact met je mogen opnemen." });
+    }else{
+      if(!a.voorletters) return res.status(400).json({ error: "Vul je voorletters in." });
+      if(!a.straat || !a.huisnummer || !a.postcode || !a.plaats) return res.status(400).json({ error: "Vul je adres volledig in." });
+      if(!a.domein) return res.status(400).json({ error: "Vul een geldige domeinnaam in, bijvoorbeeld mijnbedrijf.nl" });
+      if(b.akkoordOpdracht !== true) return res.status(400).json({ error: "Geef ons opdracht om het pakket bij WebReus voor je aan te vragen." });
+      if(b.akkoordVoorwaarden !== true) return res.status(400).json({ error: "Ga akkoord met de voorwaarden en de prijs van je pakket." });
+    }
+    lijst.push(nu); aanvraagTeller.set(ip, lijst);
+
+    const id = "A" + new Date().toISOString().slice(0, 10).replace(/-/g, "") + "-" + crypto.randomBytes(3).toString("hex").toUpperCase();
+    const naam = [a.aanhef, a.voorletters, a.tussenvoegsel, a.achternaam].filter(Boolean).join(" ");
+    const rec = Object.assign({ id, aangemaakt: new Date().toISOString(), ip }, a);
+    try{
+      let alle = [];
+      if(fs.existsSync(AANVRAAG_FILE)) alle = JSON.parse(fs.readFileSync(AANVRAAG_FILE, "utf8")) || [];
+      alle.push(rec);
+      safeWriteFileSync(AANVRAAG_FILE, JSON.stringify(alle, null, 2));
+    }catch(e){ console.error("Websitemodel: aanvraag opslaan mislukt:", (e && e.message) || e); }
+
+    const regels = [
+      "Nieuwe aanvraag " + id,
+      "Pakket: " + PAKKETTEN[pakket],
+      "",
+      titanium ? "CONTACTGEGEVENS" : "GEGEVENS VOOR WEBREUS (kies daar altijd Nieuwe Klant)",
+      "Bedrijf: " + (a.bedrijf || "-"),
+      "Aanhef: " + (a.aanhef || "-"),
+      "Voorletters: " + (a.voorletters || "-"),
+      "Tussenvoegsel: " + (a.tussenvoegsel || "-"),
+      "Achternaam: " + a.achternaam,
+      "Postcode: " + (a.postcode || "-"),
+      "Huisnummer: " + (a.huisnummer || "-"),
+      "Toevoeging: " + (a.toevoeging || "-"),
+      "Straat: " + (a.straat || "-"),
+      "Plaats: " + (a.plaats || "-"),
+      "Land: " + a.land,
+      "Telefoon: " + a.telefoon,
+      "E-mail: " + a.email,
+      "",
+      "DOMEINNAAM",
+      "Gewenst: " + (a.domein || "-"),
+      "Alternatief 1: " + (a.domein2 || "-"),
+      "Alternatief 2: " + (a.domein3 || "-"),
+      "Heeft de domeinnaam al ergens anders: " + (a.heeftDomein ? "ja, verhuiscode opvragen" : "nee"),
+      "",
+      (titanium ? "WENSEN" : "OPMERKINGEN"),
+      a.wensen || "-",
+      "",
+      titanium ? "Akkoord: mag contact opnemen." : "Akkoord: opdracht om namens de klant bij WebReus aan te vragen, voorwaarden WebReus en FormForge, prijs van het pakket.",
+      "Verstuurd vanaf IP: " + ip
+    ];
+    try{
+      await sendResendEmail({ to: NOTIFY_EMAIL, subject: (titanium ? "Titanium-aanvraag: " : "Aanvraag website (" + pakket + "): ") + (a.bedrijf || naam) + " " + id, text: regels.join("\r\n") + "\r\n" });
+    }catch(e){
+      console.error("Websitemodel: aanvraagmail naar FormForge mislukt:", (e && e.message) || e);
+      return res.status(500).json({ error: "Versturen is niet gelukt. Probeer het opnieuw of mail naar info@formforge.nl." });
+    }
+
+    let klantTekst, klantHtml;
+    if(titanium){
+      klantTekst = ["Beste " + naam + ",", "", "Bedankt voor je aanvraag voor Titanium. We nemen binnen 1 werkdag contact met je op voor een kennismaking. Daarna krijg je van ons een offerte op maat.", "", "Je aanvraagnummer is " + id + ".", "", "Met vriendelijke groet,", "FormForge"];
+    }else{
+      klantTekst = [
+        "Beste " + naam + ",", "",
+        "Bedankt voor je aanvraag. Je hebt gekozen voor: " + PAKKETTEN[pakket] + ".", "",
+        "Zo gaat het verder:",
+        "1. Wij vragen binnen 1 werkdag (niet in het weekend) op jouw naam het Power-pakket en de domeinnaam " + a.domein + " aan bij WebReus.",
+        "2. Je krijgt van WebReus een mail over de betaling. Domein en hosting betaal je zelf aan WebReus, ongeveer 45 euro per jaar incl. btw.",
+        "3. Na je betaling stuurt WebReus je een mail met je gegevens, met daarin het blok FTP Gegevens. Stuur die mail door naar info@formforge.nl.",
+        "4. Wij zetten je website erop en sturen je de link naar je beheerpagina.",
+        a.heeftDomein ? "Je gaf aan dat je de domeinnaam al hebt. Dan vragen we je nog om de verhuiscode bij je huidige aanbieder." : "",
+        "", "Voor je pakket bij FormForge krijg je van ons apart een betaalverzoek.", "",
+        "Je aanvraagnummer is " + id + ".", "",
+        "Met vriendelijke groet,", "FormForge"
+      ].filter((r, i, arr) => !(r === "" && arr[i - 1] === ""));
+    }
+    klantHtml = klantTekst.map(r => r === "" ? "" : "<p>" + esc(r) + "</p>").join("");
+    try{
+      await sendResendEmail({ to: a.email, subject: titanium ? "Je aanvraag voor Titanium bij FormForge" : "Je aanvraag bij FormForge: " + a.domein, text: klantTekst.join("\r\n") + "\r\n", html: klantHtml });
+    }catch(e){ console.error("Websitemodel: bevestiging naar klant mislukt:", (e && e.message) || e); }
+
+    res.json({ ok: true, id });
+  });
+
+  /* ===========================================================
      Stijlen: de lijst die elke beheerpagina ophaalt.
      Staat in websitemodel1/stijlen.json. Voeg je daar een stijl aan
      toe, dan zien alle klanten hem vanzelf (binnen ongeveer 12 uur).
