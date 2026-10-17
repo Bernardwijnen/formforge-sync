@@ -504,6 +504,23 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
     unlimited: "Unlimited (79 euro per maand excl. btw, 12 maanden, website door ons ingevuld)",
     titanium: "Titanium (op maat, op aanvraag)"
   };
+  /* Mail naar FormForge waarbij "Beantwoorden" direct naar de klant gaat.
+     Gebruikt dezelfde Resend-sleutel als de server; lukt dat niet, dan de gewone mail. */
+  async function mailMetAntwoord({ to, subject, text, replyTo }){
+    const key = String(process.env.RESEND_API_KEY || "").trim();
+    if(key && FROM_EMAIL && replyTo){
+      try{
+        const r = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" },
+          body: JSON.stringify({ from: FROM_EMAIL, to: [to], subject, text, reply_to: replyTo })
+        });
+        if(r.ok) return;
+        console.error("Websitemodel: mail met antwoordadres mislukt, status " + r.status);
+      }catch(e){ console.error("Websitemodel: mail met antwoordadres mislukt:", (e && e.message) || e); }
+    }
+    await sendResendEmail({ to, subject, text });
+  }
   const aanvraagTeller = new Map();
   function veld(v, max){ return String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max || 120); }
   function tekstveld(v, max){ return String(v == null ? "" : v).replace(/\r\n?/g, "\n").replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, " ").trim().slice(0, max || 3000); }
@@ -587,7 +604,10 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
       "Verstuurd vanaf IP: " + ip
     ];
     try{
-      await sendResendEmail({ to: NOTIFY_EMAIL, subject: (titanium ? "Titanium-aanvraag: " : "Aanvraag website (" + pakket + "): ") + (a.bedrijf || naam) + " " + id, text: regels.join("\r\n") + "\r\n" });
+      const tekstFF = titanium
+        ? regels.filter(r => !/^(Postcode|Huisnummer|Toevoeging|Straat|Plaats|Land|Voorletters|Tussenvoegsel|Aanhef|Bedrijf|Gewenst|Alternatief 1|Alternatief 2|Heeft de domeinnaam al ergens anders): (-|nee)$/.test(r) && r !== "DOMEINNAAM").filter((r, i, arr) => !(r === "" && arr[i - 1] === ""))
+        : regels;
+      await mailMetAntwoord({ to: NOTIFY_EMAIL, replyTo: a.email, subject: (titanium ? "Titanium-aanvraag: " : "Aanvraag website (" + pakket + "): ") + (a.bedrijf || naam) + " " + id, text: tekstFF.join("\r\n") + "\r\n" });
     }catch(e){
       console.error("Websitemodel: aanvraagmail naar FormForge mislukt:", (e && e.message) || e);
       return res.status(500).json({ error: "Versturen is niet gelukt. Probeer het opnieuw of mail naar info@formforge.nl." });
