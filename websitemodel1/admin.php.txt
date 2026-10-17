@@ -489,24 +489,24 @@ function stijl_kiezer($huidig) {
     $json = json_encode(['stijlen' => $data, 'standaard' => $huidig, 'foto' => $foto, 'vasteFoto' => opbouw('hero') === 'foto'], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     return <<<HTML
 <style>
-.ffk{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9999;display:flex;align-items:center;gap:6px;width:max-content;max-width:calc(100vw - 24px);padding:7px;border-radius:22px;background:rgba(17,24,39,.94);color:#fff;font:600 14px/1 'Segoe UI',Arial,sans-serif;letter-spacing:0;box-shadow:0 14px 40px -12px rgba(0,0,0,.55);backdrop-filter:blur(8px);}
-.ffk span{padding:0 8px 0 10px;white-space:nowrap;opacity:.8;font-weight:500;}
-.ffk .ffk-k{display:flex;flex-wrap:wrap;gap:4px;}
-.ffk .ffk-k::-webkit-scrollbar{display:none;}
-.ffk button{all:unset;cursor:pointer;white-space:nowrap;padding:10px 14px;border-radius:999px;color:#fff;font:600 14px/1 'Segoe UI',Arial,sans-serif;}
-.ffk button:hover{background:rgba(255,255,255,.14);}
-.ffk button.aan{background:#fff;color:#111827;}
-.ffk button:focus-visible{outline:2px solid #fff;outline-offset:2px;}
+.ffk{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9999;display:flex;align-items:center;gap:6px;width:max-content;max-width:calc(100vw - 24px);padding:7px;border-radius:999px;background:rgba(17,24,39,.94);color:#fff;font:600 14px/1 'Segoe UI',Arial,sans-serif;letter-spacing:0;box-shadow:0 14px 40px -12px rgba(0,0,0,.55);backdrop-filter:blur(8px);}
+.ffk span{padding:0 6px 0 12px;white-space:nowrap;opacity:.8;font-weight:500;}
+.ffk button{all:unset;cursor:pointer;display:grid;place-items:center;width:40px;height:40px;border-radius:50%;color:#fff;font:700 20px/1 'Segoe UI',Arial,sans-serif;background:rgba(255,255,255,.1);flex:none;}
+.ffk button:hover{background:rgba(255,255,255,.22);}
+.ffk select{appearance:none;-webkit-appearance:none;border:0;margin:0;cursor:pointer;height:40px;padding:0 38px 0 16px;border-radius:999px;background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23111827' stroke-width='2'/%3E%3C/svg%3E") no-repeat right 14px center/12px 8px;color:#111827;font:700 15px/1 'Segoe UI',Arial,sans-serif;min-width:220px;max-width:62vw;}
+.ffk button:focus-visible,.ffk select:focus-visible{outline:2px solid #fff;outline-offset:2px;}
+.ffk small{opacity:.6;font-weight:500;padding:0 10px 0 4px;white-space:nowrap;}
 body{padding-bottom:84px;}
-@media (max-width:640px){.ffk{left:12px;right:12px;transform:none;max-width:none;border-radius:18px;flex-direction:column;align-items:stretch;gap:4px;bottom:10px;}.ffk span{padding:6px 10px 2px;text-align:center;}.ffk .ffk-k{flex-wrap:wrap;justify-content:center;overflow:visible;}.ffk button{padding:9px 12px;font-size:13px;}body{padding-bottom:150px;}}
+@media (max-width:640px){.ffk{left:10px;right:10px;transform:none;width:auto;max-width:none;border-radius:20px;flex-wrap:wrap;justify-content:center;bottom:10px;padding:8px;}.ffk span{width:100%;text-align:center;padding:4px 0 2px;font-size:13px;}.ffk select{flex:1;min-width:0;max-width:none;}.ffk small{display:none;}body{padding-bottom:130px;}}
 </style>
-<div class="ffk" role="group" aria-label="Kies een stijl"><span>Bekijk deze website in een andere stijl:</span><div class="ffk-k"></div></div>
+<div class="ffk" role="group" aria-label="Kies een stijl"><span>Bekijk deze website in een andere stijl:</span><button type="button" class="ffk-v" aria-label="Vorige stijl">&lsaquo;</button><select aria-label="Stijl"></select><button type="button" class="ffk-n" aria-label="Volgende stijl">&rsaquo;</button><small></small></div>
 <script>
 (function(){
   var D = $json;
   var sleutel = 'ff-voorbeeld-stijl', gekozen = null;
   try { gekozen = localStorage.getItem(sleutel); } catch (e) {}
-  var balk = document.querySelector('.ffk .ffk-k');
+  var kies = document.querySelector('.ffk select'), teller = document.querySelector('.ffk small');
+  var lijst = Object.keys(D.stijlen);
   function zet(k, bewaar) {
     var s = D.stijlen[k]; if (!s) return;
     document.getElementById('ff-stijl').textContent = s.css;
@@ -517,20 +517,22 @@ body{padding-bottom:84px;}
       if ((s.foto || D.vasteFoto) && D.foto) { hero.classList.add('has-photo'); hero.style.backgroundImage = "url('" + D.foto + "')"; }
       else { hero.classList.remove('has-photo'); hero.style.backgroundImage = ''; }
     }
-    var knoppen = balk.querySelectorAll('button');
-    for (var i = 0; i < knoppen.length; i++) {
-      var aan = knoppen[i].getAttribute('data-k') === k;
-      knoppen[i].className = aan ? 'aan' : '';
-      knoppen[i].setAttribute('aria-pressed', aan ? 'true' : 'false');
-    }
+    kies.value = k;
+    teller.textContent = (lijst.indexOf(k) + 1) + ' van ' + lijst.length;
     if (bewaar) { try { localStorage.setItem(sleutel, k); } catch (e) {} }
   }
-  Object.keys(D.stijlen).forEach(function(k){
-    var b = document.createElement('button');
-    b.type = 'button'; b.setAttribute('data-k', k); b.textContent = D.stijlen[k].naam;
-    b.onclick = function(){ zet(k, true); };
-    balk.appendChild(b);
+  function stap(n) {
+    var i = lijst.indexOf(kies.value);
+    zet(lijst[(i + n + lijst.length) % lijst.length], true);
+  }
+  lijst.forEach(function(k){
+    var o = document.createElement('option');
+    o.value = k; o.textContent = D.stijlen[k].naam;
+    kies.appendChild(o);
   });
+  kies.onchange = function(){ zet(kies.value, true); };
+  document.querySelector('.ffk .ffk-v').onclick = function(){ stap(-1); };
+  document.querySelector('.ffk .ffk-n').onclick = function(){ stap(1); };
   var start = (gekozen && D.stijlen[gekozen]) ? gekozen : D.standaard;
   zet(start, false);
   if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', function(){ zet(start, false); }); }
@@ -2357,7 +2359,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
               <div class="field"><input type="color" id="ka" name="kleur_accent" value="<?= h(valid_color(st('kleur_accent'), '#1d4ed8')) ?>" /><label for="ka">Accentkleur (knoppen)</label></div>
             </div>
             <div class="hint" style="margin-top:12px">Op beide kleuren staat witte tekst, dus kies geen hele lichte kleuren.</div>
-            <label class="check" style="margin-top:14px"><input type="checkbox" name="feest_kleuren" value="1" <?= st('feest_kleuren') !== '0' ? 'checked' : '' ?> /> Bij feeststijlen (zoals Kerst, Halloween en Vakantie) de feestkleuren gebruiken</label>
+            <label class="check" style="margin-top:14px"><input type="checkbox" name="feest_kleuren" value="1" <?= st('feest_kleuren') !== '0' ? 'checked' : '' ?> /> Bij branche-, seizoen- en feeststijlen (zoals Kapper, Herfst en Kerst) de kleuren van de stijl gebruiken (stijlkleuren of feestkleuren)</label>
             <div class="hint">Uitgevinkt houdt je website je eigen kleuren, en krijg je alleen de versiering, zoals sneeuw of vleermuizen.</div>
           </div>
 
@@ -2606,7 +2608,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     "lbl:Stijl van de website": "Kies hoe je hele website eruitziet. Klik op een stijl en daarna onderaan op Opslaan. Je kunt altijd wisselen, en nieuwe stijlen verschijnen hier vanzelf. Feest- en seizoensstijlen kun je bijvoorbeeld een paar weken per jaar aanzetten.",
     "f:kd": "De donkere kleur van je website: het menu, de bovenkant en de onderkant. Kies een donkere kleur, want daar staat witte tekst op.",
     "f:ka": "De opvallende kleur voor knoppen en accenten. Vaak de kleur van je logo.",
-    "chk:feest_kleuren": "Aangevinkt: feeststijlen zoals Kerst gebruiken hun eigen feestkleuren. Uitgevinkt: je website houdt je eigen kleuren en krijgt alleen de versiering, zoals sneeuw.",
+    "chk:feest_kleuren": "Aangevinkt: branchestijlen zoals Kapper en feeststijlen zoals Kerst gebruiken hun eigen kleuren. Uitgevinkt: je website houdt je eigen kleuren en krijgt alleen de vormen, letters en versiering van de stijl, zoals sneeuw.",
     "f:op_hero": "Hoe de bovenkant van je voorpagina eruitziet. Met Grote foto komt de foto van je nieuwste project als achtergrond.",
     "f:op_diensten": "Hoe je diensten op de voorpagina staan: als tegels naast elkaar, als lijst onder elkaar, of als tegels op een donker vlak.",
     "f:op_projecten": "Hoe je uitgelichte projecten op de voorpagina staan: als mappen, als kaarten met foto, of met grote foto's.",
