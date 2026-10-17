@@ -131,6 +131,7 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
       const payload = {
         mode: "subscription",
         line_items: [lineItem],
+        allow_promotion_codes: true,
         customer_email: email,
         success_url: PAGE_URL + sep + "sessie={CHECKOUT_SESSION_ID}",
         cancel_url: PAGE_URL + sep + "geannuleerd=1",
