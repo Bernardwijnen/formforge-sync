@@ -490,52 +490,93 @@ function stijl_kiezer($huidig) {
     return <<<HTML
 <style>
 .ffk{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9999;display:flex;align-items:center;gap:6px;width:max-content;max-width:calc(100vw - 24px);padding:7px;border-radius:999px;background:rgba(17,24,39,.94);color:#fff;font:600 14px/1 'Segoe UI',Arial,sans-serif;letter-spacing:0;box-shadow:0 14px 40px -12px rgba(0,0,0,.55);backdrop-filter:blur(8px);}
-.ffk span{padding:0 6px 0 12px;white-space:nowrap;opacity:.8;font-weight:500;}
+.ffk span{padding:0 4px 0 12px;white-space:nowrap;opacity:.8;font-weight:500;}
 .ffk button{all:unset;cursor:pointer;display:grid;place-items:center;width:40px;height:40px;border-radius:50%;color:#fff;font:700 20px/1 'Segoe UI',Arial,sans-serif;background:rgba(255,255,255,.1);flex:none;}
 .ffk button:hover{background:rgba(255,255,255,.22);}
-.ffk select{appearance:none;-webkit-appearance:none;border:0;margin:0;cursor:pointer;height:40px;padding:0 38px 0 16px;border-radius:999px;background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23111827' stroke-width='2'/%3E%3C/svg%3E") no-repeat right 14px center/12px 8px;color:#111827;font:700 15px/1 'Segoe UI',Arial,sans-serif;min-width:220px;max-width:62vw;}
+.ffk select{appearance:none;-webkit-appearance:none;border:0;margin:0;cursor:pointer;height:40px;padding:0 36px 0 16px;border-radius:999px;background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23111827' stroke-width='2'/%3E%3C/svg%3E") no-repeat right 14px center/12px 8px;color:#111827;font:700 15px/1 'Segoe UI',Arial,sans-serif;min-width:200px;max-width:30vw;}
+.ffk select.ffk-o{min-width:240px;}
 .ffk button:focus-visible,.ffk select:focus-visible{outline:2px solid #fff;outline-offset:2px;}
-.ffk small{opacity:.6;font-weight:500;padding:0 10px 0 4px;white-space:nowrap;}
 body{padding-bottom:84px;}
-@media (max-width:640px){.ffk{left:10px;right:10px;transform:none;width:auto;max-width:none;border-radius:20px;flex-wrap:wrap;justify-content:center;bottom:10px;padding:8px;}.ffk span{width:100%;text-align:center;padding:4px 0 2px;font-size:13px;}.ffk select{flex:1;min-width:0;max-width:none;}.ffk small{display:none;}body{padding-bottom:130px;}}
+.ffk-flits .hero .wrap,.ffk-flits #diensten .wrap,.ffk-flits #projecten .wrap{opacity:.2;}
+.hero .wrap,#diensten .wrap,#projecten .wrap{transition:opacity .25s ease;}
+@media (max-width:1100px){.ffk span{display:none;}}
+@media (max-width:640px){.ffk{left:10px;right:10px;transform:none;width:auto;max-width:none;border-radius:20px;flex-wrap:wrap;justify-content:center;bottom:10px;padding:8px;}.ffk span{display:block;width:100%;text-align:center;padding:4px 0 2px;font-size:13px;}.ffk select{flex:1 1 40%;min-width:0;max-width:none;font-size:14px;padding:0 30px 0 12px;}.ffk select.ffk-o{order:5;flex-basis:100%;min-width:0;}body{padding-bottom:180px;}}
 </style>
-<div class="ffk" role="group" aria-label="Kies een stijl"><span>Bekijk deze website in een andere stijl:</span><button type="button" class="ffk-v" aria-label="Vorige stijl">&lsaquo;</button><select aria-label="Stijl"></select><button type="button" class="ffk-n" aria-label="Volgende stijl">&rsaquo;</button><small></small></div>
+<div class="ffk" role="group" aria-label="Kies een stijl en indeling"><span>Bekijk deze website anders:</span><button type="button" class="ffk-v" aria-label="Vorige stijl">&lsaquo;</button><select class="ffk-s" aria-label="Stijl"></select><select class="ffk-o" aria-label="Indeling"></select><button type="button" class="ffk-n" aria-label="Volgende stijl">&rsaquo;</button></div>
 <script>
 (function(){
   var D = $json;
-  var sleutel = 'ff-voorbeeld-stijl', gekozen = null;
-  try { gekozen = localStorage.getItem(sleutel); } catch (e) {}
-  var kies = document.querySelector('.ffk select'), teller = document.querySelector('.ffk small');
+  var sleutel = 'ff-voorbeeld-stijl', sleutelO = 'ff-voorbeeld-opbouw', gekozen = null, gekozenO = null;
+  try { gekozen = localStorage.getItem(sleutel); gekozenO = localStorage.getItem(sleutelO); } catch (e) {}
+  var kies = document.querySelector('.ffk .ffk-s'), kiesO = document.querySelector('.ffk .ffk-o');
   var lijst = Object.keys(D.stijlen);
+  var N = { hero: { standaard: 'Tekst links', rechts: 'Logo links', midden: 'Midden', foto: 'Grote foto' },
+            dienst: { standaard: 'tegels', lijst: 'lijst', donker: 'donker vlak' },
+            proj: { standaard: 'mappen', kaarten: 'kaarten', foto: 'grote foto\'s' } };
+  var nu = document.body.className;
+  function deel(n, std) { var m = nu.match(new RegExp('(^|\\\\s)l-' + n + '-([a-z]+)')); return m ? m[2] : std; }
+  var eigen = [deel('hero', 'standaard'), deel('dienst', 'standaard'), deel('proj', 'standaard')];
+  var OPB = [eigen,
+    ['rechts', 'lijst', 'kaarten'], ['midden', 'donker', 'foto'], ['foto', 'standaard', 'kaarten'],
+    ['standaard', 'lijst', 'foto'], ['rechts', 'donker', 'standaard'], ['midden', 'standaard', 'kaarten'],
+    ['standaard', 'donker', 'kaarten'], ['rechts', 'standaard', 'foto'], ['midden', 'lijst', 'standaard'],
+    ['foto', 'donker', 'standaard'], ['standaard', 'standaard', 'standaard']];
+  if (!D.foto) { OPB = OPB.filter(function (o, i) { return i === 0 || o[0] !== 'foto'; }); }
+  var opbNu = 0;
+  function naam(o) { return N.hero[o[0]] + ' \u00b7 ' + N.dienst[o[1]] + ' \u00b7 ' + N.proj[o[2]]; }
+  function fotoBijwerken() {
+    var hero = document.querySelector('.hero'); if (!hero) return;
+    var s = D.stijlen[kies.value] || {};
+    if ((s.foto || OPB[opbNu][0] === 'foto') && D.foto) { hero.classList.add('has-photo'); hero.style.backgroundImage = "url('" + D.foto + "')"; }
+    else { hero.classList.remove('has-photo'); hero.style.backgroundImage = ''; }
+  }
+  function zetO(i, bewaar) {
+    if (!OPB[i]) i = 0;
+    opbNu = i;
+    var o = OPB[i];
+    var b = document.body;
+    b.classList.add('ffk-flits');
+    setTimeout(function () {
+      b.className = b.className.replace(/(^|\s)l-(hero|dienst|proj)-[a-z]+/g, ' ').replace(/\s+/g, ' ').trim() + ' l-hero-' + o[0] + ' l-dienst-' + o[1] + ' l-proj-' + o[2];
+      fotoBijwerken();
+      b.classList.remove('ffk-flits');
+    }, bewaar === null ? 0 : 220);
+    kiesO.value = String(i);
+    if (bewaar) { try { localStorage.setItem(sleutelO, String(i)); } catch (e) {} }
+  }
   function zet(k, bewaar) {
     var s = D.stijlen[k]; if (!s) return;
     document.getElementById('ff-stijl').textContent = s.css;
     document.getElementById('ff-fonts').href = s.fonts ? 'https://fonts.googleapis.com/css2?' + s.fonts + '&display=swap' : 'data:text/css,';
     document.body.className = (document.body.className.replace(/(^|\s)t-[a-z0-9-]+/g, ' ') + ' t-' + k).replace(/\s+/g, ' ').trim();
-    var hero = document.querySelector('.hero');
-    if (hero) {
-      if ((s.foto || D.vasteFoto) && D.foto) { hero.classList.add('has-photo'); hero.style.backgroundImage = "url('" + D.foto + "')"; }
-      else { hero.classList.remove('has-photo'); hero.style.backgroundImage = ''; }
-    }
     kies.value = k;
-    teller.textContent = (lijst.indexOf(k) + 1) + ' van ' + lijst.length;
+    fotoBijwerken();
     if (bewaar) { try { localStorage.setItem(sleutel, k); } catch (e) {} }
   }
   function stap(n) {
-    var i = lijst.indexOf(kies.value);
-    zet(lijst[(i + n + lijst.length) % lijst.length], true);
+    var i = (lijst.indexOf(kies.value) + n + lijst.length) % lijst.length;
+    zet(lijst[i], true);
+    zetO(1 + (i % (OPB.length - 1)), true);
   }
   lijst.forEach(function(k){
     var o = document.createElement('option');
-    o.value = k; o.textContent = D.stijlen[k].naam;
+    o.value = k; o.textContent = 'Stijl: ' + D.stijlen[k].naam;
     kies.appendChild(o);
   });
+  OPB.forEach(function(o, i){
+    var e = document.createElement('option');
+    e.value = String(i); e.textContent = i === 0 ? 'Indeling: zoals de eigenaar koos' : 'Indeling: ' + naam(o);
+    kiesO.appendChild(e);
+  });
   kies.onchange = function(){ zet(kies.value, true); };
+  kiesO.onchange = function(){ zetO(parseInt(kiesO.value, 10) || 0, true); };
   document.querySelector('.ffk .ffk-v').onclick = function(){ stap(-1); };
   document.querySelector('.ffk .ffk-n').onclick = function(){ stap(1); };
   var start = (gekozen && D.stijlen[gekozen]) ? gekozen : D.standaard;
-  zet(start, false);
-  if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', function(){ zet(start, false); }); }
+  var startO = parseInt(gekozenO, 10); if (!(startO >= 0 && startO < OPB.length)) startO = 0;
+  function begin() { zet(start, false); zetO(startO, null); }
+  begin();
+  if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', begin); }
 })();
 </script>
 HTML;
