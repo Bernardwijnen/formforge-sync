@@ -689,6 +689,7 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
         const session = await callStripe("/checkout/sessions", {
           mode: "subscription",
           line_items: [{ price: prijs, quantity: 1 }],
+          allow_promotion_codes: true,
           customer_email: a.email,
           success_url: PAGE_URL + sep + "pakketsessie={CHECKOUT_SESSION_ID}#aanvraag",
           cancel_url: PAGE_URL + sep + "pakket=" + pakket + "&geannuleerd=1#aanvraag",
