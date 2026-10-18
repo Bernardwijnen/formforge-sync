@@ -344,9 +344,9 @@ function stijl_grote_foto() {
 /* ---------- Eigen opbouw, kleuren, letter en vormen ----------
    Komt na de stijl, zodat de keuzes van de klant altijd winnen. */
 $OPBOUW = [
-    'hero' => ['standaard' => 'Tekst links, logo rechts', 'rechts' => 'Logo links, tekst rechts', 'midden' => 'Alles in het midden', 'foto' => 'Grote foto als achtergrond'],
-    'diensten' => ['standaard' => 'Tegels', 'lijst' => 'Lijst onder elkaar', 'donker' => 'Tegels op een donker vlak'],
-    'projecten' => ['standaard' => 'Mappen', 'kaarten' => 'Kaarten met foto', 'foto' => 'Grote foto\'s'],
+    'hero' => ['standaard' => 'Tekst links, logo rechts', 'rechts' => 'Logo links, tekst rechts', 'midden' => 'Alles in het midden', 'foto' => 'Grote foto als achtergrond', 'kaart' => 'Tekst op een witte kaart', 'golf' => 'Ronde onderkant', 'schuin' => 'Schuine onderkant'],
+    'diensten' => ['standaard' => 'Tegels', 'lijst' => 'Lijst onder elkaar', 'donker' => 'Tegels op een donker vlak', 'iconen' => 'In het midden, met ronde cijfers', 'twee' => 'Twee brede kolommen', 'groot' => 'Grote nummers met een streep'],
+    'projecten' => ['standaard' => 'Mappen', 'kaarten' => 'Kaarten met foto', 'foto' => 'Grote foto\'s', 'mozaiek' => 'Een grote en een kleine foto', 'rij' => 'Foto naast de tekst', 'polaroid' => 'Polaroidfoto\'s'],
 ];
 $LETTERS = [
     ''          => ['naam' => 'Zoals de stijl', 'fonts' => '', 'kop' => '', 'tekst' => ''],
@@ -451,6 +451,72 @@ function maatwerk_css() {
 .l-proj-foto .folder:hover .photo-sheet img{transform:scale(1.04);}
 .l-proj-foto .folder .front{z-index:2;}
 .l-proj-foto .folder .desc{color:rgba(255,255,255,.85);}
+/* opbouw: extra varianten bovenkant */
+.l-hero-kaart .hero .wrap > div:first-child{background:#fff;color:var(--navy);border-radius:22px;padding:clamp(26px,4vw,48px);box-shadow:0 30px 60px -30px rgba(0,0,0,.55);}
+.l-hero-kaart .hero .wrap > div:first-child .lead{color:var(--muted);}
+.l-hero-kaart .hero .wrap > div:first-child .eyebrow{color:var(--blue);}
+.l-hero-kaart .hero .wrap > div:first-child .btn.quiet{color:var(--navy);box-shadow:inset 0 0 0 1.5px var(--line);}
+.l-hero-kaart .hero.has-photo .wrap{grid-template-columns:minmax(0,640px);}
+.l-hero-golf .hero{clip-path:ellipse(150% 100% at 50% 0%);padding-bottom:clamp(96px,12vw,160px);}
+.l-hero-schuin .hero{clip-path:polygon(0 0,100% 0,100% calc(100% - clamp(40px,6vw,90px)),0 100%);padding-bottom:clamp(100px,12vw,170px);}
+.hero-rand{display:none;}
+.l-hero-golf .hero-rand{display:block;position:absolute;left:-100%;width:300%;top:-100%;height:200%;border-radius:50%;box-shadow:inset 0 -6px 0 var(--blue),inset 0 -40px 50px -30px rgba(0,0,0,.10);pointer-events:none;z-index:0;}
+.l-hero-schuin .hero-rand{display:block;position:absolute;left:0;right:0;bottom:0;height:clamp(40px,6vw,90px);background:linear-gradient(to top right,transparent calc(50% - 4px),var(--blue) calc(50% - 4px) 50%,transparent 50%);pointer-events:none;z-index:0;}
+/* opbouw: extra varianten diensten */
+.l-dienst-iconen .service{background:transparent;border:0;text-align:center;align-items:center;box-shadow:none;}
+.l-dienst-iconen .service:hover{box-shadow:none;}
+.l-dienst-iconen .service .num{width:84px;height:84px;border-radius:50% !important;font-size:26px;background:var(--blue) !important;color:#fff !important;margin:0 auto 18px;box-shadow:none;transform:none;}
+.l-dienst-iconen .service p{max-width:34ch;}
+.l-dienst-twee .services{grid-template-columns:repeat(2,1fr);}
+.l-dienst-twee .service{display:grid;grid-template-columns:auto 1fr;grid-template-areas:"n t" "n p" "n g";column-gap:22px;padding:30px 32px;}
+.l-dienst-twee .service .num{grid-area:n;margin:0;}
+.l-dienst-twee .service h3{grid-area:t;}
+.l-dienst-twee .service p{grid-area:p;}
+.l-dienst-twee .service .go{grid-area:g;justify-self:start;}
+@media (max-width:700px){.l-dienst-twee .services{grid-template-columns:1fr;}.l-dienst-twee .service{padding:24px;}}
+.l-dienst-groot .service{border:0;border-top:4px solid var(--blue);border-radius:0 !important;background:transparent;padding:24px 4px 8px;box-shadow:none;}
+.l-dienst-groot .service:hover{transform:none;box-shadow:none;border-top-color:var(--navy);}
+.l-dienst-groot .service .num{background:transparent !important;color:var(--blue) !important;width:auto;height:auto;font-size:58px;font-weight:800;line-height:1;margin-bottom:12px;display:block;border-radius:0 !important;box-shadow:none !important;transform:none;}
+/* opbouw: extra varianten projecten */
+.l-proj-mozaiek .folders{grid-template-columns:1.6fr 1fr;}
+.l-proj-mozaiek .folder{padding-top:0;color:#fff;}
+.l-proj-mozaiek .folder .tab{display:none;}
+.l-proj-mozaiek .folder .body{border-radius:18px;min-height:0;padding:0;display:flex;flex-direction:column;background:var(--navy) !important;overflow:hidden;}
+.l-proj-mozaiek .folder .body::before{display:none;}
+.l-proj-mozaiek .folder .photo-sheet{position:relative;inset:auto;height:clamp(240px,27vw,360px);flex:0 0 auto;transform:none !important;border-radius:0;padding:0;box-shadow:none;}
+.l-proj-mozaiek .folder .photo-sheet img{border-radius:0;transition:transform .5s ease;}
+.l-proj-mozaiek .folder:hover .photo-sheet img{transform:scale(1.04);}
+.l-proj-mozaiek .folder .front{position:relative;inset:auto;z-index:2;padding:24px 28px 28px;}
+.l-proj-mozaiek .folder .desc{color:rgba(255,255,255,.8);}
+.l-proj-mozaiek .folder:nth-child(2) .photo-sheet{height:clamp(240px,20vw,280px);}
+@media (max-width:820px){.l-proj-mozaiek .folders{grid-template-columns:1fr;}}
+.l-proj-rij .folders{grid-template-columns:1fr;gap:22px;}
+.l-proj-rij .folders.single{max-width:none;}
+.l-proj-rij .folder{padding-top:0;color:var(--navy);}
+.l-proj-rij .folder .tab{display:none;}
+.l-proj-rij .folder .body{background:#fff !important;border:1px solid var(--line);border-radius:18px;min-height:0;padding:0;display:grid;grid-template-columns:minmax(0,1.1fr) 1fr;align-items:stretch;}
+.l-proj-rij .folder .body::before{display:none;}
+.l-proj-rij .folder .photo-sheet{position:relative;inset:auto;height:100%;min-height:280px;transform:none !important;border-radius:0;padding:0;box-shadow:none;}
+.l-proj-rij .folder .photo-sheet img{border-radius:0;}
+.l-proj-rij .folder .front{padding:clamp(24px,3vw,40px);align-self:center;}
+.l-proj-rij .folder:nth-child(2) .body{grid-template-columns:1fr minmax(0,1.1fr);}
+.l-proj-rij .folder:nth-child(2) .photo-sheet{order:2;}
+.l-proj-rij .folder .desc{color:var(--muted);}
+.l-proj-rij .folder .meta{justify-content:flex-start;color:var(--blue);}
+.l-proj-rij .folder:hover .body{border-color:var(--blue);}
+@media (max-width:760px){.l-proj-rij .folder .body,.l-proj-rij .folder:nth-child(2) .body{grid-template-columns:1fr;}.l-proj-rij .folder:nth-child(2) .photo-sheet{order:0;}.l-proj-rij .folder .photo-sheet{min-height:220px;}}
+.l-proj-polaroid .folder{padding-top:0;color:var(--navy);}
+.l-proj-polaroid .folder .tab{display:none;}
+.l-proj-polaroid .folder .body{background:#fff !important;border-radius:6px;min-height:0;padding:16px 16px 26px;box-shadow:0 26px 50px -30px rgba(0,0,0,.55);transform:rotate(-1.6deg);transition:transform .3s ease;}
+.l-proj-polaroid .folder .body::before{display:none;}
+.l-proj-polaroid .folder:nth-child(2) .body{transform:rotate(1.4deg);}
+.l-proj-polaroid .folder:hover .body{transform:rotate(0) translateY(-6px);}
+.l-proj-polaroid .folder .photo-sheet{position:relative;inset:auto;height:auto;aspect-ratio:4/3;transform:none !important;border-radius:2px;padding:0;box-shadow:none;}
+.l-proj-polaroid .folder .photo-sheet img{border-radius:2px;}
+.l-proj-polaroid .folder .front{padding:18px 6px 0;}
+.l-proj-polaroid .folder h3{font-size:clamp(24px,2.6vw,30px);}
+.l-proj-polaroid .folder .desc{color:var(--muted);}
+.l-proj-polaroid .folder .meta{justify-content:flex-start;color:var(--blue);}
 CSS;
     return $link . "<style id=\"ff-maatwerk\">\n" . $css . "\n</style>\n";
 }
@@ -497,8 +563,8 @@ function stijl_kiezer($huidig) {
 .ffk select.ffk-o{min-width:240px;}
 .ffk button:focus-visible,.ffk select:focus-visible{outline:2px solid #fff;outline-offset:2px;}
 body{padding-bottom:84px;}
-.ffk-flits .hero .wrap,.ffk-flits #diensten .wrap,.ffk-flits #projecten .wrap{opacity:.2;}
-.hero .wrap,#diensten .wrap,#projecten .wrap{transition:opacity .25s ease;}
+.ffk-flits .hero .wrap,.ffk-flits #diensten .wrap,.ffk-flits #featuredSection .wrap{opacity:.2;}
+.hero .wrap,#diensten .wrap,#featuredSection .wrap{transition:opacity .25s ease;}
 @media (max-width:1100px){.ffk span{display:none;}}
 @media (max-width:640px){.ffk{left:10px;right:10px;transform:none;width:auto;max-width:none;border-radius:20px;flex-wrap:wrap;justify-content:center;bottom:10px;padding:8px;}.ffk span{display:block;width:100%;text-align:center;padding:4px 0 2px;font-size:13px;}.ffk select{flex:1 1 40%;min-width:0;max-width:none;font-size:14px;padding:0 30px 0 12px;}.ffk select.ffk-o{order:5;flex-basis:100%;min-width:0;}body{padding-bottom:180px;}}
 </style>
@@ -510,9 +576,9 @@ body{padding-bottom:84px;}
   try { gekozen = localStorage.getItem(sleutel); gekozenO = localStorage.getItem(sleutelO); } catch (e) {}
   var kies = document.querySelector('.ffk .ffk-s'), kiesO = document.querySelector('.ffk .ffk-o');
   var lijst = Object.keys(D.stijlen);
-  var N = { hero: { standaard: 'Tekst links', rechts: 'Logo links', midden: 'Midden', foto: 'Grote foto' },
-            dienst: { standaard: 'tegels', lijst: 'lijst', donker: 'donker vlak' },
-            proj: { standaard: 'mappen', kaarten: 'kaarten', foto: 'grote foto\'s' } };
+  var N = { hero: { standaard: 'Tekst links', rechts: 'Logo links', midden: 'Midden', foto: 'Grote foto', kaart: 'Witte kaart', golf: 'Ronde onderkant', schuin: 'Schuine onderkant' },
+            dienst: { standaard: 'tegels', lijst: 'lijst', donker: 'donker vlak', iconen: 'ronde cijfers', twee: 'twee kolommen', groot: 'grote nummers' },
+            proj: { standaard: 'mappen', kaarten: 'kaarten', foto: 'grote foto\'s', mozaiek: 'mozaiek', rij: 'foto naast tekst', polaroid: 'polaroids' } };
   var nu = document.body.className;
   function deel(n, std) { var m = nu.match(new RegExp('(^|\\\\s)l-' + n + '-([a-z]+)')); return m ? m[2] : std; }
   var eigen = [deel('hero', 'standaard'), deel('dienst', 'standaard'), deel('proj', 'standaard')];
@@ -520,7 +586,10 @@ body{padding-bottom:84px;}
     ['rechts', 'lijst', 'kaarten'], ['midden', 'donker', 'foto'], ['foto', 'standaard', 'kaarten'],
     ['standaard', 'lijst', 'foto'], ['rechts', 'donker', 'standaard'], ['midden', 'standaard', 'kaarten'],
     ['standaard', 'donker', 'kaarten'], ['rechts', 'standaard', 'foto'], ['midden', 'lijst', 'standaard'],
-    ['foto', 'donker', 'standaard'], ['standaard', 'standaard', 'standaard']];
+    ['foto', 'donker', 'standaard'], ['standaard', 'standaard', 'standaard'],
+    ['kaart', 'iconen', 'mozaiek'], ['golf', 'twee', 'rij'], ['schuin', 'groot', 'polaroid'],
+    ['foto', 'iconen', 'rij'], ['kaart', 'groot', 'kaarten'], ['golf', 'lijst', 'polaroid'],
+    ['schuin', 'twee', 'mozaiek'], ['midden', 'groot', 'rij'], ['rechts', 'iconen', 'polaroid']];
   if (!D.foto) { OPB = OPB.filter(function (o, i) { return i === 0 || o[0] !== 'foto'; }); }
   var opbNu = 0;
   function naam(o) { return N.hero[o[0]] + ' \u00b7 ' + N.dienst[o[1]] + ' \u00b7 ' + N.proj[o[2]]; }
@@ -1072,7 +1141,7 @@ CSS;
     $logo = logo_url();
     $foto = hero_met_foto() ? hero_foto($pages) : '';
     $heroAttr = $foto !== '' ? ' class="hero has-photo" style="background-image:url(\'' . h($foto) . '\')"' : ' class="hero"';
-    $out .= '<main id="home" class="view"><section' . $heroAttr . '><div class="wrap' . ($logo === '' ? ' solo' : '') . '"><div>';
+    $out .= '<main id="home" class="view"><section' . $heroAttr . '><span class="hero-rand" aria-hidden="true"></span><div class="wrap' . ($logo === '' ? ' solo' : '') . '"><div>';
     if (st('eyebrow') !== '') $out .= '<div class="eyebrow">' . h(st('eyebrow')) . '</div>';
     $out .= '<h1>' . h(st('hero_titel')) . '</h1>';
     if (st('hero_tekst') !== '') $out .= '<p class="lead">' . h(st('hero_tekst')) . '</p>';
