@@ -509,8 +509,8 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
   const AANVRAAG_FILE = path.join(DATA_DIR, "websitemodel_aanvragen.json");
   const PAKKETTEN = {
     zelf: "Zelf doen, met aanvraag en installatie door FormForge (49 euro eenmalig excl. btw, 59,29 incl. btw)",
-    basis: "Basis (12,04 euro per maand incl. btw, 1 aanpassing per maand)",
-    premium: "Premium (36,24 euro per maand incl. btw, 5 aanpassingen per maand)",
+    basis: "Basis (12,03 euro per maand incl. btw, 1 aanpassing per maand)",
+    premium: "Premium (36,23 euro per maand incl. btw, 5 aanpassingen per maand)",
     unlimited: "Unlimited (95,59 euro per maand incl. btw, 12 maanden, website door ons ingevuld)",
     titanium: "Titanium (op maat, op aanvraag)"
   };
