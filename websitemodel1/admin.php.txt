@@ -1950,7 +1950,7 @@ $demoEnabled = $config && file_exists(DEMO_FILE);
 if ($demoEnabled && isset($_GET['demo']) && empty($_SESSION['ff_admin'])) {
     session_regenerate_id(true);
     $_SESSION['ff_demo'] = true;
-    header('Location: admin.php'); exit;
+    /* Geen doorverwijzing: zo opent de demo meteen, ook zonder cookie. */
 }
 $is_demo = $demoEnabled && !empty($_SESSION['ff_demo']) && empty($_SESSION['ff_admin']);
 if ($is_demo && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') {
