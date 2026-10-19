@@ -495,7 +495,7 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
      De klant vult zijn gegevens in; FormForge vraagt daarmee op
      naam van de klant het pakket en de domeinnaam aan bij WebReus.
      De klant betaalt WebReus zelf.
-     - Zelf doen (met hulp) en Titanium: direct een mail aan FormForge
+     - Titanium: direct een mail aan FormForge (Zelf doen met hulp betaalt nu ook via Stripe)
        en een bevestiging aan de klant.
      - Basis, Premium en Unlimited: eerst betalen via Stripe (maand-
        abonnement). Pas na betaling gaan de mails eruit. De betaling
@@ -508,7 +508,7 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
      =========================================================== */
   const AANVRAAG_FILE = path.join(DATA_DIR, "websitemodel_aanvragen.json");
   const PAKKETTEN = {
-    zelf: "Zelf doen, met aanvraag en installatie door FormForge (49 euro eenmalig excl. btw, 59,29 incl. btw)",
+    zelf: "Zelf doen, met aanvraag en installatie door FormForge (49 euro eenmalig excl. btw = 59,29 incl. btw, plus de website voor 12 euro per jaar excl. btw = 14,52 incl. btw)",
     basis: "Basis (12,03 euro per maand incl. btw, 1 aanpassing per maand)",
     premium: "Premium (36,23 euro per maand incl. btw, 5 aanpassingen per maand)",
     unlimited: "Unlimited (95,59 euro per maand incl. btw, 12 maanden, website door ons ingevuld)",
@@ -517,8 +517,20 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
   const PAKKET_PRIJS = {
     basis: String(process.env.WEBSITE_PRICE_BASIS || "price_1URSOz5s8MDSsy0e08jsS1BR").trim(),
     premium: String(process.env.WEBSITE_PRICE_PREMIUM || "price_1URSRP5s8MDSsy0eZ0OAqBee").trim(),
-    unlimited: String(process.env.WEBSITE_PRICE_UNLIMITED || "price_1URSTc5s8MDSsy0eODnAzDW4").trim()
+    unlimited: String(process.env.WEBSITE_PRICE_UNLIMITED || "price_1URSTc5s8MDSsy0eODnAzDW4").trim(),
+    /* Zelf doen met regelen en installeren: eenmalig 59,29 incl. btw, plus het jaarabonnement (WEBSITE_PRICE_ID) */
+    zelf: String(process.env.WEBSITE_PRICE_INSTALL || "price_1USIyS5s8MDSsy0eNGmnZX9R").trim()
   };
+  /* De regels voor de Stripe-betaling van een pakket */
+  function pakketRegels(pakket){
+    if(pakket === "zelf"){
+      if(!PRICE_ID) return null;
+      const jaar = { price: PRICE_ID, quantity: 1 };
+      if(TAX_RATE_ID) jaar.tax_rates = [TAX_RATE_ID];
+      return [jaar, { price: PAKKET_PRIJS.zelf, quantity: 1 }];
+    }
+    return [{ price: PAKKET_PRIJS[pakket], quantity: 1 }];
+  }
   let aanvragen = [];
   try{ if(fs.existsSync(AANVRAAG_FILE)) aanvragen = JSON.parse(fs.readFileSync(AANVRAAG_FILE, "utf8")) || []; }
   catch(e){ console.error("Websitemodel: aanvragen lezen mislukt:", (e && e.message) || e); aanvragen = []; }
@@ -557,7 +569,7 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
     const regels = [
       "Nieuwe aanvraag " + a.id,
       "Pakket: " + PAKKETTEN[a.pakket],
-      betaald ? "BETAALD via Stripe (maandabonnement). Stripe-sessie: " + a.sessie : "",
+      betaald ? "BETAALD via Stripe (" + (a.pakket === "zelf" ? "eenmalig regelen en installeren plus jaarabonnement" : "maandabonnement") + "). Stripe-sessie: " + a.sessie : "",
       "",
       titanium ? "CONTACTGEGEVENS" : "GEGEVENS VOOR WEBREUS (kies daar altijd Nieuwe Klant)",
       "Bedrijf: " + (a.bedrijf || "-"),
@@ -613,7 +625,7 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
         "",
         "Goed om te weten: je hosting bij WebReus is van jou. Opzeggen bij WebReus doe je zelf, schriftelijk en minstens 2 volle maanden voor het einde van het jaar. Stop je bij FormForge, dan loopt je hosting bij WebReus door tot je die daar opzegt.",
         "",
-        betaald ? "Je abonnement bij FormForge loopt via Stripe. Je betaalt elke maand automatisch. Aanpassingen vraag je aan door te mailen naar info@formforge.nl." : "Voor je pakket bij FormForge krijg je van ons apart een betaalverzoek.",
+        betaald ? (a.pakket === "zelf" ? "Het regelen en installeren heb je nu in een keer betaald. Je website loopt als jaarabonnement via Stripe: je betaalt elk jaar automatisch 14,52 euro incl. btw. Je website pas je zelf aan in je beheerpagina." : "Je abonnement bij FormForge loopt via Stripe. Je betaalt elke maand automatisch. Aanpassingen vraag je aan door te mailen naar info@formforge.nl.") : "Voor je pakket bij FormForge krijg je van ons apart een betaalverzoek.",
         "",
         "Je aanvraagnummer is " + a.id + ".", "",
         "Bedenk je je? Binnen 14 dagen kun je je bestelling ongedaan maken via https://formforge.nl/herroepen/ (zie artikel 7 van onze voorwaarden).", "",
@@ -688,13 +700,14 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
 
     /* Basis, Premium en Unlimited: eerst betalen */
     const prijs = PAKKET_PRIJS[pakket];
-    if(prijs){
+    const regels = prijs ? pakketRegels(pakket) : null;
+    if(prijs && regels){
       try{
         const sep = PAGE_URL.includes("?") ? "&" : "?";
         const meta = { kind: "website_model1", email: a.email, domein: a.domein, pakket, aanvraag: a.id };
         const session = await callStripe("/checkout/sessions", {
           mode: "subscription",
-          line_items: [{ price: prijs, quantity: 1 }],
+          line_items: regels,
           allow_promotion_codes: true,
           customer_email: a.email,
           success_url: PAGE_URL + sep + "pakketsessie={CHECKOUT_SESSION_ID}#aanvraag",
@@ -715,7 +728,7 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
       }
     }
 
-    /* Zelf doen (met hulp) en Titanium: meteen de mails */
+    /* Titanium (en zelf als de betaling niet is ingesteld): meteen de mails */
     aanvragen.push(a); bewaarAanvragen();
     try{
       await stuurAanvraagMails(a);
