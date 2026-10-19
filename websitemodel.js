@@ -259,8 +259,8 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
         await sendResendEmail({
           to: rec.email,
           subject: "Je website staat klaar: " + rec.domein,
-          text: "Je website is geinstalleerd op " + rec.domein + ".\r\n\r\nGa naar " + adminUrl + " en stel je e-mailadres en wachtwoord in.\r\nJe instelcode is: " + code + "\r\n\r\nLater inloggen? Klik helemaal onderaan je website op \"Inloggen\", of ga naar " + adminUrl + " en log in met je e-mailadres en wachtwoord.\r\n\r\nWerkt de link nog niet? Een nieuwe domeinnaam kan tot ongeveer een werkdag nodig hebben voordat hij actief is.\r\n\r\nVeiligheid: verander na de installatie je FTP-wachtwoord in het WebReus-portaal.\r\n\r\nFormForge",
-          html: "<p>Je website is geinstalleerd op <strong>" + esc(rec.domein) + "</strong>.</p><p>Ga naar <a href=\"" + esc(adminUrl) + "\">" + esc(adminUrl) + "</a> en stel je e-mailadres en wachtwoord in.</p><p>Je instelcode is: <strong style=\"font-size:20px;letter-spacing:2px\">" + esc(code) + "</strong></p><p>Later inloggen? Klik helemaal onderaan je website op <strong>Inloggen</strong>, of ga naar " + esc(adminUrl) + " en log in met je e-mailadres en wachtwoord.</p><p>Werkt de link nog niet? Een nieuwe domeinnaam kan tot ongeveer een werkdag nodig hebben voordat hij actief is.</p><p>Veiligheid: verander na de installatie je FTP-wachtwoord in het WebReus-portaal.</p><p>FormForge</p>"
+          text: "Je website is geinstalleerd op " + rec.domein + ".\r\n\r\nGa naar " + adminUrl + " en stel je e-mailadres en wachtwoord in.\r\nJe instelcode is: " + code + "\r\n\r\nLater inloggen? Klik helemaal onderaan je website op \"Inloggen\", of ga naar " + adminUrl + " en log in met je e-mailadres en wachtwoord.\r\n\r\nWerkt de link nog niet? Een nieuwe domeinnaam kan tot ongeveer een werkdag nodig hebben voordat hij actief is.\r\n\r\nVeiligheid: verander na de installatie je FTP-wachtwoord in het WebReus-portaal.\r\n\r\nNiet tevreden? Binnen 14 dagen na je betaling krijg je je geld terug. Ga naar https://formforge.nl/herroepen/\r\n\r\nFormForge",
+          html: "<p>Je website is geinstalleerd op <strong>" + esc(rec.domein) + "</strong>.</p><p>Ga naar <a href=\"" + esc(adminUrl) + "\">" + esc(adminUrl) + "</a> en stel je e-mailadres en wachtwoord in.</p><p>Je instelcode is: <strong style=\"font-size:20px;letter-spacing:2px\">" + esc(code) + "</strong></p><p>Later inloggen? Klik helemaal onderaan je website op <strong>Inloggen</strong>, of ga naar " + esc(adminUrl) + " en log in met je e-mailadres en wachtwoord.</p><p>Werkt de link nog niet? Een nieuwe domeinnaam kan tot ongeveer een werkdag nodig hebben voordat hij actief is.</p><p>Veiligheid: verander na de installatie je FTP-wachtwoord in het WebReus-portaal.</p><p>Niet tevreden? Binnen 14 dagen na je betaling krijg je je geld terug. Ga naar <a href=\"https://formforge.nl/herroepen/\">formforge.nl/herroepen</a>.</p><p>FormForge</p>"
         });
       }catch(e){ console.error("Websitemodel: mail naar klant mislukt:", (e && e.message) || e); }
       try{
@@ -616,6 +616,7 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
         betaald ? "Je abonnement bij FormForge loopt via Stripe. Je betaalt elke maand automatisch. Aanpassingen vraag je aan door te mailen naar info@formforge.nl." : "Voor je pakket bij FormForge krijg je van ons apart een betaalverzoek.",
         "",
         "Je aanvraagnummer is " + a.id + ".", "",
+        "Bedenk je je? Binnen 14 dagen kun je je bestelling ongedaan maken via https://formforge.nl/herroepen/ (zie artikel 7 van onze voorwaarden).", "",
         "Met vriendelijke groet,", "FormForge"
       ].filter((r, i, arr) => !(r === "" && arr[i - 1] === ""));
     }
@@ -774,6 +775,127 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
     }
     return stijlenCache;
   }
+  /* ---------- herroepen: "Mijn bestelling ongedaan maken" ----------
+     Wettelijke herroepingsknop (verplicht sinds 19 juni 2026) en de
+     geld-terug-garantie van 14 dagen bij Zelf doen. De klant krijgt direct
+     een bevestiging op het scherm en per mail. FormForge krijgt een mail en
+     stopt daarna zelf het abonnement in Stripe en betaalt terug. */
+  const HERROEP_FILE = path.join(DATA_DIR, "websitemodel_herroepingen.json");
+  let herroepingen = [];
+  try{ if(fs.existsSync(HERROEP_FILE)) herroepingen = JSON.parse(fs.readFileSync(HERROEP_FILE, "utf8")) || []; }
+  catch(e){ console.error("Websitemodel: herroepingen lezen mislukt:", (e && e.message) || e); herroepingen = []; }
+  function bewaarHerroepingen(){
+    try{ safeWriteFileSync(HERROEP_FILE, JSON.stringify(herroepingen, null, 2)); }
+    catch(e){ console.error("Websitemodel: herroepingen opslaan mislukt:", (e && e.message) || e); }
+  }
+  const herroepTeller = new Map();
+  const HERROEP_SOORT = {
+    zelf: "Zelf doen (website voor 12 euro per jaar)",
+    regelen: "Zelf doen, met regelen en installeren door FormForge (49 euro)",
+    basis: "Basis",
+    premium: "Premium",
+    unlimited: "Unlimited",
+    anders: "Weet ik niet / iets anders"
+  };
+  function datumTijd(d){
+    try{ return d.toLocaleString("nl-NL", { timeZone: "Europe/Amsterdam", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" }); }
+    catch(e){ return d.toISOString(); }
+  }
+
+  app.post("/api/website/herroepen", async (req, res) => {
+    const b = req.body || {};
+    if(veld(b.website, 50) !== "") return res.json({ ok: true, id: "H-0", tijd: "" }); // spamval
+    const ip = String(req.headers["x-forwarded-for"] || req.ip || "").split(",")[0].trim() || "onbekend";
+    const nu = Date.now();
+    const lijst = (herroepTeller.get(ip) || []).filter(t => nu - t < 3600 * 1000);
+    if(lijst.length >= 6) return res.status(429).json({ error: "Te veel verzoeken achter elkaar. Probeer het over een uur opnieuw of mail naar info@formforge.nl." });
+
+    const email = cleanEmail(b.email);
+    if(!email) return res.status(400).json({ error: "Vul het e-mailadres in waarmee je hebt besteld." });
+    const soort = HERROEP_SOORT[b.soort] ? b.soort : "anders";
+    const domein = cleanDomain(b.domein) || veld(b.domein, 100);
+    const h = {
+      id: "H-" + crypto.randomBytes(3).toString("hex").toUpperCase(),
+      tijd: new Date().toISOString(),
+      email, naam: veld(b.naam, 120), domein, soort,
+      opmerking: tekstveld(b.opmerking, 1500),
+      ip
+    };
+    lijst.push(nu); herroepTeller.set(ip, lijst);
+
+    /* Zoek bijbehorende bestellingen en aanvragen, zodat FormForge snel kan handelen */
+    const gevonden = [];
+    try{
+      Object.values(orders).forEach(o => {
+        if(o && (o.email === email || (domein && o.domein === domein))){
+          gevonden.push("Bestelling Zelf doen: " + (o.domein || "-") + ", " + (o.email || "-") + ", betaald: " + (o.paid ? "ja, op " + (o.betaaldOp || "?") : "nee") +
+            (o.pakket ? ", pakket " + o.pakket : "") + (o.subscriptionId ? ", Stripe-abonnement " + o.subscriptionId : "") + (o.customerId ? ", Stripe-klant " + o.customerId : ""));
+        }
+      });
+      aanvragen.forEach(a => {
+        if(a && (a.email === email || (domein && a.domein === domein))){
+          gevonden.push("Aanvraag " + (a.id || "-") + ": " + (a.pakket || "-") + ", " + (a.domein || "-") + ", " + (a.email || "-") + ", betaald: " + (a.betaald ? "ja" : "nee") + (a.sessie ? ", Stripe-sessie " + a.sessie : "") + ", aangevraagd: " + (a.tijd || a.aangemaakt || "?"));
+        }
+      });
+    }catch(e){}
+    h.gevonden = gevonden;
+    herroepingen.push(h); bewaarHerroepingen();
+
+    const tijdTekst = datumTijd(new Date(h.tijd));
+    const ff = [
+      "Iemand wil een bestelling ongedaan maken (herroeping of geld-terug-garantie).",
+      "",
+      "Nummer: " + h.id,
+      "Ontvangen: " + tijdTekst,
+      "E-mail: " + email,
+      "Naam: " + (h.naam || "-"),
+      "Domeinnaam: " + (domein || "-"),
+      "Wat: " + HERROEP_SOORT[soort],
+      "Opmerking: " + (h.opmerking || "-"),
+      "",
+      "GEVONDEN BIJ ONS",
+      gevonden.length ? gevonden.join("\r\n") : "Niets gevonden op dit e-mailadres of deze domeinnaam. Vraag de klant om meer gegevens.",
+      "",
+      "WAT JE MOET DOEN",
+      "1. Zoek de betaling op in Stripe (op het e-mailadres).",
+      "2. Zelf doen binnen 14 dagen na de eerste betaling: geld-terug-garantie, betaal het hele bedrag terug en zeg het jaarabonnement op.",
+      "3. Basis, Premium of Unlimited van een particulier binnen 14 dagen: zeg het abonnement direct op en betaal terug, min een deel naar verhouding voor de dagen die al liepen (artikel 7).",
+      "4. Terugbetalen binnen 14 dagen na vandaag, via Stripe (Terugbetalen), naar hetzelfde betaalmiddel.",
+      "5. Laat de klant weten wat je hebt gedaan. Beantwoorden gaat direct naar de klant.",
+      "",
+      "Verstuurd vanaf IP: " + ip
+    ];
+    try{ await mailMetAntwoord({ to: NOTIFY_EMAIL, replyTo: email, subject: "HERROEPING " + h.id + ": " + (domein || email), text: ff.join("\r\n") + "\r\n" }); }
+    catch(e){ console.error("Websitemodel: herroepmail naar FormForge mislukt:", (e && e.message) || e); }
+
+    const klant = [
+      "Beste " + (h.naam || "klant") + ",",
+      "",
+      "We hebben je verzoek om je bestelling ongedaan te maken goed ontvangen op " + tijdTekst + ".",
+      "",
+      "Je verzoek",
+      "Nummer: " + h.id,
+      "E-mailadres: " + email,
+      "Domeinnaam: " + (domein || "-"),
+      "Bestelling: " + HERROEP_SOORT[soort],
+      "",
+      "Wat er nu gebeurt",
+      "Valt je verzoek onder de geld-terug-garantie of de bedenktijd, dan stoppen we je bestelling en betalen we je terug binnen 14 dagen, op dezelfde manier als je hebt betaald. Bij een abonnement dat al liep betaal je alleen naar verhouding voor de dagen die al voorbij zijn. We laten je binnen 1 werkdag weten wat we hebben gedaan. Zo staat het in artikel 7 van onze voorwaarden: https://formforge.nl/voorwaarden/#a7",
+      "",
+      "Je domeinnaam en hosting bij WebReus zijn een aparte overeenkomst met WebReus. Wil je die ook stoppen, regel dat dan bij WebReus.",
+      "",
+      "Vragen? Beantwoord deze mail of mail naar info@formforge.nl.",
+      "",
+      "Met vriendelijke groet,",
+      "FormForge"
+    ];
+    try{
+      await sendResendEmail({ to: email, subject: "Bevestiging: je bestelling ongedaan maken (" + h.id + ")", text: klant.join("\r\n") + "\r\n", html: klant.map(r => r === "" ? "" : "<p>" + esc(r) + "</p>").join("") });
+    }catch(e){ console.error("Websitemodel: herroepbevestiging naar klant mislukt:", (e && e.message) || e); }
+
+    res.json({ ok: true, id: h.id, tijd: tijdTekst });
+  });
+
   app.get("/api/website/stijlen", (req, res) => {
     res.set("Cache-Control", "public, max-age=300");
     res.json({ stijlen: leesStijlen() });
