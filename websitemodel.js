@@ -978,6 +978,56 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
     }catch(e){}
   });
 
+  /* Dagelijks overzicht per mail, om 20:00 uur (Nederlandse tijd) */
+  function telDagMail(){
+    const dag = telDag();
+    const leeg = { views: 0, bezoekers: 0, paden: {}, bronnen: {}, mobiel: 0 };
+    const D = k => tel.dagen[k] || leeg;
+    const dagLijst = []; for(let i = 29; i >= 0; i--){ dagLijst.push(telDag(Date.now() - i * 86400000)); }
+    const som = l => l.reduce((a, k) => { const d = D(k); a.v += d.views; a.b += d.bezoekers; return a; }, { v: 0, b: 0 });
+    const s1 = som([dag]), s0 = som([telDag(Date.now() - 86400000)]), s7 = som(dagLijst.slice(-7)), s30 = som(dagLijst), st = som(Object.keys(tel.dagen));
+    const nl = n => Number(n).toLocaleString("nl-NL");
+    const top = (o, n) => Object.entries(o || {}).sort((a, b) => b[1] - a[1]).slice(0, n);
+    const naamPad = p2 => p2 === "/" ? "Voorpagina" : p2;
+    const vandaag = D(dag);
+    const rijen = [
+      ["Vandaag", s1], ["Gisteren", s0], ["Laatste 7 dagen", s7], ["Laatste 30 dagen", s30], ["Sinds de start", st]
+    ];
+    const datum = new Date().toLocaleDateString("nl-NL", { timeZone: "Europe/Amsterdam", weekday: "long", day: "numeric", month: "long" });
+    const tekst = [
+      "Bezoekers formforge.nl, " + datum, "",
+      ...rijen.map(([n, x]) => n + ": " + nl(x.b) + " bezoekers, " + nl(x.v) + " keer bekeken"), "",
+      "Meest bekeken vandaag:",
+      ...(top(vandaag.paden, 8).map(([p2, n]) => "- " + naamPad(p2) + ": " + nl(n)) .concat(Object.keys(vandaag.paden || {}).length ? [] : ["- nog geen bezoekers"])), "",
+      "Waar kwamen ze vandaan vandaag:",
+      ...(top(vandaag.bronnen, 8).map(([p2, n]) => "- " + p2 + ": " + nl(n)).concat(Object.keys(vandaag.bronnen || {}).length ? [] : ["- nog geen bezoekers"])), "",
+      "Alle cijfers: " + SERVER_URL + "/api/website/statistiek"
+    ];
+    const td = 'style="padding:8px 12px;border-bottom:1px solid #eef0f4"';
+    const tdn = 'style="padding:8px 12px;border-bottom:1px solid #eef0f4;text-align:right;font-weight:700"';
+    const tabel = (kop, lijst) => '<h3 style="margin:22px 0 8px;font-size:16px">' + kop + '</h3><table style="border-collapse:collapse;width:100%;max-width:520px;border:1px solid #e3e6ee">' + (lijst.length ? lijst.map(([a, b]) => '<tr><td ' + td + '>' + esc(a) + '</td><td ' + tdn + '>' + nl(b) + '</td></tr>').join('') : '<tr><td ' + td + '>Nog geen bezoekers.</td></tr>') + '</table>';
+    const html = '<div style="font-family:Segoe UI,Arial,sans-serif;color:#1b2a4a">'
+      + '<h2 style="margin:0 0 4px">Bezoekers formforge.nl</h2><p style="margin:0 0 16px;color:#5a6680">' + esc(datum) + '</p>'
+      + '<table style="border-collapse:collapse;width:100%;max-width:520px;border:1px solid #e3e6ee"><tr><th ' + td + ' align="left"></th><th ' + tdn + '>Bezoekers</th><th ' + tdn + '>Keer bekeken</th></tr>'
+      + rijen.map(([n, x]) => '<tr><td ' + td + '>' + n + '</td><td ' + tdn + '>' + nl(x.b) + '</td><td ' + tdn + '>' + nl(x.v) + '</td></tr>').join('') + '</table>'
+      + tabel("Meest bekeken vandaag", top(vandaag.paden, 8).map(([p2, n]) => [naamPad(p2), n]))
+      + tabel("Waar kwamen ze vandaan vandaag", top(vandaag.bronnen, 8))
+      + '<p style="margin-top:20px"><a href="' + esc(SERVER_URL + "/api/website/statistiek") + '">Alle cijfers bekijken</a></p></div>';
+    return { onderwerp: "Bezoekers formforge.nl vandaag: " + nl(s1.b), tekst: tekst.join("\r\n") + "\r\n", html };
+  }
+  async function telMailControle(){
+    try{
+      const nu = new Date();
+      const uur = Number(nu.toLocaleString("en-GB", { timeZone: "Europe/Amsterdam", hour: "2-digit", hourCycle: "h23" }));
+      const dag = telDag();
+      if(uur < 20 || tel.gemaild === dag) return;
+      tel.gemaild = dag; telVuil = true; telBewaar();
+      const m = telDagMail();
+      await sendResendEmail({ to: NOTIFY_EMAIL, subject: m.onderwerp, text: m.tekst, html: m.html });
+    }catch(e){ console.error("Websitemodel: dagoverzicht bezoekers mislukt:", (e && e.message) || e); }
+  }
+  setInterval(telMailControle, 60 * 1000).unref();
+
   function telEsc(s){ return esc(s); }
   function telPagina(inhoud){
     return '<!DOCTYPE html><html lang="nl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>Bezoekers formforge.nl</title><style>'
