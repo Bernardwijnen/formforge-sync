@@ -909,6 +909,142 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
     res.json({ ok: true, id: h.id, tijd: tijdTekst });
   });
 
+  /* ---------- bezoekersteller voor formforge.nl ----------
+     Zonder cookies en zonder IP-adressen op te slaan. Unieke bezoekers per
+     dag worden geteld met een hash van IP en browser plus een geheim dat
+     elke dag wisselt en nergens wordt bewaard. Alleen FormForge kan de
+     cijfers zien, via een inloglink die naar het meldadres wordt gemaild. */
+  const TEL_FILE = path.join(DATA_DIR, "websitemodel_bezoek.json");
+  const TEL_TOKENS = path.join(DATA_DIR, "websitemodel_bezoek_tokens.json");
+  let tel = { dagen: {} };
+  try{ if(fs.existsSync(TEL_FILE)) tel = JSON.parse(fs.readFileSync(TEL_FILE, "utf8")) || { dagen: {} }; }catch(e){ tel = { dagen: {} }; }
+  if(!tel.dagen) tel.dagen = {};
+  let telTokens = {};
+  try{ if(fs.existsSync(TEL_TOKENS)) telTokens = JSON.parse(fs.readFileSync(TEL_TOKENS, "utf8")) || {}; }catch(e){ telTokens = {}; }
+  let telVuil = false, telZout = { dag: "", zout: "" }, telUniek = { dag: "", set: new Set() };
+  function telDag(d){ return new Date(d || Date.now()).toLocaleDateString("sv-SE", { timeZone: "Europe/Amsterdam" }); }
+  function telBewaar(){
+    if(!telVuil) return; telVuil = false;
+    try{ safeWriteFileSync(TEL_FILE, JSON.stringify(tel)); }catch(e){ console.error("Websitemodel: bezoek opslaan mislukt:", (e && e.message) || e); }
+  }
+  setInterval(telBewaar, 30 * 1000).unref();
+  const TEL_BOT = /bot|crawl|spider|slurp|preview|facebookexternalhit|headless|lighthouse|pingdom|uptime|curl|wget|python|java\//i;
+  function telSchoonPad(p){
+    let v = String(p || "/").split("?")[0].split("#")[0].slice(0, 120);
+    if(!v.startsWith("/")) v = "/" + v;
+    v = v.replace(/index\.html$/, "").replace(/[^A-Za-z0-9\/._-]/g, "");
+    return v || "/";
+  }
+  function telBron(r){
+    try{
+      const h = new URL(String(r || "")).hostname.replace(/^www\./, "").toLowerCase();
+      if(!h || /(^|\.)formforge\.nl$/.test(h)) return "";
+      if(/google\./.test(h)) return "Google";
+      if(/bing\./.test(h)) return "Bing";
+      if(/facebook\.|fb\./.test(h)) return "Facebook";
+      if(/instagram\./.test(h)) return "Instagram";
+      if(/linkedin\.|lnkd\./.test(h)) return "LinkedIn";
+      return h.slice(0, 60);
+    }catch(e){ return ""; }
+  }
+  app.post("/api/website/tel", (req, res) => {
+    res.status(204).end();
+    try{
+      const ua = String(req.headers["user-agent"] || "");
+      if(!ua || TEL_BOT.test(ua)) return;
+      const herkomst = String(req.headers["origin"] || req.headers["referer"] || "");
+      if(!/^https?:\/\/(www\.)?formforge\.nl(\/|$)/i.test(herkomst)) return;
+      const b = req.body || {};
+      const dag = telDag();
+      if(telZout.dag !== dag){ telZout = { dag, zout: crypto.randomBytes(16).toString("hex") }; }
+      if(telUniek.dag !== dag){ telUniek = { dag, set: new Set() }; }
+      const ip = String(req.headers["x-forwarded-for"] || req.ip || "").split(",")[0].trim();
+      const sleutel = crypto.createHash("sha256").update(telZout.zout + "|" + ip + "|" + ua).digest("hex").slice(0, 16);
+      const d = tel.dagen[dag] || (tel.dagen[dag] = { views: 0, bezoekers: 0, paden: {}, bronnen: {}, mobiel: 0 });
+      d.views++;
+      const pad = telSchoonPad(b.p);
+      d.paden[pad] = (d.paden[pad] || 0) + 1;
+      if(!telUniek.set.has(sleutel)){
+        telUniek.set.add(sleutel);
+        d.bezoekers++;
+        if(/Mobi|Android|iPhone|iPad/i.test(ua)) d.mobiel++;
+        const bron = telBron(b.r);
+        const bk = bron || "Direct";
+        d.bronnen[bk] = (d.bronnen[bk] || 0) + 1;
+      }
+      telVuil = true;
+      const dagen = Object.keys(tel.dagen).sort();
+      while(dagen.length > 400){ delete tel.dagen[dagen.shift()]; }
+    }catch(e){}
+  });
+
+  function telEsc(s){ return esc(s); }
+  function telPagina(inhoud){
+    return '<!DOCTYPE html><html lang="nl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>Bezoekers formforge.nl</title><style>'
+      + 'body{margin:0;font-family:"Segoe UI",Arial,sans-serif;background:#f4f6fb;color:#1b2a4a;}main{max-width:900px;margin:0 auto;padding:28px 18px 60px;}'
+      + 'h1{font-size:26px;margin:0 0 4px;}p.sub{color:#5a6680;margin:0 0 22px;}.kaarten{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;}'
+      + '.k{background:#fff;border:1px solid #e3e6ee;border-radius:14px;padding:16px;}.k small{display:block;color:#5a6680;font-size:13px;}.k b{display:block;font-size:28px;margin-top:4px;}.k span{font-size:13px;color:#5a6680;}'
+      + 'h2{font-size:18px;margin:28px 0 10px;}.grafiek{background:#fff;border:1px solid #e3e6ee;border-radius:14px;padding:16px;display:flex;align-items:flex-end;gap:3px;height:180px;}'
+      + '.balk{flex:1;background:#2f6fed;border-radius:3px 3px 0 0;min-height:2px;position:relative;}.balk:hover{background:#1f5ad6;}'
+      + 'table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e3e6ee;border-radius:14px;overflow:hidden;}td,th{padding:10px 14px;border-bottom:1px solid #eef0f4;text-align:left;font-size:15px;}th{background:#fafbfd;font-size:13px;color:#5a6680;}td.n{text-align:right;font-weight:700;}'
+      + '.knop{display:inline-block;background:#2f6fed;color:#fff;border:0;border-radius:999px;padding:13px 22px;font:700 16px "Segoe UI",Arial,sans-serif;cursor:pointer;}.msg{margin-top:14px;color:#1d8a5b;font-weight:600;}'
+      + '.uitleg{margin-top:24px;font-size:13px;color:#5a6680;}</style></head><body><main>' + inhoud + '</main></body></html>';
+  }
+  function telTokenGeldig(t){
+    const v = telTokens[String(t || "")];
+    return !!(v && v > Date.now());
+  }
+  const telLinkTeller = [];
+  app.post("/api/website/statistiek/link", async (req, res) => {
+    const nu = Date.now();
+    while(telLinkTeller.length && nu - telLinkTeller[0] > 3600 * 1000) telLinkTeller.shift();
+    if(telLinkTeller.length >= 5) return res.status(429).json({ error: "Er zijn net al een paar links verstuurd. Kijk in je mail of probeer het over een uur opnieuw." });
+    telLinkTeller.push(nu);
+    const t = crypto.randomBytes(24).toString("hex");
+    Object.keys(telTokens).forEach(k => { if(telTokens[k] < nu) delete telTokens[k]; });
+    telTokens[t] = nu + 30 * 24 * 3600 * 1000;
+    try{ safeWriteFileSync(TEL_TOKENS, JSON.stringify(telTokens)); }catch(e){}
+    const link = SERVER_URL + "/api/website/statistiek?t=" + t;
+    try{
+      await sendResendEmail({ to: NOTIFY_EMAIL, subject: "Je inloglink voor de bezoekers van formforge.nl",
+        text: "Met deze link zie je de bezoekers van formforge.nl. De link werkt 30 dagen. Bewaar hem als bladwijzer.\r\n\r\n" + link + "\r\n\r\nGeef deze link aan niemand anders.\r\n",
+        html: "<p>Met deze link zie je de bezoekers van formforge.nl. De link werkt 30 dagen. Bewaar hem als bladwijzer.</p><p><a href=\"" + esc(link) + "\">Bezoekers bekijken</a></p><p>Geef deze link aan niemand anders.</p>" });
+    }catch(e){ return res.status(500).json({ error: "De mail kon niet worden verstuurd." }); }
+    res.json({ ok: true });
+  });
+  app.get("/api/website/statistiek", (req, res) => {
+    res.set("Cache-Control", "no-store");
+    const t = String(req.query.t || "");
+    if(!telTokenGeldig(t)){
+      return res.send(telPagina('<h1>Bezoekers formforge.nl</h1><p class="sub">Alleen voor FormForge. Klik op de knop, dan krijg je een inloglink in je mail (' + telEsc(NOTIFY_EMAIL) + ').</p>'
+        + '<button class="knop" id="k">Stuur mij een inloglink</button><div class="msg" id="m"></div>'
+        + '<script>document.getElementById("k").onclick=function(){var b=this;b.disabled=true;fetch("/api/website/statistiek/link",{method:"POST"}).then(function(r){return r.json();}).then(function(j){document.getElementById("m").textContent=j.ok?"Verstuurd. Kijk in je mail.":(j.error||"Dat lukte niet.");}).catch(function(){document.getElementById("m").textContent="Geen verbinding.";b.disabled=false;});};</script>'));
+    }
+    telBewaar();
+    const vandaag = telDag();
+    const dagLijst = [];
+    for(let i = 29; i >= 0; i--){ dagLijst.push(telDag(Date.now() - i * 86400000)); }
+    const leeg = { views: 0, bezoekers: 0, paden: {}, bronnen: {}, mobiel: 0 };
+    const D = k => tel.dagen[k] || leeg;
+    function som(lijst){ return lijst.reduce((a, k) => { const d = D(k); a.v += d.views; a.b += d.bezoekers; a.m += d.mobiel || 0; return a; }, { v: 0, b: 0, m: 0 }); }
+    const s1 = som([vandaag]), s0 = som([telDag(Date.now() - 86400000)]), s7 = som(dagLijst.slice(-7)), s30 = som(dagLijst);
+    const totaal = som(Object.keys(tel.dagen));
+    const max = Math.max(1, ...dagLijst.map(k => D(k).bezoekers));
+    const nl = n => Number(n).toLocaleString("nl-NL");
+    const kaart = (t2, s, sub) => '<div class="k"><small>' + t2 + '</small><b>' + nl(s.b) + '</b><span>' + nl(s.v) + ' keer bekeken' + (sub || '') + '</span></div>';
+    const paden = {}, bronnen = {};
+    dagLijst.forEach(k => { const d = D(k); Object.entries(d.paden || {}).forEach(([p2, n]) => paden[p2] = (paden[p2] || 0) + n); Object.entries(d.bronnen || {}).forEach(([p2, n]) => bronnen[p2] = (bronnen[p2] || 0) + n); });
+    const top = (o, n) => Object.entries(o).sort((a, b2) => b2[1] - a[1]).slice(0, n);
+    const naamPad = p2 => p2 === "/" ? "Voorpagina" : p2;
+    let h = '<h1>Bezoekers formforge.nl</h1><p class="sub">Bijgewerkt: ' + new Date().toLocaleString("nl-NL", { timeZone: "Europe/Amsterdam" }) + '. Ververs de pagina voor de nieuwste cijfers.</p>';
+    h += '<div class="kaarten">' + kaart("Vandaag", s1) + kaart("Gisteren", s0) + kaart("Laatste 7 dagen", s7) + kaart("Laatste 30 dagen", s30) + kaart("Sinds de start", totaal) + '</div>';
+    h += '<h2>Bezoekers per dag (30 dagen)</h2><div class="grafiek">' + dagLijst.map(k => '<div class="balk" title="' + k + ': ' + D(k).bezoekers + ' bezoekers" style="height:' + Math.round(D(k).bezoekers / max * 100) + '%"></div>').join('') + '</div>';
+    h += '<h2>Meest bekeken pagina\'s (30 dagen)</h2><table><tr><th>Pagina</th><th style="text-align:right">Keer bekeken</th></tr>' + (top(paden, 15).map(([p2, n]) => '<tr><td>' + telEsc(naamPad(p2)) + '</td><td class="n">' + nl(n) + '</td></tr>').join('') || '<tr><td colspan="2">Nog geen bezoekers.</td></tr>') + '</table>';
+    h += '<h2>Waar komen ze vandaan? (30 dagen)</h2><table><tr><th>Bron</th><th style="text-align:right">Bezoekers</th></tr>' + (top(bronnen, 12).map(([p2, n]) => '<tr><td>' + telEsc(p2) + '</td><td class="n">' + nl(n) + '</td></tr>').join('') || '<tr><td colspan="2">Nog geen bezoekers.</td></tr>') + '</table>';
+    h += '<p class="uitleg">Op een telefoon of tablet: ' + (s30.b ? Math.round(s30.m / s30.b * 100) : 0) + '% van de bezoekers (30 dagen). Bezoekers worden per dag geteld: wie op twee dagen langskomt, telt twee keer. We gebruiken geen cookies en bewaren geen IP-adressen. Zoekmachines en robots tellen niet mee.</p>';
+    res.send(telPagina(h));
+  });
+
   app.get("/api/website/stijlen", (req, res) => {
     res.set("Cache-Control", "public, max-age=300");
     res.json({ stijlen: leesStijlen() });
