@@ -1028,6 +1028,39 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
   }
   setInterval(telMailControle, 60 * 1000).unref();
 
+  /* ===========================================================
+     Dagelijkse taak van de administratie bij elke klant
+     Elke ochtend vanaf 06:00 roepen we admin.php?taak=... aan op
+     iedere geinstalleerde website. Daar worden dan inkoopfacturen
+     uit de mailbox gehaald, ingeplande facturen verstuurd en
+     herinneringen klaargezet. De sleutel is afgeleid van de licentie,
+     dus de klant hoeft niets in te stellen.
+     =========================================================== */
+  let taakBezig = false;
+  async function taakControle(){
+    if(taakBezig) return;
+    try{
+      const nu = new Date();
+      const uur = Number(nu.toLocaleString("en-GB", { timeZone: "Europe/Amsterdam", hour: "2-digit", hourCycle: "h23" }));
+      const dag = telDag();
+      if(uur < 6 || tel.taakDag === dag) return;
+      taakBezig = true;
+      tel.taakDag = dag; telVuil = true; telBewaar();
+      const sites = Object.values(orders).filter(r => r && r.licentie && r.domein && r.status === "geinstalleerd");
+      let goed = 0, fout = 0;
+      for(const rec of sites){
+        const k = crypto.createHash("sha256").update(rec.licentie + "|taak").digest("hex").slice(0, 32);
+        try{
+          const r = await fetch("https://" + rec.domein + "/admin.php?taak=" + k, { signal: AbortSignal.timeout(120000), headers: { "User-Agent": "FormForge-taak" } });
+          if(r.ok) goed++; else fout++;
+        }catch(e){ fout++; }
+      }
+      if(sites.length) console.log("Websitemodel: dagelijkse taak klaar bij " + goed + " van " + sites.length + " websites" + (fout ? " (" + fout + " niet bereikbaar)" : ""));
+    }catch(e){ console.error("Websitemodel: dagelijkse taak mislukt:", (e && e.message) || e); }
+    finally{ taakBezig = false; }
+  }
+  setInterval(taakControle, 5 * 60 * 1000).unref();
+
   function telEsc(s){ return esc(s); }
   function telPagina(inhoud){
     return '<!DOCTYPE html><html lang="nl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>Bezoekers formforge.nl</title><style>'
