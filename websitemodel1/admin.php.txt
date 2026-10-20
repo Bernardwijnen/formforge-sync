@@ -67,6 +67,10 @@ function default_settings() {
         'opbouw_hero'      => 'standaard',
         'opbouw_diensten'  => 'standaard',
         'opbouw_projecten' => 'standaard',
+        'opbouw_menu'      => 'standaard',
+        'opbouw_strook'    => 'standaard',
+        'opbouw_afsluiter' => 'standaard',
+        'opbouw_voet'      => 'standaard',
         'kleur_achtergrond'=> '',
         'kleur_vlak'       => '',
         'kleur_tekst'      => '',
@@ -344,9 +348,13 @@ function stijl_grote_foto() {
 /* ---------- Eigen opbouw, kleuren, letter en vormen ----------
    Komt na de stijl, zodat de keuzes van de klant altijd winnen. */
 $OPBOUW = [
-    'hero' => ['standaard' => 'Tekst links, logo rechts', 'rechts' => 'Logo links, tekst rechts', 'midden' => 'Alles in het midden', 'foto' => 'Grote foto als achtergrond', 'kaart' => 'Tekst op een witte kaart', 'golf' => 'Ronde onderkant', 'schuin' => 'Schuine onderkant'],
-    'diensten' => ['standaard' => 'Tegels', 'lijst' => 'Lijst onder elkaar', 'donker' => 'Tegels op een donker vlak', 'iconen' => 'In het midden, met ronde cijfers', 'twee' => 'Twee brede kolommen', 'groot' => 'Grote nummers met een streep'],
-    'projecten' => ['standaard' => 'Mappen', 'kaarten' => 'Kaarten met foto', 'foto' => 'Grote foto\'s', 'mozaiek' => 'Een grote en een kleine foto', 'rij' => 'Foto naast de tekst', 'polaroid' => 'Polaroidfoto\'s'],
+    'menu' => ['standaard' => 'Standaard', 'midden' => 'Logo in het midden', 'donker' => 'Donkere balk', 'zwevend' => 'Zwevende balk over de foto', 'onderlijn' => 'Strak met een gekleurde lijn'],
+    'hero' => ['standaard' => 'Tekst links, logo rechts', 'rechts' => 'Logo links, tekst rechts', 'midden' => 'Alles in het midden', 'foto' => 'Grote foto als achtergrond', 'kaart' => 'Tekst op een witte kaart', 'golf' => 'Ronde onderkant', 'schuin' => 'Schuine onderkant', 'groot' => 'Schermvullend', 'omlijst' => 'In een afgeronde lijst'],
+    'strook' => ['standaard' => 'Balk met je diensten', 'groot' => 'Grote gekleurde balk', 'lopend' => 'Lopende tekst', 'geen' => 'Geen balk'],
+    'diensten' => ['standaard' => 'Tegels', 'lijst' => 'Lijst onder elkaar', 'donker' => 'Tegels op een donker vlak', 'iconen' => 'In het midden, met ronde cijfers', 'twee' => 'Twee brede kolommen', 'groot' => 'Grote nummers met een streep', 'tijdlijn' => 'Als stappen onder elkaar'],
+    'projecten' => ['standaard' => 'Mappen', 'kaarten' => 'Kaarten met foto', 'foto' => 'Grote foto\'s', 'mozaiek' => 'Een grote en een kleine foto', 'rij' => 'Foto naast de tekst', 'polaroid' => 'Polaroidfoto\'s', 'schuif' => 'Om doorheen te schuiven'],
+    'afsluiter' => ['standaard' => 'Gekleurd vlak', 'licht' => 'Licht vlak', 'kaart' => 'Losse kaart', 'midden' => 'Alles in het midden'],
+    'voet' => ['standaard' => 'Donker', 'licht' => 'Licht', 'midden' => 'In het midden'],
 ];
 $LETTERS = [
     ''          => ['naam' => 'Zoals de stijl', 'fonts' => '', 'kop' => '', 'tekst' => ''],
@@ -365,7 +373,8 @@ function opbouw($deel) {
     return isset($OPBOUW[$deel][$v]) ? $v : 'standaard';
 }
 function body_klassen($s) {
-    return 't-' . $s . ' l-hero-' . opbouw('hero') . ' l-dienst-' . opbouw('diensten') . ' l-proj-' . opbouw('projecten');
+    return 't-' . $s . ' l-hero-' . opbouw('hero') . ' l-dienst-' . opbouw('diensten') . ' l-proj-' . opbouw('projecten')
+         . ' l-menu-' . opbouw('menu') . ' l-strook-' . opbouw('strook') . ' l-afsl-' . opbouw('afsluiter') . ' l-voet-' . opbouw('voet');
 }
 function maatwerk_css() {
     global $LETTERS;
@@ -517,6 +526,78 @@ function maatwerk_css() {
 .l-proj-polaroid .folder h3{font-size:clamp(24px,2.6vw,30px);}
 .l-proj-polaroid .folder .desc{color:var(--muted);}
 .l-proj-polaroid .folder .meta{justify-content:flex-start;color:var(--blue);}
+/* opbouw: menu */
+.l-menu-midden .top .wrap{flex-direction:column;justify-content:center;height:auto;padding-top:14px;padding-bottom:10px;gap:6px;}
+.l-menu-midden .brand{justify-content:center;}
+.l-menu-donker .top{background:var(--navy) !important;color:#fff !important;border-bottom-color:rgba(255,255,255,.08) !important;}
+.l-menu-donker .top .brand{color:#fff;}
+.l-menu-donker .menu a:not(.cta){color:rgba(255,255,255,.88) !important;background:transparent;}
+.l-menu-donker .menu a:not(.cta):hover{background:rgba(255,255,255,.12) !important;color:#fff !important;}
+.l-menu-zwevend .top{background:transparent !important;border:0 !important;backdrop-filter:none;height:0;overflow:visible;box-shadow:none !important;}
+.l-menu-zwevend .top .wrap{position:relative;top:14px;height:62px;background:rgba(255,255,255,.96);color:var(--navy);border-radius:999px;box-shadow:0 18px 40px -22px rgba(0,0,0,.55),0 0 0 1px rgba(0,0,0,.05);padding-left:22px;padding-right:8px;max-width:1120px;width:calc(100% - 24px);backdrop-filter:blur(10px);}
+.l-menu-zwevend .top .brand{color:var(--navy);}
+.l-menu-zwevend .menu a:not(.cta){color:var(--navy) !important;}
+.l-menu-zwevend .menu a:not(.cta):hover{background:rgba(0,0,0,.06) !important;}
+.l-menu-zwevend .menu a.cta{border-radius:999px;}
+.l-menu-zwevend .hero,.l-menu-zwevend .crumb,.l-menu-zwevend .shero,.l-menu-zwevend .chero,.l-menu-zwevend .phero,.l-menu-zwevend .thx{padding-top:calc(clamp(48px,7vw,96px) + 84px) !important;}
+.l-menu-onderlijn .top{border-bottom:4px solid var(--blue) !important;}
+.l-menu-onderlijn .menu a:not(.cta){border-radius:0 !important;text-transform:uppercase;letter-spacing:.08em;font-size:13px;box-shadow:inset 0 -2px 0 transparent;}
+.l-menu-onderlijn .menu a:not(.cta):hover{background:transparent !important;box-shadow:inset 0 -2px 0 var(--blue);}
+.l-menu-onderlijn .menu a.cta{border-radius:0;}
+/* opbouw: extra bovenkant */
+.l-hero-groot .hero{min-height:min(92vh,920px);display:flex;align-items:center;}
+.l-hero-groot .hero .wrap{width:100%;}
+.l-hero-groot .hero h1{font-size:clamp(44px,7.4vw,92px);}
+.l-hero-omlijst .hero{margin:clamp(10px,2vw,22px);border-radius:clamp(18px,3vw,34px);border-bottom:0 !important;box-shadow:0 30px 60px -40px rgba(0,0,0,.5);}
+.l-hero-omlijst.l-menu-zwevend .hero{margin-top:0;}
+/* opbouw: balk met diensten */
+.l-strook-geen .servicebar{display:none;}
+.l-strook-groot .servicebar{background:var(--blue) !important;color:#fff !important;font-size:clamp(17px,1.8vw,22px);font-weight:700;}
+.l-strook-groot .servicebar .wrap{padding-top:26px;padding-bottom:26px;gap:12px 40px;}
+.l-strook-groot .servicebar span::before{background:#fff;width:9px;height:9px;}
+.l-strook-lopend .servicebar{overflow:hidden;}
+.servicebar .ff-dup{display:none !important;}
+.l-strook-lopend .servicebar .wrap{max-width:none;width:max-content;flex-wrap:nowrap;justify-content:flex-start;gap:0;padding-left:0;padding-right:0;animation:ff-loop 60s linear infinite;}
+.l-strook-lopend .servicebar span{white-space:nowrap;padding-right:44px;}
+.l-strook-lopend .servicebar .ff-dup{display:inline-flex !important;}
+.l-strook-lopend .servicebar:hover .wrap{animation-play-state:paused;}
+@keyframes ff-loop{from{transform:translateX(0);}to{transform:translateX(-50%);}}
+@media (prefers-reduced-motion: reduce){.l-strook-lopend .servicebar .wrap{animation:none;flex-wrap:wrap;justify-content:center;width:auto;max-width:1180px;}.l-strook-lopend .servicebar .ff-dup{display:none !important;}}
+/* opbouw: extra diensten */
+.l-dienst-tijdlijn .services{grid-template-columns:1fr;max-width:820px;gap:0;position:relative;padding-left:34px;}
+.l-dienst-tijdlijn .services::before{content:"";position:absolute;left:25px;top:8px;bottom:8px;width:3px;border-radius:3px;background:var(--line);}
+.l-dienst-tijdlijn .service{background:transparent !important;border:0 !important;box-shadow:none !important;border-radius:0 !important;padding:6px 0 34px 46px;position:relative;transform:none !important;}
+.l-dienst-tijdlijn .service .num{position:absolute;left:-34px;top:0;width:52px;height:52px;margin:0;border-radius:50% !important;background:var(--blue) !important;color:#fff !important;box-shadow:0 0 0 6px var(--paper,#fff);}
+.l-dienst-tijdlijn .service:hover h3{color:var(--blue);}
+/* opbouw: extra projecten */
+.l-proj-schuif .folders{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;gap:clamp(18px,2.4vw,30px);padding:4px 4px 18px;margin:0 -4px;scrollbar-width:thin;}
+.l-proj-schuif .folder{flex:0 0 min(78%,560px);scroll-snap-align:start;}
+.l-proj-schuif .folders.single .folder{flex-basis:min(100%,640px);}
+/* opbouw: contactblok onderaan */
+.l-afsl-licht .band{background:var(--sky) !important;color:var(--navy) !important;}
+.l-afsl-licht .band h2{color:var(--navy);}
+.l-afsl-licht .band p{color:var(--muted) !important;}
+.l-afsl-licht .band .btn.white{background:var(--blue) !important;color:#fff !important;}
+.l-afsl-licht .band .btn.outline{color:var(--navy) !important;box-shadow:inset 0 0 0 1.5px var(--navy) !important;background:transparent !important;}
+.l-afsl-kaart .band{background:transparent !important;padding:clamp(20px,4vw,56px) clamp(12px,3vw,24px);}
+.l-afsl-kaart .band .wrap{background:var(--navy);color:#fff;border-radius:clamp(20px,3vw,32px);max-width:1120px;padding-left:clamp(24px,5vw,64px);padding-right:clamp(24px,5vw,64px);box-shadow:0 40px 70px -40px rgba(0,0,0,.6);}
+.l-afsl-kaart .band h2{color:#fff;}
+.l-afsl-kaart .band p{color:rgba(255,255,255,.82) !important;}
+.l-afsl-kaart .band .btn.white{background:var(--blue) !important;color:#fff !important;}
+.l-afsl-kaart .band .btn.outline{color:#fff !important;box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.7) !important;background:transparent !important;}
+.l-afsl-midden .band .wrap{flex-direction:column;text-align:center;justify-content:center;}
+.l-afsl-midden .band h2{max-width:22ch;margin:0 auto;}
+.l-afsl-midden .band p{margin-left:auto;margin-right:auto;}
+.l-afsl-midden .band .acts{justify-content:center;}
+/* opbouw: onderkant */
+.l-voet-licht .foot{background:var(--sky) !important;color:var(--muted) !important;border-top:1px solid var(--line);}
+.l-voet-licht .nap{border-bottom-color:var(--line) !important;}
+.l-voet-licht .nap strong{color:var(--navy) !important;}
+.l-voet-licht .foot a{color:var(--navy);}
+.l-voet-licht .foot a:hover{color:var(--blue) !important;}
+.l-voet-licht .legal .login{color:var(--muted) !important;}
+.l-voet-midden .nap{grid-template-columns:repeat(auto-fit,minmax(200px,260px));justify-content:center;text-align:center;}
+.l-voet-midden .legal{justify-content:center;flex-direction:column;align-items:center;gap:6px;text-align:center;}
 CSS;
     return $link . "<style id=\"ff-maatwerk\">\n" . $css . "\n</style>\n";
 }
@@ -563,7 +644,7 @@ function stijl_kiezer($huidig) {
 .ffk select.ffk-o{min-width:240px;}
 .ffk button:focus-visible,.ffk select:focus-visible{outline:2px solid #fff;outline-offset:2px;}
 body{padding-bottom:84px;}
-.ffk-flits .hero .wrap,.ffk-flits #diensten .wrap,.ffk-flits #featuredSection .wrap{opacity:.2;}
+.ffk-flits .hero .wrap,.ffk-flits #diensten .wrap,.ffk-flits #featuredSection .wrap,.ffk-flits .top .wrap,.ffk-flits .band .wrap,.ffk-flits .foot .wrap,.ffk-flits .servicebar{opacity:.2;}
 .hero .wrap,#diensten .wrap,#featuredSection .wrap{transition:opacity .25s ease;}
 @media (max-width:1100px){.ffk span{display:none;}}
 @media (max-width:640px){.ffk{left:10px;right:10px;transform:none;width:auto;max-width:none;border-radius:20px;flex-wrap:wrap;justify-content:center;bottom:10px;padding:8px;}.ffk span{display:block;width:100%;text-align:center;padding:4px 0 2px;font-size:13px;}.ffk select{flex:1 1 40%;min-width:0;max-width:none;font-size:14px;padding:0 30px 0 12px;}.ffk select.ffk-o{order:5;flex-basis:100%;min-width:0;}body{padding-bottom:180px;}}
@@ -576,37 +657,46 @@ body{padding-bottom:84px;}
   try { gekozen = localStorage.getItem(sleutel); gekozenO = localStorage.getItem(sleutelO); } catch (e) {}
   var kies = document.querySelector('.ffk .ffk-s'), kiesO = document.querySelector('.ffk .ffk-o');
   var lijst = Object.keys(D.stijlen);
-  var N = { hero: { standaard: 'Tekst links', rechts: 'Logo links', midden: 'Midden', foto: 'Grote foto', kaart: 'Witte kaart', golf: 'Ronde onderkant', schuin: 'Schuine onderkant' },
-            dienst: { standaard: 'tegels', lijst: 'lijst', donker: 'donker vlak', iconen: 'ronde cijfers', twee: 'twee kolommen', groot: 'grote nummers' },
-            proj: { standaard: 'mappen', kaarten: 'kaarten', foto: 'grote foto\'s', mozaiek: 'mozaiek', rij: 'foto naast tekst', polaroid: 'polaroids' } };
+  var DELEN = ['menu', 'hero', 'strook', 'dienst', 'proj', 'afsl', 'voet'];
   var nu = document.body.className;
-  function deel(n, std) { var m = nu.match(new RegExp('(^|\\\\s)l-' + n + '-([a-z]+)')); return m ? m[2] : std; }
-  var eigen = [deel('hero', 'standaard'), deel('dienst', 'standaard'), deel('proj', 'standaard')];
-  var OPB = [eigen,
-    ['rechts', 'lijst', 'kaarten'], ['midden', 'donker', 'foto'], ['foto', 'standaard', 'kaarten'],
-    ['standaard', 'lijst', 'foto'], ['rechts', 'donker', 'standaard'], ['midden', 'standaard', 'kaarten'],
-    ['standaard', 'donker', 'kaarten'], ['rechts', 'standaard', 'foto'], ['midden', 'lijst', 'standaard'],
-    ['foto', 'donker', 'standaard'], ['standaard', 'standaard', 'standaard'],
-    ['kaart', 'iconen', 'mozaiek'], ['golf', 'twee', 'rij'], ['schuin', 'groot', 'polaroid'],
-    ['foto', 'iconen', 'rij'], ['kaart', 'groot', 'kaarten'], ['golf', 'lijst', 'polaroid'],
-    ['schuin', 'twee', 'mozaiek'], ['midden', 'groot', 'rij'], ['rechts', 'iconen', 'polaroid']];
-  if (!D.foto) { OPB = OPB.filter(function (o, i) { return i === 0 || o[0] !== 'foto'; }); }
+  function deel(n) { var m = nu.match(new RegExp('(^|\\\\s)l-' + n + '-([a-z]+)')); return m ? m[2] : 'standaard'; }
+  var OPB = [['Zoals de eigenaar koos', DELEN.map(deel)],
+    ['Klassiek', ['standaard', 'standaard', 'standaard', 'standaard', 'standaard', 'standaard', 'standaard']],
+    ['Strak', ['onderlijn', 'rechts', 'geen', 'lijst', 'kaarten', 'licht', 'licht']],
+    ['Modern', ['zwevend', 'groot', 'lopend', 'iconen', 'schuif', 'kaart', 'midden']],
+    ['Magazine', ['midden', 'midden', 'groot', 'twee', 'mozaiek', 'midden', 'midden']],
+    ['Etalage', ['zwevend', 'foto', 'standaard', 'donker', 'foto', 'standaard', 'standaard']],
+    ['Ambachtelijk', ['donker', 'kaart', 'groot', 'groot', 'polaroid', 'licht', 'standaard']],
+    ['Rustig', ['standaard', 'omlijst', 'geen', 'tijdlijn', 'rij', 'licht', 'licht']],
+    ['Speels', ['zwevend', 'golf', 'lopend', 'iconen', 'polaroid', 'kaart', 'licht']],
+    ['Zakelijk', ['donker', 'standaard', 'standaard', 'lijst', 'rij', 'kaart', 'standaard']],
+    ['Krachtig', ['donker', 'schuin', 'groot', 'groot', 'mozaiek', 'standaard', 'standaard']],
+    ['Licht en luchtig', ['onderlijn', 'midden', 'geen', 'twee', 'kaarten', 'licht', 'licht']],
+    ['Groot beeld', ['midden', 'groot', 'standaard', 'donker', 'schuif', 'midden', 'midden']],
+    ['Stap voor stap', ['standaard', 'rechts', 'groot', 'tijdlijn', 'kaarten', 'midden', 'licht']],
+    ['Overzichtelijk', ['onderlijn', 'omlijst', 'lopend', 'lijst', 'polaroid', 'kaart', 'midden']],
+    ['Verhalend', ['donker', 'golf', 'standaard', 'twee', 'rij', 'licht', 'standaard']],
+    ['Kaarten', ['zwevend', 'kaart', 'groot', 'standaard', 'kaarten', 'kaart', 'standaard']],
+    ['Mozaiek', ['midden', 'schuin', 'geen', 'iconen', 'mozaiek', 'standaard', 'licht']],
+    ['Doorschuiven', ['standaard', 'foto', 'lopend', 'groot', 'schuif', 'kaart', 'midden']],
+    ['Omlijst', ['zwevend', 'omlijst', 'standaard', 'donker', 'polaroid', 'midden', 'licht']],
+    ['Tijdlijn', ['donker', 'midden', 'geen', 'tijdlijn', 'mozaiek', 'kaart', 'midden']]];
+  if (!D.foto) { OPB = OPB.filter(function (o, i) { return i === 0 || o[1][1] !== 'foto'; }); }
   var opbNu = 0;
-  function naam(o) { return N.hero[o[0]] + ' \u00b7 ' + N.dienst[o[1]] + ' \u00b7 ' + N.proj[o[2]]; }
   function fotoBijwerken() {
     var hero = document.querySelector('.hero'); if (!hero) return;
     var s = D.stijlen[kies.value] || {};
-    if ((s.foto || OPB[opbNu][0] === 'foto') && D.foto) { hero.classList.add('has-photo'); hero.style.backgroundImage = "url('" + D.foto + "')"; }
+    if ((s.foto || OPB[opbNu][1][1] === 'foto') && D.foto) { hero.classList.add('has-photo'); hero.style.backgroundImage = "url('" + D.foto + "')"; }
     else { hero.classList.remove('has-photo'); hero.style.backgroundImage = ''; }
   }
   function zetO(i, bewaar) {
     if (!OPB[i]) i = 0;
     opbNu = i;
-    var o = OPB[i];
+    var o = OPB[i][1];
     var b = document.body;
     b.classList.add('ffk-flits');
     setTimeout(function () {
-      b.className = b.className.replace(/(^|\s)l-(hero|dienst|proj)-[a-z]+/g, ' ').replace(/\s+/g, ' ').trim() + ' l-hero-' + o[0] + ' l-dienst-' + o[1] + ' l-proj-' + o[2];
+      b.className = b.className.replace(/(^|\s)l-(menu|hero|strook|dienst|proj|afsl|voet)-[a-z]+/g, ' ').replace(/\s+/g, ' ').trim() + DELEN.map(function (d, j) { return ' l-' + d + '-' + o[j]; }).join('');
       fotoBijwerken();
       b.classList.remove('ffk-flits');
     }, bewaar === null ? 0 : 220);
@@ -634,7 +724,7 @@ body{padding-bottom:84px;}
   });
   OPB.forEach(function(o, i){
     var e = document.createElement('option');
-    e.value = String(i); e.textContent = i === 0 ? 'Indeling: zoals de eigenaar koos' : 'Indeling: ' + naam(o);
+    e.value = String(i); e.textContent = 'Indeling: ' + o[0];
     kiesO.appendChild(e);
   });
   kies.onchange = function(){ zet(kies.value, true); };
@@ -1154,6 +1244,7 @@ CSS;
     if (!empty(services())) {
         $out .= '<div class="servicebar" aria-hidden="true"><div class="wrap">';
         foreach (services() as $s) { $out .= '<span>' . h($s['naam']) . '</span>'; }
+        for ($kopie = 0; $kopie < 3; $kopie++) { foreach (services() as $s) { $out .= '<span class="ff-dup">' . h($s['naam']) . '</span>'; } }
         $out .= '</div></div>' . "\n";
         $out .= '<section class="section" id="diensten"><div class="wrap"><div class="head"><div><h2>' . h(st('diensten_titel')) . '</h2>';
         if (st('diensten_intro') !== '') $out .= '<p>' . h(st('diensten_intro')) . '</p>';
@@ -2076,7 +2167,7 @@ if ($logged_in && isset($_POST['action'])) {
         $new['kleur_donker'] = valid_color($_POST['kleur_donker'] ?? '', '#0b1f3a');
         $new['kleur_accent'] = valid_color($_POST['kleur_accent'] ?? '', '#1d4ed8');
         $new['stijl'] = array_key_exists((string)($_POST['stijl'] ?? ''), alle_stijlen()) ? $_POST['stijl'] : 'stoer';
-        foreach (['hero', 'diensten', 'projecten'] as $deel) {
+        foreach (array_keys($OPBOUW) as $deel) {
             $v = (string)($_POST['opbouw_' . $deel] ?? '');
             $new['opbouw_' . $deel] = isset($OPBOUW[$deel][$v]) ? $v : 'standaard';
         }
@@ -2477,7 +2568,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
             <h2>Opbouw en details</h2>
             <p class="hint" style="margin:-4px 0 16px">Hiermee maak je je website echt eigen. Je teksten en foto's blijven gewoon staan.</p>
             <div class="opbouw">
-              <?php $OPN = ['hero' => 'Bovenkant van de voorpagina', 'diensten' => 'Diensten', 'projecten' => 'Uitgelichte projecten']; ?>
+              <?php $OPN = ['menu' => 'Menu bovenaan', 'hero' => 'Bovenkant van de voorpagina', 'strook' => 'Balk met diensten', 'diensten' => 'Diensten', 'projecten' => 'Uitgelichte projecten', 'afsluiter' => 'Contactblok onderaan', 'voet' => 'Onderkant (adres en contact)']; ?>
               <?php foreach ($OPBOUW as $deel => $keuzes): ?>
                 <div class="field"><label for="op_<?= h($deel) ?>"><?= h($OPN[$deel]) ?></label>
                   <select id="op_<?= h($deel) ?>" name="opbouw_<?= h($deel) ?>">
@@ -2720,8 +2811,12 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     "f:ka": "De opvallende kleur voor knoppen en accenten. Vaak de kleur van je logo.",
     "chk:feest_kleuren": "Aangevinkt: branchestijlen zoals Kapper en feeststijlen zoals Kerst gebruiken hun eigen kleuren. Uitgevinkt: je website houdt je eigen kleuren en krijgt alleen de vormen, letters en versiering van de stijl, zoals sneeuw.",
     "f:op_hero": "Hoe de bovenkant van je voorpagina eruitziet. Met Grote foto komt de foto van je nieuwste project als achtergrond.",
-    "f:op_diensten": "Hoe je diensten op de voorpagina staan: als tegels naast elkaar, als lijst onder elkaar, of als tegels op een donker vlak.",
-    "f:op_projecten": "Hoe je uitgelichte projecten op de voorpagina staan: als mappen, als kaarten met foto, of met grote foto's.",
+    "f:op_diensten": "Hoe je diensten op de voorpagina staan: als tegels, als lijst, op een donker vlak, met ronde of grote nummers, in twee kolommen, of als stappen onder elkaar.",
+    "f:op_projecten": "Hoe je uitgelichte projecten op de voorpagina staan: als mappen, als kaarten, met grote foto's, als polaroids, of om doorheen te schuiven.",
+    "f:op_menu": "Hoe het menu bovenaan elke pagina eruitziet: standaard, met je logo in het midden, als donkere balk, als zwevende balk over de bovenkant, of strak met een gekleurde lijn.",
+    "f:op_strook": "De balk onder de bovenkant met de namen van je diensten. Kies een grote gekleurde balk, lopende tekst, of zet hem uit.",
+    "f:op_afsluiter": "Het blok onderaan de voorpagina waarmee bezoekers contact opnemen: een gekleurd vlak, een licht vlak, een losse kaart, of alles in het midden.",
+    "f:op_voet": "De onderkant van elke pagina met je adres, contactgegevens en openingstijden: donker, licht, of in het midden.",
     "f:lettertype": "De letter van je website. Zoals de stijl = de letter die bij je gekozen stijl hoort.",
     "f:vorm": "Of knoppen en blokken hoekig, licht afgerond of helemaal rond zijn.",
     "f:chat_url": "Heb je een chat, bijvoorbeeld WhatsApp? Zet hier de link, dan komt er rechtsonder op elke pagina een chatknop.",
