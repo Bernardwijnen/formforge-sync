@@ -98,6 +98,8 @@ function default_settings() {
         'vragen_titel'     => 'Veelgestelde vragen',
         'vragen'           => [],
         'beelden'          => [],
+        'banner'           => '',
+        'banner_vorm'      => 'achter',
         'diensten'         => [
             ['key' => 'd1', 'slug' => 'dienst-1', 'naam' => 'Dienst 1', 'kort' => 'Korte omschrijving van deze dienst.', 'tekst' => "Vertel hier uitgebreid over deze dienst.\n\nEen lege regel begint een nieuwe alinea."],
             ['key' => 'd2', 'slug' => 'dienst-2', 'naam' => 'Dienst 2', 'kort' => 'Korte omschrijving van deze dienst.', 'tekst' => 'Vertel hier uitgebreid over deze dienst.'],
@@ -623,8 +625,10 @@ CSS;
     return $link . "<style id=\"ff-maatwerk\">\n" . $css . "\n</style>\n";
 }
 /* Grote foto bovenaan: bij de stijl Etalage, of als de klant dat kiest */
+function banner_achter() { return st('banner') !== '' && st('banner_vorm') !== 'strook'; }
+function banner_strook() { return st('banner') !== '' && st('banner_vorm') === 'strook'; }
 function hero_met_foto() {
-    return stijl_grote_foto() || opbouw('hero') === 'foto';
+    return banner_achter() || stijl_grote_foto() || opbouw('hero') === 'foto';
 }
 /* Zet de gekozen stijl in een gemaakte pagina */
 function stijl_pagina($html) {
@@ -654,7 +658,7 @@ function stijl_kiezer($huidig) {
         $data[$k] = ['naam' => $v['naam'], 'fonts' => $v['fonts'], 'css' => $v['css'], 'foto' => !empty($v['grote_foto'])];
     }
     $foto = hero_foto(load_pages());
-    $json = json_encode(['stijlen' => $data, 'standaard' => $huidig, 'foto' => $foto, 'vasteFoto' => opbouw('hero') === 'foto'], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $json = json_encode(['stijlen' => $data, 'standaard' => $huidig, 'foto' => $foto, 'vasteFoto' => opbouw('hero') === 'foto' || banner_achter()], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     return <<<HTML
 <style>
 .ffk{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9999;display:flex;align-items:center;gap:6px;width:max-content;max-width:calc(100vw - 24px);padding:7px;border-radius:999px;background:rgba(17,24,39,.94);color:#fff;font:600 14px/1 'Segoe UI',Arial,sans-serif;letter-spacing:0;box-shadow:0 14px 40px -12px rgba(0,0,0,.55);backdrop-filter:blur(8px);}
@@ -763,6 +767,7 @@ HTML;
 }
 /* Eerste projectfoto, voor de grote foto in de stijl Etalage */
 function hero_foto($pages) {
+    if (banner_achter()) { return '/uploads/site/' . rawurlencode(st('banner')); }
     list($featured, $projects) = site_lists($pages);
     foreach (array_merge($featured, $projects) as $p) { if (!empty($p['photo'])) return $p['photo']; }
     return '';
@@ -1324,6 +1329,8 @@ function render_home($pages) {
   .ov-tekst h2 { font-size:clamp(32px,4.2vw,50px); margin-bottom:18px; }
   .ov-tekst p { margin:0 0 1em; font-size:17px; }
   .ov-naam { font-weight:700; color:var(--blue); }
+  .banner-strook { line-height:0; background:var(--navy); }
+  .banner-strook img { display:block; width:100%; height:clamp(150px,26vw,380px); object-fit:cover; object-position:center; }
   .blok-beeld[hidden] { display:none; }
   .bd { display:grid; grid-template-columns:1fr 1fr; gap:clamp(28px,5vw,64px); align-items:center; }
   .bd.rechts .bd-foto { order:2; }
@@ -1418,7 +1425,9 @@ CSS;
     $logo = logo_url();
     $foto = hero_met_foto() ? hero_foto($pages) : '';
     $heroAttr = $foto !== '' ? ' class="hero has-photo" style="background-image:url(\'' . h($foto) . '\')"' : ' class="hero"';
-    $out .= '<main id="home" class="view"><section' . $heroAttr . '><span class="hero-rand" aria-hidden="true"></span><div class="wrap' . ($logo === '' ? ' solo' : '') . '"><div>';
+    $out .= '<main id="home" class="view">';
+    if (banner_strook()) { $out .= '<div class="banner-strook"><img src="/uploads/site/' . h(rawurlencode(st('banner'))) . '" alt="' . h(st('naam')) . '" /></div>'; }
+    $out .= '<section' . $heroAttr . '><span class="hero-rand" aria-hidden="true"></span><div class="wrap' . ($logo === '' ? ' solo' : '') . '"><div>';
     if (st('eyebrow') !== '') $out .= '<div class="eyebrow">' . h(st('eyebrow')) . '</div>';
     $out .= '<h1>' . h(st('hero_titel')) . '</h1>';
     if (st('hero_tekst') !== '') $out .= '<p class="lead">' . h(st('hero_tekst')) . '</p>';
@@ -6719,6 +6728,12 @@ if ($logged_in && isset($_POST['action'])) {
         if (!empty($_POST['over_foto_weg'])) { $weg($new['over_foto']); $new['over_foto'] = ''; }
         $nf = $foto('over_foto', null, 'over-');
         if ($nf !== '') { $weg($new['over_foto']); $new['over_foto'] = $nf; }
+        if (isset($_POST['banner_vorm'])) {
+            if (!empty($_POST['banner_weg'])) { $weg($new['banner'] ?? ''); $new['banner'] = ''; }
+            $nf = $foto('banner', null, 'banner-');
+            if ($nf !== '') { $weg($new['banner'] ?? ''); $new['banner'] = $nf; }
+            $new['banner_vorm'] = $_POST['banner_vorm'] === 'strook' ? 'strook' : 'achter';
+        }
         if (isset($_POST['bd_set'])) {
             global $BEELD_VORMEN;
             $bdn = [];
@@ -7054,6 +7069,8 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
             <h2>Voorpagina</h2>
             <p class="sub">De teksten bovenaan de website.</p>
             <div class="field"><label for="slogan">Balk bovenaan (optioneel)</label><input type="text" id="slogan" name="slogan" maxlength="140" value="<?= h(st('slogan')) ?>" /><div class="hint">Een korte slogan in een gekleurde balk boven het menu. Leeg = geen balk.</div></div>
+            <div class="field"><label for="banner">Bannerfoto bovenaan (mag leeg)</label><?php if (st('banner') !== ''): ?><img class="blk-mini" src="/uploads/site/<?= h(rawurlencode(st('banner'))) ?>" alt="" style="width:100%;max-width:420px;height:auto;aspect-ratio:3/1;object-fit:cover" /><label class="check"><input type="checkbox" name="banner_weg" value="1" /> <span>Bannerfoto weghalen</span></label><?php endif; ?><input type="file" id="banner" name="banner" accept="image/jpeg,image/png,image/webp" /><div class="hint">Een grote, liggende foto voor bovenaan je voorpagina, bijvoorbeeld van een mooi project of je team. Liefst breed, minstens 1600 pixels.</div></div>
+            <div class="field"><label for="banner_vorm">Hoe staat de bannerfoto erop?</label><select id="banner_vorm" name="banner_vorm"><option value="achter"<?= st('banner_vorm') !== 'strook' ? ' selected' : '' ?>>Achter de titel en de knop</option><option value="strook"<?= st('banner_vorm') === 'strook' ? ' selected' : '' ?>>Als brede strook boven de titel</option></select></div>
             <div class="field"><label for="eyebrow">Kleine regel boven de titel</label><input type="text" id="eyebrow" name="eyebrow" maxlength="80" placeholder="bv. Installatiebedrijf in Sittard" value="<?= h(st('eyebrow')) ?>" /></div>
             <div class="field"><label for="hero_titel">Grote titel</label><input type="text" id="hero_titel" name="hero_titel" maxlength="90" value="<?= h(st('hero_titel')) ?>" /></div>
             <div class="field"><label for="hero_tekst">Tekst onder de titel</label><textarea class="short" id="hero_tekst" name="hero_tekst" maxlength="300"><?= h(st('hero_tekst')) ?></textarea></div>
@@ -7430,6 +7447,8 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     "h2:Opbouw en details": "Hiermee maak je je website echt eigen: hoe de blokken op de voorpagina eruitzien, welk lettertype je gebruikt en hoe rond de knoppen zijn. Probeer gerust iets uit, je kunt het altijd terugzetten.",
     "h2:Extra": "Extra instellingen. Die heb je meestal niet nodig, maar ze kunnen handig zijn.",
     "h3:Extra kleuren (optioneel)": "Wil je nog meer eigen kleuren? Vink een kleur aan en kies hem. Uitgevinkt gebruikt je website de kleur van de stijl. Let op dat tekst goed leesbaar blijft.",
+    "f:banner": "Een grote foto bovenaan je voorpagina. Kies een liggende foto; op een telefoon wordt de zijkant soms iets afgesneden.",
+    "f:banner_vorm": "Achter de titel: je titel en knop staan op de foto, met een donkere waas zodat de tekst leesbaar blijft. Als strook: de foto staat als brede baan onder het menu en je titel staat eronder.",
     "f:bdfoto": "Kies een foto of plaatje van je telefoon of computer. Dit blok komt op je voorpagina, op de plek die je met de pijltjes kiest.",
     "f:bdvorm": "Naast elkaar past goed bij een foto met wat tekst. Over de hele breedte is mooi voor een grote sfeerfoto. Klein in het midden is handig voor een logo of keurmerk.",
     "f:bdlink": "Waar bezoekers naartoe gaan als ze op de knop klikken. Laat je dit leeg, dan gaat de knop naar je contactpagina. Een andere website begint met https://.",
