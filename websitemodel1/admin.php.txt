@@ -2089,8 +2089,14 @@ schrijf_poort();
 define('FF_GEEN_POORT', 1);
 if (is_file(ROOT . '/licentie.php')) { require_once ROOT . '/licentie.php'; }
 $LIC = function_exists('ff_licentie_status') ? ff_licentie_status(isset($_GET['controleer'])) : ['actief' => true];
+/* Abonnement gestopt of niet betaald: de website staat offline, maar je administratie blijft bereikbaar om te bekijken en te downloaden (alleen lezen) */
+$ADM_ALLEEN_LEZEN = false;
 if ($config && empty($LIC['actief'])) {
-    toon_geblokkeerd(); exit;
+    if (isset($_GET['doc']) || isset($_GET['taak']) || isset($_GET['agenda']) || isset($_GET['download']) || isset($_GET['herinnering']) || isset($_GET['bijlage']) || (($_POST['action'] ?? '') === 'adm_akkoord')) {
+        http_response_code(503); header('Content-Type: text/html; charset=UTF-8');
+        exit('<!DOCTYPE html><html lang="nl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Niet beschikbaar</title></head><body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#111827;color:#fff;font-family:Segoe UI,Arial,sans-serif;text-align:center;padding:24px"><div><h1 style="font-size:28px;margin:0 0 10px">Deze pagina is niet beschikbaar.</h1><p style="margin:0;color:rgba(255,255,255,.75)">Neem contact op met de afzender.</p></div></body></html>');
+    }
+    $ADM_ALLEEN_LEZEN = true;
 }
 
 /* ===========================================================
@@ -5284,6 +5290,54 @@ function adm_pakket_maak($kw, &$fout) {
     return [$pad, $naam . '.zip', $ontbreekt];
 }
 
+/* ---------- Alles downloaden: je hele administratie in 1 zip, altijd te gebruiken (ook na opzeggen) ---------- */
+function adm_alles_maak(&$fout) {
+    $fout = '';
+    if (!class_exists('ZipArchive')) { $fout = 'Je hosting kan geen zip-bestanden maken.'; return null; }
+    @set_time_limit(600);
+    $docs = adm_docs(); $inkoop = adm_inkoop(); $bank = adm_bank(); $inst = adm_inst(); $klanten = adm_klanten();
+    ensure_data_dir(); if (!is_dir(ADM_PAKKET_DIR)) { mkdir(ADM_PAKKET_DIR, 0755, true); }
+    $pad = ADM_PAKKET_DIR . '/alles-' . bin2hex(random_bytes(6)) . '.zip';
+    $z = new ZipArchive();
+    if ($z->open($pad, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) { $fout = 'De zip kon niet worden gemaakt.'; return null; }
+    $f = function($c) { return number_format($c / 100, 2, ',', ''); };
+    $ontbreekt = [];
+    $vk = array_values(array_filter($docs, function($d) { return $d['soort'] === 'factuur' && $d['status'] !== 'concept'; }));
+    usort($vk, function($a, $b) { return strcmp($a['datum'], $b['datum']); });
+    $of = array_values(array_filter($docs, function($d) { return $d['soort'] === 'offerte'; }));
+    usort($of, function($a, $b) { return strcmp($a['datum'], $b['datum']); });
+    $z->addFromString('Overzichten/Verkoopfacturen.csv', adm_csv_tekst(['Datum', 'Nummer', 'Klant', 'Omschrijving', 'Excl. btw', 'Btw', 'Incl. btw', 'Status', 'Betaald op'], array_map(function($d) use ($f) { $t = adm_tot($d); return [$d['datum'], $d['nummer'], $d['klant']['naam'], $d['onderwerp'], $f($t['excl']), $f($t['btw']), $f($t['incl']), adm_status($d)[1], $d['betaald_op']]; }, $vk)));
+    $z->addFromString('Overzichten/Offertes.csv', adm_csv_tekst(['Datum', 'Nummer', 'Klant', 'Omschrijving', 'Excl. btw', 'Incl. btw', 'Status'], array_map(function($d) use ($f) { $t = adm_tot($d); return [$d['datum'], $d['nummer'], $d['klant']['naam'], $d['onderwerp'], $f($t['excl']), $f($t['incl']), adm_status($d)[1]]; }, $of)));
+    $z->addFromString('Overzichten/Inkoopfacturen.csv', adm_csv_tekst(['Datum', 'Leverancier', 'Nummer', 'Incl. btw', 'Btw', 'Status', 'Betaald op'], array_map(function($x) use ($f) { return [$x['datum'], $x['leverancier'], $x['nummer'], $f($x['bedrag']), $f($x['btw']), $x['status'], $x['betaald_op'] ?? '']; }, $inkoop)));
+    global $ADM_INDELING;
+    $z->addFromString('Overzichten/Bank.csv', adm_csv_tekst(['Datum', 'Naam', 'Omschrijving', 'Bedrag', 'Indeling'], array_map(function($t) use ($f, $ADM_INDELING) { return [$t['datum'], $t['naam'], $t['oms'], $f($t['bedrag']), $ADM_INDELING[$t['indeling']] ?? $t['indeling']]; }, $bank)));
+    $z->addFromString('Overzichten/Klanten.csv', adm_csv_tekst(['Naam', 'Contactpersoon', 'E-mail', 'Telefoon', 'Adres', 'Postcode', 'Plaats', 'KvK', 'Btw-nummer', 'Notitie'], array_map(function($k) { return [$k['naam'], $k['contact'] ?? '', $k['email'] ?? '', $k['tel'] ?? '', $k['straat'] ?? '', $k['postcode'] ?? '', $k['plaats'] ?? '', $k['kvk'] ?? '', $k['btw'] ?? '', $k['notitie'] ?? '']; }, $klanten)));
+    foreach ($vk as $d) {
+        $nm = substr($d['datum'], 0, 4) . '/' . adm_bestandsnaam($d['datum'] . ' ' . $d['klant']['naam'] . ' ' . $d['nummer'] . ' ' . $f(adm_tot($d)['incl'])) . '.pdf';
+        if (!empty($d['extern'])) { $pd = adm_pdf_pad($d['pdf'] ?? ''); if ($pd !== '' && is_file($pd)) { $z->addFile($pd, 'Verkoopfacturen/' . $nm); } else { $ontbreekt[] = 'Pdf van verkoopfactuur ' . $d['nummer']; } }
+        else { $z->addFromString('Verkoopfacturen/' . $nm, adm_doc_pdf($d, $inst)); }
+    }
+    foreach ($of as $d) { $z->addFromString('Offertes/' . substr($d['datum'], 0, 4) . '/' . adm_bestandsnaam($d['datum'] . ' ' . $d['klant']['naam'] . ' ' . ($d['nummer'] !== '' ? $d['nummer'] : 'concept') . ' ' . $f(adm_tot($d)['incl'])) . '.pdf', adm_doc_pdf($d, $inst)); }
+    foreach ($inkoop as $x) {
+        $pd = adm_pdf_pad($x['pdf']);
+        $nm = substr($x['datum'], 0, 4) . '/' . adm_bestandsnaam($x['datum'] . ' ' . $x['leverancier'] . ' ' . $x['nummer'] . ' ' . $f($x['bedrag'])) . '.pdf';
+        if ($pd !== '' && is_file($pd)) { $z->addFile($pd, 'Inkoopfacturen/' . $nm); } elseif (adm_voorbeeld()) { $z->addFromString('Inkoopfacturen/' . $nm, adm_demo_inkpdf($x)); } else { $ontbreekt[] = 'Pdf van inkoopfactuur ' . $x['leverancier'] . ' ' . $x['nummer']; }
+    }
+    foreach (adm_voorbeeld() ? [] : read_json(ADM_BANKBEST_DIR . '/lijst.json', []) as $b) { if (is_file(ADM_BANKBEST_DIR . '/' . $b['bestand'])) { $z->addFile(ADM_BANKBEST_DIR . '/' . $b['bestand'], 'Bankbestanden/' . adm_bestandsnaam($b['naam'])); } }
+    /* De gegevens zelf, zodat je ze later in een ander programma kunt inlezen (zonder wachtwoorden en sleutels) */
+    if (!adm_voorbeeld()) {
+        foreach (['adm_klanten.json', 'adm_docs.json', 'adm_inkoop.json', 'adm_bank.json', 'adm_bankregels.json', 'adm_agenda.json', 'adm_maillog.json'] as $jf) { if (is_file(DATA_DIR . '/' . $jf)) { $z->addFile(DATA_DIR . '/' . $jf, 'Gegevens (voor een ander programma)/' . $jf); } }
+        $ins = read_json(ADM_INST, []); foreach (['taak_sleutel', 'agenda_sleutel'] as $k) { unset($ins[$k]); }
+        $z->addFromString('Gegevens (voor een ander programma)/adm_inst.json', json_encode($ins, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    }
+    $z->addFromString('Lees mij.txt', "Dit is je complete administratie van " . st('naam') . ", gemaakt op " . date('d-m-Y H:i') . ".\r\n\r\n"
+        . "Verkoopfacturen  : al je facturen als pdf, per jaar\r\nOffertes         : al je offertes als pdf, per jaar\r\nInkoopfacturen   : de facturen van je leveranciers, per jaar\r\nBankbestanden    : de bankbestanden die je hebt ingelezen\r\nOverzichten      : lijsten om te openen in Excel\r\nGegevens         : dezelfde gegevens in een vorm die een ander programma kan inlezen\r\n\r\n"
+        . "Bewaar deze zip goed. Een ondernemer moet zijn administratie meestal 7 jaar bewaren; vraag je boekhouder wat voor jou geldt.\r\n"
+        . ($ontbreekt ? "\r\nLet op, deze stukken ontbreken:\r\n- " . implode("\r\n- ", $ontbreekt) . "\r\n" : ''));
+    $z->close();
+    return [$pad, adm_bestandsnaam((st('naam') ?: 'Administratie') . ' complete administratie ' . date('Y-m-d')) . '.zip'];
+}
+
 /* ---------- acties: versturen, inplannen, agenda, pakket, tekstherkenning ---------- */
 function adm_acties3($action) {
     global $ADM_MAILFOUT;
@@ -6192,6 +6246,11 @@ function adm_v_inst($inst) {
     ?>
     <h2 style="font-size:22px">Mijn gegevens voor offertes en facturen</h2>
     <p class="sub">Deze gegevens komen op elke offerte en factuur. Naam, adres, telefoon, e-mail, KvK en logo komen uit je <a href="admin.php?instellingen=1" style="color:#8fb3ff">Instellingen</a>.</p>
+    <div class="formcard" id="alles" style="border-color:#2f8f5b">
+      <h2 style="margin-bottom:6px">Al je gegevens downloaden</h2>
+      <p class="hint" style="margin:0 0 12px">Je administratie staat op je eigen hosting, niet bij ons. Met deze knop download je alles in 1 zip: al je facturen, offertes en inkoopfacturen als pdf, je bankbestanden, overzichten voor Excel en je klantenlijst. Handig als kopie, en dit kan altijd, ook als je ooit stopt.</p>
+      <a class="btn" href="admin.php?adm=alles">Alles downloaden (zip)</a>
+    </div>
     <div class="formcard">
       <div class="two">
         <div><div class="hint" style="margin:0">Bedrijfsnaam</div><?= h(st('naam')) ?: '<span style="color:#ff9b9b">nog niet ingevuld</span>' ?></div>
@@ -6273,7 +6332,7 @@ if ($config && ($_POST['action'] ?? '') === 'login') {
             session_regenerate_id(true);
             $_SESSION['ff_admin'] = true;
             unset($_SESSION['ff_demo']);
-            header('Location: ' . (isset($_GET['adm']) ? 'admin.php?adm' : 'admin.php')); exit;
+            header('Location: ' . (isset($_GET['adm']) || !empty($GLOBALS['ADM_ALLEEN_LEZEN']) ? 'admin.php?adm' : 'admin.php')); exit;
         }
         login_failed();
         $error = 'E-mailadres of wachtwoord klopt niet.';
@@ -6349,7 +6408,13 @@ if ($is_demo && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action
 $logged_in = $config && (!empty($_SESSION['ff_admin']) || $is_demo);
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
 define('SITE_BOUW', '2026-10-22-voet');
-if ($logged_in && !$is_demo && ($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
+if ($ADM_ALLEEN_LEZEN && $logged_in) {
+    $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
+    if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
+    if (($_GET['adm'] ?? '') === 'mailbg') { header('Content-Type: application/json'); echo json_encode(['nieuw' => 0]); exit; }
+    if (!isset($_GET['adm']) && !isset($_GET['logout'])) { header('Location: admin.php?adm'); exit; }
+}
+if ($logged_in && !$is_demo && !$ADM_ALLEEN_LEZEN && ($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
     $bouw = read_json(DATA_DIR . '/bouw.json', []);
     if (($bouw['v'] ?? '') !== SITE_BOUW) {
         @set_time_limit(120);
@@ -6359,6 +6424,13 @@ if ($logged_in && !$is_demo && ($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
 }
 if ($logged_in && ($_GET['adm'] ?? '') === 'export') { if (($_GET['wat'] ?? '') === 'inkoop') { adm_export_inkoop(); } else { adm_export(); } exit; }
 if ($logged_in && ($_GET['adm'] ?? '') === 'pdf') { adm_pdf_toon(); }
+if ($logged_in && ($_GET['adm'] ?? '') === 'alles') {
+    $af = ''; $ar = adm_alles_maak($af);
+    if (!$ar) { $_SESSION['ff_notice'] = 'Downloaden lukte niet: ' . $af; header('Location: admin.php?adm=inst#alles'); exit; }
+    adm_schoon_uitvoer();
+    header('Content-Type: application/zip'); header('Content-Length: ' . filesize($ar[0])); header('Content-Disposition: attachment; filename="' . $ar[1] . '"');
+    readfile($ar[0]); @unlink($ar[0]); exit;
+}
 if ($logged_in && ($_GET['adm'] ?? '') === 'docpdf') {
     $ddocs = adm_docs(); $di = adm_vind($ddocs, (string)($_GET['id'] ?? ''));
     if ($di === null || !empty($ddocs[$di]['extern'])) { http_response_code(404); exit('Niet gevonden.'); }
@@ -6811,6 +6883,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
 <?php elseif (!$logged_in): ?>
   <main class="wrap login">
     <h1><?= isset($_GET['adm']) ? 'Inloggen op je administratie' : 'Inloggen' ?></h1>
+    <?php if (!empty($ADM_ALLEEN_LEZEN)): ?><div class="ok">Het abonnement voor deze website is gestopt en de website staat offline. Log in om je administratie te bekijken en te downloaden.</div><?php endif; ?>
     <p class="sub"><?= h(st('naam')) ?></p>
     <?php if ($resetFout): ?><div class="err">Deze link is verlopen of al gebruikt. Vraag hieronder via "Wachtwoord vergeten?" een nieuwe aan.</div><?php endif; ?>
     <?php if ($notice): ?><div class="ok"><?= h($notice) ?></div><?php endif; ?>
@@ -6843,6 +6916,9 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
       </div>
     </div>
   </header>
+  <?php if (!empty($ADM_ALLEEN_LEZEN)): ?>
+  <div class="demobar" style="background:#ffcf70;color:#1c2330"><div class="wrap">Je abonnement is gestopt. Je website staat offline en je kunt niets meer wijzigen. Je administratie kun je nog wel bekijken en downloaden. <a href="admin.php?adm=alles" style="color:#1c2330;font-weight:700">Alles downloaden</a> &middot; <a href="<?= h(betaal_link()) ?>" style="color:#1c2330;font-weight:700">Opnieuw starten</a></div></div>
+  <?php endif; ?>
   <?php if (!$is_demo && !empty($LIC['waarschuwing'])): ?>
   <div class="demobar" style="background:#ff9b9b"><div class="wrap">Je laatste betaling voor deze website is niet gelukt. Regel het v&#xF3;&#xF3;r <?= h(nl_datum($LIC['offlineOp'] ?? '')) ?>, anders gaat je website offline. <a href="<?= h(betaal_link()) ?>">Betaling regelen</a></div></div>
   <?php endif; ?>
@@ -7345,6 +7421,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     "f:nmc": "Wil je dat iemand anders de mail ook krijgt? Vul hier een tweede adres in.",
     "f:nmt": "Je bericht. Stuur je bijlagen mee, dan zet de admin er vanzelf een link onder om ze online te openen.",
     "f:nmb": "Kies een of meer bestanden van je telefoon of computer, zoals foto's of een pdf. Samen maximaal 15 MB.",
+    "h2:Al je gegevens downloaden": "Download je hele administratie in 1 zip: alle facturen, offertes en inkoopfacturen als pdf, je bankbestanden, overzichten voor Excel en je klantenlijst. Bewaar hem op je computer of in de cloud als kopie.",
     "h2:Verzonden mails": "Hier zie je van elke verstuurde mail of hij goed is weggegaan, of hij is teruggekomen en of je klant hem heeft geopend. Van elke mail staat ook een kopie in de map Verzonden van je eigen mailbox.",
     "h2:Gekoppeld": "Je e-mail werkt. Met Stuur mij een testmail kun je controleren of het versturen goed gaat.",
     "f:aklant": "Kies een klant uit je klantenbestand, of kies + Nieuwe klant toevoegen en vul de gegevens in. Een nieuwe klant wordt vanzelf bewaard.",
