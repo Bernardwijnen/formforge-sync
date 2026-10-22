@@ -97,6 +97,7 @@ function default_settings() {
         'over_foto'        => '',
         'vragen_titel'     => 'Veelgestelde vragen',
         'vragen'           => [],
+        'beelden'          => [],
         'diensten'         => [
             ['key' => 'd1', 'slug' => 'dienst-1', 'naam' => 'Dienst 1', 'kort' => 'Korte omschrijving van deze dienst.', 'tekst' => "Vertel hier uitgebreid over deze dienst.\n\nEen lege regel begint een nieuwe alinea."],
             ['key' => 'd2', 'slug' => 'dienst-2', 'naam' => 'Dienst 2', 'kort' => 'Korte omschrijving van deze dienst.', 'tekst' => 'Vertel hier uitgebreid over deze dienst.'],
@@ -1166,7 +1167,26 @@ function site_lists($pages) {
 /* ===========================================================
    Blokken op de voorpagina: volgorde en aan/uit, plus de nieuwe blokken
    =========================================================== */
-$BLOKKEN = ['strook' => 'Balk met diensten', 'diensten' => 'Diensten', 'projecten' => 'Uitgelichte projecten', 'voorna' => 'Voor en na (foto\'s)', 'werkwijze' => 'Werkwijze in stappen', 'cijfers' => 'Cijfers', 'over' => 'Over ons', 'vragen' => 'Veelgestelde vragen'];
+$BLOKKEN = ['strook' => 'Balk met diensten', 'diensten' => 'Diensten', 'projecten' => 'Uitgelichte projecten', 'voorna' => 'Voor en na (foto\'s)', 'werkwijze' => 'Werkwijze in stappen', 'cijfers' => 'Cijfers', 'over' => 'Over ons', 'vragen' => 'Veelgestelde vragen', 'beeld1' => 'Eigen afbeelding 1', 'beeld2' => 'Eigen afbeelding 2', 'beeld3' => 'Eigen afbeelding 3'];
+$BEELD_VORMEN = ['links' => 'Foto links, tekst rechts', 'rechts' => 'Foto rechts, tekst links', 'breed' => 'Grote foto over de hele breedte', 'klein' => 'Kleine foto in het midden (bijvoorbeeld een logo of keurmerk)'];
+function beeld_item($n) {
+    global $ST, $BEELD_VORMEN;
+    $x = is_array($ST['beelden'][$n] ?? null) ? $ST['beelden'][$n] : [];
+    $u = ['foto' => '', 'titel' => '', 'tekst' => '', 'knop' => '', 'link' => '', 'vorm' => 'links', 'van' => '', 'tot' => ''];
+    foreach ($u as $k => $v) { if (isset($x[$k]) && is_string($x[$k])) { $u[$k] = $x[$k]; } }
+    if (!isset($BEELD_VORMEN[$u['vorm']])) { $u['vorm'] = 'links'; }
+    if (!preg_match('/^\d\d-\d\d$/', $u['van']) || !preg_match('/^\d\d-\d\d$/', $u['tot'])) { $u['van'] = ''; $u['tot'] = ''; }
+    return $u;
+}
+function beeld_nu_zichtbaar($x) {
+    if ($x['van'] === '') return true;
+    $t = date('m-d');
+    return $x['van'] <= $x['tot'] ? ($t >= $x['van'] && $t <= $x['tot']) : ($t >= $x['van'] || $t <= $x['tot']);
+}
+function beeld_datum_tekst($md) {
+    $m = ['', 'januari', 'februari', 'maart', 'april', 'mei', 'juni', 'juli', 'augustus', 'september', 'oktober', 'november', 'december'];
+    return (int)substr($md, 3, 2) . ' ' . $m[(int)substr($md, 0, 2)];
+}
 function blokken_volgorde() {
     global $ST, $BLOKKEN;
     $uit = []; $gezien = [];
@@ -1185,6 +1205,7 @@ function blok_inhoud($k) {
     if ($k === 'cijfers') { return array_values(array_filter(blok_lijst('cijfers'), function($x) { return trim($x['getal'] ?? '') !== ''; })); }
     if ($k === 'vragen') { return array_values(array_filter(blok_lijst('vragen'), function($x) { return trim($x['vraag'] ?? '') !== '' && trim($x['antwoord'] ?? '') !== ''; })); }
     if ($k === 'over') { return st('over_tekst') !== '' ? [1] : []; }
+    if (preg_match('/^beeld([1-3])$/', $k, $m)) { return beeld_item((int)$m[1] - 1)['foto'] !== '' ? [1] : []; }
     return [];
 }
 function blok_kop($titel, $intro) {
@@ -1224,6 +1245,22 @@ function blok_html($k, $sky) {
         foreach (preg_split("/\n\s*\n/", st('over_tekst')) as $al) { $o .= '<p>' . nl2br(h(trim($al))) . '</p>'; }
         if (st('over_naam') !== '') { $o .= '<p class="ov-naam">' . h(st('over_naam')) . '</p>'; }
         $o .= '</div></div></div></section>' . "\n";
+    } elseif (preg_match('/^beeld([1-3])$/', $k, $m)) {
+        $x = beeld_item((int)$m[1] - 1);
+        $id = 'beeld-' . $m[1];
+        $per = $x['van'] !== '';
+        $txt = '';
+        if ($x['titel'] !== '') { $txt .= '<h2>' . h($x['titel']) . '</h2>'; }
+        if ($x['tekst'] !== '') { foreach (preg_split("/\n\s*\n/", $x['tekst']) as $al) { $txt .= '<p>' . nl2br(h(trim($al))) . '</p>'; } }
+        if ($x['knop'] !== '') { $txt .= '<p class="bd-knop"><a class="btn primary" href="' . h($x['link'] !== '' ? $x['link'] : '/contact/') . '">' . h($x['knop']) . '</a></p>'; }
+        $img = '<div class="bd-foto"><img src="/uploads/site/' . h(rawurlencode($x['foto'])) . '" alt="' . h($x['titel'] !== '' ? $x['titel'] : st('naam')) . '" loading="lazy" /></div>';
+        $vorm = $x['vorm'];
+        if ($txt === '' && ($vorm === 'links' || $vorm === 'rechts')) { $vorm = 'solo'; }
+        $o .= '<section class="' . $cl . ' blok-beeld" id="' . $id . '"' . ($per ? ' hidden data-van="' . h($x['van']) . '" data-tot="' . h($x['tot']) . '"' : '') . '><div class="wrap"><div class="bd ' . $vorm . '">';
+        $t = $txt !== '' ? '<div class="bd-tekst">' . $txt . '</div>' : '';
+        $o .= $vorm === 'breed' ? $t . $img : $img . $t;
+        $o .= '</div></div></section>' . "\n";
+        if ($per) { $o .= '<script>(function(){var e=document.getElementById("' . $id . '");if(!e)return;var d=new Date(),t=("0"+(d.getMonth()+1)).slice(-2)+"-"+("0"+d.getDate()).slice(-2),a=e.getAttribute("data-van"),b=e.getAttribute("data-tot");if(a<=b?(t>=a&&t<=b):(t>=a||t<=b)){e.hidden=false;}})();</script>' . "\n"; }
     } elseif ($k === 'vragen') {
         $o .= '<section class="' . $cl . '" id="vragen"><div class="wrap">' . blok_kop(st('vragen_titel') ?: 'Veelgestelde vragen', '') . '<div class="fq">';
         foreach ($items as $x) { $o .= '<details class="fq-item"><summary>' . h($x['vraag']) . '</summary><div class="fq-a">' . nl2br(h($x['antwoord'])) . '</div></details>'; }
@@ -1287,6 +1324,18 @@ function render_home($pages) {
   .ov-tekst h2 { font-size:clamp(32px,4.2vw,50px); margin-bottom:18px; }
   .ov-tekst p { margin:0 0 1em; font-size:17px; }
   .ov-naam { font-weight:700; color:var(--blue); }
+  .blok-beeld[hidden] { display:none; }
+  .bd { display:grid; grid-template-columns:1fr 1fr; gap:clamp(28px,5vw,64px); align-items:center; }
+  .bd.rechts .bd-foto { order:2; }
+  .bd.solo, .bd.breed { grid-template-columns:1fr; }
+  .bd.klein { grid-template-columns:1fr; max-width:680px; margin:0 auto; text-align:center; }
+  .bd.breed .bd-tekst { max-width:760px; }
+  @media (max-width:820px) { .bd { grid-template-columns:1fr; } .bd.rechts .bd-foto { order:0; } }
+  .bd-foto img { display:block; max-width:100%; width:auto; height:auto; max-height:640px; margin:0 auto; border-radius:18px; }
+  .bd.klein .bd-foto img { max-height:380px; }
+  .bd-tekst h2 { font-size:clamp(30px,4vw,46px); margin-bottom:16px; }
+  .bd-tekst p { margin:0 0 1em; font-size:17px; }
+  .bd-knop { margin-top:22px; }
   .fq { max-width:860px; display:grid; gap:12px; }
   .fq-item { background:#fff; border:1px solid var(--line); border-radius:14px; padding:0 22px; }
   .fq-item summary { cursor:pointer; list-style:none; font-weight:700; font-size:17.5px; padding:20px 30px 20px 0; position:relative; }
@@ -6670,6 +6719,30 @@ if ($logged_in && isset($_POST['action'])) {
         if (!empty($_POST['over_foto_weg'])) { $weg($new['over_foto']); $new['over_foto'] = ''; }
         $nf = $foto('over_foto', null, 'over-');
         if ($nf !== '') { $weg($new['over_foto']); $new['over_foto'] = $nf; }
+        if (isset($_POST['bd_set'])) {
+            global $BEELD_VORMEN;
+            $bdn = [];
+            for ($n = 0; $n < 3; $n++) {
+                $o = beeld_item($n);
+                if (!empty($_POST['bd_weg'][$n])) { $weg($o['foto']); $o['foto'] = ''; }
+                $nf = $foto('bd_foto', $n, 'beeld-');
+                if ($nf !== '') { $weg($o['foto']); $o['foto'] = $nf; }
+                $o['titel'] = $kort($_POST['bd_titel'][$n] ?? '', 90);
+                $o['tekst'] = $lang($_POST['bd_tekst'][$n] ?? '', 1500);
+                $o['knop'] = $kort($_POST['bd_knop'][$n] ?? '', 40);
+                $lnk = trim((string)($_POST['bd_link'][$n] ?? ''));
+                if ($lnk !== '' && preg_match('#^www\.\S+$#i', $lnk)) { $lnk = 'https://' . $lnk; }
+                $o['link'] = preg_match('#^(https?://\S+|/\S*|\#[\w-]+|tel:[+\d ]{6,20}|mailto:\S+@\S+)$#i', $lnk) ? cut($lnk, 300) : '';
+                if ($lnk !== '' && $o['link'] === '') { $msgs[] = 'De link bij Eigen afbeelding ' . ($n + 1) . ' klopt niet en is leeggelaten. Begin met https:// of met /.'; }
+                $v = (string)($_POST['bd_vorm'][$n] ?? '');
+                $o['vorm'] = isset($BEELD_VORMEN[$v]) ? $v : 'links';
+                $md = function($dk, $mk) use ($n) { $d = (int)($_POST[$dk][$n] ?? 0); $m = (int)($_POST[$mk][$n] ?? 0); return ($d >= 1 && $d <= 31 && $m >= 1 && $m <= 12) ? sprintf('%02d-%02d', $m, $d) : ''; };
+                $van = $md('bd_vd', 'bd_vm'); $tot = $md('bd_td', 'bd_tm');
+                if (!empty($_POST['bd_periode'][$n]) && $van !== '' && $tot !== '') { $o['van'] = $van; $o['tot'] = $tot; } else { $o['van'] = ''; $o['tot'] = ''; }
+                $bdn[] = $o;
+            }
+            $new['beelden'] = $bdn;
+        }
         $msgs = array_merge($msgs, $upErrors);
 
         save_settings($new);
@@ -7136,6 +7209,24 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
                       <button type="button" class="btn ghost sm" onclick="var e=this.parentNode.querySelector('.fq-extra[hidden]');if(e){e.hidden=false;}if(!this.parentNode.querySelector('.fq-extra[hidden]')){this.hidden=true;}">+ Nog een vraag</button>
                       <div class="hint">Deze vragen helpen ook in Google.</div>
                     </details>
+                  <?php elseif (preg_match('/^beeld([1-3])$/', $k, $bm)): global $BEELD_VORMEN; $bi = (int)$bm[1] - 1; $x = beeld_item($bi); $mnd = ['', 'januari', 'februari', 'maart', 'april', 'mei', 'juni', 'juli', 'augustus', 'september', 'oktober', 'november', 'december']; $vd = $x['van'] !== '' ? (int)substr($x['van'], 3) : 1; $vm = $x['van'] !== '' ? (int)substr($x['van'], 0, 2) : 11; $td = $x['tot'] !== '' ? (int)substr($x['tot'], 3) : 1; $tm = $x['tot'] !== '' ? (int)substr($x['tot'], 0, 2) : 3; ?>
+                    <?php if ($x['foto'] !== '' && $x['van'] !== ''): ?><div class="hint" style="margin:4px 0 0 28px"><?= beeld_nu_zichtbaar($x) ? 'Nu te zien' : 'Nu niet te zien' ?>: alleen van <?= h(beeld_datum_tekst($x['van'])) ?> tot en met <?= h(beeld_datum_tekst($x['tot'])) ?>.</div><?php endif; ?>
+                    <details class="blk-in"><summary>Inhoud: afbeelding en tekst</summary>
+                      <input type="hidden" name="bd_set[<?= $bi ?>]" value="1" />
+                      <div class="field"><label for="bdfoto<?= $bi ?>">Afbeelding</label><?php if ($x['foto'] !== ''): ?><img class="blk-mini" src="/uploads/site/<?= h(rawurlencode($x['foto'])) ?>" alt="" /><label class="check"><input type="checkbox" name="bd_weg[<?= $bi ?>]" value="1" /> <span>Afbeelding weghalen</span></label><?php endif; ?><input type="file" id="bdfoto<?= $bi ?>" name="bd_foto[<?= $bi ?>]" accept="image/jpeg,image/png,image/webp,image/gif" /><div class="hint">Een foto of plaatje, bijvoorbeeld voor je winterschilderwerk, een actie of een keurmerk. Jpg, png of webp, tot 8 MB.</div></div>
+                      <div class="field"><label for="bdvorm<?= $bi ?>">Hoe laten zien</label><select id="bdvorm<?= $bi ?>" name="bd_vorm[<?= $bi ?>]"><?php foreach ($BEELD_VORMEN as $vk => $vl): ?><option value="<?= h($vk) ?>"<?= $x['vorm'] === $vk ? ' selected' : '' ?>><?= h($vl) ?></option><?php endforeach; ?></select></div>
+                      <div class="two"><div class="field"><label for="bdtitel<?= $bi ?>">Titel (mag leeg)</label><input type="text" id="bdtitel<?= $bi ?>" name="bd_titel[<?= $bi ?>]" maxlength="90" value="<?= h($x['titel']) ?>" placeholder="Bijvoorbeeld: Ook in de winter schilderen wij" /></div><div class="field"><label for="bdknop<?= $bi ?>">Tekst op de knop (mag leeg)</label><input type="text" id="bdknop<?= $bi ?>" name="bd_knop[<?= $bi ?>]" maxlength="40" value="<?= h($x['knop']) ?>" placeholder="Bijvoorbeeld: Vraag een offerte aan" /></div></div>
+                      <div class="field"><label for="bdtekst<?= $bi ?>">Tekst (mag leeg)</label><textarea id="bdtekst<?= $bi ?>" name="bd_tekst[<?= $bi ?>]" class="short" maxlength="1500"><?= h($x['tekst']) ?></textarea></div>
+                      <div class="field"><label for="bdlink<?= $bi ?>">Waar gaat de knop naartoe? (mag leeg)</label><input type="text" id="bdlink<?= $bi ?>" name="bd_link[<?= $bi ?>]" maxlength="300" value="<?= h($x['link']) ?>" placeholder="Leeg = je contactpagina" /></div>
+                      <label class="check"><input type="checkbox" name="bd_periode[<?= $bi ?>]" value="1" <?= $x['van'] !== '' ? 'checked' : '' ?> onchange="this.parentNode.nextElementSibling.hidden=!this.checked" /> <span>Alleen laten zien in een periode, elk jaar opnieuw</span></label>
+                      <div class="blk-sub"<?= $x['van'] !== '' ? '' : ' hidden' ?>>
+                        <div class="two">
+                          <div class="field"><label>Van</label><div style="display:flex;gap:8px"><select name="bd_vd[<?= $bi ?>]" aria-label="Dag"><?php for ($d = 1; $d <= 31; $d++): ?><option value="<?= $d ?>"<?= $d === $vd ? ' selected' : '' ?>><?= $d ?></option><?php endfor; ?></select><select name="bd_vm[<?= $bi ?>]" aria-label="Maand"><?php for ($m = 1; $m <= 12; $m++): ?><option value="<?= $m ?>"<?= $m === $vm ? ' selected' : '' ?>><?= $mnd[$m] ?></option><?php endfor; ?></select></div></div>
+                          <div class="field"><label>Tot en met</label><div style="display:flex;gap:8px"><select name="bd_td[<?= $bi ?>]" aria-label="Dag"><?php for ($d = 1; $d <= 31; $d++): ?><option value="<?= $d ?>"<?= $d === $td ? ' selected' : '' ?>><?= $d ?></option><?php endfor; ?></select><select name="bd_tm[<?= $bi ?>]" aria-label="Maand"><?php for ($m = 1; $m <= 12; $m++): ?><option value="<?= $m ?>"<?= $m === $tm ? ' selected' : '' ?>><?= $mnd[$m] ?></option><?php endfor; ?></select></div></div>
+                        </div>
+                        <div class="hint">Bijvoorbeeld van 1 november tot en met 1 maart voor je winterschilderwerk. Buiten die periode verdwijnt het blok vanzelf, en volgend jaar komt het vanzelf terug.</div>
+                      </div>
+                    </details>
                   <?php endif; ?>
                 </div>
               <?php endforeach; ?>
@@ -7339,6 +7430,9 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     "h2:Opbouw en details": "Hiermee maak je je website echt eigen: hoe de blokken op de voorpagina eruitzien, welk lettertype je gebruikt en hoe rond de knoppen zijn. Probeer gerust iets uit, je kunt het altijd terugzetten.",
     "h2:Extra": "Extra instellingen. Die heb je meestal niet nodig, maar ze kunnen handig zijn.",
     "h3:Extra kleuren (optioneel)": "Wil je nog meer eigen kleuren? Vink een kleur aan en kies hem. Uitgevinkt gebruikt je website de kleur van de stijl. Let op dat tekst goed leesbaar blijft.",
+    "f:bdfoto": "Kies een foto of plaatje van je telefoon of computer. Dit blok komt op je voorpagina, op de plek die je met de pijltjes kiest.",
+    "f:bdvorm": "Naast elkaar past goed bij een foto met wat tekst. Over de hele breedte is mooi voor een grote sfeerfoto. Klein in het midden is handig voor een logo of keurmerk.",
+    "f:bdlink": "Waar bezoekers naartoe gaan als ze op de knop klikken. Laat je dit leeg, dan gaat de knop naar je contactpagina. Een andere website begint met https://.",
     "f:naam": "De naam van je bedrijf. Die staat bovenaan elke pagina en in Google.",
     "f:straat": "Je adres, voor onderaan de website en voor Google. Werk je vanuit huis en wil je dat niet laten zien? Laat het dan leeg.",
     "f:postcode": "Je postcode. Die helpt Google om je in de buurt te laten zien.",
