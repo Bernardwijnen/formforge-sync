@@ -2024,6 +2024,7 @@ function res_inst() {
     $x = read_json(RES_INST, []);
     $in = $std;
     foreach (['aan', 'knop', 'goedkeuren', 'klant'] as $k) { if (isset($x[$k])) $in[$k] = !empty($x[$k]); }
+    $in['herinner'] = in_array($x['herinner'] ?? 'dag', ['dag', 'zelfde', 'uit'], true) ? ($x['herinner'] ?? 'dag') : 'dag';
     if (isset($x['soort']) && in_array($x['soort'], ['tafel', 'afspraak'], true)) { $in['soort'] = $x['soort']; }
     elseif (isset($x['personen'])) { $in['soort'] = !empty($x['personen']) ? 'tafel' : 'afspraak'; }
     $in['personen'] = $in['soort'] === 'tafel';
@@ -2163,6 +2164,10 @@ function res_mail_gast($in, $r, $soort) {
     if ($soort === 'bevestigd') {
         $ond = 'Uw ' . $w . ' bij ' . $zaak . ': ' . $wat;
         $txt = "Beste " . $r['naam'] . ",\n\nBedankt voor uw " . $w . " bij " . $zaak . ". Wij zien u graag.\n\n" . $regels . "\nKunt u toch niet komen? Annuleer dan via deze link:\n" . $link . $tel . "\n\nMet vriendelijke groet,\n" . $zaak;
+    } elseif ($soort === 'herinnering') {
+        $wanneer = $r['dag'] === date('Y-m-d') ? 'vandaag' : ($r['dag'] === date('Y-m-d', strtotime('+1 day')) ? 'morgen' : res_datum_tekst($r['dag']));
+        $ond = 'Herinnering: ' . $wanneer . ' om ' . res_tt($r['tijd']) . ' uur bij ' . $zaak;
+        $txt = "Beste " . $r['naam'] . ",\n\nEven een herinnering: u heeft " . $wanneer . " een " . $w . " bij " . $zaak . ".\n\n" . $regels . "\nWij zien u graag. Kunt u toch niet komen? Laat het ons dan even weten, dan kan iemand anders uw plek krijgen. Annuleren kan via deze link:\n" . $link . $tel . "\n\nMet vriendelijke groet,\n" . $zaak;
     } elseif ($soort === 'aanvraag') {
         $ond = 'Wij hebben uw ' . $w . ' ontvangen: ' . $wat;
         $txt = "Beste " . $r['naam'] . ",\n\nBedankt voor uw " . $w . " bij " . $zaak . ". Wij kijken of het lukt en sturen u zo snel mogelijk een bevestiging.\n\n" . $regels . "\nKunt u toch niet komen? Annuleer dan via deze link:\n" . $link . $tel . "\n\nMet vriendelijke groet,\n" . $zaak;
@@ -2223,6 +2228,25 @@ function res_limiet_ok() {
     if ($uur >= 6 || count($mijn) >= 20) { write_json(RES_LIMIET, $l); return false; }
     $mijn[] = $nu; $l[$ip] = $mijn; write_json(RES_LIMIET, $l);
     return true;
+}
+/* Herinnering per mail: draait mee met de dagelijkse taak (rond 06:00) */
+function res_herinneringen() {
+    if (!is_file(RES_FILE)) return [];
+    $in = res_inst();
+    if (empty($in['aan']) || $in['herinner'] === 'uit') return [];
+    $dag = $in['herinner'] === 'zelfde' ? date('Y-m-d') : date('Y-m-d', strtotime('+1 day'));
+    $log = []; $lijst = res_lijst(); $klaar = [];
+    foreach ($lijst as $r) {
+        if ($r['dag'] !== $dag || ($r['status'] ?? '') !== 'bevestigd' || !empty($r['herinnerd']) || !filter_var($r['mail'] ?? '', FILTER_VALIDATE_EMAIL)) continue;
+        if ($dag === date('Y-m-d') && strtotime($r['dag'] . ' ' . $r['tijd']) < time() + 3600) continue;
+        $ok = res_mail_gast($in, $r, 'herinnering');
+        $klaar[$r['id']] = $ok ? date('Y-m-d H:i') : '';
+        $log[] = ($ok ? 'Herinnering gestuurd aan ' : 'Herinnering NIET gelukt voor ') . $r['naam'] . ' (' . res_tt($r['tijd']) . ')';
+    }
+    if ($klaar) {
+        res_slot(function() use ($klaar) { $l = res_lijst(); foreach ($l as $k => $x) { if (isset($klaar[$x['id']]) && $klaar[$x['id']] !== '') $l[$k]['herinnerd'] = $klaar[$x['id']]; } res_bewaar($l); });
+    }
+    return $log;
 }
 function res_openbaar() {
     $in = res_inst();
@@ -2569,7 +2593,8 @@ function res_acties($action) {
     if ($action === 'res_inst') {
         $in = res_inst();
         $soort = ($_POST['rs_soort'] ?? '') === 'afspraak' ? 'afspraak' : 'tafel';
-        $x = ['aan' => !empty($_POST['rs_aan']), 'soort' => $soort, 'knop' => !empty($_POST['rs_knop']), 'goedkeuren' => !empty($_POST['rs_goedkeuren']), 'klant' => !empty($_POST['rs_klant']),
+        $herinner = in_array($_POST['rs_herinner'] ?? '', ['dag', 'zelfde', 'uit'], true) ? $_POST['rs_herinner'] : 'dag';
+        $x = ['aan' => !empty($_POST['rs_aan']), 'soort' => $soort, 'knop' => !empty($_POST['rs_knop']), 'goedkeuren' => !empty($_POST['rs_goedkeuren']), 'klant' => !empty($_POST['rs_klant']), 'herinner' => $herinner,
               'titel' => cut(trim((string)($_POST['rs_titel'] ?? '')), 80), 'intro' => cut(trim((string)($_POST['rs_intro'] ?? '')), 300),
               'plaatsen' => (int)($_POST['rs_plaatsen'] ?? 40), 'max_p' => (int)($_POST['rs_max'] ?? 8), 'duur' => (int)($_POST['rs_duur'] ?? 120), 'stap' => (int)($_POST['rs_stap'] ?? 30),
               'vooruit' => (int)($_POST['rs_vooruit'] ?? 60), 'vooraf' => (int)($_POST['rs_vooraf'] ?? 2), 'dagen' => [], 'dicht' => []];
@@ -2699,7 +2724,7 @@ function res_beheer_view() {
             <div class="rs-r<?= $r['status'] === 'geannuleerd' ? ' weg' : '' ?>">
               <div class="rs-t"><?= h(str_replace(':', '.', $r['tijd'])) ?></div>
               <div><span class="rs-n"><?= h($r['naam']) ?></span><?php if (!empty($in['personen'])): ?> <span class="rs-k">&middot; <?= (int)$r['p'] ?> pers.</span><?php endif; ?><?php if (res_wat($r) !== ''): ?> <span class="rs-k">&middot; <?= h(res_wat($r)) ?></span><?php endif; ?><span class="rs-b <?= h($r['status']) ?>"><?= $r['status'] === 'aanvraag' ? 'wacht op jou' : h($r['status']) ?></span>
-                <div class="rs-k"><?php if (($r['tel'] ?? '') !== ''): ?><a href="tel:<?= h(preg_replace('/[^0-9+]/', '', $r['tel'])) ?>"><?= h($r['tel']) ?></a><?php endif; ?><?php if (($r['mail'] ?? '') !== ''): ?> &middot; <a href="mailto:<?= h($r['mail']) ?>"><?= h($r['mail']) ?></a><?php endif; ?><?= ($r['bron'] ?? '') === 'zelf' ? ' &middot; zelf ingevoerd' : '' ?></div>
+                <div class="rs-k"><?php if (($r['tel'] ?? '') !== ''): ?><a href="tel:<?= h(preg_replace('/[^0-9+]/', '', $r['tel'])) ?>"><?= h($r['tel']) ?></a><?php endif; ?><?php if (($r['mail'] ?? '') !== ''): ?> &middot; <a href="mailto:<?= h($r['mail']) ?>"><?= h($r['mail']) ?></a><?php endif; ?><?= ($r['bron'] ?? '') === 'zelf' ? ' &middot; zelf ingevoerd' : '' ?><?= !empty($r['herinnerd']) ? ' &middot; herinnering verstuurd' : '' ?></div>
                 <?php if (($r['opm'] ?? '') !== ''): ?><div class="rs-k">&ldquo;<?= h($r['opm']) ?>&rdquo;</div><?php endif; ?>
               </div>
               <div class="rs-acts">
@@ -2775,6 +2800,7 @@ function res_beheer_view() {
       </div>
       <div class="field"><label for="rsdicht">Gesloten dagen (mag leeg)</label><textarea id="rsdicht" name="rs_dicht" class="short" placeholder="Bijvoorbeeld: 24-12-2026 25-12-2026 31-12-2026"><?= h(implode("\n", array_map(function($d) { return date('d-m-Y', strtotime($d)); }, $in['dicht']))) ?></textarea><div class="hint">Vakantie of een feestdag? Zet de datums hier, &#xE9;&#xE9;n per regel. Die dagen kan niemand reserveren.</div></div>
       <label class="check"><input type="checkbox" name="rs_goedkeuren" value="1" <?= !empty($in['goedkeuren']) ? 'checked' : '' ?> /> <span>Ik wil elke reservering eerst zelf bevestigen</span></label>
+      <div class="field" style="margin-top:12px"><label for="rsherinner">Herinnering per mail aan de klant</label><select id="rsherinner" name="rs_herinner"><?php foreach (['dag' => 'De dag ervoor, \'s ochtends (aanbevolen)', 'zelfde' => 'Op de dag zelf, \'s ochtends', 'uit' => 'Geen herinnering'] as $o => $l): ?><option value="<?= $o ?>"<?= $in['herinner'] === $o ? ' selected' : '' ?>><?= $l ?></option><?php endforeach; ?></select><div class="hint">Zo vergeten minder klanten hun afspraak. In de mail staan de dag, de tijd, je adres en een link om af te zeggen, zodat je de plek nog aan iemand anders kunt geven.</div></div>
       <label class="check"><input type="checkbox" name="rs_klant" value="1" <?= !empty($in['klant']) ? 'checked' : '' ?> /> <span>Zet nieuwe klanten ook bij <strong>Klanten</strong> in de administratie</span></label>
       <div class="field" style="margin-top:12px"><label for="rsmelding">Meldingen van nieuwe reserveringen naar (mag leeg)</label><input type="email" id="rsmelding" name="rs_melding" maxlength="120" value="<?= h($in['melding']) ?>" placeholder="<?= h(st('email')) ?>" /><div class="hint">Leeg = het e-mailadres van je bedrijf. Mails gaan via je gekoppelde mailbox (Administratie, tabblad E-mail).</div></div>
       <div style="margin-top:16px"><button class="btn" type="submit">Opslaan en website bijwerken</button></div>
@@ -6583,6 +6609,8 @@ function adm_taak_draai($bron = '') {
         } else { global $ADM_MAILFOUT; $docs[$i]['gepland']['fout'] = $ADM_MAILFOUT; $log[] = adm_naam($d) . ' NIET verstuurd: ' . $ADM_MAILFOUT; }
         $gewijzigd = true;
     }
+    /* 1b. herinneringen voor afspraken en reserveringen */
+    foreach (res_herinneringen() as $rl) { $log[] = $rl; }
     /* 2. te laat: eerst aan jezelf vragen of er een herinnering uit mag */
     $eigen = adm_eigen_mail();
     if ($eigen !== '') {
@@ -8972,6 +9000,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     "f:abnaam": "Zo heet de knop in het menu van je website, bijvoorbeeld Occasions, Aanbod of Collectie.",
     "f:abdagen": "Hoe lang een verkochte auto of uitverkocht product nog met dat label op je website blijft staan.",
     "f:abbestand": "Een Excel-bestand (.xlsx) of CSV. Op de eerste regel de kopjes, zoals Kenteken, Merk, Model, Prijs, Bouwjaar en Km.",
+    "f:rsherinner": "Rond 6 uur 's ochtends krijgt de klant automatisch een mail met zijn afspraak. Dat werkt alleen als de klant een e-mailadres heeft ingevuld.",
     "f:rstitel": "De kop boven de kalender, bijvoorbeeld Reserveer een tafel of Maak een afspraak.",
     "f:rsstap": "Om de hoeveel minuten er een tijd te kiezen is. Elke 30 minuten geeft bijvoorbeeld 18.00, 18.30, 19.00.",
     "f:rsduur": "Hoe lang een gast ongeveer blijft. Zolang telt zijn plek als bezet, ook voor de tijden erna.",
