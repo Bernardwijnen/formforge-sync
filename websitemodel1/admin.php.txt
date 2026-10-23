@@ -2647,6 +2647,41 @@ function res_acties($action) {
         }
         header('Location: admin.php?reserveren=1&dag=' . rawurlencode((string)($_POST['terug'] ?? ''))); exit;
     }
+    if ($action === 'res_afrekenen') {
+        $id = (string)($_POST['id'] ?? ''); $lijst = res_lijst(); $r = null;
+        foreach ($lijst as $x) { if (($x['id'] ?? '') === $id) { $r = $x; break; } }
+        $terug = 'admin.php?reserveren=1&dag=' . rawurlencode((string)($r['dag'] ?? ''));
+        if (!$r) { $_SESSION['ff_notice'] = 'Deze afspraak bestaat niet meer.'; header('Location: admin.php?reserveren=1'); exit; }
+        if (!empty($r['factuur_id']) && adm_vind(adm_docs(), $r['factuur_id']) !== null) { $_SESSION['ff_notice'] = 'Deze afspraak is al afgerekend.'; header('Location: ' . $terug); exit; }
+        $wijzen = ['pin' => 'pin', 'contant' => 'contant', 'anders' => 'overig'];
+        $wijze = isset($wijzen[$_POST['wijze'] ?? '']) ? $_POST['wijze'] : 'pin';
+        $ainst = adm_inst();
+        $kor = !empty($ainst['kor']); $pct = $kor ? 0 : (int)$ainst['btw'];
+        $excl = function($incl) use ($pct) { if ($pct <= 0) return $incl; $e = (int)round($incl * 100 / (100 + $pct)); $e += $incl - ($e + (int)round($e * $pct / 100)); return $e; };
+        $regels = [];
+        $hoofd = adm_cent($_POST['bedrag'] ?? '');
+        $oms = ($r['dienst'] ?? '') !== '' ? $r['dienst'] : (ucfirst(res_woord($in)) . (!empty($in['personen']) ? ' ' . (int)$r['p'] . ' personen' : ''));
+        if ($hoofd > 0) $regels[] = ['oms' => $oms, 'aantal' => 1, 'eenheid' => 'stuk', 'prijs' => $excl($hoofd), 'btw' => $pct];
+        $eo = cut(trim((string)($_POST['extra_oms'] ?? '')), 200); $eb = adm_cent($_POST['extra_bedrag'] ?? '');
+        if ($eb > 0) $regels[] = ['oms' => $eo !== '' ? $eo : 'Overig', 'aantal' => 1, 'eenheid' => 'stuk', 'prijs' => $excl($eb), 'btw' => $pct];
+        if (!$regels) { $_SESSION['ff_notice'] = 'Vul een bedrag in.'; header('Location: ' . $terug); exit; }
+        $kl = adm_klanten(); $ki = adm_vind($kl, (string)($r['klant_id'] ?? ''));
+        if ($ki === null && filter_var($r['mail'] ?? '', FILTER_VALIDATE_EMAIL)) { foreach ($kl as $n => $k) { if (strcasecmp((string)($k['email'] ?? ''), $r['mail']) === 0) { $ki = $n; break; } } }
+        if ($ki === null) {
+            $kl[] = ['id' => adm_id('k'), 'naam' => $r['naam'], 'contact' => '', 'email' => (string)($r['mail'] ?? ''), 'tel' => (string)($r['tel'] ?? ''), 'straat' => '', 'postcode' => '', 'plaats' => '', 'kvk' => '', 'btw' => '', 'notitie' => ''];
+            adm_save_klanten($kl); $ki = count($kl) - 1;
+        }
+        $k = $kl[$ki];
+        $nr = adm_volgnummer($ainst, 'factuur'); write_json(ADM_INST, $ainst);
+        $d = ['id' => adm_id('d'), 'soort' => 'factuur', 'kassa' => true, 'betaalwijze' => $wijzen[$wijze], 'nummer' => $nr, 'status' => 'betaald', 'credit' => false, 'van' => '', 'token' => bin2hex(random_bytes(12)),
+              'betaald_op' => date('Y-m-d'), 'verstuurd_op' => '', 'akkoord_op' => '', 'aangemaakt' => date('Y-m-d H:i'), 'klant_id' => $k['id'], 'klant' => adm_snap($k),
+              'datum' => date('Y-m-d'), 'leverdatum' => $r['dag'], 'termijn' => 0, 'geldig_tot' => '', 'onderwerp' => '', 'opmerking' => 'Betaald met ' . $wijzen[$wijze] . '.', 'kor' => $kor, 'pdf' => '', 'regels' => $regels];
+        $docs = adm_docs(); array_unshift($docs, $d); adm_save_docs($docs);
+        $tot = adm_tot($d)['incl'];
+        res_slot(function() use ($id, $d, $tot, $wijzen, $wijze) { $l = res_lijst(); foreach ($l as $n => $x) { if (($x['id'] ?? '') === $id) { $l[$n]['factuur_id'] = $d['id']; $l[$n]['afgerekend'] = ['bedrag' => $tot, 'wijze' => $wijzen[$wijze], 'op' => date('Y-m-d H:i')]; } } res_bewaar($l); });
+        $_SESSION['ff_notice'] = 'Afgerekend: ' . adm_eur($tot) . ' met ' . $wijzen[$wijze] . ' van ' . $r['naam'] . '. Het staat als omzet in je administratie.';
+        header('Location: ' . $terug); exit;
+    }
     if ($action === 'res_zelf') {
         $in = res_inst();
         $dag = (string)($_POST['dag'] ?? ''); $tijd = (string)($_POST['tijd'] ?? '');
@@ -2680,7 +2715,9 @@ function res_beheer_view() {
     }
     $vandaag = date('Y-m-d');
     $kies = preg_match('/^\d{4}-\d\d-\d\d$/', (string)($_GET['dag'] ?? '')) ? (string)$_GET['dag'] : '';
-    $komend = array_values(array_filter($lijst, function($r) use ($vandaag) { return $r['dag'] >= $vandaag; }));
+    $vanaf = date('Y-m-d', strtotime('-7 days'));
+    $komend = array_values(array_filter($lijst, function($r) use ($vanaf) { return $r['dag'] >= $vanaf; }));
+    $eersteKomend = ''; foreach ($komend as $r) { if ($r['dag'] >= $vandaag) { $eersteKomend = $r['dag']; break; } }
     $perDag = [];
     foreach ($komend as $r) { $perDag[$r['dag']][] = $r; }
     ?>
@@ -2694,7 +2731,12 @@ function res_beheer_view() {
       .rs-t{font-size:20px;font-weight:800;} .rs-n{font-weight:700;} .rs-k{color:#9fb0cc;font-size:14px;} .rs-k a{color:#8fb3ff;}
       .rs-b{display:inline-block;font-size:12px;font-weight:700;padding:2px 9px;border-radius:999px;margin-left:6px;vertical-align:middle;}
       .rs-b.bevestigd{background:#163d2a;color:#6ee7a8;} .rs-b.aanvraag{background:#3a2f12;color:#f6c453;} .rs-b.geannuleerd{background:#3a1f2a;color:#ff9bb5;}
-      .rs-acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;} .rs-acts form{margin:0;}
+.rs-acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;} .rs-acts form{margin:0;}
+      .rs-afr{grid-column:1 / -1;background:#0c121c;border:1px solid #263049;border-radius:12px;padding:12px;margin:2px 0 4px;}
+      .rs-afr[hidden]{display:none;}
+      .rs-afr-rij{display:grid;grid-template-columns:110px 1fr 110px;gap:8px;} .rs-afr-rij label{font-size:13px;color:#9fb0cc;display:grid;gap:4px;}
+      @media (max-width:560px){.rs-afr-rij{grid-template-columns:1fr 1fr;} .rs-afr-rij label:nth-child(2){grid-column:1 / -1;order:3;}}
+      .rs-afr-knop{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;} .rs-afr-knop span{color:#9fb0cc;font-size:14px;}
       @media (max-width:640px){.rs-r{grid-template-columns:56px 1fr;} .rs-acts{grid-column:1 / -1;justify-content:flex-start;}}
       .rs-dt{display:grid;gap:8px;margin-bottom:10px;}
       .rs-drij{display:grid;grid-template-columns:2fr 110px 100px;gap:8px;padding:10px;border:1px solid #263049;border-radius:12px;}
@@ -2715,10 +2757,11 @@ function res_beheer_view() {
     <?php endif; ?>
 
     <div class="formcard">
-      <h2>Komende <?= h($Wn) ?></h2>
-      <?php if (!$perDag): ?><p class="hint" style="margin:0">Er zijn nog geen komende <?= h($Wn) ?>.</p><?php endif; ?>
+      <h2><?= h(ucfirst($Wn)) ?></h2>
+      <?php if (!$perDag): ?><p class="hint" style="margin:0">Er zijn nog geen <?= h($Wn) ?>.</p><?php endif; ?>
       <?php foreach ($perDag as $dag => $rs): $act = array_filter($rs, function($r) { return $r['status'] !== 'geannuleerd'; }); $pers = array_sum(array_map(function($r) use ($in) { return res_telt($r, $in); }, $act)); ?>
-        <details class="rs-dag"<?= ($kies === $dag || ($kies === '' && $dag === array_key_first($perDag))) ? ' open' : '' ?>>
+        <?php if ($dag < $vandaag && !isset($kopVoorbij)): $kopVoorbij = 1; ?><p class="hint" style="margin:0 0 8px">Afgelopen week, om nog af te rekenen:</p><?php endif; ?><?php if ($dag >= $vandaag && !empty($kopVoorbij) && empty($kopKomend)): $kopKomend = 1; ?><p class="hint" style="margin:14px 0 8px">Vandaag en later:</p><?php endif; ?>
+        <details class="rs-dag"<?= ($kies === $dag || ($kies === '' && $dag === $eersteKomend)) ? ' open' : '' ?>>
           <summary><?= h(ucfirst(res_datum_tekst($dag))) ?><span><?= count($act) ?> <?= count($act) === 1 ? h($W) : h($Wn) ?><?= !empty($in['personen']) ? ', ' . $pers . ' personen' : '' ?><?php $omzet = array_sum(array_map(function($r) { return (int)($r['prijs'] ?? 0); }, $act)); echo $omzet > 0 ? ', ' . h(adm_eur($omzet)) : ''; ?></span></summary>
           <?php foreach ($rs as $r): ?>
             <div class="rs-r<?= $r['status'] === 'geannuleerd' ? ' weg' : '' ?>">
@@ -2729,8 +2772,16 @@ function res_beheer_view() {
               </div>
               <div class="rs-acts">
                 <?php if ($r['status'] === 'aanvraag'): ?><form method="post"><input type="hidden" name="action" value="res_bevestig" /><input type="hidden" name="id" value="<?= h($r['id']) ?>" /><input type="hidden" name="mail" value="1" /><input type="hidden" name="terug" value="<?= h($dag) ?>" /><button class="btn sm" type="submit">Bevestigen</button></form><?php endif; ?>
-                <?php if ($r['status'] !== 'geannuleerd'): ?><form method="post" onsubmit="return confirm('Deze <?= h($W) ?> annuleren?')"><input type="hidden" name="action" value="res_annuleer" /><input type="hidden" name="id" value="<?= h($r['id']) ?>" /><input type="hidden" name="terug" value="<?= h($dag) ?>" /><?php if (($r['mail'] ?? '') !== ''): ?><input type="hidden" name="mail" value="1" /><?php endif; ?><button class="btn ghost sm" type="submit">Annuleren</button></form><?php endif; ?>
+                <?php if ($r['status'] !== 'geannuleerd'): ?><?php if (!empty($r['factuur_id'])): ?><a class="btn ghost sm" href="admin.php?adm=doc&amp;id=<?= h(rawurlencode($r['factuur_id'])) ?>"><?= !empty($r['afgerekend']) ? 'Afgerekend ' . h(adm_eur((int)$r['afgerekend']['bedrag'])) . ' (' . h($r['afgerekend']['wijze']) . ')' : 'Factuur bekijken' ?></a><?php else: ?><button class="btn sm" type="button" onclick="var f=this.parentNode.parentNode.querySelector('.rs-afr');f.hidden=!f.hidden;">Afrekenen</button><?php endif; ?><form method="post" onsubmit="return confirm('Deze <?= h($W) ?> annuleren?')"><input type="hidden" name="action" value="res_annuleer" /><input type="hidden" name="id" value="<?= h($r['id']) ?>" /><input type="hidden" name="terug" value="<?= h($dag) ?>" /><?php if (($r['mail'] ?? '') !== ''): ?><input type="hidden" name="mail" value="1" /><?php endif; ?><button class="btn ghost sm" type="submit">Annuleren</button></form><?php endif; ?>
               </div>
+              <?php if (empty($r['factuur_id']) && $r['status'] !== 'geannuleerd'): ?>
+              <form class="rs-afr" method="post" hidden>
+                <input type="hidden" name="action" value="res_afrekenen" /><input type="hidden" name="id" value="<?= h($r['id']) ?>" />
+                <div class="rs-afr-rij"><label>Bedrag<input type="text" inputmode="decimal" name="bedrag" value="<?= (int)($r['prijs'] ?? 0) > 0 ? h(number_format($r['prijs'] / 100, 2, ',', '')) : '' ?>" placeholder="0,00" /></label><label>Extra (mag leeg)<input type="text" name="extra_oms" placeholder="Bijvoorbeeld: haarwax" /></label><label>Bedrag extra<input type="text" inputmode="decimal" name="extra_bedrag" placeholder="0,00" /></label></div>
+                <div class="rs-afr-knop"><span>Betaald met:</span><button class="btn sm" name="wijze" value="pin" type="submit">Pin</button><button class="btn sm" name="wijze" value="contant" type="submit">Contant</button><button class="btn ghost sm" name="wijze" value="anders" type="submit">Anders</button></div>
+                <div class="hint" style="margin:6px 0 0">Bedragen inclusief btw. Het komt als omzet in je administratie, de klant krijgt geen factuur.</div>
+              </form>
+              <?php endif; ?>
             </div>
           <?php endforeach; ?>
         </details>
@@ -3786,6 +3837,7 @@ function adm_status($d) {
 }
 function adm_titel($d) {
     if ($d['soort'] === 'offerte') return 'Offerte';
+    if (!empty($d['kassa'])) return 'Kassabon';
     return !empty($d['credit']) ? 'Creditfactuur' : 'Factuur';
 }
 function adm_naam($d) {
