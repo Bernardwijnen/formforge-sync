@@ -96,6 +96,8 @@ function default_settings() {
         'over_titel'       => 'Over ons',
         'over_tekst'       => '',
         'over_naam'        => '',
+        'woord_project'    => '',
+        'woord_projecten'  => '',
         'over_foto'        => '',
         'vragen_titel'     => 'Veelgestelde vragen',
         'vragen'           => [],
@@ -1109,11 +1111,17 @@ function slogan_bar() {
     return st('slogan') !== '' ? '<div class="notice"><div class="wrap">' . h(st('slogan')) . '</div></div>' . "\n" : '';
 }
 /* $backUrl leeg = menu van de voorpagina */
+/* Hoe heet het werk op de site: projecten, boeken, fragmenten... (enkelvoud, meervoud) */
+function werk_woord() {
+    $e = trim((string)st('woord_project')); $m = trim((string)st('woord_projecten'));
+    return [$e !== '' ? mb_strtolower(cut($e, 30), 'UTF-8') : 'project', $m !== '' ? mb_strtolower(cut($m, 30), 'UTF-8') : 'projecten'];
+}
+function werk_hoofd($w) { return mb_strtoupper(mb_substr($w, 0, 1, 'UTF-8'), 'UTF-8') . mb_substr($w, 1, null, 'UTF-8'); }
 function site_header($backUrl = '', $backLabel = '') {
     $out = slogan_bar() . '<header class="top"><div class="wrap">' . brand_html() . '<nav class="menu" aria-label="Menu">';
     if ($backUrl === '') {
         if (!empty(services())) { $out .= '<a class="nav" href="/#diensten">Diensten</a>'; }
-        $out .= (load_pages() ? '<a class="nav" href="/#projecten">Projecten</a>' : '') . ab_menu_link() . mk_menu_link();
+        $out .= (load_pages() ? '<a class="nav" href="/#projecten">' . h(werk_hoofd(werk_woord()[1])) . '</a>' : '') . ab_menu_link() . mk_menu_link();
     } else {
         $out .= '<a class="back" href="' . h($backUrl) . '" onclick="try{var r=document.referrer;if(r&&r.indexOf(location.origin+\'/\')===0&&history.length>1){history.back();return false;}}catch(e){}return true;"><svg viewBox="0 0 24 24" fill="none" width="16" height="16" aria-hidden="true"><path d="M19 12H5M11 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="long">' . h($backLabel) . '</span><span class="short">Terug</span></a>';
     }
@@ -1330,7 +1338,7 @@ function render_home($pages) {
     foreach (services() as $k => $s) { $svc[] = ['key' => $k, 'page' => '/' . $s['slug'] . '/', 'name' => $s['naam'], 'text' => $s['kort'] ?? '']; }
     $cfg = [
         'services' => $svc, 'featured' => $featured, 'projects' => $projects,
-        'title' => home_title(), 'naam' => st('naam'),
+        'title' => home_title(), 'naam' => st('naam'), 'we' => werk_woord()[0], 'wm' => werk_woord()[1],
     ];
     $json = json_encode($cfg, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
 
@@ -1495,7 +1503,7 @@ CSS;
             $sky = !$sky;
         } elseif ($k === 'projecten') {
             if (empty($featured)) continue;
-            $out .= '<section class="section' . ($sky ? ' sky' : '') . '" id="featuredSection" hidden><div class="wrap"><div class="head"><div><h2>Uitgelichte projecten</h2><p>Een greep uit ons werk.</p></div><a class="textlink" href="#projecten">Alle projecten bekijken</a></div><div class="folders" id="featured"></div></div></section>' . "\n";
+            $out .= '<section class="section' . ($sky ? ' sky' : '') . '" id="featuredSection" hidden><div class="wrap"><div class="head"><div><h2>Uitgelichte ' . h(werk_woord()[1]) . '</h2><p>Een greep uit ons werk.</p></div><a class="textlink" href="#projecten">Alle ' . h(werk_woord()[1]) . ' bekijken</a></div><div class="folders" id="featured"></div></div></section>' . "\n";
             $sky = !$sky;
         } else {
             $b = blok_html($k, $sky);
@@ -1506,7 +1514,7 @@ CSS;
 
     $out .= '<main id="projects" class="view" hidden><section class="crumb"><div class="wrap">';
     $out .= '<a class="backlink" href="/" data-go="home"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M19 12H5M11 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Terug naar home</a>';
-    $out .= '<h1><span id="projTitle">Projecten</span> <span class="count" id="projCount">0</span></h1><p id="projLead"></p><nav class="filters" id="filters" aria-label="Filter op dienst"></nav></div></section>';
+    $out .= '<h1><span id="projTitle">' . h(werk_hoofd(werk_woord()[1])) . '</span> <span class="count" id="projCount">0</span></h1><p id="projLead"></p><nav class="filters" id="filters" aria-label="Filter op dienst"></nav></div></section>';
     $out .= '<section class="section sky"><div class="wrap"><div class="cards" id="cards"></div></div></section></main>' . "\n";
 
     $out .= site_footer();
@@ -1538,7 +1546,7 @@ CSS;
       var n = countFor(s.key);
       return '<a class="service" href="' + esc(s.page) + '"><span class="num">' + ("0" + (i + 1)).slice(-2) + '</span>' +
         '<h3>' + esc(s.name) + '</h3><p>' + esc(s.text) + '</p>' +
-        '<span class="go">Meer informatie' + (n ? ' <span class="n">(' + n + (n === 1 ? ' project' : ' projecten') + ')</span>' : '') + ' ' + arrow + '</span></a>';
+        '<span class="go">Meer informatie' + (n ? ' <span class="n">(' + n + (n === 1 ? ' ' + CFG.we : ' ' + CFG.wm) + ')</span>' : '') + ' ' + arrow + '</span></a>';
     }).join("");
   }
 
@@ -1558,7 +1566,7 @@ CSS;
         '<span class="tab" aria-hidden="true"></span><div class="body">' + sheet +
         '<div class="front"><h3>' + esc(p.title) + '</h3>' +
         (p.desc ? '<p class="desc">' + esc(p.desc) + '</p>' : '') +
-        '<div class="meta"><span class="open">Bekijk project ' + arrow + '</span></div></div></div></a>';
+        '<div class="meta"><span class="open">Bekijk ' + esc(CFG.we) + ' ' + arrow + '</span></div></div></div></a>';
     }).join("");
   }
 
@@ -1566,11 +1574,11 @@ CSS;
     var s = cat ? serviceByKey(cat) : null;
     if (cat && !s) { cat = ""; }
     var list = data.projects.filter(function (p) { return !cat || (p.cats || []).indexOf(cat) !== -1; });
-    document.getElementById("projTitle").textContent = s ? s.name : "Projecten";
-    document.getElementById("projLead").textContent = s ? s.text : "Een overzicht van ons werk. Kies een project voor de foto's en het verhaal.";
+    document.getElementById("projTitle").textContent = s ? s.name : CFG.wm.charAt(0).toUpperCase() + CFG.wm.slice(1);
+    document.getElementById("projLead").textContent = s ? s.text : "Een overzicht van ons werk. Kies er een voor de foto's en het verhaal.";
     document.getElementById("projCount").textContent = list.length;
     document.getElementById("filters").innerHTML = SERVICES.length ?
-      '<a href="#projecten"' + (!cat ? ' class="on" aria-current="true"' : '') + '>Alle projecten</a>' +
+      '<a href="#projecten"' + (!cat ? ' class="on" aria-current="true"' : '') + '>Alle ' + esc(CFG.wm) + '</a>' +
       SERVICES.map(function (x) {
         return '<a href="#projecten/' + esc(x.key) + '"' + (x.key === cat ? ' class="on" aria-current="true"' : '') + '>' + esc(x.name) + '</a>';
       }).join("") : "";
@@ -1580,7 +1588,7 @@ CSS;
         (p.photo ? '<img src="' + esc(p.photo) + '" alt="" loading="lazy" />' : '') +
         '</div><div class="txt">' + (tags ? '<div class="tags">' + tags + '</div>' : '') +
         '<h3>' + esc(p.title) + '</h3><p>' + esc(p.desc || "") +
-        '</p><span class="go">Bekijk project ' + arrow + '</span></div></a>';
+        '</p><span class="go">Bekijk ' + esc(CFG.we) + ' ' + arrow + '</span></div></a>';
     }).join("") : '<p class="empty">' + (cat ? "Er staan nog geen projecten in deze categorie. Binnenkort meer." : "Er zijn nog geen projecten gepubliceerd.") + '</p>';
   }
 
@@ -1593,7 +1601,7 @@ CSS;
       var cat = h.length > 11 ? h.slice(11) : "";
       renderProjects(cat);
       var s = serviceByKey(cat);
-      document.title = (s ? s.name + " - " : "Projecten - ") + CFG.naam;
+      document.title = (s ? s.name + " - " : CFG.wm.charAt(0).toUpperCase() + CFG.wm.slice(1) + " - ") + CFG.naam;
       window.scrollTo(0, 0);
     } else {
       document.title = CFG.title;
@@ -1875,7 +1883,7 @@ function render_project_page($p) {
 </head>
 <body>
 CSS;
-    $out .= site_header('/#projecten', 'Terug naar projecten');
+    $out .= site_header('/#projecten', 'Terug naar ' . werk_woord()[1]);
     $out .= '<section class="phero"><div class="wrap">';
     $cats = page_cats($p);
     $names = cat_names();
@@ -1911,7 +1919,7 @@ function render_code_page($p) {
     $t = h($title);
     $out  = site_head($title, meta_desc_for($p), '/' . $p['slug'] . '/');
     $out .= "<style>.page-main{padding:0;} #app-frame{width:100%;border:0;display:block;min-height:100vh;}</style>\n</head>\n<body>\n";
-    $out .= site_header('/#projecten', 'Terug naar projecten');
+    $out .= site_header('/#projecten', 'Terug naar ' . werk_woord()[1]);
     $out .= <<<HTML
 <main class="page-main">
   <iframe id="app-frame" title="{$t}" scrolling="no" loading="eager"></iframe>
@@ -2101,6 +2109,7 @@ function res_demo_lijst() {
     $in = res_inst();
     $namen = [['Daan', 'Vermeulen'], ['Sem', 'Hendriks'], ['Luuk', 'Bakker'], ['Milan', 'de Groot'], ['Noah', 'Peeters'], ['Finn', 'Dekker'], ['Jesse', 'Willems'], ['Thijs', 'Smeets']];
     $plan = [[-1, '10:00', 'afgerond'], [0, '09:30', 'bevestigd'], [0, '11:00', 'bevestigd'], [0, '14:30', 'bevestigd'], [1, '10:30', 'bevestigd'], [1, '15:00', 'nieuw'], [2, '13:00', 'bevestigd'], [3, '09:00', 'nieuw']];
+    if ($in['soort'] === 'tafel') { $tt = ['19:00', '12:30', '13:00', '18:30', '19:30', '20:00', '18:00', '12:00']; foreach ($plan as $i => $pl) { $plan[$i][1] = $tt[$i]; } }
     $uit = [];
     foreach ($plan as $i => $pl) {
         $t = strtotime(($pl[0] >= 0 ? '+' : '') . $pl[0] . ' days');
@@ -4777,6 +4786,9 @@ function adm_vind($lijst, $id) {
 /* Voorbeeldgegevens voor de demo (worden nooit opgeslagen) */
 function adm_demo() {
     if (demo_branche() === 'barber') return adm_demo_barber();
+    if (demo_branche() === 'restaurant') return adm_demo_restaurant();
+    if (demo_branche() === 'autobedrijf') return adm_demo_auto();
+    if (demo_branche() === 'schrijver') return adm_demo_schrijver();
     $j = date('Y');
     $dg = function($n) { return date('Y-m-d', strtotime(($n >= 0 ? '+' : '') . $n . ' days')); };
     $k1 = ['id' => 'kdemo1', 'naam' => 'Familie Jansen', 'contact' => '', 'email' => 'jansen@voorbeeld.nl', 'tel' => '06 12345678', 'straat' => 'Dorpsstraat 12', 'postcode' => '6161 AB', 'plaats' => 'Geleen', 'kvk' => '', 'btw' => '', 'notitie' => ''];
@@ -4868,6 +4880,174 @@ function adm_demo2_barber($basis) {
         ['email' => 'facturen@voorbeeld-kapper.nl', 'naam' => 'Kappersgroothandel Voorbeeld', 'termijn' => 30],
         ['email' => 'huur@voorbeeld-vastgoed.nl', 'naam' => 'Verhuur Winkelpand Centrum', 'termijn' => 14],
         ['email' => 'factuur@voorbeeld-energie.nl', 'naam' => 'Energie Voorbeeld', 'termijn' => 30],
+    ];
+    return $basis;
+}
+
+/* Voorbeeldadministratie voor een restaurant */
+function adm_demo_restaurant() {
+    $j = date('Y');
+    $dg = function($n) { return date('Y-m-d', strtotime(($n >= 0 ? '+' : '') . $n . ' days')); };
+    $kl = function($id, $naam, $contact, $mail, $tel, $straat, $pc, $plaats, $kvk = '') { return ['id' => $id, 'naam' => $naam, 'contact' => $contact, 'email' => $mail, 'tel' => $tel, 'straat' => $straat, 'postcode' => $pc, 'plaats' => $plaats, 'kvk' => $kvk, 'btw' => '', 'notitie' => '']; };
+    $k1 = $kl('kdemo1', 'Advieskantoor Zuid', 'Marieke Lemmens', 'info@voorbeeld.nl', '046 123 4567', 'Stationsplein 4', '6161 BD', 'Geleen', '12345678');
+    $k2 = $kl('kdemo2', 'Familie Coenen', '', 'coenen@voorbeeld.nl', '06 1234 5620', 'Dorpsstraat 8', '6162 AA', 'Geleen');
+    $k3 = $kl('kdemo3', 'Voetbalvereniging Voorbeeld', 'het bestuur', 'bestuur@voorbeeld.nl', '', 'Sportlaan 1', '6163 AB', 'Geleen', '87654321');
+    $snap = function($k) { unset($k['id'], $k['tel'], $k['notitie']); return $k; };
+    $r = function($oms, $a, $e, $p, $b = 9) { return ['oms' => $oms, 'aantal' => $a, 'eenheid' => $e, 'prijs' => $p, 'btw' => $b]; };
+    $doc = function($id, $soort, $nr, $status, $k, $datum, $regels, $extra = []) use ($snap) {
+        return array_merge(['id' => $id, 'soort' => $soort, 'nummer' => $nr, 'status' => $status, 'credit' => false, 'van' => '',
+            'klant_id' => $k['id'], 'klant' => $snap($k), 'datum' => $datum, 'leverdatum' => '', 'termijn' => 14, 'geldig_tot' => '',
+            'onderwerp' => '', 'regels' => $regels, 'opmerking' => '', 'token' => 'demo-' . $id, 'kor' => false,
+            'betaald_op' => '', 'verstuurd_op' => '', 'akkoord_op' => '', 'aangemaakt' => $datum], $extra);
+    };
+    $docs = [
+        $doc('ddemo1', 'factuur', $j . '-0112', 'betaald', $k1, $dg(-34), [$r('Zakelijke lunch, 12 personen', 12, 'persoon', 2294), $r('Dranken', 1, 'post', 9450, 21)], ['onderwerp' => 'Lunch met klanten', 'betaald_op' => $dg(-20)]),
+        $doc('ddemo2', 'factuur', $j . '-0118', 'open', $k1, $dg(-9), [$r('Kerstdiner personeel, 3 gangen', 18, 'persoon', 3624), $r('Wijnarrangement', 18, 'persoon', 1653, 21)], ['onderwerp' => 'Kerstdiner op locatie']),
+        $doc('ddemo3', 'factuur', $j . '-0119', 'betaald', $k2, $dg(-6), [$r('Verjaardagsdiner, 3 gangen', 10, 'persoon', 3211), $r('Taart met kaarsjes', 1, 'stuk', 3211)], ['onderwerp' => 'Verjaardag 60 jaar', 'betaald_op' => $dg(-6)]),
+        $doc('ddemo4', 'offerte', $j . '-O021', 'verstuurd', $k3, $dg(-3), [$r('Buffet na de kampioenswedstrijd', 45, 'persoon', 1835), $r('Dranken op nacalculatie', 1, 'post', 0, 21)], ['onderwerp' => 'Feestavond kampioenschap', 'geldig_tot' => $dg(27), 'verstuurd_op' => $dg(-3)]),
+        $doc('ddemo5', 'offerte', $j . '-O019', 'akkoord', $k2, $dg(-20), [$r('Verjaardagsdiner, 3 gangen', 10, 'persoon', 3211)], ['onderwerp' => 'Verjaardag 60 jaar', 'geldig_tot' => $dg(10), 'akkoord_op' => $dg(-15)]),
+    ];
+    return ['klanten' => [$k1, $k2, $k3], 'docs' => $docs];
+}
+function adm_demo2_restaurant($basis) {
+    $dg = function($n) { return date('Y-m-d', strtotime(($n >= 0 ? '+' : '') . $n . ' days')); };
+    $ink = function($id, $lev, $nr, $dag, $bedrag, $btw, $status, $extra = []) use ($dg) {
+        return array_merge(['id' => $id, 'leverancier' => $lev, 'afzender' => '', 'nummer' => $nr, 'datum' => $dg($dag), 'termijn' => 14, 'verval' => $dg($dag + 14),
+            'bedrag' => $bedrag, 'btw' => $btw, 'btwsoort' => 'nl', 'oms' => '', 'status' => $status, 'betaald_op' => '', 'pdf' => 'demo', 'hash' => '', 'bron' => 'mail',
+            'controleren' => false, 'aangemaakt' => $dg($dag)], $extra);
+    };
+    $basis['inkoop'] = [
+        $ink('idemo1', 'Horecagroothandel Voorbeeld', 'HG-301877', -2, 84230, 6955, 'open', ['afzender' => 'facturen@voorbeeld-horeca.nl', 'oms' => 'Vlees, zuivel en groente']),
+        $ink('idemo2', 'Drankenhandel Voorbeeld', 'DV-2026-552', -5, 61017, 10590, 'open', ['afzender' => 'factuur@voorbeeld-dranken.nl', 'oms' => 'Fusten bier en wijn']),
+        $ink('idemo3', 'Bakkerij Voorbeeld', 'BV-0912', -9, 9810, 810, 'open', ['afzender' => 'info@voorbeeld-bakker.nl', 'controleren' => true]),
+        $ink('idemo4', 'Horecagroothandel Voorbeeld', 'HG-300421', -16, 79115, 6532, 'betaald', ['betaald_op' => $dg(-4), 'afzender' => 'facturen@voorbeeld-horeca.nl']),
+        $ink('idemo5', 'Energie Voorbeeld', 'EV-772210', -30, 54450, 9450, 'betaald', ['betaald_op' => $dg(-22), 'afzender' => 'factuur@voorbeeld-energie.nl', 'termijn' => 30]),
+    ];
+    $tx = function($id, $dag, $bedrag, $naam, $oms, $ind, $extra = []) use ($dg) {
+        return array_merge(['id' => $id, 'datum' => $dg($dag), 'bedrag' => $bedrag, 'naam' => $naam, 'iban' => '', 'oms' => $oms, 'indeling' => $ind, 'btw' => 9, 'koppel' => ''], $extra);
+    };
+    $basis['bank'] = [
+        $tx('bdemo1', -1, 318540, 'Pinautomaat uitbetaling', 'Uitbetaling pinbetalingen weekend', 'omzet'),
+        $tx('bdemo2', -4, -79115, 'Horecagroothandel Voorbeeld', 'Factuur HG-300421', 'zakelijk', ['koppel' => 'i:idemo4']),
+        $tx('bdemo3', -6, 38533, 'Familie Coenen', 'Factuur ' . date('Y') . '-0119', 'omzet', ['koppel' => 'd:ddemo3']),
+        $tx('bdemo4', -8, 205410, 'Pinautomaat uitbetaling', 'Uitbetaling pinbetalingen week', 'omzet'),
+        $tx('bdemo5', -20, 39208, 'Advieskantoor Zuid', 'Factuur ' . date('Y') . '-0112', 'omzet', ['koppel' => 'd:ddemo1']),
+        $tx('bdemo6', -22, -54450, 'Energie Voorbeeld', 'Factuur EV-772210', 'zakelijk', ['koppel' => 'i:idemo5']),
+        $tx('bdemo7', -33, -1295, 'Bank', 'Kosten zakelijke rekening', 'zakelijk_vrij'),
+    ];
+    $basis['mail']['afzenders'] = [
+        ['email' => 'facturen@voorbeeld-horeca.nl', 'naam' => 'Horecagroothandel Voorbeeld', 'termijn' => 14],
+        ['email' => 'factuur@voorbeeld-dranken.nl', 'naam' => 'Drankenhandel Voorbeeld', 'termijn' => 14],
+        ['email' => 'info@voorbeeld-bakker.nl', 'naam' => 'Bakkerij Voorbeeld', 'termijn' => 14],
+    ];
+    return $basis;
+}
+
+/* Voorbeeldadministratie voor een autobedrijf */
+function adm_demo_auto() {
+    $j = date('Y');
+    $dg = function($n) { return date('Y-m-d', strtotime(($n >= 0 ? '+' : '') . $n . ' days')); };
+    $kl = function($id, $naam, $contact, $mail, $tel, $straat, $pc, $plaats, $kvk = '', $not = '') { return ['id' => $id, 'naam' => $naam, 'contact' => $contact, 'email' => $mail, 'tel' => $tel, 'straat' => $straat, 'postcode' => $pc, 'plaats' => $plaats, 'kvk' => $kvk, 'btw' => '', 'notitie' => $not]; };
+    $k1 = $kl('kdemo1', 'Familie Janssen', '', 'janssen@voorbeeld.nl', '06 1234 5630', 'Kerkstraat 21', '6161 AC', 'Geleen', '', 'Volkswagen Polo, APK in maart.');
+    $k2 = $kl('kdemo2', 'Installatiebedrijf Voorbeeld', 'Rob Schreurs', 'info@voorbeeld.nl', '046 123 4567', 'Industrieweg 9', '6161 RE', 'Geleen', '12345678', 'Wagenpark: 4 bussen.');
+    $k3 = $kl('kdemo3', 'Lisa Wouters', '', 'lisa@voorbeeld.nl', '06 1234 5631', 'Parkweg 3', '6131 AA', 'Sittard');
+    $snap = function($k) { unset($k['id'], $k['tel'], $k['notitie']); return $k; };
+    $r = function($oms, $a, $e, $p, $b = 21) { return ['oms' => $oms, 'aantal' => $a, 'eenheid' => $e, 'prijs' => $p, 'btw' => $b]; };
+    $doc = function($id, $soort, $nr, $status, $k, $datum, $regels, $extra = []) use ($snap) {
+        return array_merge(['id' => $id, 'soort' => $soort, 'nummer' => $nr, 'status' => $status, 'credit' => false, 'van' => '',
+            'klant_id' => $k['id'], 'klant' => $snap($k), 'datum' => $datum, 'leverdatum' => '', 'termijn' => 14, 'geldig_tot' => '',
+            'onderwerp' => '', 'regels' => $regels, 'opmerking' => '', 'token' => 'demo-' . $id, 'kor' => false,
+            'betaald_op' => '', 'verstuurd_op' => '', 'akkoord_op' => '', 'aangemaakt' => $datum], $extra);
+    };
+    $docs = [
+        $doc('ddemo1', 'factuur', $j . '-0231', 'betaald', $k1, $dg(-40), [$r('APK-keuring', 1, 'stuk', 3967), $r('Ruitenwissers voor', 1, 'set', 2471)], ['onderwerp' => 'APK Volkswagen Polo', 'betaald_op' => $dg(-40)]),
+        $doc('ddemo2', 'factuur', $j . '-0244', 'open', $k2, $dg(-12), [$r('Grote beurt bedrijfsbus', 2, 'stuk', 28843), $r('Remblokken voor', 2, 'set', 9504), $r('Arbeid remmen', 2, 'uur', 7438)], ['onderwerp' => 'Onderhoud 2 bussen']),
+        $doc('ddemo3', 'factuur', $j . '-0251', 'open', $k3, $dg(-3), [$r('Winterbanden 205/55 R16 incl. montage', 4, 'stuk', 9050), $r('Banden opslaan, 1 seizoen', 1, 'set', 4132)], ['onderwerp' => 'Winterbanden']),
+        $doc('ddemo4', 'offerte', $j . '-O033', 'verstuurd', $k2, $dg(-2), [$r('Onderhoudscontract wagenpark, 4 bussen', 12, 'maand', 16529)], ['onderwerp' => 'Onderhoudscontract 2027', 'geldig_tot' => $dg(28), 'verstuurd_op' => $dg(-2)]),
+        $doc('ddemo5', 'offerte', $j . '-O031', 'akkoord', $k1, $dg(-25), [$r('Distributieriem vervangen', 1, 'stuk', 41240)], ['onderwerp' => 'Distributieriem', 'geldig_tot' => $dg(5), 'akkoord_op' => $dg(-22)]),
+    ];
+    return ['klanten' => [$k1, $k2, $k3], 'docs' => $docs];
+}
+function adm_demo2_auto($basis) {
+    $dg = function($n) { return date('Y-m-d', strtotime(($n >= 0 ? '+' : '') . $n . ' days')); };
+    $ink = function($id, $lev, $nr, $dag, $bedrag, $btw, $status, $extra = []) use ($dg) {
+        return array_merge(['id' => $id, 'leverancier' => $lev, 'afzender' => '', 'nummer' => $nr, 'datum' => $dg($dag), 'termijn' => 30, 'verval' => $dg($dag + 30),
+            'bedrag' => $bedrag, 'btw' => $btw, 'btwsoort' => 'nl', 'oms' => '', 'status' => $status, 'betaald_op' => '', 'pdf' => 'demo', 'hash' => '', 'bron' => 'mail',
+            'controleren' => false, 'aangemaakt' => $dg($dag)], $extra);
+    };
+    $basis['inkoop'] = [
+        $ink('idemo1', 'Onderdelengroothandel Voorbeeld', 'OG-778120', -3, 48612, 8437, 'open', ['afzender' => 'facturen@voorbeeld-onderdelen.nl', 'oms' => 'Remblokken, filters en olie']),
+        $ink('idemo2', 'Bandencentrale Voorbeeld', 'BC-2026-1180', -6, 30250, 5250, 'open', ['afzender' => 'factuur@voorbeeld-banden.nl', 'oms' => '8 winterbanden']),
+        $ink('idemo3', 'Diagnoseapparatuur GmbH', 'R-55412', -20, 59900, 0, 'betaald', ['btwsoort' => 'verlegd', 'betaald_op' => $dg(-12), 'afzender' => 'rechnung@voorbeeld.de', 'oms' => 'Software-update, btw verlegd']),
+        $ink('idemo4', 'Onderdelengroothandel Voorbeeld', 'OG-776004', -33, 51127, 8873, 'betaald', ['betaald_op' => $dg(-5), 'afzender' => 'facturen@voorbeeld-onderdelen.nl']),
+    ];
+    $tx = function($id, $dag, $bedrag, $naam, $oms, $ind, $extra = []) use ($dg) {
+        return array_merge(['id' => $id, 'datum' => $dg($dag), 'bedrag' => $bedrag, 'naam' => $naam, 'iban' => '', 'oms' => $oms, 'indeling' => $ind, 'btw' => 21, 'koppel' => ''], $extra);
+    };
+    $basis['bank'] = [
+        $tx('bdemo1', -2, 94310, 'Pinautomaat uitbetaling', 'Uitbetaling pinbetalingen week', 'omzet'),
+        $tx('bdemo2', -5, -51127, 'Onderdelengroothandel Voorbeeld', 'Factuur OG-776004', 'zakelijk', ['koppel' => 'i:idemo4']),
+        $tx('bdemo3', -12, -59900, 'Diagnoseapparatuur GmbH', 'Rechnung R-55412', 'zakelijk', ['koppel' => 'i:idemo3']),
+        $tx('bdemo4', -40, 7799, 'Familie Janssen', 'Factuur ' . date('Y') . '-0231', 'omzet', ['koppel' => 'd:ddemo1']),
+        $tx('bdemo5', -33, -1295, 'Bank', 'Kosten zakelijke rekening', 'zakelijk_vrij'),
+    ];
+    $basis['mail']['afzenders'] = [
+        ['email' => 'facturen@voorbeeld-onderdelen.nl', 'naam' => 'Onderdelengroothandel Voorbeeld', 'termijn' => 30],
+        ['email' => 'factuur@voorbeeld-banden.nl', 'naam' => 'Bandencentrale Voorbeeld', 'termijn' => 30],
+        ['email' => 'rechnung@voorbeeld.de', 'naam' => 'Diagnoseapparatuur GmbH', 'termijn' => 14],
+    ];
+    return $basis;
+}
+
+/* Voorbeeldadministratie voor een schrijver */
+function adm_demo_schrijver() {
+    $j = date('Y');
+    $dg = function($n) { return date('Y-m-d', strtotime(($n >= 0 ? '+' : '') . $n . ' days')); };
+    $kl = function($id, $naam, $contact, $mail, $straat, $pc, $plaats, $kvk = '') { return ['id' => $id, 'naam' => $naam, 'contact' => $contact, 'email' => $mail, 'tel' => '', 'straat' => $straat, 'postcode' => $pc, 'plaats' => $plaats, 'kvk' => $kvk, 'btw' => '', 'notitie' => '']; };
+    $k1 = $kl('kdemo1', 'Bibliotheek Voorbeeld', 'Anouk Hermans', 'programma@voorbeeld.nl', 'Markt 1', '6161 GA', 'Geleen', '12345678');
+    $k2 = $kl('kdemo2', 'Boekhandel Voorbeeld', 'Tom Ramakers', 'info@voorbeeld.nl', 'Raadhuisstraat 5', '6131 AB', 'Sittard', '87654321');
+    $k3 = $kl('kdemo3', 'Basisschool Voorbeeld', 'groep 8', 'directie@voorbeeld.nl', 'Schoolstraat 2', '6162 BC', 'Geleen');
+    $snap = function($k) { unset($k['id'], $k['tel'], $k['notitie']); return $k; };
+    $r = function($oms, $a, $e, $p, $b = 21) { return ['oms' => $oms, 'aantal' => $a, 'eenheid' => $e, 'prijs' => $p, 'btw' => $b]; };
+    $doc = function($id, $soort, $nr, $status, $k, $datum, $regels, $extra = []) use ($snap) {
+        return array_merge(['id' => $id, 'soort' => $soort, 'nummer' => $nr, 'status' => $status, 'credit' => false, 'van' => '',
+            'klant_id' => $k['id'], 'klant' => $snap($k), 'datum' => $datum, 'leverdatum' => '', 'termijn' => 14, 'geldig_tot' => '',
+            'onderwerp' => '', 'regels' => $regels, 'opmerking' => '', 'token' => 'demo-' . $id, 'kor' => false,
+            'betaald_op' => '', 'verstuurd_op' => '', 'akkoord_op' => '', 'aangemaakt' => $datum], $extra);
+    };
+    $docs = [
+        $doc('ddemo1', 'factuur', $j . '-0014', 'betaald', $k1, $dg(-45), [$r('Lezing met signeersessie', 1, 'stuk', 35000), $r('Reiskosten', 32, 'km', 23)], ['onderwerp' => 'Lezing Maand van het boek', 'betaald_op' => $dg(-30)]),
+        $doc('ddemo2', 'factuur', $j . '-0015', 'betaald', $k2, $dg(-20), [$r('Signeermiddag', 1, 'stuk', 20000), $r('Gesigneerde boeken in commissie', 24, 'stuk', 1651, 9)], ['onderwerp' => 'Signeermiddag zaterdag', 'betaald_op' => $dg(-8)]),
+        $doc('ddemo3', 'factuur', $j . '-0016', 'open', $k3, $dg(-4), [$r('Schrijfworkshop groep 8, 2 uur', 1, 'stuk', 27500)], ['onderwerp' => 'Schrijfworkshop']),
+        $doc('ddemo4', 'offerte', $j . '-O006', 'verstuurd', $k1, $dg(-2), [$r('Schrijfcursus voor volwassenen, 4 avonden', 4, 'avond', 22500)], ['onderwerp' => 'Schrijfcursus voorjaar', 'geldig_tot' => $dg(28), 'verstuurd_op' => $dg(-2)]),
+    ];
+    return ['klanten' => [$k1, $k2, $k3], 'docs' => $docs];
+}
+function adm_demo2_schrijver($basis) {
+    $dg = function($n) { return date('Y-m-d', strtotime(($n >= 0 ? '+' : '') . $n . ' days')); };
+    $ink = function($id, $lev, $nr, $dag, $bedrag, $btw, $status, $extra = []) use ($dg) {
+        return array_merge(['id' => $id, 'leverancier' => $lev, 'afzender' => '', 'nummer' => $nr, 'datum' => $dg($dag), 'termijn' => 30, 'verval' => $dg($dag + 30),
+            'bedrag' => $bedrag, 'btw' => $btw, 'btwsoort' => 'nl', 'oms' => '', 'status' => $status, 'betaald_op' => '', 'pdf' => 'demo', 'hash' => '', 'bron' => 'mail',
+            'controleren' => false, 'aangemaakt' => $dg($dag)], $extra);
+    };
+    $basis['inkoop'] = [
+        $ink('idemo1', 'Drukkerij Voorbeeld', 'DR-2026-0418', -6, 81750, 6750, 'open', ['afzender' => 'facturen@voorbeeld-drukkerij.nl', 'oms' => '250 exemplaren, tweede druk']),
+        $ink('idemo2', 'Ontwerpstudio Voorbeeld', 'OS-112', -15, 36300, 6300, 'open', ['afzender' => 'studio@voorbeeld.nl', 'oms' => 'Omslagontwerp']),
+        $ink('idemo3', 'Webhosting Voorbeeld', 'WH-55120', -40, 6050, 1050, 'betaald', ['betaald_op' => $dg(-35), 'afzender' => 'factuur@voorbeeld-hosting.nl']),
+    ];
+    $tx = function($id, $dag, $bedrag, $naam, $oms, $ind, $extra = []) use ($dg) {
+        return array_merge(['id' => $id, 'datum' => $dg($dag), 'bedrag' => $bedrag, 'naam' => $naam, 'iban' => '', 'oms' => $oms, 'indeling' => $ind, 'btw' => 21, 'koppel' => ''], $extra);
+    };
+    $basis['bank'] = [
+        $tx('bdemo1', -8, 67381, 'Boekhandel Voorbeeld', 'Factuur ' . date('Y') . '-0015', 'omzet', ['koppel' => 'd:ddemo2']),
+        $tx('bdemo2', -12, 42150, 'Uitgeverij Voorbeeld', 'Royalty' . "'" . 's derde kwartaal', 'omzet'),
+        $tx('bdemo3', -30, 43280, 'Bibliotheek Voorbeeld', 'Factuur ' . date('Y') . '-0014', 'omzet', ['koppel' => 'd:ddemo1']),
+        $tx('bdemo4', -35, -6050, 'Webhosting Voorbeeld', 'Factuur WH-55120', 'zakelijk', ['koppel' => 'i:idemo3']),
+        $tx('bdemo5', -33, -1295, 'Bank', 'Kosten zakelijke rekening', 'zakelijk_vrij'),
+    ];
+    $basis['mail']['afzenders'] = [
+        ['email' => 'facturen@voorbeeld-drukkerij.nl', 'naam' => 'Drukkerij Voorbeeld', 'termijn' => 30],
+        ['email' => 'studio@voorbeeld.nl', 'naam' => 'Ontwerpstudio Voorbeeld', 'termijn' => 30],
     ];
     return $basis;
 }
@@ -5572,6 +5752,9 @@ function adm_demo2() {
             'noreply@voorbeeld-lease.nl' => ['naam' => 'Lease Voorbeeld', 'onderwerp' => 'Factuur leaseauto oktober', 'datum' => $dg(-8), 'n' => 4],
         ]];
     $uit = ['inkoop' => $inkoop, 'bank' => $bank, 'mail' => $mail];
+    if (demo_branche() === 'restaurant') return adm_demo2_restaurant($uit);
+    if (demo_branche() === 'autobedrijf') return adm_demo2_auto($uit);
+    if (demo_branche() === 'schrijver') return adm_demo2_schrijver($uit);
     return demo_branche() === 'barber' ? adm_demo2_barber($uit) : $uit;
 }
 
@@ -7819,6 +8002,30 @@ function adm_herinnering_pagina() {
 
 /* ---------- agenda ---------- */
 function adm_agenda() {
+    if (adm_voorbeeld() && demo_branche() === 'schrijver') {
+        $dg = function($n) { return date('Y-m-d', strtotime(($n >= 0 ? '+' : '') . $n . ' days')); };
+        return [
+            ['id' => 'ademo1', 'soort' => 'afspraak', 'titel' => 'Deadline hoofdstuk 12', 'datum' => $dg(3), 'tot' => '', 'van' => '', 'totTijd' => '', 'klant_id' => '', 'klant' => '', 'adres' => '', 'notitie' => 'Naar de redacteur sturen.'],
+            ['id' => 'ademo2', 'soort' => 'klus', 'titel' => 'Schrijfworkshop groep 8', 'datum' => $dg(6), 'tot' => '', 'van' => '10:00', 'totTijd' => '12:00', 'klant_id' => 'kdemo3', 'klant' => 'Basisschool Voorbeeld', 'adres' => 'Schoolstraat 2, Geleen', 'notitie' => ''],
+            ['id' => 'ademo3', 'soort' => 'afspraak', 'titel' => 'Signeren bij Boekhandel Voorbeeld', 'datum' => $dg(9), 'tot' => '', 'van' => '13:00', 'totTijd' => '16:00', 'klant_id' => 'kdemo2', 'klant' => 'Boekhandel Voorbeeld', 'adres' => 'Raadhuisstraat 5, Sittard', 'notitie' => ''],
+        ];
+    }
+    if (adm_voorbeeld() && demo_branche() === 'autobedrijf') {
+        $dg = function($n) { return date('Y-m-d', strtotime(($n >= 0 ? '+' : '') . $n . ' days')); };
+        return [
+            ['id' => 'ademo1', 'soort' => 'afspraak', 'titel' => 'Inkoop: twee inruilauto' . "'" . 's bekijken', 'datum' => $dg(1), 'tot' => '', 'van' => '16:00', 'totTijd' => '17:00', 'klant_id' => '', 'klant' => '', 'adres' => '', 'notitie' => ''],
+            ['id' => 'ademo2', 'soort' => 'klus', 'titel' => 'Onderhoud 2 bussen Installatiebedrijf Voorbeeld', 'datum' => $dg(3), 'tot' => '', 'van' => '08:00', 'totTijd' => '12:00', 'klant_id' => 'kdemo2', 'klant' => 'Installatiebedrijf Voorbeeld', 'adres' => '', 'notitie' => 'Bussen worden om 07:45 gebracht.'],
+            ['id' => 'ademo3', 'soort' => 'afspraak', 'titel' => 'Distributieriem Familie Janssen', 'datum' => $dg(4), 'tot' => '', 'van' => '08:30', 'totTijd' => '13:00', 'klant_id' => 'kdemo1', 'klant' => 'Familie Janssen', 'adres' => '', 'notitie' => 'Vervangend vervoer geregeld.'],
+        ];
+    }
+    if (adm_voorbeeld() && demo_branche() === 'restaurant') {
+        $dg = function($n) { return date('Y-m-d', strtotime(($n >= 0 ? '+' : '') . $n . ' days')); };
+        return [
+            ['id' => 'ademo1', 'soort' => 'afspraak', 'titel' => 'Proeverij nieuwe winterkaart', 'datum' => $dg(2), 'tot' => '', 'van' => '15:00', 'totTijd' => '16:30', 'klant_id' => '', 'klant' => '', 'adres' => '', 'notitie' => 'Hele keukenploeg erbij.'],
+            ['id' => 'ademo2', 'soort' => 'klus', 'titel' => 'Kerstdiner Advieskantoor Zuid', 'datum' => $dg(12), 'tot' => '', 'van' => '18:30', 'totTijd' => '22:30', 'klant_id' => 'kdemo1', 'klant' => 'Advieskantoor Zuid', 'adres' => '', 'notitie' => '18 personen, achterzaal.'],
+            ['id' => 'ademo3', 'soort' => 'afspraak', 'titel' => 'Leverancier wijn: nieuwe huiswijn proeven', 'datum' => $dg(4), 'tot' => '', 'van' => '10:00', 'totTijd' => '11:00', 'klant_id' => '', 'klant' => '', 'adres' => '', 'notitie' => ''],
+        ];
+    }
     if (adm_voorbeeld() && demo_branche() === 'barber') {
         $dg = function($n) { return date('Y-m-d', strtotime(($n >= 0 ? '+' : '') . $n . ' days')); };
         return [
@@ -9322,7 +9529,7 @@ if ($logged_in && isset($_POST['action'])) {
         $new['blokken'] = $bl;
         $kort = function($v, $max) { return cut(trim(preg_replace('/\s+/', ' ', (string)$v)), $max); };
         $lang = function($v, $max) { return cut(trim(str_replace("\r\n", "\n", (string)$v)), $max); };
-        foreach (['voorna_titel' => 80, 'voorna_intro' => 200, 'werkwijze_titel' => 80, 'werkwijze_intro' => 200, 'cijfers_titel' => 80, 'over_titel' => 80, 'over_naam' => 100, 'vragen_titel' => 80] as $kk => $mx) { if (isset($_POST[$kk])) { $new[$kk] = $kort($_POST[$kk], $mx); } }
+        foreach (['voorna_titel' => 80, 'voorna_intro' => 200, 'werkwijze_titel' => 80, 'werkwijze_intro' => 200, 'cijfers_titel' => 80, 'over_titel' => 80, 'over_naam' => 100, 'vragen_titel' => 80, 'woord_project' => 30, 'woord_projecten' => 30] as $kk => $mx) { if (isset($_POST[$kk])) { $new[$kk] = $kort($_POST[$kk], $mx); } }
         if (isset($_POST['over_tekst'])) { $new['over_tekst'] = $lang($_POST['over_tekst'], 3000); }
         if (isset($_POST['ww_titel'])) {
             $ww = [];
@@ -9885,7 +10092,11 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
                   </div>
                   <?php if ($k === 'strook'): ?><div class="hint" style="margin:4px 0 0 28px">De namen van je diensten. Hoe de balk eruitziet, kies je hierboven bij Opbouw.</div><?php endif; ?>
                   <?php if ($k === 'diensten'): ?><div class="hint" style="margin:4px 0 0 28px">Je diensten vul je verderop in, bij Diensten.</div><?php endif; ?>
-                  <?php if ($k === 'projecten'): ?><div class="hint" style="margin:4px 0 0 28px">Projecten die je in de map Uitgelicht zet.</div><?php endif; ?>
+                  <?php if ($k === 'projecten'): ?><div class="hint" style="margin:4px 0 0 28px">Projecten die je in de map Uitgelicht zet.</div>
+                    <details class="blk-in"><summary>Hoe noem je je werk? (nu: <?= h(werk_woord()[1]) ?>)</summary>
+                      <div class="two"><div class="field"><label for="woordenk">Een</label><input type="text" id="woordenk" name="woord_project" maxlength="30" value="<?= h(st('woord_project')) ?>" placeholder="project" /></div><div class="field"><label for="woordmv">Meer</label><input type="text" id="woordmv" name="woord_projecten" maxlength="30" value="<?= h(st('woord_projecten')) ?>" placeholder="projecten" /></div></div>
+                      <div class="hint">Bijvoorbeeld boek en boeken, fragment en fragmenten, of klus en klussen. Dit woord staat in het menu en boven je werk op de website.</div>
+                    </details><?php endif; ?>
                   <?php if ($k === 'beoordelingen'): ?><div class="hint" style="margin:4px 0 0 28px">Sterren en teksten van je klanten. Instellen doe je bovenaan bij <a href="admin.php?beoordelingen=1" style="color:#8fb3ff">Beoordelingen</a>.</div><?php endif; ?>
                   <?php if ($k === 'aanbod'): ?><div class="hint" style="margin:4px 0 0 28px">Je nieuwste 6 auto's of producten. Toevoegen doe je bovenaan bij <a href="admin.php?aanbod=1" style="color:#8fb3ff">Aanbod</a>.</div><?php endif; ?>
                   <?php if ($k === 'menukaart'): ?><div class="hint" style="margin:4px 0 0 28px">Een paar gerechten van je kaart, met een knop naar de hele menukaart. Specialiteiten en nieuwe gerechten gaan voor. Invullen doe je bovenaan bij <a href="admin.php?menukaart=1" style="color:#8fb3ff">Menukaart</a>.</div><?php endif; ?>
