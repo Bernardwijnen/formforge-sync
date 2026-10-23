@@ -104,6 +104,8 @@ function default_settings() {
         'beelden'          => [],
         'banner'           => '',
         'banner_vorm'      => 'achter',
+        'knop_link'        => '',
+        'menulinks'        => [],
         'diensten'         => [
             ['key' => 'd1', 'slug' => 'dienst-1', 'naam' => 'Dienst 1', 'kort' => 'Korte omschrijving van deze dienst.', 'tekst' => "Vertel hier uitgebreid over deze dienst.\n\nEen lege regel begint een nieuwe alinea."],
             ['key' => 'd2', 'slug' => 'dienst-2', 'naam' => 'Dienst 2', 'kort' => 'Korte omschrijving van deze dienst.', 'tekst' => 'Vertel hier uitgebreid over deze dienst.'],
@@ -145,6 +147,23 @@ function cat_names() {
 function service_url($key) {
     $s = services();
     return isset($s[$key]) ? '/' . $s[$key]['slug'] . '/' : '/#diensten';
+}
+/* Een link die de klant zelf invult: https://..., /pagina/, #blok, tel: of mailto:. Anders leeg. */
+function eigen_link($lnk) {
+    $lnk = trim((string)$lnk);
+    if ($lnk !== '' && preg_match('#^www\.\S+$#i', $lnk)) { $lnk = 'https://' . $lnk; }
+    return preg_match('#^(https?://\S+|/\S*|\#[\w-]+|tel:[+\d ]{6,20}|mailto:\S+@\S+)$#i', $lnk) ? cut($lnk, 300) : '';
+}
+/* Extra knoppen in het menu (bijvoorbeeld naar eigen pagina's die al op de server staan) */
+function menu_links() {
+    $uit = [];
+    global $ST;
+    foreach ((is_array($ST['menulinks'] ?? null) ? $ST['menulinks'] : []) as $x) {
+        if (!is_array($x)) continue;
+        $t = trim((string)($x['tekst'] ?? '')); $l = eigen_link($x['link'] ?? '');
+        if ($t !== '' && $l !== '') { $uit[] = ['tekst' => $t, 'link' => $l]; }
+    }
+    return array_slice($uit, 0, 6);
 }
 
 /* Webadres van de site: uit de instellingen, anders het huidige domein */
@@ -1061,6 +1080,7 @@ function site_head($title, $desc = '', $path = '', $extra = '', $fullTitle = fal
   .menu a.cta:hover { filter:brightness(1.12); background:var(--blue); }
   .menu a.back .short { display:none; }
   @media (max-width:700px) { .menu a.nav { display:none; } }
+  @media (max-width:1100px) { .menu a.nav.ml { display:none; } }
   @media (max-width:640px) { .menu a.back { padding:9px 10px; } .menu a.back .long { display:none; } .menu a.back .short { display:inline; } }
   @media (max-width:460px) { .brand img + .name { display:none; } }
   .btn { display:inline-flex; align-items:center; gap:8px; font-weight:600; font-size:16px; text-decoration:none; padding:13px 20px; border-radius:10px; border:0; cursor:pointer; font-family:inherit; }
@@ -1122,6 +1142,7 @@ function site_header($backUrl = '', $backLabel = '') {
     if ($backUrl === '') {
         if (!empty(services())) { $out .= '<a class="nav" href="/#diensten">Diensten</a>'; }
         $out .= (load_pages() ? '<a class="nav" href="/#projecten">' . h(werk_hoofd(werk_woord()[1])) . '</a>' : '') . ab_menu_link() . mk_menu_link();
+        foreach (menu_links() as $ml) { $out .= '<a class="nav ml" href="' . h($ml['link']) . '">' . h($ml['tekst']) . '</a>'; }
     } else {
         $out .= '<a class="back" href="' . h($backUrl) . '" onclick="try{var r=document.referrer;if(r&&r.indexOf(location.origin+\'/\')===0&&history.length>1){history.back();return false;}}catch(e){}return true;"><svg viewBox="0 0 24 24" fill="none" width="16" height="16" aria-hidden="true"><path d="M19 12H5M11 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="long">' . h($backLabel) . '</span><span class="short">Terug</span></a>';
     }
@@ -1207,7 +1228,7 @@ function site_lists($pages) {
 /* ===========================================================
    Blokken op de voorpagina: volgorde en aan/uit, plus de nieuwe blokken
    =========================================================== */
-$BLOKKEN = ['strook' => 'Balk met diensten', 'diensten' => 'Diensten', 'projecten' => 'Uitgelichte projecten', 'voorna' => 'Voor en na (foto\'s)', 'werkwijze' => 'Werkwijze in stappen', 'cijfers' => 'Cijfers', 'over' => 'Over ons', 'vragen' => 'Veelgestelde vragen', 'reserveren' => 'Afspraakplanner (kalender)', 'aanbod' => 'Aanbod: occasions of producten', 'beoordelingen' => 'Beoordelingen (sterren)', 'menukaart' => 'Menukaart (horeca)', 'beeld1' => 'Eigen afbeelding 1', 'beeld2' => 'Eigen afbeelding 2', 'beeld3' => 'Eigen afbeelding 3'];
+$BLOKKEN = ['strook' => 'Balk met diensten', 'diensten' => 'Diensten', 'projecten' => 'Uitgelichte projecten', 'voorna' => 'Voor en na (foto\'s)', 'werkwijze' => 'Werkwijze in stappen', 'cijfers' => 'Cijfers', 'over' => 'Over ons', 'vragen' => 'Veelgestelde vragen', 'reserveren' => 'Afspraakplanner (kalender)', 'aanbod' => 'Aanbod: occasions of producten', 'beoordelingen' => 'Beoordelingen (sterren)', 'menukaart' => 'Menukaart (horeca)', 'beeld1' => 'Eigen afbeelding 1', 'beeld2' => 'Eigen afbeelding 2', 'beeld3' => 'Eigen afbeelding 3', 'beeld4' => 'Eigen afbeelding 4', 'beeld5' => 'Eigen afbeelding 5', 'beeld6' => 'Eigen afbeelding 6'];
 $BEELD_VORMEN = ['links' => 'Foto links, tekst rechts', 'rechts' => 'Foto rechts, tekst links', 'breed' => 'Grote foto over de hele breedte', 'klein' => 'Kleine foto in het midden (bijvoorbeeld een logo of keurmerk)'];
 function beeld_item($n) {
     global $ST, $BEELD_VORMEN;
@@ -1245,7 +1266,7 @@ function blok_inhoud($k) {
     if ($k === 'cijfers') { return array_values(array_filter(blok_lijst('cijfers'), function($x) { return trim($x['getal'] ?? '') !== ''; })); }
     if ($k === 'vragen') { return array_values(array_filter(blok_lijst('vragen'), function($x) { return trim($x['vraag'] ?? '') !== '' && trim($x['antwoord'] ?? '') !== ''; })); }
     if ($k === 'over') { return st('over_tekst') !== '' ? [1] : []; }
-    if (preg_match('/^beeld([1-3])$/', $k, $m)) { return beeld_item((int)$m[1] - 1)['foto'] !== '' ? [1] : []; }
+    if (preg_match('/^beeld([1-6])$/', $k, $m)) { return beeld_item((int)$m[1] - 1)['foto'] !== '' ? [1] : []; }
     if ($k === 'reserveren') { return !empty(res_inst()['aan']) ? [1] : []; }
     if ($k === 'beoordelingen') { return bd_inst()['aan'] && bd_zichtbaar() ? [1] : []; }
     if ($k === 'menukaart') { return mk_inst()['aan'] && mk_aantal(mk_data(), true) ? [1] : []; }
@@ -1298,7 +1319,7 @@ function blok_html($k, $sky) {
     } elseif ($k === 'reserveren') {
         $ri = res_inst();
         $o .= '<section class="' . $cl . '" id="reserveren"><div class="wrap">' . blok_kop($ri['titel'] !== '' ? $ri['titel'] : 'Reserveren', $ri['intro']) . res_widget($ri) . '</div></section>' . "\n";
-    } elseif (preg_match('/^beeld([1-3])$/', $k, $m)) {
+    } elseif (preg_match('/^beeld([1-6])$/', $k, $m)) {
         $x = beeld_item((int)$m[1] - 1);
         $id = 'beeld-' . $m[1];
         $per = $x['van'] !== '';
@@ -1479,7 +1500,7 @@ CSS;
     if (st('eyebrow') !== '') $out .= '<div class="eyebrow">' . h(st('eyebrow')) . '</div>';
     $out .= '<h1>' . h(st('hero_titel')) . '</h1>';
     if (st('hero_tekst') !== '') $out .= '<p class="lead">' . h(st('hero_tekst')) . '</p>';
-    $out .= '<div class="actions"><a class="btn primary" href="/contact/">' . h(st('knop_tekst') !== '' ? st('knop_tekst') : 'Neem contact op') . '</a>';
+    $out .= '<div class="actions"><a class="btn primary" href="' . h(eigen_link(st('knop_link')) !== '' ? eigen_link(st('knop_link')) : '/contact/') . '">' . h(st('knop_tekst') !== '' ? st('knop_tekst') : 'Neem contact op') . '</a>';
     if (!empty(services())) $out .= '<a class="btn quiet" href="#diensten">' . h(st('diensten_titel')) . '</a>';
     $out .= '</div></div>';
     if ($logo !== '') $out .= '<div class="emblem"><img src="' . h($logo) . '" alt="Logo ' . h(st('naam')) . '" /></div>';
@@ -9344,7 +9365,7 @@ if ($is_demo && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action
 }
 $logged_in = $config && (!empty($_SESSION['ff_admin']) || $is_demo);
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-10-23-menukaart');
+define('SITE_BOUW', '2026-10-23-menulinks');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -9493,12 +9514,29 @@ if ($logged_in && isset($_POST['action'])) {
 
     if ($action === 'settings') {
         $new = $ST;
+        $mlMsgs = [];
         $txt = ['naam' => 80, 'slogan' => 140, 'eyebrow' => 80, 'hero_titel' => 90, 'hero_tekst' => 300, 'knop_tekst' => 40,
                 'diensten_titel' => 60, 'diensten_intro' => 300, 'cta_titel' => 90, 'cta_tekst' => 300,
                 'seo_titel' => 70, 'seo_omschrijving' => 160, 'straat' => 100, 'postcode' => 12, 'plaats' => 60,
                 'provincie' => 60, 'tel' => 30, 'tel2' => 30, 'kvk' => 20, 'werkgebied' => 140, 'whatsapp' => 25, 'whatsapp_tekst' => 140];
         foreach ($txt as $k => $max) { $new[$k] = cut(trim(preg_replace('/\s+/', ' ', $_POST[$k] ?? '')), $max); }
         $new['tijden'] = cut(trim(str_replace("\r\n", "\n", $_POST['tijden'] ?? '')), 300);
+        if (isset($_POST['knop_link'])) {
+            $new['knop_link'] = eigen_link($_POST['knop_link']);
+            if (trim((string)$_POST['knop_link']) !== '' && $new['knop_link'] === '') { $mlMsgs[] = 'De link van de hoofdknop klopt niet en is leeggelaten. Begin met https:// of met /.'; }
+        }
+        if (isset($_POST['ml_tekst'])) {
+            $mls = [];
+            for ($n = 0; $n < 6; $n++) {
+                $t = cut(trim(preg_replace('/\s+/', ' ', (string)($_POST['ml_tekst'][$n] ?? ''))), 30);
+                $lr = (string)($_POST['ml_link'][$n] ?? '');
+                $l = eigen_link($lr);
+                if ($t === '' && trim($lr) === '') continue;
+                if ($t === '' || $l === '') { $mlMsgs[] = 'Menuknop ' . ($n + 1) . ' is niet bewaard: vul een tekst en een geldige link in (begin met / of https://).'; continue; }
+                $mls[] = ['tekst' => $t, 'link' => $l];
+            }
+            $new['menulinks'] = $mls;
+        }
         if ($new['naam'] === '') { $new['naam'] = 'Uw Bedrijfsnaam'; }
         if ($new['hero_titel'] === '') { $new['hero_titel'] = $new['naam']; }
         $mail = trim($_POST['email'] ?? '');
@@ -9547,7 +9585,7 @@ if ($logged_in && isset($_POST['action'])) {
             $new['vragen'] = array_slice($fq, 0, 10);
         }
 
-        $msgs = [];
+        $msgs = $mlMsgs;
         if ($mail !== '' && $new['email'] === '') { $msgs[] = 'Het e-mailadres klopt niet en is leeggelaten.'; }
         if ($site !== '' && $new['site_url'] === '') { $msgs[] = 'Het webadres klopt niet (voorbeeld: https://www.bedrijf.nl) en is leeggelaten.'; }
         if ($chat !== '' && $new['chat_url'] === '') { $msgs[] = 'De chatlink moet met https:// beginnen en is leeggelaten.'; }
@@ -9561,7 +9599,8 @@ if ($logged_in && isset($_POST['action'])) {
             if ($naam === '') continue;
             $base = slugify($naam);
             $slug = $base; $n = 2;
-            while (in_array($slug, $RESERVED, true) || in_array($slug, $projectSlugs, true) || in_array($slug, $used, true)) { $slug = $base . '-' . $n; $n++; }
+            $gemaakt = generated_slugs();
+            while (in_array($slug, $RESERVED, true) || in_array($slug, $projectSlugs, true) || in_array($slug, $used, true) || (file_exists(ROOT . '/' . $slug) && !in_array($slug, $gemaakt, true) && !in_array($slug, service_slugs(), true))) { $slug = $base . '-' . $n; $n++; }
             $used[] = $slug;
             $diensten[] = [
                 'key'   => 'd' . ($i + 1),
@@ -9627,7 +9666,7 @@ if ($logged_in && isset($_POST['action'])) {
         if (isset($_POST['bd_set'])) {
             global $BEELD_VORMEN;
             $bdn = [];
-            for ($n = 0; $n < 3; $n++) {
+            for ($n = 0; $n < 6; $n++) {
                 $o = beeld_item($n);
                 if (!empty($_POST['bd_weg'][$n])) { $weg($o['foto']); $o['foto'] = ''; }
                 $nf = $foto('bd_foto', $n, 'beeld-');
@@ -9987,6 +10026,16 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
             <div class="field"><label for="hero_titel">Grote titel</label><input type="text" id="hero_titel" name="hero_titel" maxlength="90" value="<?= h(st('hero_titel')) ?>" /></div>
             <div class="field"><label for="hero_tekst">Tekst onder de titel</label><textarea class="short" id="hero_tekst" name="hero_tekst" maxlength="300"><?= h(st('hero_tekst')) ?></textarea></div>
             <div class="field"><label for="knop_tekst">Tekst op de hoofdknop</label><input type="text" id="knop_tekst" name="knop_tekst" maxlength="40" value="<?= h(st('knop_tekst')) ?>" /></div>
+            <div class="field"><label for="knop_link">Waar gaat de hoofdknop naartoe? (mag leeg)</label><input type="text" id="knop_link" name="knop_link" maxlength="300" value="<?= h(st('knop_link')) ?>" placeholder="Leeg = je contactpagina" /><div class="hint">Bijvoorbeeld /mijn-pagina/ of een volledig webadres met https://</div></div>
+            <details class="blk-in"><summary>Extra knoppen in het menu (nu: <?= count(menu_links()) ?>)</summary>
+              <p class="hint">Voor pagina's die al op je server staan, of een andere website. Maximaal 6. Op een smal scherm (telefoon, kleine laptop) vallen ze weg, zet daarom ook een link op de voorpagina.</p>
+              <?php $mlh = array_values(is_array($ST['menulinks'] ?? null) ? $ST['menulinks'] : []); for ($mi = 0; $mi < 6; $mi++): $mx = is_array($mlh[$mi] ?? null) ? $mlh[$mi] : []; ?>
+              <div class="two">
+                <div class="field"><label for="mlt<?= $mi ?>">Knop <?= $mi + 1 ?>: tekst</label><input type="text" id="mlt<?= $mi ?>" name="ml_tekst[<?= $mi ?>]" maxlength="30" value="<?= h($mx['tekst'] ?? '') ?>" /></div>
+                <div class="field"><label for="mll<?= $mi ?>">Knop <?= $mi + 1 ?>: link</label><input type="text" id="mll<?= $mi ?>" name="ml_link[<?= $mi ?>]" maxlength="300" value="<?= h($mx['link'] ?? '') ?>" placeholder="/pagina/ of https://..." /></div>
+              </div>
+              <?php endfor; ?>
+            </details>
             <div class="two">
               <div class="field"><label for="cta_titel">Titel van de balk onderaan</label><input type="text" id="cta_titel" name="cta_titel" maxlength="90" value="<?= h(st('cta_titel')) ?>" /></div>
               <div class="field"><label for="cta_tekst">Tekst van de balk onderaan</label><input type="text" id="cta_tekst" name="cta_tekst" maxlength="300" value="<?= h(st('cta_tekst')) ?>" /></div>
@@ -10146,7 +10195,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
                       <button type="button" class="btn ghost sm" onclick="var e=this.parentNode.querySelector('.fq-extra[hidden]');if(e){e.hidden=false;}if(!this.parentNode.querySelector('.fq-extra[hidden]')){this.hidden=true;}">+ Nog een vraag</button>
                       <div class="hint">Deze vragen helpen ook in Google.</div>
                     </details>
-                  <?php elseif (preg_match('/^beeld([1-3])$/', $k, $bm)): global $BEELD_VORMEN; $bi = (int)$bm[1] - 1; $x = beeld_item($bi); $mnd = ['', 'januari', 'februari', 'maart', 'april', 'mei', 'juni', 'juli', 'augustus', 'september', 'oktober', 'november', 'december']; $vd = $x['van'] !== '' ? (int)substr($x['van'], 3) : 1; $vm = $x['van'] !== '' ? (int)substr($x['van'], 0, 2) : 11; $td = $x['tot'] !== '' ? (int)substr($x['tot'], 3) : 1; $tm = $x['tot'] !== '' ? (int)substr($x['tot'], 0, 2) : 3; ?>
+                  <?php elseif (preg_match('/^beeld([1-6])$/', $k, $bm)): global $BEELD_VORMEN; $bi = (int)$bm[1] - 1; $x = beeld_item($bi); $mnd = ['', 'januari', 'februari', 'maart', 'april', 'mei', 'juni', 'juli', 'augustus', 'september', 'oktober', 'november', 'december']; $vd = $x['van'] !== '' ? (int)substr($x['van'], 3) : 1; $vm = $x['van'] !== '' ? (int)substr($x['van'], 0, 2) : 11; $td = $x['tot'] !== '' ? (int)substr($x['tot'], 3) : 1; $tm = $x['tot'] !== '' ? (int)substr($x['tot'], 0, 2) : 3; ?>
                     <?php if ($x['foto'] !== '' && $x['van'] !== ''): ?><div class="hint" style="margin:4px 0 0 28px"><?= beeld_nu_zichtbaar($x) ? 'Nu te zien' : 'Nu niet te zien' ?>: alleen van <?= h(beeld_datum_tekst($x['van'])) ?> tot en met <?= h(beeld_datum_tekst($x['tot'])) ?>.</div><?php endif; ?>
                     <details class="blk-in"><summary>Inhoud: afbeelding en tekst</summary>
                       <input type="hidden" name="bd_set[<?= $bi ?>]" value="1" />
