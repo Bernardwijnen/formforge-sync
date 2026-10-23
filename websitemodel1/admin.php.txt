@@ -749,7 +749,7 @@ body{padding-bottom:84px;}
   });
   OPB.forEach(function(o, i){
     var e = document.createElement('option');
-    e.value = String(i); e.textContent = 'Indeling: ' + o[0];
+    e.value = String(i); e.textContent = 'Indeling: ' + o[0] + (i > 0 && o[1][1] === 'foto' ? ', met grote foto bovenaan' : '');
     kiesO.appendChild(e);
   });
   kies.onchange = function(){ zet(kies.value, true); };
@@ -6465,7 +6465,7 @@ if ($is_demo && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action
 }
 $logged_in = $config && (!empty($_SESSION['ff_admin']) || $is_demo);
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-10-22-voet');
+define('SITE_BOUW', '2026-10-23-indeling');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
