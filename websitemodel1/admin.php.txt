@@ -29,7 +29,7 @@ define('MAX_PHOTO_BYTES', 8 * 1024 * 1024);
 define('MAX_DIENSTEN', 9);
 
 $RESERVED = ['admin', 'assets', 'data', 'index', 'uploads', 'site', 'favicon', 'error', 'stats', 'cgi-bin',
-             'sitemap', 'robots', 'contact', 'bedankt', 'projecten', 'diensten', 'reserveren', 'occasions', 'aanbod'];
+             'sitemap', 'robots', 'contact', 'bedankt', 'projecten', 'diensten', 'reserveren', 'occasions', 'aanbod', 'beoordelingen'];
 
 /* ===========================================================
    Instellingen
@@ -1199,7 +1199,7 @@ function site_lists($pages) {
 /* ===========================================================
    Blokken op de voorpagina: volgorde en aan/uit, plus de nieuwe blokken
    =========================================================== */
-$BLOKKEN = ['strook' => 'Balk met diensten', 'diensten' => 'Diensten', 'projecten' => 'Uitgelichte projecten', 'voorna' => 'Voor en na (foto\'s)', 'werkwijze' => 'Werkwijze in stappen', 'cijfers' => 'Cijfers', 'over' => 'Over ons', 'vragen' => 'Veelgestelde vragen', 'reserveren' => 'Afspraakplanner (kalender)', 'aanbod' => 'Aanbod: occasions of producten', 'beeld1' => 'Eigen afbeelding 1', 'beeld2' => 'Eigen afbeelding 2', 'beeld3' => 'Eigen afbeelding 3'];
+$BLOKKEN = ['strook' => 'Balk met diensten', 'diensten' => 'Diensten', 'projecten' => 'Uitgelichte projecten', 'voorna' => 'Voor en na (foto\'s)', 'werkwijze' => 'Werkwijze in stappen', 'cijfers' => 'Cijfers', 'over' => 'Over ons', 'vragen' => 'Veelgestelde vragen', 'reserveren' => 'Afspraakplanner (kalender)', 'aanbod' => 'Aanbod: occasions of producten', 'beoordelingen' => 'Beoordelingen (sterren)', 'beeld1' => 'Eigen afbeelding 1', 'beeld2' => 'Eigen afbeelding 2', 'beeld3' => 'Eigen afbeelding 3'];
 $BEELD_VORMEN = ['links' => 'Foto links, tekst rechts', 'rechts' => 'Foto rechts, tekst links', 'breed' => 'Grote foto over de hele breedte', 'klein' => 'Kleine foto in het midden (bijvoorbeeld een logo of keurmerk)'];
 function beeld_item($n) {
     global $ST, $BEELD_VORMEN;
@@ -1239,6 +1239,7 @@ function blok_inhoud($k) {
     if ($k === 'over') { return st('over_tekst') !== '' ? [1] : []; }
     if (preg_match('/^beeld([1-3])$/', $k, $m)) { return beeld_item((int)$m[1] - 1)['foto'] !== '' ? [1] : []; }
     if ($k === 'reserveren') { return !empty(res_inst()['aan']) ? [1] : []; }
+    if ($k === 'beoordelingen') { return bd_inst()['aan'] && bd_zichtbaar() ? [1] : []; }
     if ($k === 'aanbod') { return !empty(ab_inst()['aan']) && array_filter(ab_lijst(), function($x) { return ($x['status'] ?? '') !== 'verkocht'; }) ? [1] : []; }
     return [];
 }
@@ -1279,6 +1280,8 @@ function blok_html($k, $sky) {
         foreach (preg_split("/\n\s*\n/", st('over_tekst')) as $al) { $o .= '<p>' . nl2br(h(trim($al))) . '</p>'; }
         if (st('over_naam') !== '') { $o .= '<p class="ov-naam">' . h(st('over_naam')) . '</p>'; }
         $o .= '</div></div></div></section>' . "\n";
+    } elseif ($k === 'beoordelingen') {
+        $o .= bd_blok_html($sky);
     } elseif ($k === 'aanbod') {
         $o .= ab_blok_html($sky);
     } elseif ($k === 'reserveren') {
@@ -1994,6 +1997,7 @@ function write_contact_pages() {
     }
     write_reserveren_page();
     write_aanbod_pages();
+    write_beoordelingen_page();
 }
 function write_seo_files($pages) {
     $u = site_url();
@@ -2002,6 +2006,7 @@ function write_seo_files($pages) {
     foreach (services() as $s) { $urls[] = ['loc' => $u . '/' . $s['slug'] . '/', 'lastmod' => $today]; }
     $urls[] = ['loc' => $u . '/contact/', 'lastmod' => $today];
     if (!empty(res_inst()['aan'])) { $urls[] = ['loc' => $u . '/reserveren/', 'lastmod' => $today]; }
+    if (bd_inst()['aan'] && bd_zichtbaar()) { $urls[] = ['loc' => $u . '/beoordelingen/', 'lastmod' => $today]; }
     $abi = ab_inst();
     if (!empty($abi['aan'])) {
         $urls[] = ['loc' => $u . '/' . $abi['slug'] . '/', 'lastmod' => $today];
@@ -3582,6 +3587,298 @@ function ab_beheer_view() {
 }
 
 /* ===========================================================
+   Beoordelingen: echte klanten geven sterren en een korte tekst.
+   Alleen via een persoonlijke link uit een mail, dus geen nepreviews.
+   Alles wordt getoond, behalve met een duidelijke reden (scheldwoorden, privacy).
+   =========================================================== */
+define('BD_INST', DATA_DIR . '/beoordelingen_inst.json');
+define('BD_FILE', DATA_DIR . '/beoordelingen.json');
+define('BD_VRAAG', DATA_DIR . '/beoordelingen_vragen.json');
+$BD_REDENEN = ['scheld' => 'Er staan scheldwoorden of beledigingen in', 'privacy' => 'Er staan persoonsgegevens in', 'geen' => 'Het gaat niet over ons bedrijf', 'spam' => 'Reclame of spam'];
+function bd_inst() {
+    $x = read_json(BD_INST, []);
+    return ['aan' => !empty($x['aan']), 'auto_afspraak' => isset($x['auto_afspraak']) ? !empty($x['auto_afspraak']) : true, 'auto_factuur' => isset($x['auto_factuur']) ? !empty($x['auto_factuur']) : true,
+            'wacht' => isset($x['wacht']) ? max(0, min(14, (int)$x['wacht'])) : 1, 'titel' => trim((string)($x['titel'] ?? '')) !== '' ? cut((string)$x['titel'], 80) : 'Wat klanten over ons zeggen'];
+}
+function bd_lijst() { $l = read_json(BD_FILE, []); return is_array($l) ? array_values(array_filter($l, 'is_array')) : []; }
+function bd_vragen() { $l = read_json(BD_VRAAG, []); return is_array($l) ? $l : []; }
+function bd_zichtbaar() { return array_values(array_filter(bd_lijst(), function($b) { return ($b['status'] ?? '') === 'online'; })); }
+function bd_stats($lijst = null) {
+    $l = array_values(array_filter($lijst ?? bd_lijst(), function($b) { return ($b['status'] ?? '') !== 'spam'; }));
+    $n = count($l);
+    return ['n' => $n, 'gem' => $n ? round(array_sum(array_map(function($b) { return (int)$b['sterren']; }, $l)) / $n, 1) : 0];
+}
+function bd_sterren($n, $groot = false) {
+    $o = '<span class="bd-st' . ($groot ? ' groot' : '') . '" role="img" aria-label="' . h(str_replace('.', ',', (string)$n)) . ' van de 5 sterren">';
+    for ($i = 1; $i <= 5; $i++) {
+        $v = $n >= $i ? 100 : ($n > $i - 1 ? (int)round(($n - $i + 1) * 100) : 0);
+        $o .= '<i style="--v:' . $v . '%"></i>';
+    }
+    return $o . '</span>';
+}
+function bd_css() {
+    return <<<'CSS'
+<style>
+.bd-st{display:inline-flex;gap:2px;vertical-align:middle;}
+.bd-st i{width:18px;height:18px;display:block;background:linear-gradient(90deg,#f5a524 var(--v),#d6dbe3 var(--v));-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3 6.1 20.6l1.3-6.6L2.5 9.4l6.6-.8z'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3 6.1 20.6l1.3-6.6L2.5 9.4l6.6-.8z'/%3E%3C/svg%3E") center/contain no-repeat;}
+.bd-st.groot i{width:28px;height:28px;}
+.bd-kop{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin:0 0 26px;}
+.bd-kop b{font-size:44px;line-height:1;} .bd-kop small{display:block;color:var(--muted);font-size:15px;margin-top:4px;}
+.bd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:18px;}
+.bd-k{background:#fff;color:var(--navy);border:1px solid var(--line);border-radius:16px;padding:22px;display:flex;flex-direction:column;gap:10px;}
+.bd-k p{margin:0;font-size:16px;line-height:1.6;}
+.bd-k .wie{font-weight:700;font-size:15px;} .bd-k .wie span{font-weight:400;color:var(--muted);}
+.bd-k .ant{background:var(--sky);border-radius:12px;padding:12px 14px;font-size:14.5px;} .bd-k .ant b{display:block;font-size:13px;margin-bottom:4px;}
+.bd-uitleg{color:var(--muted);font-size:13.5px;margin-top:18px;max-width:70ch;}
+</style>
+CSS;
+}
+function bd_kaart($b) {
+    $m = ['', 'januari', 'februari', 'maart', 'april', 'mei', 'juni', 'juli', 'augustus', 'september', 'oktober', 'november', 'december'];
+    $t = strtotime((string)$b['op']);
+    $o = '<div class="bd-k">' . bd_sterren((int)$b['sterren']);
+    if (trim((string)($b['tekst'] ?? '')) !== '') $o .= '<p>' . nl2br(h($b['tekst'])) . '</p>';
+    $o .= '<div class="wie">' . h($b['naam'] !== '' ? $b['naam'] : 'Klant') . ' <span>&middot; ' . ($t ? $m[(int)date('n', $t)] . ' ' . date('Y', $t) : '') . '</span></div>';
+    if (trim((string)($b['antwoord'] ?? '')) !== '') $o .= '<div class="ant"><b>Reactie van ' . h(st('naam')) . '</b>' . nl2br(h($b['antwoord'])) . '</div>';
+    return $o . '</div>';
+}
+function bd_uitleg() { return '<p class="bd-uitleg">Alle beoordelingen komen van echte klanten. Zij kregen na hun afspraak of opdracht een persoonlijke link om hun mening te geven. We tonen alle beoordelingen, ook de minder goede, behalve als er scheldwoorden, persoonsgegevens of reclame in staan.</p>'; }
+function bd_blok_html($sky) {
+    $in = bd_inst(); $l = bd_zichtbaar(); $s = bd_stats();
+    usort($l, function($a, $b) { return strcmp((string)$b['op'], (string)$a['op']); });
+    $o = '<section class="section blok-beoordelingen' . ($sky ? ' sky' : '') . '" id="beoordelingen"><div class="wrap">' . bd_css() . blok_kop($in['titel'], '');
+    $o .= '<div class="bd-kop"><b>' . h(str_replace('.', ',', number_format($s['gem'], 1))) . '</b><div>' . bd_sterren($s['gem'], true) . '<small>Gemiddeld, uit ' . $s['n'] . ' ' . ($s['n'] === 1 ? 'beoordeling' : 'beoordelingen') . '</small></div></div>';
+    $o .= '<div class="bd-grid">';
+    foreach (array_slice($l, 0, 6) as $b) { $o .= bd_kaart($b); }
+    $o .= '</div>' . (count($l) > 6 ? '<p style="margin-top:22px"><a class="btn primary" href="/beoordelingen/">Alle ' . count($l) . ' beoordelingen lezen</a></p>' : '') . bd_uitleg() . '</div></section>' . "\n";
+    return $o;
+}
+function render_beoordelingen_page() {
+    $in = bd_inst(); $l = bd_zichtbaar(); $s = bd_stats();
+    usort($l, function($a, $b) { return strcmp((string)$b['op'], (string)$a['op']); });
+    $out = site_head($in['titel'] . ' | ' . st('naam'), cut('Lees wat klanten van ' . st('naam') . ' vinden. Gemiddeld ' . str_replace('.', ',', number_format($s['gem'], 1)) . ' van de 5 sterren uit ' . $s['n'] . ' beoordelingen.', 160), '/beoordelingen/', business_jsonld(), true);
+    $out .= bd_css() . '<style>.chero{background:var(--navy);color:#fff;padding:clamp(44px,6vw,80px) 0 clamp(36px,5vw,56px);} .chero h1{font-size:clamp(34px,5vw,56px);} .cwrap{padding:clamp(36px,6vw,72px) 0;background:var(--sky);}</style>' . "\n</head>\n<body>\n";
+    $out .= site_header('/', 'Naar home');
+    $out .= '<main><section class="chero"><div class="wrap"><h1>' . h($in['titel']) . '</h1></div></section><section class="cwrap"><div class="wrap">';
+    $out .= '<div class="bd-kop"><b>' . h(str_replace('.', ',', number_format($s['gem'], 1))) . '</b><div>' . bd_sterren($s['gem'], true) . '<small>Gemiddeld, uit ' . $s['n'] . ' ' . ($s['n'] === 1 ? 'beoordeling' : 'beoordelingen') . '</small></div></div><div class="bd-grid">';
+    foreach ($l as $b) { $out .= bd_kaart($b); }
+    $out .= '</div>' . bd_uitleg() . '</div></section></main>' . site_footer() . "\n</body>\n</html>\n";
+    return $out;
+}
+function write_beoordelingen_page() {
+    $dir = ROOT . '/beoordelingen';
+    if (bd_inst()['aan'] && bd_zichtbaar()) {
+        if (!is_dir($dir)) { mkdir($dir, 0755, true); }
+        schrijf_pagina($dir, stijl_pagina(render_beoordelingen_page()));
+    } elseif (is_dir($dir)) { @unlink($dir . '/index.php'); @unlink($dir . '/index.html'); @rmdir($dir); }
+}
+
+/* ---------- om een beoordeling vragen ---------- */
+function bd_al_gevraagd($mail) {
+    $grens = date('Y-m-d', strtotime('-180 days'));
+    foreach (bd_vragen() as $v) { if (strcasecmp((string)$v['mail'], $mail) === 0 && substr((string)$v['op'], 0, 10) >= $grens) return true; }
+    return false;
+}
+function bd_vraag($naam, $mail, $bron, $ref, $wat = '') {
+    if (!filter_var($mail, FILTER_VALIDATE_EMAIL)) return false;
+    $tok = bin2hex(random_bytes(16));
+    $zaak = st('naam');
+    $link = adm_basis() . '?beoordeel=' . $tok;
+    $voornaam = trim(explode(' ', trim($naam))[0] ?? '');
+    $txt = "Beste " . ($voornaam !== '' ? $voornaam : 'klant') . ",\n\nBedankt dat u " . ($wat !== '' ? 'voor ' . $wat . ' ' : '') . "bij " . $zaak . " bent geweest. Wilt u ons laten weten hoe tevreden u bent? Het kost minder dan een minuut: kies een aantal sterren en schrijf eventueel een paar woorden.\n\n" . $link . "\n\nUw mening helpt ons om het nog beter te doen, en helpt andere klanten bij hun keuze.\n\nMet vriendelijke groet,\n" . $zaak;
+    $ok = adm_mail_stuur($mail, 'Hoe tevreden bent u over ' . $zaak . '?', $txt, [], [], ['soort' => 'beoordeling', 'ref' => $ref]);
+    if ($ok) {
+        $v = bd_vragen();
+        $v[] = ['token' => $tok, 'naam' => cut($naam, 80), 'mail' => $mail, 'bron' => $bron, 'ref' => $ref, 'wat' => cut($wat, 120), 'op' => date('Y-m-d H:i'), 'ingevuld' => ''];
+        if (count($v) > 2000) { $v = array_slice($v, -2000); }
+        write_json(BD_VRAAG, array_values($v));
+    }
+    return $ok;
+}
+/* Draait mee met de dagelijkse taak */
+function bd_automatisch() {
+    $in = bd_inst();
+    if (!$in['aan'] || adm_voorbeeld()) return [];
+    $log = []; $grens = date('Y-m-d', strtotime('-' . $in['wacht'] . ' days')); $oud = date('Y-m-d', strtotime('-' . ($in['wacht'] + 7) . ' days'));
+    $gedaan = [];
+    foreach (bd_vragen() as $v) { $gedaan[$v['bron'] . ':' . $v['ref']] = 1; }
+    $n = 0;
+    if ($in['auto_afspraak'] && is_file(RES_FILE)) {
+        $ri = res_inst();
+        foreach (res_lijst() as $r) {
+            if ($n >= 40) break;
+            if (($r['status'] ?? '') !== 'bevestigd' || $r['dag'] > $grens || $r['dag'] < $oud || isset($gedaan['afspraak:' . $r['id']])) continue;
+            if (!filter_var($r['mail'] ?? '', FILTER_VALIDATE_EMAIL) || bd_al_gevraagd($r['mail'])) continue;
+            if (bd_vraag($r['naam'], $r['mail'], 'afspraak', $r['id'], ($r['dienst'] ?? '') !== '' ? mb_strtolower($r['dienst'], 'UTF-8') : '')) { $n++; $log[] = 'Om een beoordeling gevraagd: ' . $r['naam']; }
+        }
+    }
+    if ($in['auto_factuur']) {
+        $vanRes = [];
+        if (is_file(RES_FILE)) { foreach (res_lijst() as $r) { if (!empty($r['factuur_id'])) $vanRes[$r['factuur_id']] = 1; } }
+        foreach (adm_docs() as $d) {
+            if ($n >= 40) break;
+            if ($d['soort'] !== 'factuur' || $d['status'] !== 'betaald' || !empty($d['credit']) || isset($vanRes[$d['id']]) || isset($gedaan['factuur:' . $d['id']])) continue;
+            $bo = substr((string)($d['betaald_op'] ?? ''), 0, 10);
+            if ($bo === '' || $bo > $grens || $bo < $oud) continue;
+            $mail = (string)($d['klant']['email'] ?? '');
+            if (!filter_var($mail, FILTER_VALIDATE_EMAIL) || bd_al_gevraagd($mail)) continue;
+            if (bd_vraag((string)($d['klant']['contact'] ?? '') !== '' ? $d['klant']['contact'] : $d['klant']['naam'], $mail, 'factuur', $d['id'], trim((string)($d['onderwerp'] ?? '')) !== '' ? mb_strtolower($d['onderwerp'], 'UTF-8') : '')) { $n++; $log[] = 'Om een beoordeling gevraagd: ' . $d['klant']['naam']; }
+        }
+    }
+    return $log;
+}
+
+/* ---------- het formulier voor de klant (link uit de mail) ---------- */
+function bd_formulier() {
+    $tok = preg_replace('/[^a-f0-9]/', '', (string)$_GET['beoordeel']);
+    $vragen = bd_vragen(); $vi = null;
+    if (strlen($tok) === 32) { foreach ($vragen as $i => $v) { if (hash_equals((string)$v['token'], $tok)) { $vi = $i; break; } } }
+    $kop = ''; $tekst = ''; $form = false; $fout = '';
+    if ($vi === null) { $kop = 'Deze link werkt niet'; $tekst = 'Wij kunnen deze uitnodiging niet vinden. Misschien is hij al gebruikt.'; }
+    elseif ($vragen[$vi]['ingevuld'] !== '') { $kop = 'Bedankt, u heeft al een beoordeling gegeven'; $tekst = 'Wij hebben uw mening ontvangen. Nogmaals bedankt!'; }
+    elseif (strtotime((string)$vragen[$vi]['op']) < strtotime('-120 days')) { $kop = 'Deze link is verlopen'; $tekst = 'Deze uitnodiging is te oud. Neem gerust contact met ons op.'; }
+    else {
+        $v = $vragen[$vi];
+        if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+            $st = (int)($_POST['sterren'] ?? 0);
+            $naam = cut(trim(preg_replace('/\s+/', ' ', (string)($_POST['naam'] ?? ''))), 60);
+            $txt = cut(trim(str_replace("\r\n", "\n", (string)($_POST['tekst'] ?? ''))), 1500);
+            if ($st < 1 || $st > 5) { $fout = 'Kies een aantal sterren.'; $form = true; }
+            else {
+                $l = bd_lijst();
+                $l[] = ['id' => bin2hex(random_bytes(6)), 'sterren' => $st, 'naam' => $naam, 'tekst' => $txt, 'op' => date('Y-m-d H:i'), 'bron' => $v['bron'], 'ref' => $v['ref'], 'mail' => $v['mail'],
+                        'status' => !empty($_POST['akkoord']) ? 'online' : 'prive', 'reden' => '', 'antwoord' => '', 'nieuw' => 1];
+                write_json(BD_FILE, $l);
+                $vragen[$vi]['ingevuld'] = date('Y-m-d H:i'); write_json(BD_VRAAG, $vragen);
+                write_beoordelingen_page(); schrijf_pagina(ROOT, stijl_pagina(render_home(load_pages())));
+                $eigen = st('email');
+                if (filter_var($eigen, FILTER_VALIDATE_EMAIL)) { adm_mail_stuur($eigen, 'Nieuwe beoordeling: ' . $st . ' van de 5 sterren' . ($naam !== '' ? ' van ' . $naam : ''), "Er is een nieuwe beoordeling binnengekomen.\n\nSterren: " . $st . " van de 5\nNaam: " . $naam . "\n" . ($txt !== '' ? "Tekst: " . $txt . "\n" : '') . "\nBekijken en eventueel reageren: " . adm_basis() . "?beoordelingen=1", [], [], ['soort' => 'aan jezelf', 'ref' => 'beoordeling']); }
+                $kop = 'Bedankt voor uw beoordeling!'; $tekst = $st >= 4 ? 'Fijn dat u tevreden bent. Wij waarderen het enorm dat u de tijd nam.' : 'Bedankt voor uw eerlijke mening. Wij nemen het ter harte en nemen eventueel contact met u op.';
+            }
+        } else { $form = true; }
+        if ($form) { $kop = 'Hoe tevreden bent u over ' . st('naam') . '?'; }
+    }
+    $out = site_head($kop . ' | ' . st('naam'), '', '/beoordelingen/', '<meta name="robots" content="noindex, nofollow" />', true);
+    $out .= '<style>.thx{background:var(--sky);padding:clamp(40px,7vw,90px) 0;min-height:60vh;} .bdf{max-width:620px;background:#fff;color:var(--navy);border:1px solid var(--line);border-radius:18px;padding:clamp(22px,4vw,36px);} .bdf h1{font-size:clamp(26px,4vw,38px);line-height:1.15;} .bdf p{color:var(--muted);margin:12px 0 0;} .bd-kies{display:flex;flex-direction:row-reverse;justify-content:flex-end;gap:6px;margin:22px 0 8px;} .bd-kies input{position:absolute;opacity:0;width:1px;height:1px;} .bd-kies label{cursor:pointer;width:48px;height:48px;display:block;background:#d6dbe3;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\'%3E%3Cpath d=\'M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3 6.1 20.6l1.3-6.6L2.5 9.4l6.6-.8z\'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\'%3E%3Cpath d=\'M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3 6.1 20.6l1.3-6.6L2.5 9.4l6.6-.8z\'/%3E%3C/svg%3E") center/contain no-repeat;transition:transform .1s ease;} .bd-kies label:hover,.bd-kies label:hover ~ label,.bd-kies input:checked ~ label{background:#f5a524;} .bd-kies label:hover{transform:scale(1.1);} .bd-kies input:focus-visible + label{outline:3px solid var(--blue);outline-offset:2px;} .bdf .fld{margin-top:16px;} .bdf .fld label{display:block;font-weight:600;margin-bottom:6px;} .bdf input[type=text],.bdf textarea{width:100%;font:inherit;font-size:16px;color:var(--navy);background:#fff;border:1.5px solid var(--line);border-radius:10px;padding:12px 14px;} .bdf textarea{min-height:120px;} .bdf .chk{display:flex;gap:10px;align-items:flex-start;margin-top:14px;font-size:15px;} .bdf .chk input{margin-top:4px;} .bdf .fout{background:#fdecec;color:#8a1c1c;border-radius:10px;padding:10px 12px;margin-top:14px;} .bdf .btn{margin-top:20px;}</style>' . "\n</head>\n<body>\n";
+    $out .= site_header('/', 'Naar home') . '<main class="thx"><div class="wrap"><div class="bdf"><h1>' . h($kop) . '</h1>';
+    if ($form) {
+        $v = $vragen[$vi];
+        $voor = trim(explode(' ', trim((string)$v['naam']))[0] ?? '');
+        $rest = trim(substr(trim((string)$v['naam']), strlen($voor)));
+        $voorstel = trim($voor . ($rest !== '' ? ' ' . mb_strtoupper(mb_substr($rest, 0, 1, 'UTF-8'), 'UTF-8') . '.' : ''));
+        $out .= '<p>Kies het aantal sterren en schrijf eventueel een paar woorden. Het kost minder dan een minuut.</p>';
+        if ($fout !== '') $out .= '<div class="fout">' . h($fout) . '</div>';
+        $out .= '<form method="post" action="/admin.php?beoordeel=' . h($tok) . '"><fieldset style="border:0;padding:0;margin:0"><legend class="visually-hidden" style="position:absolute;left:-9999px">Aantal sterren</legend><div class="bd-kies">';
+        for ($i = 5; $i >= 1; $i--) { $out .= '<input type="radio" id="st' . $i . '" name="sterren" value="' . $i . '" /><label for="st' . $i . '" title="' . $i . ' van de 5" aria-label="' . $i . ' van de 5 sterren"></label>'; }
+        $out .= '</div></fieldset>';
+        $out .= '<div class="fld"><label for="bdt">Uw ervaring (mag leeg)</label><textarea id="bdt" name="tekst" maxlength="1500" placeholder="Wat ging er goed? Wat kan beter?"></textarea></div>';
+        $out .= '<div class="fld"><label for="bdn">Naam bij uw beoordeling</label><input type="text" id="bdn" name="naam" maxlength="60" value="' . h($voorstel) . '" /></div>';
+        $out .= '<label class="chk"><input type="checkbox" name="akkoord" value="1" checked /> <span>' . h(st('naam')) . ' mag mijn beoordeling met deze naam op de website laten zien.</span></label>';
+        $out .= '<button class="btn primary" type="submit">Beoordeling versturen</button></form>';
+    } else {
+        $out .= '<p>' . h($tekst) . '</p><p style="margin-top:22px"><a class="btn primary" href="/">Naar de website</a></p>';
+    }
+    $out .= '</div></div></main>' . site_footer() . "\n</body>\n</html>\n";
+    header('Content-Type: text/html; charset=UTF-8'); header('X-Robots-Tag: noindex, nofollow');
+    echo stijl_pagina($out); exit;
+}
+
+/* ---------- beheer ---------- */
+function bd_nieuw_aantal() { return count(array_filter(bd_lijst(), function($b) { return !empty($b['nieuw']); })); }
+function bd_acties($action) {
+    global $BD_REDENEN;
+    $terug = function($t, $anker = '') { $_SESSION['ff_notice'] = $t; header('Location: admin.php?beoordelingen=1' . $anker); exit; };
+    $na = function() { write_beoordelingen_page(); rebuild_site(load_pages()); };
+    if ($action === 'bd_inst') {
+        write_json(BD_INST, ['aan' => !empty($_POST['bd_aan']), 'auto_afspraak' => !empty($_POST['bd_afspraak']), 'auto_factuur' => !empty($_POST['bd_factuur']), 'wacht' => (int)($_POST['bd_wacht'] ?? 1), 'titel' => cut(trim((string)($_POST['bd_titel'] ?? '')), 80)]);
+        $na(); $terug('Opgeslagen.', '#instellen');
+    }
+    if ($action === 'bd_status' || $action === 'bd_antwoord') {
+        $l = bd_lijst(); $id = (string)($_POST['id'] ?? '');
+        foreach ($l as $k => $b) {
+            if ($b['id'] !== $id) continue;
+            if ($action === 'bd_antwoord') { $l[$k]['antwoord'] = cut(trim(str_replace("\r\n", "\n", (string)($_POST['antwoord'] ?? ''))), 1000); }
+            else {
+                $st = (string)($_POST['status'] ?? '');
+                if ($st === 'online' && $b['status'] !== 'prive') { $l[$k]['status'] = 'online'; $l[$k]['reden'] = ''; }
+                elseif ($st === 'verborgen' && isset($BD_REDENEN[$_POST['reden'] ?? ''])) { $l[$k]['status'] = $_POST['reden'] === 'spam' ? 'spam' : 'verborgen'; $l[$k]['reden'] = $_POST['reden']; }
+            }
+        }
+        write_json(BD_FILE, $l); $na();
+        $terug($action === 'bd_antwoord' ? 'Je reactie is opgeslagen en staat onder de beoordeling.' : 'Bijgewerkt.');
+    }
+    if ($action === 'bd_vraag_zelf') {
+        $naam = cut(trim((string)($_POST['naam'] ?? '')), 80); $mail = trim((string)($_POST['mail'] ?? ''));
+        if (!filter_var($mail, FILTER_VALIDATE_EMAIL)) $terug('Vul een geldig e-mailadres in.', '#vragen');
+        global $ADM_MAILFOUT;
+        $ok = bd_vraag($naam, $mail, 'zelf', bin2hex(random_bytes(4)), cut(trim((string)($_POST['wat'] ?? '')), 120));
+        $terug($ok ? 'De uitnodiging is verstuurd naar ' . $mail . '.' : 'Versturen lukte niet: ' . $ADM_MAILFOUT, '#vragen');
+    }
+}
+function bd_beheer_view() {
+    global $BD_REDENEN;
+    $in = bd_inst(); $l = bd_lijst(); $s = bd_stats($l);
+    if (empty($GLOBALS['is_demo']) && array_filter($l, function($b) { return !empty($b['nieuw']); })) { $l2 = $l; foreach ($l2 as $k => $b) { unset($l2[$k]['nieuw']); } write_json(BD_FILE, $l2); }
+    usort($l, function($a, $b) { return strcmp((string)$b['op'], (string)$a['op']); });
+    $vr = bd_vragen(); $openstaand = count(array_filter($vr, function($v) { return $v['ingevuld'] === ''; }));
+    ?>
+    <style>
+      .bdb{background:#141b2b;border:1px solid #263049;border-radius:14px;padding:14px 16px;margin-bottom:10px;}
+      .bdb.uit{opacity:.6;}
+      .bdb .k{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;}
+      .bdb .s{color:#f5a524;font-size:20px;letter-spacing:2px;} .bdb .s span{color:#3a465c;}
+      .bdb p{margin:8px 0 0;} .bdb small{color:#9fb0cc;}
+      .bdb .lab{font-size:12px;font-weight:700;padding:2px 9px;border-radius:999px;} .lab.online{background:#163d2a;color:#6ee7a8;} .lab.verborgen,.lab.spam{background:#3a1f2a;color:#ff9bb5;} .lab.prive{background:#1d2f55;color:#8fb3ff;}
+      .bdb form{margin:10px 0 0;} .bdb .rij{display:flex;gap:8px;flex-wrap:wrap;align-items:center;} .bdb select{width:auto;}
+      .bd-sam{display:flex;gap:24px;flex-wrap:wrap;margin:0 0 18px;} .bd-sam div{background:#141b2b;border:1px solid #263049;border-radius:14px;padding:14px 18px;} .bd-sam b{display:block;font-size:26px;} .bd-sam small{color:#9fb0cc;}
+    </style>
+    <h1>Beoordelingen</h1>
+    <p class="sub">Je klanten krijgen na hun afspraak of opdracht een mail met een persoonlijke link. Zo komen er alleen echte beoordelingen op je website.</p>
+    <?php if (!$in['aan']): ?><div class="formcard" style="border-color:#ff9b4a"><h2>Beoordelingen staan nog uit</h2><p class="hint" style="margin:0">Vink onderaan <strong>Beoordelingen aan</strong> aan en klik op Opslaan. Daarna vraagt je website vanzelf je klanten om hun mening.</p></div><?php endif; ?>
+    <div class="bd-sam"><div><b><?= h(str_replace('.', ',', number_format($s['gem'], 1))) ?> / 5</b><small>gemiddeld</small></div><div><b><?= $s['n'] ?></b><small>beoordelingen</small></div><div><b><?= $openstaand ?></b><small>uitnodigingen nog niet ingevuld</small></div></div>
+    <?php if (!$l): ?><p class="hint">Er zijn nog geen beoordelingen.</p><?php endif; ?>
+    <?php foreach ($l as $b): $uit = $b['status'] !== 'online'; ?>
+      <div class="bdb<?= $uit ? ' uit' : '' ?>">
+        <div class="k"><span class="s"><?= str_repeat("\u{2605}", (int)$b['sterren']) ?><span><?= str_repeat("\u{2605}", 5 - (int)$b['sterren']) ?></span></span><span><span class="lab <?= h($b['status']) ?>"><?= ['online' => 'Op je website', 'verborgen' => 'Verborgen', 'spam' => 'Spam', 'prive' => 'Alleen voor jou (geen toestemming)'][$b['status']] ?? '' ?></span></span></div>
+        <small><?= h($b['naam'] !== '' ? $b['naam'] : 'Zonder naam') ?> &middot; <?= h(date('d-m-Y', strtotime($b['op']))) ?> &middot; <?= h($b['mail'] ?? '') ?><?= $b['reden'] !== '' ? ' &middot; reden: ' . h(mb_strtolower($BD_REDENEN[$b['reden']] ?? '', 'UTF-8')) : '' ?></small>
+        <?php if (trim((string)$b['tekst']) !== ''): ?><p><?= nl2br(h($b['tekst'])) ?></p><?php endif; ?>
+        <?php if ($b['status'] !== 'prive'): ?>
+        <form method="post"><input type="hidden" name="action" value="bd_antwoord" /><input type="hidden" name="id" value="<?= h($b['id']) ?>" /><textarea name="antwoord" class="short" maxlength="1000" placeholder="Jouw reactie (mag leeg). Die staat onder de beoordeling op je website." style="min-height:60px"><?= h($b['antwoord'] ?? '') ?></textarea><div class="rij" style="margin-top:6px"><button class="btn sm" type="submit">Reactie opslaan</button></div></form>
+        <form method="post"><input type="hidden" name="action" value="bd_status" /><input type="hidden" name="id" value="<?= h($b['id']) ?>" />
+          <?php if ($uit): ?><input type="hidden" name="status" value="online" /><button class="btn ghost sm" type="submit">Weer op je website zetten</button>
+          <?php else: ?><div class="rij"><input type="hidden" name="status" value="verborgen" /><select name="reden" aria-label="Reden" required><option value="">Verbergen, omdat...</option><?php foreach ($BD_REDENEN as $k => $r): ?><option value="<?= $k ?>"><?= h($r) ?></option><?php endforeach; ?></select><button class="btn ghost sm" type="submit">Verbergen</button></div><?php endif; ?>
+        </form>
+        <?php endif; ?>
+      </div>
+    <?php endforeach; ?>
+    <p class="hint" style="margin-top:6px">Een minder goede beoordeling verbergen mag niet zomaar: dan is het overzicht op je website niet eerlijk meer. Reageer liever netjes, dat maakt vaak meer indruk dan alleen maar vijf sterren.</p>
+
+    <form class="formcard" method="post" id="vragen" style="margin-top:20px">
+      <input type="hidden" name="action" value="bd_vraag_zelf" />
+      <h2>Zelf iemand om een beoordeling vragen</h2>
+      <p class="hint" style="margin:-4px 0 12px">Voor een klant die niet via je afspraakplanner of een factuur kwam. Hij krijgt een mail met een persoonlijke link.</p>
+      <div class="two"><div class="field"><label for="bdvn">Naam</label><input type="text" id="bdvn" name="naam" maxlength="80" /></div><div class="field"><label for="bdvm">E-mailadres</label><input type="email" id="bdvm" name="mail" maxlength="120" required /></div></div>
+      <div class="field"><label for="bdvw">Waarvoor (mag leeg)</label><input type="text" id="bdvw" name="wat" maxlength="120" placeholder="Bijvoorbeeld: het schilderwerk aan uw huis" /></div>
+      <button class="btn" type="submit">Uitnodiging versturen</button>
+    </form>
+
+    <form class="formcard" method="post" id="instellen">
+      <input type="hidden" name="action" value="bd_inst" />
+      <h2>Instellingen</h2>
+      <label class="check" style="font-size:17px"><input type="checkbox" name="bd_aan" value="1" <?= $in['aan'] ? 'checked' : '' ?> /> <span><strong>Beoordelingen aan</strong></span></label>
+      <label class="check"><input type="checkbox" name="bd_afspraak" value="1" <?= $in['auto_afspraak'] ? 'checked' : '' ?> /> <span>Vanzelf vragen na een afspraak uit de afspraakplanner</span></label>
+      <label class="check"><input type="checkbox" name="bd_factuur" value="1" <?= $in['auto_factuur'] ? 'checked' : '' ?> /> <span>Vanzelf vragen als een factuur betaald is</span></label>
+      <div class="two" style="margin-top:12px">
+        <div class="field"><label for="bdwacht">Wanneer vragen</label><select id="bdwacht" name="bd_wacht"><?php foreach ([0 => 'Dezelfde dag', 1 => 'De dag erna', 2 => 'Na 2 dagen', 3 => 'Na 3 dagen', 7 => 'Na een week'] as $o => $t): ?><option value="<?= $o ?>"<?= $in['wacht'] === $o ? ' selected' : '' ?>><?= $t ?></option><?php endforeach; ?></select></div>
+        <div class="field"><label for="bdtitel">Titel op je website</label><input type="text" id="bdtitel" name="bd_titel" maxlength="80" value="<?= h($in['titel']) ?>" /></div>
+      </div>
+      <div class="hint">Iedere klant krijgt hooguit eens per half jaar een uitnodiging, zodat niemand zich gestoord voelt. Op je voorpagina zet je het blok Beoordelingen aan bij Instellingen > Blokken.</div>
+      <div style="margin-top:14px"><button class="btn" type="submit">Opslaan</button></div>
+    </form>
+    <?php
+}
+
+/* ===========================================================
    Licentiepoort (licentie.php)
    De admin schrijft dit bestand zelf. Elke pagina laadt het.
    Het vraagt hooguit eens per 6 uur aan de FormForge-server of
@@ -3744,7 +4041,7 @@ $LIC = function_exists('ff_licentie_status') ? ff_licentie_status(isset($_GET['c
 /* Abonnement gestopt of niet betaald: de website staat offline, maar je administratie blijft bereikbaar om te bekijken en te downloaden (alleen lezen) */
 $ADM_ALLEEN_LEZEN = false;
 if ($config && empty($LIC['actief'])) {
-    if (isset($_GET['doc']) || isset($_GET['res']) || isset($_GET['taak']) || isset($_GET['agenda']) || isset($_GET['download']) || isset($_GET['herinnering']) || isset($_GET['bijlage']) || (($_POST['action'] ?? '') === 'adm_akkoord')) {
+    if (isset($_GET['doc']) || isset($_GET['res']) || isset($_GET['beoordeel']) || isset($_GET['taak']) || isset($_GET['agenda']) || isset($_GET['download']) || isset($_GET['herinnering']) || isset($_GET['bijlage']) || (($_POST['action'] ?? '') === 'adm_akkoord')) {
         http_response_code(503); header('Content-Type: text/html; charset=UTF-8');
         exit('<!DOCTYPE html><html lang="nl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Niet beschikbaar</title></head><body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#111827;color:#fff;font-family:Segoe UI,Arial,sans-serif;text-align:center;padding:24px"><div><h1 style="font-size:28px;margin:0 0 10px">Deze pagina is niet beschikbaar.</h1><p style="margin:0;color:rgba(255,255,255,.75)">Neem contact op met de afzender.</p></div></body></html>');
     }
@@ -6689,6 +6986,7 @@ function adm_taak_draai($bron = '') {
     }
     /* 1b. herinneringen voor afspraken en reserveringen */
     foreach (res_herinneringen() as $rl) { $log[] = $rl; }
+    foreach (bd_automatisch() as $rl) { $log[] = $rl; }
     /* 2. te laat: eerst aan jezelf vragen of er een herinnering uit mag */
     $eigen = adm_eigen_mail();
     if ($eigen !== '') {
@@ -6986,7 +7284,7 @@ function adm_alles_maak(&$fout) {
     foreach (adm_voorbeeld() ? [] : read_json(ADM_BANKBEST_DIR . '/lijst.json', []) as $b) { if (is_file(ADM_BANKBEST_DIR . '/' . $b['bestand'])) { $z->addFile(ADM_BANKBEST_DIR . '/' . $b['bestand'], 'Bankbestanden/' . adm_bestandsnaam($b['naam'])); } }
     /* De gegevens zelf, zodat je ze later in een ander programma kunt inlezen (zonder wachtwoorden en sleutels) */
     if (!adm_voorbeeld()) {
-        foreach (['adm_klanten.json', 'adm_docs.json', 'adm_inkoop.json', 'adm_bank.json', 'adm_bankregels.json', 'adm_agenda.json', 'adm_maillog.json', 'reserveringen.json', 'aanbod.json'] as $jf) { if (is_file(DATA_DIR . '/' . $jf)) { $z->addFile(DATA_DIR . '/' . $jf, 'Gegevens (voor een ander programma)/' . $jf); } }
+        foreach (['adm_klanten.json', 'adm_docs.json', 'adm_inkoop.json', 'adm_bank.json', 'adm_bankregels.json', 'adm_agenda.json', 'adm_maillog.json', 'reserveringen.json', 'aanbod.json', 'beoordelingen.json'] as $jf) { if (is_file(DATA_DIR . '/' . $jf)) { $z->addFile(DATA_DIR . '/' . $jf, 'Gegevens (voor een ander programma)/' . $jf); } }
         $ins = read_json(ADM_INST, []); foreach (['taak_sleutel', 'agenda_sleutel'] as $k) { unset($ins[$k]); }
         $z->addFromString('Gegevens (voor een ander programma)/adm_inst.json', json_encode($ins, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
     }
@@ -8052,6 +8350,7 @@ define('DEMO_FILE', DATA_DIR . '/demo-aan.txt');
 if (isset($_GET['doc']) || (($_POST['action'] ?? '') === 'adm_akkoord')) { adm_publiek(); }
 if (isset($_GET['taak']) || isset($_GET['agenda']) || isset($_GET['download']) || isset($_GET['herinnering']) || isset($_GET['bijlage'])) { adm_openbaar(); }
 if (isset($_GET['res'])) { res_openbaar(); }
+if (isset($_GET['beoordeel'])) { bd_formulier(); }
 $demoEnabled = $config && file_exists(DEMO_FILE);
 if ($demoEnabled && isset($_GET['demo']) && empty($_SESSION['ff_admin'])) {
     session_regenerate_id(true);
@@ -8068,7 +8367,7 @@ if ($is_demo && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action
 }
 $logged_in = $config && (!empty($_SESSION['ff_admin']) || $is_demo);
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-10-23-whatsapp');
+define('SITE_BOUW', '2026-10-23-beoordelingen');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -8123,6 +8422,7 @@ if ($logged_in && isset($_POST['action'])) {
     if (strpos($action, 'adm_') === 0) { adm_acties($action); }
     if (strpos($action, 'res_') === 0) { res_acties($action); }
     if (strpos($action, 'ab_') === 0) { ab_acties($action); }
+    if (strpos($action, 'bd_') === 0) { bd_acties($action); }
 
     if ($action === 'save') {
         $title = trim($_POST['title'] ?? '');
@@ -8420,6 +8720,7 @@ $showSettings = $logged_in && isset($_GET['instellingen']);
 $showAdm = $logged_in && isset($_GET['adm']);
 $showRes = $logged_in && isset($_GET['reserveren']);
 $showAb = $logged_in && isset($_GET['aanbod']);
+$showBd = $logged_in && isset($_GET['beoordelingen']);
 $uploadLimit = ini_get('upload_max_filesize');
 $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (string)($_SERVER['HTTP_HOST'] ?? '')));
 ?>
@@ -8608,9 +8909,10 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     <div class="wrap">
       <a class="brand" href="admin.php"><?php if (logo_url() !== ''): ?><img src="<?= h(logo_url()) ?>" alt="" /><?php endif; ?><?= h(st('naam')) ?> <span>ADMIN</span></a>
       <div class="row">
-        <a class="btn ghost sm<?= (!$showSettings && !$showAccount && !$showAdm && !$showRes && !$showAb) ? ' on' : '' ?>" href="admin.php">Projecten</a>
+        <a class="btn ghost sm<?= (!$showSettings && !$showAccount && !$showAdm && !$showRes && !$showAb && !$showBd) ? ' on' : '' ?>" href="admin.php">Projecten</a>
         <a class="btn ghost sm<?= $showAdm ? ' on' : '' ?>" href="admin.php?adm">Administratie</a>
         <a class="btn ghost sm<?= $showAb ? ' on' : '' ?>" href="admin.php?aanbod=1"><?= h(ab_inst()['aan'] ? ab_inst()['naam'] : 'Aanbod') ?></a>
+        <a class="btn ghost sm<?= $showBd ? ' on' : '' ?>" href="admin.php?beoordelingen=1">Beoordelingen<?php $bdN = $showBd ? 0 : bd_nieuw_aantal(); if ($bdN): ?> <span style="display:inline-block;min-width:20px;padding:0 6px;border-radius:999px;background:#ff5d5d;color:#fff;font-size:12px;line-height:20px;text-align:center"><?= $bdN ?></span><?php endif; ?></a>
         <a class="btn ghost sm<?= $showRes ? ' on' : '' ?>" href="admin.php?reserveren=1">Afspraakplanner<?php $rsN = $showRes ? 0 : res_nieuw_aantal(); if ($rsN): ?> <span style="display:inline-block;min-width:20px;padding:0 6px;border-radius:999px;background:#ff5d5d;color:#fff;font-size:12px;line-height:20px;text-align:center"><?= $rsN ?></span><?php endif; ?></a>
         <a class="btn ghost sm<?= $showSettings ? ' on' : '' ?>" href="admin.php?instellingen=1">Instellingen</a>
         <a class="btn ghost sm<?= $showAccount ? ' on' : '' ?>" href="admin.php?account=1">Inloggegevens</a>
@@ -8645,6 +8947,9 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
 
       <?php elseif ($showAb): ?>
         <?php ab_beheer_view(); ?>
+
+      <?php elseif ($showBd): ?>
+        <?php bd_beheer_view(); ?>
 
       <?php elseif ($showAccount): ?>
         <h1>Inloggegevens</h1>
@@ -8804,6 +9109,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
                   <?php if ($k === 'strook'): ?><div class="hint" style="margin:4px 0 0 28px">De namen van je diensten. Hoe de balk eruitziet, kies je hierboven bij Opbouw.</div><?php endif; ?>
                   <?php if ($k === 'diensten'): ?><div class="hint" style="margin:4px 0 0 28px">Je diensten vul je verderop in, bij Diensten.</div><?php endif; ?>
                   <?php if ($k === 'projecten'): ?><div class="hint" style="margin:4px 0 0 28px">Projecten die je in de map Uitgelicht zet.</div><?php endif; ?>
+                  <?php if ($k === 'beoordelingen'): ?><div class="hint" style="margin:4px 0 0 28px">Sterren en teksten van je klanten. Instellen doe je bovenaan bij <a href="admin.php?beoordelingen=1" style="color:#8fb3ff">Beoordelingen</a>.</div><?php endif; ?>
                   <?php if ($k === 'aanbod'): ?><div class="hint" style="margin:4px 0 0 28px">Je nieuwste 6 auto's of producten. Toevoegen doe je bovenaan bij <a href="admin.php?aanbod=1" style="color:#8fb3ff">Aanbod</a>.</div><?php endif; ?>
                   <?php if ($k === 'reserveren'): ?><div class="hint" style="margin:4px 0 0 28px">De kalender om online te reserveren. Instellen doe je bovenaan bij <a href="admin.php?reserveren=1" style="color:#8fb3ff">Afspraakplanner</a>.</div><?php endif; ?>
                   <?php if ($k === 'voorna'): ?>
@@ -9082,6 +9388,8 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     "f:abbestand": "Een Excel-bestand (.xlsx) of CSV. Op de eerste regel de kopjes, zoals Kenteken, Merk, Model, Prijs, Bouwjaar en Km.",
     "f:rsherinner": "Rond 6 uur 's ochtends krijgt de klant automatisch een mail met zijn afspraak. Dat werkt alleen als de klant een e-mailadres heeft ingevuld.",
     "f:whatsapp": "Het nummer waarop je WhatsApp gebruikt. Een 06-nummer is goed, wij maken er zelf het juiste formaat van.",
+    "f:bdwacht": "Hoe lang na de afspraak of na de betaling de klant de uitnodiging krijgt. De dag erna werkt meestal het best.",
+    "f:bdvm": "Het e-mailadres van de klant. Hij krijgt een mail met een persoonlijke link om sterren en een korte tekst te geven.",
     "f:rstitel": "De kop boven de kalender, bijvoorbeeld Reserveer een tafel of Maak een afspraak.",
     "f:rsstap": "Om de hoeveel minuten er een tijd te kiezen is. Elke 30 minuten geeft bijvoorbeeld 18.00, 18.30, 19.00.",
     "f:rsduur": "Hoe lang een gast ongeveer blijft. Zolang telt zijn plek als bezet, ook voor de tijden erna.",
