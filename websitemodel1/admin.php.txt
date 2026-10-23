@@ -29,7 +29,7 @@ define('MAX_PHOTO_BYTES', 8 * 1024 * 1024);
 define('MAX_DIENSTEN', 9);
 
 $RESERVED = ['admin', 'assets', 'data', 'index', 'uploads', 'site', 'favicon', 'error', 'stats', 'cgi-bin',
-             'sitemap', 'robots', 'contact', 'bedankt', 'projecten', 'diensten'];
+             'sitemap', 'robots', 'contact', 'bedankt', 'projecten', 'diensten', 'reserveren'];
 
 /* ===========================================================
    Instellingen
@@ -1093,7 +1093,9 @@ function site_header($backUrl = '', $backLabel = '') {
     } else {
         $out .= '<a class="back" href="' . h($backUrl) . '" onclick="try{var r=document.referrer;if(r&&r.indexOf(location.origin+\'/\')===0&&history.length>1){history.back();return false;}}catch(e){}return true;"><svg viewBox="0 0 24 24" fill="none" width="16" height="16" aria-hidden="true"><path d="M19 12H5M11 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="long">' . h($backLabel) . '</span><span class="short">Terug</span></a>';
     }
-    $out .= '<a class="cta" href="/contact/">Contact</a></nav></div></header>' . "\n";
+    $ri = res_inst();
+    if (!empty($ri['aan']) && !empty($ri['knop'])) { $out .= '<a class="nav" href="/contact/">Contact</a><a class="cta" href="/reserveren/">Reserveren</a></nav></div></header>' . "\n"; }
+    else { $out .= (!empty($ri['aan']) ? '<a class="nav" href="/reserveren/">Reserveren</a>' : '') . '<a class="cta" href="/contact/">Contact</a></nav></div></header>' . "\n"; }
     return $out;
 }
 function nap_block() {
@@ -1172,7 +1174,7 @@ function site_lists($pages) {
 /* ===========================================================
    Blokken op de voorpagina: volgorde en aan/uit, plus de nieuwe blokken
    =========================================================== */
-$BLOKKEN = ['strook' => 'Balk met diensten', 'diensten' => 'Diensten', 'projecten' => 'Uitgelichte projecten', 'voorna' => 'Voor en na (foto\'s)', 'werkwijze' => 'Werkwijze in stappen', 'cijfers' => 'Cijfers', 'over' => 'Over ons', 'vragen' => 'Veelgestelde vragen', 'beeld1' => 'Eigen afbeelding 1', 'beeld2' => 'Eigen afbeelding 2', 'beeld3' => 'Eigen afbeelding 3'];
+$BLOKKEN = ['strook' => 'Balk met diensten', 'diensten' => 'Diensten', 'projecten' => 'Uitgelichte projecten', 'voorna' => 'Voor en na (foto\'s)', 'werkwijze' => 'Werkwijze in stappen', 'cijfers' => 'Cijfers', 'over' => 'Over ons', 'vragen' => 'Veelgestelde vragen', 'reserveren' => 'Online reserveren (kalender)', 'beeld1' => 'Eigen afbeelding 1', 'beeld2' => 'Eigen afbeelding 2', 'beeld3' => 'Eigen afbeelding 3'];
 $BEELD_VORMEN = ['links' => 'Foto links, tekst rechts', 'rechts' => 'Foto rechts, tekst links', 'breed' => 'Grote foto over de hele breedte', 'klein' => 'Kleine foto in het midden (bijvoorbeeld een logo of keurmerk)'];
 function beeld_item($n) {
     global $ST, $BEELD_VORMEN;
@@ -1211,6 +1213,7 @@ function blok_inhoud($k) {
     if ($k === 'vragen') { return array_values(array_filter(blok_lijst('vragen'), function($x) { return trim($x['vraag'] ?? '') !== '' && trim($x['antwoord'] ?? '') !== ''; })); }
     if ($k === 'over') { return st('over_tekst') !== '' ? [1] : []; }
     if (preg_match('/^beeld([1-3])$/', $k, $m)) { return beeld_item((int)$m[1] - 1)['foto'] !== '' ? [1] : []; }
+    if ($k === 'reserveren') { return !empty(res_inst()['aan']) ? [1] : []; }
     return [];
 }
 function blok_kop($titel, $intro) {
@@ -1250,6 +1253,9 @@ function blok_html($k, $sky) {
         foreach (preg_split("/\n\s*\n/", st('over_tekst')) as $al) { $o .= '<p>' . nl2br(h(trim($al))) . '</p>'; }
         if (st('over_naam') !== '') { $o .= '<p class="ov-naam">' . h(st('over_naam')) . '</p>'; }
         $o .= '</div></div></div></section>' . "\n";
+    } elseif ($k === 'reserveren') {
+        $ri = res_inst();
+        $o .= '<section class="' . $cl . '" id="reserveren"><div class="wrap">' . blok_kop($ri['titel'] !== '' ? $ri['titel'] : 'Reserveren', $ri['intro']) . res_widget($ri) . '</div></section>' . "\n";
     } elseif (preg_match('/^beeld([1-3])$/', $k, $m)) {
         $x = beeld_item((int)$m[1] - 1);
         $id = 'beeld-' . $m[1];
@@ -1955,6 +1961,7 @@ function write_contact_pages() {
         if (!is_dir($dir)) { mkdir($dir, 0755, true); }
         schrijf_pagina($dir, stijl_pagina($html));
     }
+    write_reserveren_page();
 }
 function write_seo_files($pages) {
     $u = site_url();
@@ -1962,6 +1969,7 @@ function write_seo_files($pages) {
     $urls = [['loc' => $u . '/', 'lastmod' => $today]];
     foreach (services() as $s) { $urls[] = ['loc' => $u . '/' . $s['slug'] . '/', 'lastmod' => $today]; }
     $urls[] = ['loc' => $u . '/contact/', 'lastmod' => $today];
+    if (!empty(res_inst()['aan'])) { $urls[] = ['loc' => $u . '/reserveren/', 'lastmod' => $today]; }
     foreach ($pages as $p) {
         if (page_folder($p) === '') continue;
         $d = substr((string)($p['updated'] ?? ($p['created'] ?? '')), 0, 10);
@@ -1985,6 +1993,785 @@ function rebuild_site($pages) {
 function rebuild_everything($pages) {
     foreach ($pages as $p) { write_page_files($p); }
     rebuild_site($pages);
+}
+
+/* ===========================================================
+   Online reserveren: kalender met vrije dagen en tijden
+   De bezoeker kiest het aantal personen, een dag en een vrije tijd.
+   Volle tijden verschijnen niet. Alles staat in data/ van de klant.
+   =========================================================== */
+define('RES_INST', DATA_DIR . '/res_inst.json');
+define('RES_FILE', DATA_DIR . '/reserveringen.json');
+define('RES_LIMIET', DATA_DIR . '/res_limiet.json');
+$RES_DAGNAAM = [1 => 'maandag', 2 => 'dinsdag', 3 => 'woensdag', 4 => 'donderdag', 5 => 'vrijdag', 6 => 'zaterdag', 7 => 'zondag'];
+function res_inst() {
+    $std = ['aan' => false, 'soort' => 'tafel', 'titel' => '', 'intro' => '',
+        'knop' => true, 'personen' => true, 'plaatsen' => 40, 'max_p' => 8, 'duur' => 120, 'stap' => 30,
+        'dagen' => [], 'dicht' => [], 'vooruit' => 365, 'vooraf' => 2, 'goedkeuren' => false, 'melding' => '', 'klant' => true,
+        'diensten' => [['naam' => 'Heren knippen vanaf 14 jaar', 'duur' => 30, 'prijs' => 2500, 'oms' => ''], ['naam' => 'Knippen en baard', 'duur' => 30, 'prijs' => 3000, 'oms' => ''], ['naam' => 'Alleen baard', 'duur' => 30, 'prijs' => 2000, 'oms' => '']]];
+    for ($d = 1; $d <= 7; $d++) { $std['dagen'][$d] = ['open' => $d >= 2 && $d <= 6, 'van' => '09:00', 'tot' => '17:30']; }
+    $x = read_json(RES_INST, []);
+    $in = $std;
+    foreach (['aan', 'knop', 'goedkeuren', 'klant'] as $k) { if (isset($x[$k])) $in[$k] = !empty($x[$k]); }
+    if (isset($x['soort']) && in_array($x['soort'], ['tafel', 'afspraak'], true)) { $in['soort'] = $x['soort']; }
+    elseif (isset($x['personen'])) { $in['soort'] = !empty($x['personen']) ? 'tafel' : 'afspraak'; }
+    $in['personen'] = $in['soort'] === 'tafel';
+    foreach (['titel' => 80, 'intro' => 300, 'melding' => 120] as $k => $m) { if (isset($x[$k]) && is_string($x[$k])) $in[$k] = cut($x[$k], $m); }
+    foreach (['plaatsen' => [1, 2000], 'max_p' => [1, 100], 'duur' => [5, 600], 'stap' => [5, 240], 'vooruit' => [1, 730], 'vooraf' => [0, 168]] as $k => $r) {
+        if (isset($x[$k]) && is_numeric($x[$k])) $in[$k] = max($r[0], min($r[1], (int)$x[$k]));
+    }
+    for ($d = 1; $d <= 7; $d++) {
+        $v = $x['dagen'][$d] ?? ($x['dagen'][(string)$d] ?? null);
+        if (!is_array($v)) continue;
+        $in['dagen'][$d]['open'] = !empty($v['open']);
+        foreach (['van', 'tot'] as $k) { if (isset($v[$k]) && preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', (string)$v[$k])) $in['dagen'][$d][$k] = $v[$k]; }
+    }
+    if (isset($x['dicht']) && is_array($x['dicht'])) { $in['dicht'] = array_values(array_filter($x['dicht'], function($d) { return is_string($d) && preg_match('/^\d{4}-\d\d-\d\d$/', $d); })); }
+    if (isset($x['diensten']) && is_array($x['diensten'])) {
+        $in['diensten'] = [];
+        foreach ($x['diensten'] as $dd) {
+            if (!is_array($dd) || trim((string)($dd['naam'] ?? '')) === '') continue;
+            $in['diensten'][] = ['naam' => cut(trim((string)$dd['naam']), 80), 'duur' => max(5, min(600, (int)($dd['duur'] ?? 30))), 'prijs' => max(0, (int)($dd['prijs'] ?? 0)), 'oms' => cut(trim((string)($dd['oms'] ?? '')), 120)];
+        }
+    }
+    if ($in['soort'] === 'afspraak' && !$in['diensten']) { $in['diensten'] = [['naam' => 'Afspraak', 'duur' => max(5, (int)$in['stap']), 'prijs' => 0, 'oms' => '']]; }
+    if (trim($in['titel']) === '') { $in['titel'] = $in['soort'] === 'afspraak' ? 'Maak een afspraak' : 'Reserveer een tafel'; }
+    if (trim($in['intro']) === '') { $in['intro'] = $in['soort'] === 'afspraak' ? 'Kies een dag, een tijd en wat u wilt laten doen. U krijgt direct een bevestiging per mail.' : 'Kies een dag en een tijd. U krijgt direct een bevestiging per mail.'; }
+    return $in;
+}
+
+function res_min($t) { $p = explode(':', (string)$t); return (int)($p[0] ?? 0) * 60 + (int)($p[1] ?? 0); }
+function res_tt($t) { return str_replace(':', '.', (string)$t); }
+function res_uur($m) { return sprintf('%02d:%02d', intdiv($m, 60), $m % 60); }
+function res_lijst() { $l = read_json(RES_FILE, []); return is_array($l) ? array_values(array_filter($l, 'is_array')) : []; }
+function res_bewaar($l) {
+    $grens = date('Y-m-d', strtotime('-400 days'));
+    $l = array_values(array_filter($l, function($r) use ($grens) { return ($r['dag'] ?? '') >= $grens; }));
+    usort($l, function($a, $b) { return strcmp($a['dag'] . $a['tijd'], $b['dag'] . $b['tijd']); });
+    write_json(RES_FILE, $l);
+}
+function res_slot($fn) {
+    ensure_data_dir();
+    $fh = @fopen(DATA_DIR . '/res.lock', 'c');
+    if ($fh) { flock($fh, LOCK_EX); }
+    try { return $fn(); } finally { if ($fh) { flock($fh, LOCK_UN); fclose($fh); } }
+}
+function res_tijden($in, $dag) {
+    $t = strtotime($dag . ' 12:00');
+    if (!$t) return [];
+    $d = $in['dagen'][(int)date('N', $t)] ?? null;
+    if (!$d || empty($d['open']) || in_array($dag, $in['dicht'], true)) return [];
+    $van = res_min($d['van']); $tot = res_min($d['tot']); $stap = max(5, (int)$in['stap']);
+    $uit = [];
+    for ($m = $van; $m <= $tot; $m += $stap) { $uit[] = res_uur($m); }
+    return $uit;
+}
+function res_telt($r, $in) { return !empty($in['personen']) ? max(1, (int)($r['p'] ?? 1)) : 1; }
+/* Hoeveel plaatsen zijn op zijn drukst bezet tijdens [start, start + duur) */
+function res_piek($in, $lijst, $dag, $start, $duur = 0, $negeer = '') {
+    $duur = $duur > 0 ? $duur : max(5, (int)$in['duur']);
+    $act = [];
+    foreach ($lijst as $r) {
+        if (($r['dag'] ?? '') !== $dag || ($r['status'] ?? '') === 'geannuleerd' || ($r['id'] ?? '') === $negeer) continue;
+        $act[] = [res_min($r['tijd']), res_telt($r, $in), res_duur_van($r, $in)];
+    }
+    $punten = [$start];
+    foreach ($act as $a) { if ($a[0] > $start && $a[0] < $start + $duur) $punten[] = $a[0]; }
+    $max = 0;
+    foreach ($punten as $t) {
+        $o = 0;
+        foreach ($act as $a) { if ($a[0] <= $t && $t < $a[0] + $a[2]) $o += $a[1]; }
+        if ($o > $max) $max = $o;
+    }
+    return $max;
+}
+function res_duur_van($r, $in) { return max(5, (int)($r['duur'] ?? $in['duur'])); }
+/* Bij afspraken moet de behandeling klaar zijn voor sluitingstijd (laatste tijd + 1 stap) */
+function res_past_in_dag($in, $dag, $t, $duur) {
+    if ($in['soort'] !== 'afspraak') return true;
+    $d = $in['dagen'][(int)date('N', strtotime($dag . ' 12:00'))] ?? null;
+    return $d && res_min($t) + $duur <= res_min($d['tot']) + max(5, (int)$in['stap']);
+}
+function res_kortste($in) {
+    if ($in['soort'] !== 'afspraak' || !$in['diensten']) return max(5, (int)$in['duur']);
+    return min(array_map(function($d) { return (int)$d['duur']; }, $in['diensten']));
+}
+function res_woord($in) { return $in['soort'] === 'afspraak' ? 'afspraak' : 'reservering'; }
+function res_wat($r) { return ($r['dienst'] ?? '') !== '' ? $r['dienst'] . ((int)($r['prijs'] ?? 0) > 0 ? ' (' . adm_eur((int)$r['prijs']) . ')' : '') : ''; }
+
+function res_in_bereik($in, $dag) {
+    $vandaag = date('Y-m-d');
+    return $dag >= $vandaag && $dag <= date('Y-m-d', strtotime('+' . (int)$in['vooruit'] . ' days'));
+}
+function res_vrij($in, $lijst, $dag, $p, $duur = 0) {
+    if (!res_in_bereik($in, $dag)) return [];
+    $duur = $duur > 0 ? $duur : res_kortste($in);
+    $grens = time() + (int)round($in['vooraf'] * 3600);
+    $nodig = !empty($in['personen']) ? max(1, (int)$p) : 1;
+    $uit = [];
+    foreach (res_tijden($in, $dag) as $t) {
+        if (strtotime($dag . ' ' . $t) < $grens || !res_past_in_dag($in, $dag, $t, $duur)) continue;
+        if (res_piek($in, $lijst, $dag, res_min($t), $duur) + $nodig <= (int)$in['plaatsen']) $uit[] = $t;
+    }
+    return $uit;
+}
+/* Welke behandelingen passen nog op deze dag en tijd */
+function res_diensten_vrij($in, $lijst, $dag, $t) {
+    $uit = [];
+    if (!res_in_bereik($in, $dag) || !in_array($t, res_tijden($in, $dag), true) || strtotime($dag . ' ' . $t) < time() + (int)round($in['vooraf'] * 3600)) return $uit;
+    foreach ($in['diensten'] as $i => $d) {
+        if (!res_past_in_dag($in, $dag, $t, (int)$d['duur'])) continue;
+        if (res_piek($in, $lijst, $dag, res_min($t), (int)$d['duur']) + 1 <= (int)$in['plaatsen']) {
+            $uit[] = ['i' => $i, 'naam' => $d['naam'], 'oms' => $d['oms'], 'duur' => (int)$d['duur'], 'prijs' => (int)$d['prijs'] > 0 ? adm_eur((int)$d['prijs']) : ''];
+        }
+    }
+    return $uit;
+}
+
+function res_datum_tekst($dag) {
+    global $RES_DAGNAAM;
+    $t = strtotime($dag . ' 12:00');
+    return $t ? $RES_DAGNAAM[(int)date('N', $t)] . ' ' . nl_datum($dag) : $dag;
+}
+function res_json($d) {
+    header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); header('X-Robots-Tag: noindex');
+    echo json_encode($d, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); exit;
+}
+function res_mail_gast($in, $r, $soort) {
+    if (!filter_var($r['mail'] ?? '', FILTER_VALIDATE_EMAIL)) return false;
+    $zaak = st('naam'); $w = res_woord($in);
+    $wat = res_datum_tekst($r['dag']) . ' om ' . res_tt($r['tijd']) . ' uur';
+    $regels = "Datum: " . res_datum_tekst($r['dag']) . "\nTijd: " . res_tt($r['tijd']) . " uur\n"
+            . (res_wat($r) !== '' ? "Behandeling: " . res_wat($r) . "\n" : '')
+            . (!empty($in['personen']) ? "Aantal personen: " . (int)$r['p'] . "\n" : '')
+            . "Op naam van: " . $r['naam'] . "\n"
+            . (st('straat') !== '' ? "Adres: " . st('straat') . ', ' . trim(st('postcode') . ' ' . st('plaats')) . "\n" : '');
+    $link = site_url() . '/admin.php?res=annuleer&t=' . $r['token'];
+    $tel = st('tel') !== '' ? "\nOf bel ons: " . st('tel') : '';
+    if ($soort === 'bevestigd') {
+        $ond = 'Uw ' . $w . ' bij ' . $zaak . ': ' . $wat;
+        $txt = "Beste " . $r['naam'] . ",\n\nBedankt voor uw " . $w . " bij " . $zaak . ". Wij zien u graag.\n\n" . $regels . "\nKunt u toch niet komen? Annuleer dan via deze link:\n" . $link . $tel . "\n\nMet vriendelijke groet,\n" . $zaak;
+    } elseif ($soort === 'aanvraag') {
+        $ond = 'Wij hebben uw ' . $w . ' ontvangen: ' . $wat;
+        $txt = "Beste " . $r['naam'] . ",\n\nBedankt voor uw " . $w . " bij " . $zaak . ". Wij kijken of het lukt en sturen u zo snel mogelijk een bevestiging.\n\n" . $regels . "\nKunt u toch niet komen? Annuleer dan via deze link:\n" . $link . $tel . "\n\nMet vriendelijke groet,\n" . $zaak;
+    } else {
+        $ond = 'Uw ' . $w . ' bij ' . $zaak . ' is geannuleerd';
+        $txt = "Beste " . $r['naam'] . ",\n\nUw " . $w . " bij " . $zaak . " is geannuleerd.\n\n" . $regels . "\nWilt u een andere dag of tijd? Kijk dan op " . site_url() . "/reserveren/" . $tel . "\n\nMet vriendelijke groet,\n" . $zaak;
+    }
+    return adm_mail_stuur($r['mail'], $ond, $txt, [], [], ['soort' => $w, 'ref' => $r['id']]);
+}
+
+function res_mail_eigenaar($in, $r, $soort) {
+    $naar = filter_var($in['melding'], FILTER_VALIDATE_EMAIL) ? $in['melding'] : st('email');
+    if (!filter_var($naar, FILTER_VALIDATE_EMAIL)) return false;
+    $w = res_woord($in);
+    $kop = $soort === 'geannuleerd' ? 'Geannuleerd door de klant' : ($soort === 'aanvraag' ? 'Nieuwe ' . $w . ', wacht op jouw bevestiging' : 'Nieuwe ' . $w);
+    $txt = $kop . "\n\nDatum: " . res_datum_tekst($r['dag']) . "\nTijd: " . res_tt($r['tijd']) . " uur\n"
+         . (res_wat($r) !== '' ? "Behandeling: " . res_wat($r) . "\n" : '')
+         . (!empty($in['personen']) ? "Personen: " . (int)$r['p'] . "\n" : '')
+         . "Naam: " . $r['naam'] . "\nTelefoon: " . ($r['tel'] ?? '') . "\nE-mail: " . ($r['mail'] ?? '') . "\n" . (($r['opm'] ?? '') !== '' ? "Opmerking: " . $r['opm'] . "\n" : '')
+         . "\nAlles bekijken: " . site_url() . "/admin.php?reserveren=1";
+    return adm_mail_stuur($naar, $kop . ': ' . res_datum_tekst($r['dag']) . ' ' . res_tt($r['tijd']) . ' (' . $r['naam'] . ')', $txt, [], [], ['soort' => $w, 'ref' => $r['id']]);
+}
+/* De klant ook in Klanten van de administratie zetten (op e-mailadres), zodat je hem later een bon of factuur kunt sturen */
+function res_klant_koppel($in, $r) {
+    if (empty($in['klant']) || adm_voorbeeld() || !filter_var($r['mail'] ?? '', FILTER_VALIDATE_EMAIL)) return '';
+    $kl = adm_klanten();
+    foreach ($kl as $i => $k) {
+        if (strcasecmp((string)($k['email'] ?? ''), $r['mail']) === 0) {
+            if (($k['tel'] ?? '') === '' && ($r['tel'] ?? '') !== '') { $kl[$i]['tel'] = $r['tel']; adm_save_klanten($kl); }
+            return (string)$k['id'];
+        }
+    }
+    $k = ['id' => adm_id('k'), 'naam' => $r['naam'], 'contact' => '', 'email' => $r['mail'], 'tel' => (string)($r['tel'] ?? ''), 'straat' => '', 'postcode' => '', 'plaats' => '', 'kvk' => '', 'btw' => '', 'notitie' => 'Via online ' . res_woord($in) . ' op ' . date('d-m-Y') . '.'];
+    $kl[] = $k; adm_save_klanten($kl);
+    return $k['id'];
+}
+/* Reserveringen en afspraken ook in de agenda van de administratie (en daarmee in de agenda op je telefoon) */
+function res_agenda_items($vanaf) {
+    if (!is_file(RES_FILE)) return [];
+    $in = res_inst(); $uit = [];
+    foreach (res_lijst() as $r) {
+        if (($r['status'] ?? '') === 'geannuleerd' || $r['dag'] < $vanaf) continue;
+        $titel = res_wat($r) !== '' ? $r['dienst'] . ': ' . $r['naam'] : (!empty($in['personen']) ? 'Reservering ' . (int)$r['p'] . ' pers.: ' . $r['naam'] : 'Afspraak: ' . $r['naam']);
+        if (($r['status'] ?? '') === 'aanvraag') { $titel = 'Te bevestigen: ' . $titel; }
+        $noot = trim(implode("\n", array_filter([($r['tel'] ?? '') !== '' ? 'Tel: ' . $r['tel'] : '', ($r['mail'] ?? '') !== '' ? 'E-mail: ' . $r['mail'] : '', (int)($r['prijs'] ?? 0) > 0 ? 'Prijs: ' . adm_eur((int)$r['prijs']) : '', $r['opm'] ?? ''])));
+        $uit[] = ['id' => 'r-' . $r['id'], 'eigen' => '', 'soort' => 'online', 'titel' => $titel, 'datum' => $r['dag'], 'tot' => '', 'van' => $r['tijd'], 'totTijd' => res_uur(min(1439, res_min($r['tijd']) + res_duur_van($r, $in))), 'plaats' => '', 'notitie' => $noot, 'link' => 'admin.php?reserveren=1&dag=' . $r['dag']];
+    }
+    return $uit;
+}
+
+function res_limiet_ok() {
+    $ip = hash('sha256', (string)($_SERVER['REMOTE_ADDR'] ?? '') . 'ff-res');
+    $l = read_json(RES_LIMIET, []);
+    $nu = time();
+    foreach ($l as $k => $v) { $l[$k] = array_values(array_filter((array)$v, function($t) use ($nu) { return $nu - (int)$t < 86400; })); if (!$l[$k]) unset($l[$k]); }
+    $mijn = $l[$ip] ?? [];
+    $uur = count(array_filter($mijn, function($t) use ($nu) { return $nu - $t < 3600; }));
+    if ($uur >= 6 || count($mijn) >= 20) { write_json(RES_LIMIET, $l); return false; }
+    $mijn[] = $nu; $l[$ip] = $mijn; write_json(RES_LIMIET, $l);
+    return true;
+}
+function res_openbaar() {
+    $in = res_inst();
+    $w = (string)($_GET['res'] ?? '');
+    if ($w === 'annuleer') { res_annuleer_pagina($in); }
+    if (empty($in['aan'])) { res_json(['fout' => 'Online ' . res_woord($in) . ' maken staat op dit moment uit.']); }
+    $p = max(1, min((int)$in['max_p'], (int)($_POST['p'] ?? ($_GET['p'] ?? 1))));
+    if ($w === 'maand') {
+        $m = preg_match('/^\d{4}-\d\d$/', (string)($_GET['m'] ?? '')) ? (string)$_GET['m'] : date('Y-m');
+        $lijst = res_lijst();
+        $dagen = [];
+        $aantal = (int)date('t', strtotime($m . '-01'));
+        for ($d = 1; $d <= $aantal; $d++) {
+            $dag = $m . '-' . sprintf('%02d', $d);
+            $alle = res_in_bereik($in, $dag) ? res_tijden($in, $dag) : [];
+            if (!$alle) { $dagen[$dag] = 'dicht'; continue; }
+            $vrij = res_vrij($in, $lijst, $dag, $p);
+            $dagen[$dag] = !$vrij ? 'vol' : (count($vrij) <= max(1, (int)floor(count($alle) / 4)) ? 'weinig' : 'vrij');
+        }
+        res_json(['maand' => $m, 'dagen' => $dagen, 'eerste' => date('Y-m-d'), 'laatste' => date('Y-m-d', strtotime('+' . (int)$in['vooruit'] . ' days'))]);
+    }
+    if ($w === 'tijden') {
+        $dag = preg_match('/^\d{4}-\d\d-\d\d$/', (string)($_GET['dag'] ?? '')) ? (string)$_GET['dag'] : '';
+        res_json(['dag' => $dag, 'tekst' => $dag !== '' ? res_datum_tekst($dag) : '', 'tijden' => $dag !== '' ? res_vrij($in, res_lijst(), $dag, $p) : []]);
+    }
+    if ($w === 'diensten') {
+        $dag = preg_match('/^\d{4}-\d\d-\d\d$/', (string)($_GET['dag'] ?? '')) ? (string)$_GET['dag'] : '';
+        $t = preg_match('/^\d\d:\d\d$/', (string)($_GET['tijd'] ?? '')) ? (string)$_GET['tijd'] : '';
+        res_json(['diensten' => ($dag !== '' && $t !== '') ? res_diensten_vrij($in, res_lijst(), $dag, $t) : []]);
+    }
+    if ($w === 'boek' && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+        if (trim((string)($_POST['website'] ?? '')) !== '' || (int)($_POST['tt'] ?? 0) < 2500) { res_json(['ok' => 1, 'status' => 'bevestigd', 'tekst' => 'Uw ' . res_woord($in) . ' is ontvangen.']); }
+        $dag = (string)($_POST['dag'] ?? ''); $tijd = (string)($_POST['tijd'] ?? '');
+        $kort = function($v, $n) { return cut(trim(preg_replace('/\s+/', ' ', (string)$v)), $n); };
+        $voor = $kort($_POST['voornaam'] ?? '', 60); $achter = $kort($_POST['achternaam'] ?? '', 80);
+        $naam = trim($voor . ' ' . $achter);
+        $tel = cut(trim((string)($_POST['tel'] ?? '')), 25);
+        $mail = trim((string)($_POST['mail'] ?? ''));
+        $opm = cut(trim(str_replace("\r\n", "\n", (string)($_POST['opm'] ?? ''))), 500);
+        if (!preg_match('/^\d{4}-\d\d-\d\d$/', $dag) || !preg_match('/^\d\d:\d\d$/', $tijd)) res_json(['fout' => 'Kies eerst een dag en een tijd.']);
+        if (mb_strlen($voor) < 1 || mb_strlen($achter) < 2) res_json(['fout' => 'Vul uw voornaam en achternaam in.']);
+        if (!preg_match('/^[0-9+() .\-]{6,25}$/', $tel)) res_json(['fout' => 'Vul een geldig telefoonnummer in.']);
+        if (!filter_var($mail, FILTER_VALIDATE_EMAIL)) res_json(['fout' => 'Vul een geldig e-mailadres in, daar sturen wij de bevestiging naartoe.']);
+        $di = null;
+        if ($in['soort'] === 'afspraak') {
+            $di = (int)($_POST['d'] ?? -1);
+            if (!isset($in['diensten'][$di])) res_json(['fout' => 'Kies wat u wilt laten doen.']);
+        }
+        if (!res_limiet_ok()) res_json(['fout' => 'Er zijn vanaf dit adres al veel ' . res_woord($in) . 'en gemaakt. Bel ons gerust als het niet lukt.']);
+        $r = res_slot(function() use ($in, $dag, $tijd, $p, $voor, $achter, $naam, $tel, $mail, $opm, $di) {
+            $lijst = res_lijst();
+            if ($di !== null) {
+                $ok = false; foreach (res_diensten_vrij($in, $lijst, $dag, $tijd) as $x) { if ($x['i'] === $di) $ok = true; }
+                if (!$ok) return null;
+                $dd = $in['diensten'][$di];
+            } elseif (!in_array($tijd, res_vrij($in, $lijst, $dag, $p), true)) { return null; }
+            $r = ['id' => bin2hex(random_bytes(6)), 'token' => bin2hex(random_bytes(16)), 'dag' => $dag, 'tijd' => $tijd, 'p' => !empty($in['personen']) ? $p : 1,
+                  'duur' => $di !== null ? (int)$dd['duur'] : (int)$in['duur'], 'dienst' => $di !== null ? $dd['naam'] : '', 'prijs' => $di !== null ? (int)$dd['prijs'] : 0,
+                  'voornaam' => $voor, 'achternaam' => $achter, 'naam' => $naam, 'tel' => $tel, 'mail' => $mail, 'opm' => $opm,
+                  'status' => !empty($in['goedkeuren']) ? 'aanvraag' : 'bevestigd', 'bron' => 'website', 'op' => date('Y-m-d H:i'), 'nieuw' => 1];
+            $lijst[] = $r; res_bewaar($lijst);
+            return $r;
+        });
+        if (!$r) res_json(['fout' => 'Net te laat: deze tijd is zojuist bezet. Kies een andere tijd.', 'vol' => 1]);
+        $kid = res_klant_koppel($in, $r);
+        if ($kid !== '') { res_slot(function() use ($r, $kid) { $l = res_lijst(); foreach ($l as $k => $x) { if ($x['id'] === $r['id']) $l[$k]['klant_id'] = $kid; } res_bewaar($l); }); }
+        $gm = res_mail_gast($in, $r, $r['status']);
+        res_mail_eigenaar($in, $r, $r['status']);
+        $wat = res_datum_tekst($dag) . ' om ' . res_tt($tijd) . ' uur' . ($r['dienst'] !== '' ? ', ' . res_wat($r) : '') . (!empty($in['personen']) ? ', ' . $p . ($p === 1 ? ' persoon' : ' personen') : '');
+        $tekst = $r['status'] === 'aanvraag' ? 'Wij hebben uw ' . res_woord($in) . ' ontvangen: ' . $wat . '. U krijgt zo snel mogelijk een bevestiging.' : 'Uw ' . res_woord($in) . ' staat vast: ' . $wat . '.';
+        $tekst .= $gm ? ($r['status'] === 'aanvraag' ? ' Wij hebben een mail gestuurd naar ' . $mail . '.' : ' U krijgt een bevestiging op ' . $mail . '.') : (st('tel') !== '' ? ' Vragen? Bel ons op ' . st('tel') . '.' : '');
+        res_json(['ok' => 1, 'status' => $r['status'], 'tekst' => $tekst]);
+    }
+    res_json(['fout' => 'Onbekend verzoek.']);
+}
+
+function res_annuleer_pagina($in) {
+    $t = (string)($_GET['t'] ?? '');
+    $lijst = res_lijst(); $i = null;
+    if (preg_match('/^[a-f0-9]{32}$/', $t)) { foreach ($lijst as $k => $r) { if (hash_equals((string)($r['token'] ?? ''), $t)) { $i = $k; break; } } }
+    $kop = ''; $tekst = ''; $knop = false;
+    if ($i === null) { $kop = 'Deze link werkt niet'; $tekst = 'Wij kunnen deze ' . res_woord($in) . ' niet vinden. Neem gerust contact met ons op.'; }
+    else {
+        $r = $lijst[$i];
+        $voorbij = strtotime($r['dag'] . ' ' . $r['tijd']) < time();
+        if (($r['status'] ?? '') === 'geannuleerd') { $kop = 'Deze ' . res_woord($in) . ' is al geannuleerd'; $tekst = res_datum_tekst($r['dag']) . ' om ' . $r['tijd'] . ' uur, op naam van ' . $r['naam'] . '.'; }
+        elseif ($voorbij) { $kop = 'Deze ' . res_woord($in) . ' is al voorbij'; $tekst = res_datum_tekst($r['dag']) . ' om ' . $r['tijd'] . ' uur.'; }
+        elseif (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['ja'] ?? '') === '1') {
+            res_slot(function() use ($t) {
+                $l = res_lijst();
+                foreach ($l as $k => $x) { if (hash_equals((string)($x['token'] ?? ''), $t)) { $l[$k]['status'] = 'geannuleerd'; $l[$k]['nieuw'] = 1; $l[$k]['geannuleerd_op'] = date('Y-m-d H:i'); } }
+                res_bewaar($l);
+            });
+            res_mail_eigenaar($in, $r, 'geannuleerd');
+            $kop = 'Uw ' . res_woord($in) . ' is geannuleerd'; $tekst = 'Jammer dat u niet kunt komen. ' . res_datum_tekst($r['dag']) . ' om ' . $r['tijd'] . ' uur is vrijgegeven.';
+        } else {
+            $kop = ucfirst(res_woord($in)) . ' annuleren?'; $knop = true;
+            $tekst = res_datum_tekst($r['dag']) . ' om ' . res_tt($r['tijd']) . ' uur' . (res_wat($r) !== '' ? ', ' . res_wat($r) : '') . (!empty($in['personen']) ? ', ' . (int)$r['p'] . ' personen' : '') . ', op naam van ' . $r['naam'] . '.';
+        }
+    }
+    $out = site_head($kop . ' | ' . st('naam'), '', '/reserveren/', '<meta name="robots" content="noindex, nofollow" />', true);
+    $out .= '<style>.thx{background:var(--navy);color:#fff;padding:clamp(64px,10vw,130px) 0;min-height:55vh;} .thx h1{font-size:clamp(32px,5vw,52px);} .thx p{margin:16px 0 0;color:rgba(255,255,255,.82);font-size:18px;max-width:56ch;} .thx .acts{margin-top:32px;display:flex;gap:12px;flex-wrap:wrap;} .thx form{margin:0;}</style>' . "\n</head>\n<body>\n";
+    $out .= site_header('/', 'Naar home');
+    $out .= '<main class="thx"><div class="wrap"><h1>' . h($kop) . '</h1><p>' . h($tekst) . '</p><div class="acts">';
+    if ($knop) { $out .= '<form method="post" action="/admin.php?res=annuleer&amp;t=' . h($t) . '"><input type="hidden" name="ja" value="1" /><button class="btn primary" type="submit">Ja, annuleer mijn ' . res_woord($in) . '</button></form>'; }
+    $out .= '<a class="btn quiet" href="/">Naar de voorpagina</a></div></div></main>' . site_footer() . "\n</body>\n</html>\n";
+    header('Content-Type: text/html; charset=UTF-8'); header('X-Robots-Tag: noindex');
+    echo stijl_pagina($out); exit;
+}
+
+/* ---------- De kalender op de website ---------- */
+function res_widget($in) {
+    $o = '<div class="resw" data-max="' . (int)$in['max_p'] . '" data-pers="' . (!empty($in['personen']) ? '1' : '0') . '" data-soort="' . h($in['soort']) . '" data-tel="' . h(st('tel')) . '"><noscript><p>Zet JavaScript aan om online een ' . res_woord($in) . ' te maken' . (st('tel') !== '' ? ', of bel ' . h(st('tel')) : '') . '.</p></noscript></div>';
+    $o .= <<<'HTML'
+<style>
+.resw{--rw-r:16px;background:#fff;color:var(--navy);border:1px solid var(--line);border-radius:var(--rw-r);padding:clamp(18px,3vw,30px);box-shadow:0 30px 60px -40px rgba(0,0,0,.35);max-width:760px;}
+.resw *{box-sizing:border-box;}
+.rw-stap{font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 10px;}
+.rw-pers{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:22px;}
+.rw-pers button{width:44px;height:44px;border-radius:50%;border:1.5px solid var(--line);background:#fff;color:var(--navy);font-size:22px;line-height:1;cursor:pointer;}
+.rw-pers button:disabled{opacity:.35;cursor:default;}
+.rw-pers strong{font-size:20px;min-width:110px;text-align:center;}
+.rw-kop{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+.rw-kop strong{font-size:19px;text-transform:capitalize;}
+.rw-kop button{width:42px;height:42px;border-radius:50%;border:1.5px solid var(--line);background:#fff;color:var(--navy);font-size:20px;cursor:pointer;}
+.rw-kop button:disabled{opacity:.3;cursor:default;}
+.rw-week,.rw-dagen{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;}
+.rw-week span{text-align:center;font-size:12.5px;font-weight:700;color:var(--muted);padding:4px 0;text-transform:uppercase;}
+.rw-dagen button,.rw-dagen span{height:clamp(44px,7vw,56px);display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:12px;font:inherit;font-size:16px;font-weight:700;border:0;}
+.rw-dagen span{visibility:hidden;}
+.rw-dagen button{cursor:pointer;background:color-mix(in srgb,#16a34a 12%,#fff);color:#14532d;position:relative;transition:transform .12s ease;}
+.rw-dagen button i{width:6px;height:6px;border-radius:50%;background:#16a34a;margin-top:3px;}
+.rw-dagen button.weinig{background:#fff4e0;color:#7c4a03;} .rw-dagen button.weinig i{background:#f59e0b;}
+.rw-dagen button.vol{background:#f3f4f6;color:#9ca3af;text-decoration:line-through;cursor:default;} .rw-dagen button.vol i{background:#d1d5db;}
+.rw-dagen button.dicht{background:transparent;color:#c4c8cf;cursor:default;font-weight:500;} .rw-dagen button.dicht i{display:none;}
+.rw-dagen button:not(:disabled):hover{transform:translateY(-2px);}
+.rw-dagen button.on{background:var(--blue);color:#fff;box-shadow:0 10px 20px -10px var(--blue);} .rw-dagen button.on i{background:#fff;}
+.rw-uitleg{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin-top:12px;}
+.rw-uitleg span{display:inline-flex;align-items:center;gap:6px;} .rw-uitleg i{width:10px;height:10px;border-radius:50%;display:inline-block;} .rw-uitleg i.dicht{border:1.5px solid #c4c8cf;width:9px;height:9px;}
+.rw-dl{display:grid;gap:10px;}
+.rw-dienst{display:flex;align-items:center;justify-content:space-between;gap:14px;width:100%;text-align:left;padding:16px 18px;border-radius:14px;border:1.5px solid var(--line);background:#fff;color:var(--navy);font:inherit;cursor:pointer;}
+.rw-dienst:hover{border-color:var(--blue);}
+.rw-dienst.on{border-color:var(--blue);box-shadow:inset 0 0 0 1.5px var(--blue);background:color-mix(in srgb,var(--blue) 6%,#fff);}
+.rw-dn{display:flex;flex-direction:column;gap:2px;} .rw-dn strong{font-size:17px;} .rw-dn small{color:var(--muted);font-size:14px;}
+.rw-dp{font-weight:800;font-size:18px;white-space:nowrap;}
+.rw-sam{white-space:pre-line;}
+.rw-tijden{margin-top:24px;} .rw-tijden h3{font-size:19px;margin:0 0 12px;}
+.rw-tl{display:flex;flex-wrap:wrap;gap:10px;}
+.rw-tl button{min-width:88px;padding:13px 16px;border-radius:12px;border:1.5px solid var(--line);background:#fff;color:var(--navy);font:inherit;font-weight:700;font-size:17px;cursor:pointer;}
+.rw-tl button:hover{border-color:var(--blue);}
+.rw-tl button.on{background:var(--blue);border-color:var(--blue);color:#fff;}
+.rw-leeg{color:var(--muted);}
+.rw-form{margin-top:26px;border-top:1px solid var(--line);padding-top:22px;}
+.rw-sam{background:var(--sky);border-radius:12px;padding:14px 16px;font-weight:600;margin-bottom:18px;}
+.rw-rij{display:grid;grid-template-columns:1fr 1fr;gap:14px;} @media (max-width:560px){.rw-rij{grid-template-columns:1fr;}}
+.rw-f{margin-bottom:14px;} .rw-f label{display:block;font-weight:600;font-size:15px;margin-bottom:6px;}
+.rw-f input,.rw-f textarea{width:100%;font:inherit;font-size:16px;color:var(--navy);background:#fff;border:1.5px solid var(--line);border-radius:10px;padding:12px 14px;}
+.rw-f textarea{min-height:80px;resize:vertical;} .rw-f input:focus,.rw-f textarea:focus{outline:none;border-color:var(--blue);}
+.rw-hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;}
+.rw-fout{background:#fdecec;color:#8a1c1c;border:1px solid #f5c2c2;border-radius:10px;padding:12px 14px;margin:0 0 14px;font-weight:500;}
+.rw-klaar{text-align:center;padding:20px 6px;} .rw-klaar b{display:grid;place-items:center;width:64px;height:64px;margin:0 auto 14px;border-radius:50%;background:#16a34a;color:#fff;font-size:32px;}
+.rw-klaar h3{font-size:24px;margin:0 0 8px;} .rw-klaar p{color:var(--muted);max-width:46ch;margin:0 auto 18px;}
+.resw .btn[disabled]{opacity:.6;cursor:default;}
+</style>
+<script>
+(function () {
+  var MND = ['januari','februari','maart','april','mei','juni','juli','augustus','september','oktober','november','december'];
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function ym(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1); }
+  function maak(tag, cls, tekst) { var e = document.createElement(tag); if (cls) e.className = cls; if (tekst != null) e.textContent = tekst; return e; }
+  function duurTekst(m) { return m < 60 ? m + ' minuten' : (m % 60 === 0 ? (m / 60) + ' uur' : Math.floor(m / 60) + ' uur ' + (m % 60) + ' min'); }
+  function start(el) {
+    var max = parseInt(el.getAttribute('data-max'), 10) || 8, pers = el.getAttribute('data-pers') === '1', afspr = el.getAttribute('data-soort') === 'afspraak', t0 = Date.now();
+    var woord = afspr ? 'afspraak' : 'reservering', Woord = afspr ? 'Afspraak' : 'Reservering';
+    var nu = new Date(), st = { p: pers ? Math.min(2, max) : 1, m: new Date(nu.getFullYear(), nu.getMonth(), 1), dag: '', dagTekst: '', tijd: '', d: -1, dNaam: '', laatste: '' };
+    var stap = 0; function nr() { stap++; return stap + '. '; }
+    el.innerHTML = '';
+    if (pers) {
+      el.appendChild(maak('p', 'rw-stap', nr() + 'Met hoeveel personen?'));
+      var pw = maak('div', 'rw-pers'), min = maak('button', '', '\u2212'), plus = maak('button', '', '+'), pt = maak('strong');
+      min.type = plus.type = 'button'; min.setAttribute('aria-label', 'Minder personen'); plus.setAttribute('aria-label', 'Meer personen');
+      pw.appendChild(min); pw.appendChild(pt); pw.appendChild(plus); el.appendChild(pw);
+      var zetP = function (n) { st.p = Math.max(1, Math.min(max, n)); pt.textContent = st.p + (st.p === 1 ? ' persoon' : ' personen'); min.disabled = st.p <= 1; plus.disabled = st.p >= max; };
+      min.onclick = function () { zetP(st.p - 1); st.dag = ''; st.tijd = ''; laadMaand(); };
+      plus.onclick = function () { zetP(st.p + 1); st.dag = ''; st.tijd = ''; laadMaand(); };
+      zetP(st.p);
+    }
+    var nrDag = nr(), nrTijd = nr(), nrDienst = afspr ? nr() : '', nrGeg = nr();
+    el.appendChild(maak('p', 'rw-stap', nrDag + 'Kies een dag'));
+    var kop = maak('div', 'rw-kop'), vorige = maak('button', '', '\u2039'), naam = maak('strong'), volgende = maak('button', '', '\u203A');
+    vorige.type = volgende.type = 'button'; vorige.setAttribute('aria-label', 'Vorige maand'); volgende.setAttribute('aria-label', 'Volgende maand');
+    kop.appendChild(vorige); kop.appendChild(naam); kop.appendChild(volgende); el.appendChild(kop);
+    var week = maak('div', 'rw-week'); ['ma','di','wo','do','vr','za','zo'].forEach(function (d) { week.appendChild(maak('span', '', d)); }); el.appendChild(week);
+    var dagen = maak('div', 'rw-dagen'); el.appendChild(dagen);
+    var uitleg = maak('div', 'rw-uitleg');
+    [['#16a34a', 'Plek vrij'], ['#f59e0b', 'Bijna vol'], ['#d1d5db', 'Vol'], ['', 'Gesloten']].forEach(function (u) { var s = maak('span'), i = maak('i'); if (u[0]) { i.style.background = u[0]; } else { i.className = 'dicht'; } s.appendChild(i); s.appendChild(document.createTextNode(u[1])); uitleg.appendChild(s); });
+    el.appendChild(uitleg);
+    var tijden = maak('div', 'rw-tijden'); tijden.hidden = true; el.appendChild(tijden);
+    var dienstBox = maak('div', 'rw-tijden'); dienstBox.hidden = true; el.appendChild(dienstBox);
+    var formBox = maak('div', 'rw-form'); formBox.hidden = true; el.appendChild(formBox);
+    vorige.onclick = function () { st.m = new Date(st.m.getFullYear(), st.m.getMonth() - 1, 1); laadMaand(); };
+    volgende.onclick = function () { st.m = new Date(st.m.getFullYear(), st.m.getMonth() + 1, 1); laadMaand(); };
+    function haal(url, cb) {
+      fetch(url, { credentials: 'same-origin', cache: 'no-store' }).then(function (r) { return r.json(); }).then(cb).catch(function () { cb({ fout: 'Er ging iets mis met de verbinding. Probeer het opnieuw.' }); });
+    }
+    function laadMaand() {
+      naam.textContent = MND[st.m.getMonth()] + ' ' + st.m.getFullYear();
+      vorige.disabled = ym(st.m) <= ym(nu);
+      tijden.hidden = true; dienstBox.hidden = true; formBox.hidden = true;
+      haal('/admin.php?res=maand&m=' + ym(st.m) + '&p=' + st.p, function (d) {
+        dagen.innerHTML = '';
+        if (d.fout) { dagen.appendChild(maak('p', 'rw-leeg', d.fout)); return; }
+        st.laatste = d.laatste || '';
+        volgende.disabled = st.laatste !== '' && ym(st.m) >= st.laatste.slice(0, 7);
+        var eerste = new Date(st.m.getFullYear(), st.m.getMonth(), 1), leeg = (eerste.getDay() + 6) % 7;
+        for (var i = 0; i < leeg; i++) dagen.appendChild(maak('span'));
+        Object.keys(d.dagen).forEach(function (k) {
+          var s = d.dagen[k], b = maak('button', s, String(parseInt(k.slice(8), 10)));
+          b.type = 'button'; b.appendChild(maak('i'));
+          var label = parseInt(k.slice(8), 10) + ' ' + MND[st.m.getMonth()];
+          if (s === 'vrij' || s === 'weinig') { b.setAttribute('aria-label', label + (s === 'weinig' ? ', bijna vol' : ', plek vrij')); b.onclick = function () { st.dag = k; st.tijd = ''; dagen.querySelectorAll('button.on').forEach(function (x) { x.classList.remove('on'); }); b.classList.add('on'); laadTijden(); }; }
+          else { b.disabled = true; b.setAttribute('aria-label', label + (s === 'vol' ? ', vol' : ', gesloten')); }
+          if (k === st.dag) b.classList.add('on');
+          dagen.appendChild(b);
+        });
+      });
+    }
+    function laadTijden() {
+      tijden.hidden = false; dienstBox.hidden = true; formBox.hidden = true; tijden.innerHTML = '';
+      tijden.appendChild(maak('p', 'rw-stap', nrTijd + 'Kies een tijd'));
+      var h3 = maak('h3', '', 'Even kijken...'); tijden.appendChild(h3);
+      var tl = maak('div', 'rw-tl'); tijden.appendChild(tl);
+      haal('/admin.php?res=tijden&dag=' + st.dag + '&p=' + st.p, function (d) {
+        if (d.fout) { h3.textContent = d.fout; return; }
+        st.dagTekst = d.tekst;
+        h3.textContent = 'Vrije tijden op ' + d.tekst;
+        if (!d.tijden.length) { tl.appendChild(maak('p', 'rw-leeg', 'Deze dag is net vol geraakt. Kies een andere dag.')); laadMaand(); return; }
+        d.tijden.forEach(function (t) {
+          var b = maak('button', '', t.replace(':', '.')); b.type = 'button';
+          b.onclick = function () { st.tijd = t; tl.querySelectorAll('button.on').forEach(function (x) { x.classList.remove('on'); }); b.classList.add('on'); if (afspr) { laadDiensten(); } else { toonForm(); } };
+          tl.appendChild(b);
+        });
+        tijden.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      });
+    }
+    function laadDiensten() {
+      dienstBox.hidden = false; formBox.hidden = true; dienstBox.innerHTML = '';
+      dienstBox.appendChild(maak('p', 'rw-stap', nrDienst + 'Wat wilt u laten doen?'));
+      var lijst = maak('div', 'rw-dl'); dienstBox.appendChild(lijst);
+      haal('/admin.php?res=diensten&dag=' + st.dag + '&tijd=' + st.tijd, function (d) {
+        if (d.fout) { lijst.appendChild(maak('p', 'rw-leeg', d.fout)); return; }
+        if (!d.diensten || !d.diensten.length) { lijst.appendChild(maak('p', 'rw-leeg', 'Om deze tijd is niets meer vrij. Kies een andere tijd.')); return; }
+        d.diensten.forEach(function (x) {
+          var b = maak('button', 'rw-dienst'); b.type = 'button';
+          var l = maak('span', 'rw-dn'); l.appendChild(maak('strong', '', x.naam)); l.appendChild(maak('small', '', duurTekst(x.duur) + (x.oms ? ' \u00b7 ' + x.oms : '')));
+          b.appendChild(l); if (x.prijs) b.appendChild(maak('span', 'rw-dp', x.prijs));
+          b.onclick = function () { st.d = x.i; st.dNaam = x.naam + (x.prijs ? ' (' + x.prijs + ')' : ''); lijst.querySelectorAll('button.on').forEach(function (y) { y.classList.remove('on'); }); b.classList.add('on'); toonForm(); };
+          lijst.appendChild(b);
+        });
+        dienstBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      });
+    }
+    function veld(lbl, naamV, type, auto, verplicht) {
+      var f = maak('div', 'rw-f'), id = 'rw' + Math.random().toString(36).slice(2, 8), l = maak('label', '', lbl + (verplicht ? ' *' : '')), i = maak(type === 'textarea' ? 'textarea' : 'input');
+      l.htmlFor = id; i.id = id; i.name = naamV; if (type !== 'textarea') i.type = type; if (auto) i.autocomplete = auto; if (verplicht) i.required = true;
+      f.appendChild(l); f.appendChild(i); return f;
+    }
+    function toonForm() {
+      formBox.hidden = false; formBox.innerHTML = '';
+      formBox.appendChild(maak('p', 'rw-stap', nrGeg + 'Uw gegevens'));
+      var sam = st.dagTekst.charAt(0).toUpperCase() + st.dagTekst.slice(1) + ' om ' + st.tijd.replace(':', '.') + ' uur' + (pers ? ', ' + st.p + (st.p === 1 ? ' persoon' : ' personen') : '') + (afspr ? '\n' + st.dNaam : '');
+      formBox.appendChild(maak('div', 'rw-sam', sam));
+      var f = document.createElement('form'); f.noValidate = true;
+      var fout = maak('div', 'rw-fout'); fout.hidden = true; f.appendChild(fout);
+      var rij = maak('div', 'rw-rij'); rij.appendChild(veld('Voornaam', 'voornaam', 'text', 'given-name', true)); rij.appendChild(veld('Achternaam', 'achternaam', 'text', 'family-name', true)); f.appendChild(rij);
+      var rij2 = maak('div', 'rw-rij'); rij2.appendChild(veld('Telefoonnummer', 'tel', 'tel', 'tel', true)); rij2.appendChild(veld('E-mailadres', 'mail', 'email', 'email', true)); f.appendChild(rij2);
+      f.appendChild(veld('Opmerking (mag leeg)', 'opm', 'textarea', '', false));
+      var hp = maak('div', 'rw-hp'); hp.setAttribute('aria-hidden', 'true'); var hi = document.createElement('input'); hi.name = 'website'; hi.tabIndex = -1; hi.autocomplete = 'off'; hp.appendChild(hi); f.appendChild(hp);
+      var knop = maak('button', 'btn primary', Woord + ' bevestigen'); knop.type = 'submit'; f.appendChild(knop);
+      f.onsubmit = function (e) {
+        e.preventDefault(); fout.hidden = true;
+        var fd = new FormData(f); fd.append('dag', st.dag); fd.append('tijd', st.tijd); fd.append('p', st.p); fd.append('d', st.d); fd.append('tt', Date.now() - t0);
+        knop.disabled = true; knop.textContent = 'Even geduld...';
+        fetch('/admin.php?res=boek', { method: 'POST', body: fd, credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (d) {
+          if (d.ok) {
+            el.innerHTML = '';
+            var k = maak('div', 'rw-klaar'); k.appendChild(maak('b', '', '\u2713'));
+            k.appendChild(maak('h3', '', d.status === 'aanvraag' ? Woord + ' ontvangen' : 'Uw ' + woord + ' staat vast'));
+            k.appendChild(maak('p', '', d.tekst));
+            var nog = maak('button', 'btn quiet', 'Nog een ' + woord + ' maken'); nog.type = 'button'; nog.onclick = function () { start(el); };
+            k.appendChild(nog); el.appendChild(k); el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          } else {
+            fout.textContent = d.fout || 'Er ging iets mis. Probeer het opnieuw.'; fout.hidden = false;
+            knop.disabled = false; knop.textContent = Woord + ' bevestigen';
+            if (d.vol) { laadTijden(); }
+          }
+        }).catch(function () { fout.textContent = 'Er ging iets mis met de verbinding. Probeer het opnieuw.'; fout.hidden = false; knop.disabled = false; knop.textContent = Woord + ' bevestigen'; });
+      };
+      formBox.appendChild(f);
+      formBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    laadMaand();
+  }
+  document.querySelectorAll('.resw').forEach(start);
+})();
+</script>
+HTML;
+    return $o;
+}
+function render_reserveren_page() {
+    $in = res_inst();
+    $out = site_head(($in['titel'] !== '' ? $in['titel'] : 'Reserveren') . ' | ' . st('naam'), cut(($in['soort'] === 'afspraak' ? 'Maak online een afspraak bij ' : 'Reserveer online bij ') . st('naam') . '. Kies een dag en een tijd en u krijgt direct een bevestiging.', 160), '/reserveren/', business_jsonld(), true);
+    $out .= '<style>.chero{background:var(--navy);color:#fff;padding:clamp(44px,6vw,80px) 0 clamp(40px,5vw,64px);} .chero h1{font-size:clamp(34px,5vw,56px);} .chero p{margin:14px 0 0;color:rgba(255,255,255,.8);max-width:56ch;font-size:18px;} .cwrap{padding:clamp(36px,6vw,72px) 0;background:var(--sky);} .rgrid{display:grid;grid-template-columns:1fr 300px;gap:28px;align-items:start;} @media (max-width:900px){.rgrid{grid-template-columns:1fr;}} .cside{background:var(--navy);color:rgba(255,255,255,.82);border-radius:16px;padding:clamp(22px,3vw,30px);line-height:1.7;} .cside h3{color:#fff;margin:0 0 4px;font-size:17px;} .cside p{margin:0 0 18px;} .cside p:last-child{margin:0;} .cside a{color:#fff;font-weight:600;text-decoration:none;}</style>' . "\n</head>\n<body>\n";
+    $out .= site_header('/', 'Naar home');
+    $out .= '<main><section class="chero"><div class="wrap"><h1>' . h($in['titel'] !== '' ? $in['titel'] : 'Reserveren') . '</h1>' . ($in['intro'] !== '' ? '<p>' . h($in['intro']) . '</p>' : '') . '</div></section>';
+    $out .= '<section class="cwrap"><div class="wrap rgrid"><div>' . res_widget($in) . '</div><aside class="cside">';
+    if (st('tel') !== '') { $out .= '<h3>Liever bellen?</h3><p><a href="tel:' . h(tel_link(st('tel'))) . '">' . h(st('tel')) . '</a></p>'; }
+    $adres = array_filter([st('straat'), trim(st('postcode') . ' ' . st('plaats'))]);
+    if ($adres) { $out .= '<h3>Adres</h3><p>' . implode('<br />', array_map('h', $adres)) . '</p>'; }
+    if (st('tijden') !== '') { $out .= '<h3>Openingstijden</h3><p>' . nl2br(h(st('tijden'))) . '</p>'; }
+    if (!empty($in['personen'])) { $out .= '<h3>Groep groter dan ' . (int)$in['max_p'] . '?</h3><p>Neem even <a href="/contact/">contact</a> met ons op.</p>'; }
+    elseif ($in['diensten']) { $out .= '<h3>Prijzen</h3><p>'; foreach ($in['diensten'] as $d) { $out .= h($d['naam']) . ((int)$d['prijs'] > 0 ? ': ' . h(adm_eur((int)$d['prijs'])) : '') . '<br />'; } $out .= '</p>'; }
+    $out .= '</aside></div></section></main>' . site_footer() . "\n</body>\n</html>\n";
+    return $out;
+}
+function write_reserveren_page() {
+    $dir = ROOT . '/reserveren';
+    if (!empty(res_inst()['aan'])) {
+        if (!is_dir($dir)) { mkdir($dir, 0755, true); }
+        schrijf_pagina($dir, stijl_pagina(render_reserveren_page()));
+    } elseif (is_dir($dir)) {
+        @unlink($dir . '/index.php'); @unlink($dir . '/index.html'); @rmdir($dir);
+    }
+}
+
+/* ---------- Beheer: overzicht en instellingen ---------- */
+function res_nieuw_aantal() {
+    if (empty(res_inst()['aan'])) return 0;
+    return count(array_filter(res_lijst(), function($r) { return !empty($r['nieuw']); }));
+}
+function res_acties($action) {
+    global $RES_DAGNAAM;
+    if ($action === 'res_inst') {
+        $in = res_inst();
+        $soort = ($_POST['rs_soort'] ?? '') === 'afspraak' ? 'afspraak' : 'tafel';
+        $x = ['aan' => !empty($_POST['rs_aan']), 'soort' => $soort, 'knop' => !empty($_POST['rs_knop']), 'goedkeuren' => !empty($_POST['rs_goedkeuren']), 'klant' => !empty($_POST['rs_klant']),
+              'titel' => cut(trim((string)($_POST['rs_titel'] ?? '')), 80), 'intro' => cut(trim((string)($_POST['rs_intro'] ?? '')), 300),
+              'plaatsen' => (int)($_POST['rs_plaatsen'] ?? 40), 'max_p' => (int)($_POST['rs_max'] ?? 8), 'duur' => (int)($_POST['rs_duur'] ?? 120), 'stap' => (int)($_POST['rs_stap'] ?? 30),
+              'vooruit' => (int)($_POST['rs_vooruit'] ?? 60), 'vooraf' => (int)($_POST['rs_vooraf'] ?? 2), 'dagen' => [], 'dicht' => []];
+        $mail = trim((string)($_POST['rs_melding'] ?? ''));
+        $x['melding'] = filter_var($mail, FILTER_VALIDATE_EMAIL) ? $mail : '';
+        $fout = [];
+        foreach (['Reserveer een tafel', 'Maak een afspraak'] as $std) { if ($x['titel'] === $std) $x['titel'] = ''; }
+        if (strpos($x['intro'], 'U krijgt direct een bevestiging per mail.') !== false && strpos($x['intro'], 'Kies een dag') === 0) { $x['intro'] = ''; }
+        $x['diensten'] = [];
+        foreach ((array)($_POST['rd_naam'] ?? []) as $n => $nm) {
+            $nm = cut(trim(preg_replace('/\s+/', ' ', (string)$nm)), 80);
+            if ($nm === '') continue;
+            $pr = str_replace(["\u{20ac}", ' '], '', (string)($_POST['rd_prijs'][$n] ?? ''));
+            $pr = str_replace(',', '.', preg_replace('/\.(?=\d{3}(\D|$))/', '', $pr));
+            $x['diensten'][] = ['naam' => $nm, 'duur' => max(5, min(600, (int)($_POST['rd_duur'][$n] ?? 30))), 'prijs' => is_numeric($pr) ? (int)round((float)$pr * 100) : 0, 'oms' => cut(trim((string)($_POST['rd_oms'][$n] ?? '')), 120)];
+        }
+        if ($soort === 'afspraak' && !$x['diensten']) { $fout[] = "Zet minstens \u{e9}\u{e9}n behandeling in de lijst, met naam, tijd en prijs."; }
+        for ($d = 1; $d <= 7; $d++) {
+            $van = (string)($_POST['rs_van'][$d] ?? ''); $tot = (string)($_POST['rs_tot'][$d] ?? '');
+            $open = !empty($_POST['rs_open'][$d]);
+            if ($open && preg_match('/^\d\d:\d\d$/', $van) && preg_match('/^\d\d:\d\d$/', $tot) && res_min($tot) < res_min($van)) { $fout[] = 'Bij ' . $RES_DAGNAAM[$d] . ' is de laatste tijd eerder dan de eerste tijd.'; }
+            $x['dagen'][$d] = ['open' => $open, 'van' => $van, 'tot' => $tot];
+        }
+        foreach (preg_split('/[\s,;]+/', (string)($_POST['rs_dicht'] ?? '')) as $r) {
+            $r = trim($r); if ($r === '') continue;
+            if (preg_match('/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})$/', $r, $m) && checkdate((int)$m[2], (int)$m[1], (int)$m[3])) { $x['dicht'][] = sprintf('%04d-%02d-%02d', $m[3], $m[2], $m[1]); }
+            elseif (preg_match('/^(\d{4})-(\d\d)-(\d\d)$/', $r, $m) && checkdate((int)$m[2], (int)$m[3], (int)$m[1])) { $x['dicht'][] = $r; }
+            else { $fout[] = '"' . cut($r, 20) . '" is geen datum. Schrijf gesloten dagen als 25-12-2026.'; }
+        }
+        $x['dicht'] = array_values(array_unique(array_filter($x['dicht'], function($d) { return $d >= date('Y-m-d', strtotime('-1 day')); })));
+        sort($x['dicht']);
+        write_json(RES_INST, $x);
+        if ($mail !== '' && $x['melding'] === '') { $fout[] = 'Het e-mailadres voor meldingen klopt niet en is leeggelaten.'; }
+        rebuild_everything(load_pages());
+        $_SESSION['ff_notice'] = $fout ? implode(' ', $fout) : ($x['aan'] ? 'Opgeslagen. Online ' . ($soort === 'afspraak' ? 'afspraken maken' : 'reserveren') . ' staat aan op je website.' : 'Opgeslagen. Online reserveren staat uit.');
+        header('Location: admin.php?reserveren=1#instellen'); exit;
+    }
+    if ($action === 'res_annuleer' || $action === 'res_bevestig') {
+        $id = (string)($_POST['id'] ?? ''); $in = res_inst(); $gevonden = null;
+        res_slot(function() use ($id, $action, &$gevonden) {
+            $l = res_lijst();
+            foreach ($l as $k => $r) { if (($r['id'] ?? '') === $id) { $l[$k]['status'] = $action === 'res_annuleer' ? 'geannuleerd' : 'bevestigd'; $gevonden = $l[$k]; } }
+            res_bewaar($l);
+        });
+        if ($gevonden) {
+            $ok = !empty($_POST['mail']) ? res_mail_gast($in, $gevonden, $action === 'res_annuleer' ? 'geannuleerd' : 'bevestigd') : false;
+            $_SESSION['ff_notice'] = 'De ' . res_woord($in) . ' van ' . $gevonden['naam'] . ($action === 'res_annuleer' ? ' is geannuleerd.' : ' is bevestigd.') . ($ok ? ' ' . $gevonden['naam'] . ' heeft een mail gekregen.' : '');
+        }
+        header('Location: admin.php?reserveren=1&dag=' . rawurlencode((string)($_POST['terug'] ?? ''))); exit;
+    }
+    if ($action === 'res_zelf') {
+        $in = res_inst();
+        $dag = (string)($_POST['dag'] ?? ''); $tijd = (string)($_POST['tijd'] ?? '');
+        $naam = cut(trim((string)($_POST['naam'] ?? '')), 80);
+        if (!preg_match('/^\d{4}-\d\d-\d\d$/', $dag) || !preg_match('/^\d\d:\d\d$/', $tijd) || $naam === '') { $_SESSION['ff_notice'] = 'Vul in elk geval een dag, een tijd en een naam in.'; header('Location: admin.php?reserveren=1#zelf'); exit; }
+        $p = max(1, min(500, (int)($_POST['p'] ?? 1)));
+        $di = (int)($_POST['d'] ?? -1); $dd = $in['soort'] === 'afspraak' && isset($in['diensten'][$di]) ? $in['diensten'][$di] : null;
+        if ($dd) { $p = 1; }
+        $r = ['id' => bin2hex(random_bytes(6)), 'token' => bin2hex(random_bytes(16)), 'dag' => $dag, 'tijd' => $tijd, 'p' => $p, 'naam' => $naam,
+              'duur' => $dd ? (int)$dd['duur'] : (int)$in['duur'], 'dienst' => $dd ? $dd['naam'] : '', 'prijs' => $dd ? (int)$dd['prijs'] : 0,
+              'tel' => cut(trim((string)($_POST['tel'] ?? '')), 25), 'mail' => filter_var(trim((string)($_POST['mail'] ?? '')), FILTER_VALIDATE_EMAIL) ? trim((string)$_POST['mail']) : '',
+              'opm' => cut(trim((string)($_POST['opm'] ?? '')), 500), 'status' => 'bevestigd', 'bron' => 'zelf', 'op' => date('Y-m-d H:i'), 'nieuw' => 0];
+        $vol = false;
+        res_slot(function() use ($in, $r, &$vol) {
+            $l = res_lijst();
+            $vol = res_piek($in, $l, $r['dag'], res_min($r['tijd']), (int)$r['duur']) + res_telt($r, $in) > (int)$in['plaatsen'];
+            $l[] = $r; res_bewaar($l);
+        });
+        $ok = !empty($_POST['stuur']) && $r['mail'] !== '' ? res_mail_gast($in, $r, 'bevestigd') : false;
+        $kid = res_klant_koppel($in, $r);
+        if ($kid !== '') { res_slot(function() use ($r, $kid) { $l = res_lijst(); foreach ($l as $k => $x) { if ($x['id'] === $r['id']) $l[$k]['klant_id'] = $kid; } res_bewaar($l); }); }
+        $_SESSION['ff_notice'] = 'De ' . res_woord($in) . ' van ' . $naam . ' staat erin.' . ($vol ? ' Let op: op dat moment is het eigenlijk vol.' : '') . ($ok ? ' ' . $naam . ' heeft een bevestiging gekregen.' : '');
+        header('Location: admin.php?reserveren=1&dag=' . rawurlencode($dag)); exit;
+    }
+}
+function res_beheer_view() {
+    global $RES_DAGNAAM;
+    $in = res_inst(); $lijst = res_lijst();
+    if (empty($GLOBALS['is_demo']) && array_filter($lijst, function($r) { return !empty($r['nieuw']); })) {
+        res_slot(function() { $l = res_lijst(); foreach ($l as $k => $r) { unset($l[$k]['nieuw']); } res_bewaar($l); });
+    }
+    $vandaag = date('Y-m-d');
+    $kies = preg_match('/^\d{4}-\d\d-\d\d$/', (string)($_GET['dag'] ?? '')) ? (string)$_GET['dag'] : '';
+    $komend = array_values(array_filter($lijst, function($r) use ($vandaag) { return $r['dag'] >= $vandaag; }));
+    $perDag = [];
+    foreach ($komend as $r) { $perDag[$r['dag']][] = $r; }
+    ?>
+    <style>
+      .rs-dag{background:#141b2b;border:1px solid #263049;border-radius:14px;margin:0 0 14px;overflow:hidden;}
+      .rs-dag summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:14px 18px;font-weight:700;}
+      .rs-dag summary::-webkit-details-marker{display:none;}
+      .rs-dag summary span{color:#9fb0cc;font-weight:500;}
+      .rs-r{display:grid;grid-template-columns:70px 1fr auto;gap:12px;align-items:center;padding:12px 18px;border-top:1px solid #263049;}
+      .rs-r.weg{opacity:.5;} .rs-r.weg .rs-n{text-decoration:line-through;}
+      .rs-t{font-size:20px;font-weight:800;} .rs-n{font-weight:700;} .rs-k{color:#9fb0cc;font-size:14px;} .rs-k a{color:#8fb3ff;}
+      .rs-b{display:inline-block;font-size:12px;font-weight:700;padding:2px 9px;border-radius:999px;margin-left:6px;vertical-align:middle;}
+      .rs-b.bevestigd{background:#163d2a;color:#6ee7a8;} .rs-b.aanvraag{background:#3a2f12;color:#f6c453;} .rs-b.geannuleerd{background:#3a1f2a;color:#ff9bb5;}
+      .rs-acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;} .rs-acts form{margin:0;}
+      @media (max-width:640px){.rs-r{grid-template-columns:56px 1fr;} .rs-acts{grid-column:1 / -1;justify-content:flex-start;}}
+      .rs-dt{display:grid;gap:8px;margin-bottom:10px;}
+      .rs-drij{display:grid;grid-template-columns:2fr 110px 100px;gap:8px;padding:10px;border:1px solid #263049;border-radius:12px;}
+      .rs-drij .rs-oms{grid-column:1 / -1;}
+      .rs-drij[hidden]{display:none;}
+      @media (max-width:560px){.rs-drij{grid-template-columns:1fr 1fr;} .rs-drij input:first-child{grid-column:1 / -1;}}
+      .rs-week{display:grid;grid-template-columns:110px 1fr 1fr;gap:8px 12px;align-items:center;}
+      .rs-week input[type=time]{width:100%;}
+      @media (max-width:560px){.rs-week{grid-template-columns:1fr 1fr;} .rs-week .rs-wd{grid-column:1 / -1;}}
+    </style>
+    <?php $W = res_woord($in); $Wn = $W === 'afspraak' ? 'afspraken' : 'reserveringen'; ?>
+    <h1>Reserveren</h1>
+    <p class="sub">Bezoekers kiezen op je website een dag en een vrije tijd<?= $in['soort'] === 'afspraak' ? ' en wat ze willen laten doen' : '' ?>. Volle tijden zien ze niet. Alles komt ook in de agenda van je administratie.</p>
+    <?php if (empty($in['aan'])): ?>
+      <div class="formcard" style="border-color:#ff9b4a"><h2>Online reserveren staat nog uit</h2><p class="hint" style="margin:0">Kies hieronder of het om <strong>tafels</strong> (restaurant) of <strong>afspraken</strong> (kapper, barber, schoonheidssalon) gaat, stel je dagen en tijden in en zet het vinkje <strong>Online reserveren aan</strong> aan. Daarna komt er een pagina /reserveren/ op je website, en een knop Reserveren bovenaan.</p></div>
+    <?php else: ?>
+      <p style="margin:-6px 0 18px"><a class="btn ghost sm" href="/reserveren/" target="_blank">Bekijk de reserveringspagina</a></p>
+    <?php endif; ?>
+
+    <div class="formcard">
+      <h2>Komende <?= h($Wn) ?></h2>
+      <?php if (!$perDag): ?><p class="hint" style="margin:0">Er zijn nog geen komende <?= h($Wn) ?>.</p><?php endif; ?>
+      <?php foreach ($perDag as $dag => $rs): $act = array_filter($rs, function($r) { return $r['status'] !== 'geannuleerd'; }); $pers = array_sum(array_map(function($r) use ($in) { return res_telt($r, $in); }, $act)); ?>
+        <details class="rs-dag"<?= ($kies === $dag || ($kies === '' && $dag === array_key_first($perDag))) ? ' open' : '' ?>>
+          <summary><?= h(ucfirst(res_datum_tekst($dag))) ?><span><?= count($act) ?> <?= count($act) === 1 ? h($W) : h($Wn) ?><?= !empty($in['personen']) ? ', ' . $pers . ' personen' : '' ?><?php $omzet = array_sum(array_map(function($r) { return (int)($r['prijs'] ?? 0); }, $act)); echo $omzet > 0 ? ', ' . h(adm_eur($omzet)) : ''; ?></span></summary>
+          <?php foreach ($rs as $r): ?>
+            <div class="rs-r<?= $r['status'] === 'geannuleerd' ? ' weg' : '' ?>">
+              <div class="rs-t"><?= h(str_replace(':', '.', $r['tijd'])) ?></div>
+              <div><span class="rs-n"><?= h($r['naam']) ?></span><?php if (!empty($in['personen'])): ?> <span class="rs-k">&middot; <?= (int)$r['p'] ?> pers.</span><?php endif; ?><?php if (res_wat($r) !== ''): ?> <span class="rs-k">&middot; <?= h(res_wat($r)) ?></span><?php endif; ?><span class="rs-b <?= h($r['status']) ?>"><?= $r['status'] === 'aanvraag' ? 'wacht op jou' : h($r['status']) ?></span>
+                <div class="rs-k"><?php if (($r['tel'] ?? '') !== ''): ?><a href="tel:<?= h(preg_replace('/[^0-9+]/', '', $r['tel'])) ?>"><?= h($r['tel']) ?></a><?php endif; ?><?php if (($r['mail'] ?? '') !== ''): ?> &middot; <a href="mailto:<?= h($r['mail']) ?>"><?= h($r['mail']) ?></a><?php endif; ?><?= ($r['bron'] ?? '') === 'zelf' ? ' &middot; zelf ingevoerd' : '' ?></div>
+                <?php if (($r['opm'] ?? '') !== ''): ?><div class="rs-k">&ldquo;<?= h($r['opm']) ?>&rdquo;</div><?php endif; ?>
+              </div>
+              <div class="rs-acts">
+                <?php if ($r['status'] === 'aanvraag'): ?><form method="post"><input type="hidden" name="action" value="res_bevestig" /><input type="hidden" name="id" value="<?= h($r['id']) ?>" /><input type="hidden" name="mail" value="1" /><input type="hidden" name="terug" value="<?= h($dag) ?>" /><button class="btn sm" type="submit">Bevestigen</button></form><?php endif; ?>
+                <?php if ($r['status'] !== 'geannuleerd'): ?><form method="post" onsubmit="return confirm('Deze <?= h($W) ?> annuleren?')"><input type="hidden" name="action" value="res_annuleer" /><input type="hidden" name="id" value="<?= h($r['id']) ?>" /><input type="hidden" name="terug" value="<?= h($dag) ?>" /><?php if (($r['mail'] ?? '') !== ''): ?><input type="hidden" name="mail" value="1" /><?php endif; ?><button class="btn ghost sm" type="submit">Annuleren</button></form><?php endif; ?>
+              </div>
+            </div>
+          <?php endforeach; ?>
+        </details>
+      <?php endforeach; ?>
+    </div>
+
+    <form class="formcard" method="post" id="zelf">
+      <input type="hidden" name="action" value="res_zelf" />
+      <h2>Zelf een <?= h($W) ?> invoeren</h2>
+      <p class="hint" style="margin:-4px 0 14px">Belt iemand of komt hij langs? Zet de <?= h($W) ?> hier, dan telt hij mee en verdwijnt de tijd op je website als het vol is.</p>
+      <div class="two"><div class="field"><label for="rzdag">Dag</label><input type="date" id="rzdag" name="dag" min="<?= h($vandaag) ?>" value="<?= h($kies !== '' ? $kies : $vandaag) ?>" required /></div><div class="field"><label for="rztijd">Tijd</label><input type="time" id="rztijd" name="tijd" step="300" required /></div></div>
+      <div class="two"><div class="field"><label for="rznaam">Naam</label><input type="text" id="rznaam" name="naam" maxlength="80" required /></div><?php if ($in['soort'] === 'afspraak'): ?><div class="field"><label for="rzd">Behandeling</label><select id="rzd" name="d"><?php foreach ($in['diensten'] as $i => $d): ?><option value="<?= $i ?>"><?= h($d['naam'] . ' (' . $d['duur'] . ' min' . ((int)$d['prijs'] > 0 ? ', ' . adm_eur((int)$d['prijs']) : '') . ')') ?></option><?php endforeach; ?></select></div><?php else: ?><div class="field"><label for="rzp">Aantal personen</label><input type="number" id="rzp" name="p" min="1" max="500" value="2" /></div><?php endif; ?></div>
+      <div class="two"><div class="field"><label for="rztel">Telefoon (mag leeg)</label><input type="tel" id="rztel" name="tel" maxlength="25" /></div><div class="field"><label for="rzmail">E-mail (mag leeg)</label><input type="email" id="rzmail" name="mail" maxlength="120" /></div></div>
+      <div class="field"><label for="rzopm">Opmerking (mag leeg)</label><input type="text" id="rzopm" name="opm" maxlength="500" /></div>
+      <label class="check"><input type="checkbox" name="stuur" value="1" checked /> <span>Stuur een bevestiging als er een e-mailadres is ingevuld</span></label>
+      <div style="margin-top:14px"><button class="btn" type="submit"><?= h(ucfirst($W)) ?> toevoegen</button></div>
+    </form>
+
+    <form class="formcard" method="post" id="instellen">
+      <input type="hidden" name="action" value="res_inst" />
+      <h2>Instellingen voor reserveren</h2>
+      <label class="check" style="font-size:17px"><input type="checkbox" name="rs_aan" value="1" <?= !empty($in['aan']) ? 'checked' : '' ?> /> <span><strong>Online reserveren aan</strong></span></label>
+      <div class="field" style="margin-top:12px"><label>Waarvoor gebruik je het?</label>
+        <label class="check"><input type="radio" name="rs_soort" value="tafel" <?= $in['soort'] === 'tafel' ? 'checked' : '' ?> onchange="rsSoort()" /> <span><strong>Tafels reserveren</strong>, voor een restaurant, lunchroom of caf&#xE9;: gasten kiezen met hoeveel personen ze komen</span></label>
+        <label class="check"><input type="radio" name="rs_soort" value="afspraak" <?= $in['soort'] === 'afspraak' ? 'checked' : '' ?> onchange="rsSoort()" /> <span><strong>Afspraken</strong>, voor een kapper, barber, schoonheidssalon of praktijk: klanten kiezen een behandeling met tijd en prijs</span></label>
+      </div>
+      <div class="rs-afspr">
+        <h3 style="margin:16px 0 8px">Behandelingen</h3>
+        <p class="hint" style="margin:0 0 10px">Na het kiezen van een dag en tijd kiest de klant hieruit. Een behandeling die niet meer past voor sluitingstijd of omdat het druk is, ziet hij niet.</p>
+        <div class="rs-dt">
+          <?php $rdl = $in['diensten']; for ($n = 0; $n < max(6, count($rdl) + 2); $n++): $d = $rdl[$n] ?? ['naam' => '', 'duur' => 30, 'prijs' => 0, 'oms' => '']; if ($n >= 12) break; ?>
+            <div class="rs-drij"<?= $n >= count($rdl) + 1 && $n >= 3 ? ' hidden' : '' ?>>
+              <input type="text" name="rd_naam[<?= $n ?>]" maxlength="80" value="<?= h($d['naam']) ?>" placeholder="Bijvoorbeeld: Heren knippen vanaf 14 jaar" aria-label="Naam behandeling <?= $n + 1 ?>" />
+              <select name="rd_duur[<?= $n ?>]" aria-label="Duur"><?php foreach ([10, 15, 20, 30, 45, 60, 75, 90, 120, 150, 180, 240] as $o): ?><option value="<?= $o ?>"<?= (int)$d['duur'] === $o ? ' selected' : '' ?>><?= $o ?> min</option><?php endforeach; ?></select>
+              <input type="text" name="rd_prijs[<?= $n ?>]" inputmode="decimal" value="<?= (int)$d['prijs'] > 0 ? h(number_format($d['prijs'] / 100, 2, ',', '')) : '' ?>" placeholder="25,00" aria-label="Prijs in euro" />
+              <input type="text" class="rs-oms" name="rd_oms[<?= $n ?>]" maxlength="120" value="<?= h($d['oms']) ?>" placeholder="Korte uitleg (mag leeg)" aria-label="Korte uitleg" />
+            </div>
+          <?php endfor; ?>
+        </div>
+        <button type="button" class="btn ghost sm" onclick="var e=document.querySelector('.rs-drij[hidden]');if(e){e.hidden=false;}if(!document.querySelector('.rs-drij[hidden]')){this.hidden=true;}">+ Nog een behandeling</button>
+        <div class="hint">Naam, hoe lang het duurt en de prijs in euro. Laat de naam leeg om een behandeling weg te halen.</div>
+      </div>
+      <label class="check" style="margin-top:14px"><input type="checkbox" name="rs_knop" value="1" <?= !empty($in['knop']) ? 'checked' : '' ?> /> <span>Bovenaan op je website een knop <strong>Reserveren</strong> in plaats van Contact</span></label>
+      <div class="two" style="margin-top:12px"><div class="field"><label for="rstitel">Titel van de pagina</label><input type="text" id="rstitel" name="rs_titel" maxlength="80" value="<?= h($in['titel']) ?>" /></div><div class="field"><label for="rsintro">Korte tekst</label><input type="text" id="rsintro" name="rs_intro" maxlength="300" value="<?= h($in['intro']) ?>" /></div></div>
+
+      <h3 style="margin:18px 0 10px">Wanneer kan er gereserveerd worden?</h3>
+      <div class="rs-week">
+        <?php for ($d = 1; $d <= 7; $d++): $v = $in['dagen'][$d]; ?>
+          <label class="check rs-wd" style="margin:0"><input type="checkbox" name="rs_open[<?= $d ?>]" value="1" <?= !empty($v['open']) ? 'checked' : '' ?> /> <span><?= ucfirst($RES_DAGNAAM[$d]) ?></span></label>
+          <div><input type="time" name="rs_van[<?= $d ?>]" value="<?= h($v['van']) ?>" aria-label="Eerste tijd op <?= $RES_DAGNAAM[$d] ?>" step="300" /></div>
+          <div><input type="time" name="rs_tot[<?= $d ?>]" value="<?= h($v['tot']) ?>" aria-label="Laatste tijd op <?= $RES_DAGNAAM[$d] ?>" step="300" /></div>
+        <?php endfor; ?>
+      </div>
+      <div class="hint"><span class="rs-tafel">Links de eerste tijd waarop gasten kunnen komen, rechts de laatste. Bijvoorbeeld van 17:00 tot 21:00.</span><span class="rs-afspr">Links de eerste en rechts de laatste begintijd van een afspraak. Bijvoorbeeld 09:00 tot 17:30 als je om 18:00 sluit en de kortste behandeling 30 minuten duurt.</span></div>
+      <div class="two" style="margin-top:14px">
+        <div class="field"><label for="rsstap">Om de hoeveel minuten een tijd?</label><select id="rsstap" name="rs_stap"><?php foreach ([15, 30, 45, 60, 90, 120] as $o): ?><option value="<?= $o ?>"<?= (int)$in['stap'] === $o ? ' selected' : '' ?>>Elke <?= $o ?> minuten</option><?php endforeach; ?></select></div>
+        <div class="field rs-tafel"><label for="rsduur">Hoe lang duurt een reservering?</label><select id="rsduur" name="rs_duur"><?php foreach ([15, 30, 45, 60, 90, 120, 150, 180, 240] as $o): ?><option value="<?= $o ?>"<?= (int)$in['duur'] === $o ? ' selected' : '' ?>><?= $o < 60 ? $o . ' minuten' : rtrim(rtrim(number_format($o / 60, 1, ',', ''), '0'), ',') . ' uur' ?></option><?php endforeach; ?></select></div>
+      </div>
+      <div class="two">
+        <div class="field"><label for="rsplaatsen"><span class="rs-tafel">Aantal plaatsen (stoelen)</span><span class="rs-afspr">Hoeveel klanten tegelijk?</span></label><input type="number" id="rsplaatsen" name="rs_plaatsen" min="1" max="2000" value="<?= (int)$in['plaatsen'] ?>" /><div class="hint rs-afspr">Werk je alleen, vul dan 1 in. Met 3 stoelen en 3 kappers: 3.</div></div>
+        <div class="field rs-tafel"><label for="rsmax">Maximaal personen per reservering</label><input type="number" id="rsmax" name="rs_max" min="1" max="100" value="<?= (int)$in['max_p'] ?>" /></div>
+      </div>
+      <div class="two">
+        <div class="field"><label for="rsvooruit">Hoe ver vooruit</label><select id="rsvooruit" name="rs_vooruit"><?php foreach ([7 => '1 week', 14 => '2 weken', 30 => '1 maand', 60 => '2 maanden', 90 => '3 maanden', 180 => 'half jaar', 365 => '1 jaar'] as $o => $l): ?><option value="<?= $o ?>"<?= (int)$in['vooruit'] === $o ? ' selected' : '' ?>><?= $l ?></option><?php endforeach; ?></select></div>
+        <div class="field"><label for="rsvooraf">Minimaal van tevoren</label><select id="rsvooraf" name="rs_vooraf"><?php foreach ([0 => 'Tot het laatste moment', 1 => '1 uur', 2 => '2 uur', 3 => '3 uur', 4 => '4 uur', 6 => '6 uur', 12 => '12 uur', 24 => '1 dag', 48 => '2 dagen'] as $o => $l): ?><option value="<?= $o ?>"<?= (int)$in['vooraf'] === $o ? ' selected' : '' ?>><?= $l ?></option><?php endforeach; ?></select></div>
+      </div>
+      <div class="field"><label for="rsdicht">Gesloten dagen (mag leeg)</label><textarea id="rsdicht" name="rs_dicht" class="short" placeholder="Bijvoorbeeld: 24-12-2026 25-12-2026 31-12-2026"><?= h(implode("\n", array_map(function($d) { return date('d-m-Y', strtotime($d)); }, $in['dicht']))) ?></textarea><div class="hint">Vakantie of een feestdag? Zet de datums hier, &#xE9;&#xE9;n per regel. Die dagen kan niemand reserveren.</div></div>
+      <label class="check"><input type="checkbox" name="rs_goedkeuren" value="1" <?= !empty($in['goedkeuren']) ? 'checked' : '' ?> /> <span>Ik wil elke reservering eerst zelf bevestigen</span></label>
+      <label class="check"><input type="checkbox" name="rs_klant" value="1" <?= !empty($in['klant']) ? 'checked' : '' ?> /> <span>Zet nieuwe klanten ook bij <strong>Klanten</strong> in de administratie</span></label>
+      <div class="field" style="margin-top:12px"><label for="rsmelding">Meldingen van nieuwe reserveringen naar (mag leeg)</label><input type="email" id="rsmelding" name="rs_melding" maxlength="120" value="<?= h($in['melding']) ?>" placeholder="<?= h(st('email')) ?>" /><div class="hint">Leeg = het e-mailadres van je bedrijf. Mails gaan via je gekoppelde mailbox (Administratie, tabblad E-mail).</div></div>
+      <div style="margin-top:16px"><button class="btn" type="submit">Opslaan en website bijwerken</button></div>
+    </form>
+    <script>
+    function rsSoort() {
+      var a = (document.querySelector('input[name=rs_soort]:checked') || {}).value === 'afspraak';
+      document.querySelectorAll('.rs-afspr').forEach(function (e) { e.style.display = a ? '' : 'none'; });
+      document.querySelectorAll('.rs-tafel').forEach(function (e) { e.style.display = a ? 'none' : ''; });
+    }
+    rsSoort();
+    </script>
+    <?php
 }
 
 /* ===========================================================
@@ -2150,7 +2937,7 @@ $LIC = function_exists('ff_licentie_status') ? ff_licentie_status(isset($_GET['c
 /* Abonnement gestopt of niet betaald: de website staat offline, maar je administratie blijft bereikbaar om te bekijken en te downloaden (alleen lezen) */
 $ADM_ALLEEN_LEZEN = false;
 if ($config && empty($LIC['actief'])) {
-    if (isset($_GET['doc']) || isset($_GET['taak']) || isset($_GET['agenda']) || isset($_GET['download']) || isset($_GET['herinnering']) || isset($_GET['bijlage']) || (($_POST['action'] ?? '') === 'adm_akkoord')) {
+    if (isset($_GET['doc']) || isset($_GET['res']) || isset($_GET['taak']) || isset($_GET['agenda']) || isset($_GET['download']) || isset($_GET['herinnering']) || isset($_GET['bijlage']) || (($_POST['action'] ?? '') === 'adm_akkoord')) {
         http_response_code(503); header('Content-Type: text/html; charset=UTF-8');
         exit('<!DOCTYPE html><html lang="nl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Niet beschikbaar</title></head><body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#111827;color:#fff;font-family:Segoe UI,Arial,sans-serif;text-align:center;padding:24px"><div><h1 style="font-size:28px;margin:0 0 10px">Deze pagina is niet beschikbaar.</h1><p style="margin:0;color:rgba(255,255,255,.75)">Neem contact op met de afzender.</p></div></body></html>');
     }
@@ -5201,6 +5988,7 @@ function adm_agenda_items($ookVoorbij = false) {
             $uit[] = ['id' => 'b-' . $jr . '-' . $q, 'eigen' => '', 'soort' => 'btw', 'titel' => 'Btw: kwartaal ' . $q . ' ' . $jr . ' afronden', 'datum' => $dag, 'tot' => '', 'van' => '', 'totTijd' => '', 'plaats' => '', 'notitie' => 'De btw-aangifte moet uiterlijk ' . nl_datum($einde) . ' binnen zijn. Stuur het pakket naar je boekhouder via Overzicht.', 'link' => 'admin.php?adm&jaar=' . $jr];
         } }
     }
+    if (!adm_voorbeeld()) { foreach (res_agenda_items($vanaf) as $ri) { $uit[] = $ri; } }
     usort($uit, function($a, $b) { return strcmp($a['datum'] . ($a['van'] ?: '00:00'), $b['datum'] . ($b['van'] ?: '00:00')); });
     return $uit;
 }
@@ -5370,6 +6158,8 @@ function adm_alles_maak(&$fout) {
     global $ADM_INDELING;
     $z->addFromString('Overzichten/Bank.csv', adm_csv_tekst(['Datum', 'Naam', 'Omschrijving', 'Bedrag', 'Indeling'], array_map(function($t) use ($f, $ADM_INDELING) { return [$t['datum'], $t['naam'], $t['oms'], $f($t['bedrag']), $ADM_INDELING[$t['indeling']] ?? $t['indeling']]; }, $bank)));
     $z->addFromString('Overzichten/Klanten.csv', adm_csv_tekst(['Naam', 'Contactpersoon', 'E-mail', 'Telefoon', 'Adres', 'Postcode', 'Plaats', 'KvK', 'Btw-nummer', 'Notitie'], array_map(function($k) { return [$k['naam'], $k['contact'] ?? '', $k['email'] ?? '', $k['tel'] ?? '', $k['straat'] ?? '', $k['postcode'] ?? '', $k['plaats'] ?? '', $k['kvk'] ?? '', $k['btw'] ?? '', $k['notitie'] ?? '']; }, $klanten)));
+    $rsl = res_lijst();
+    if ($rsl) { $z->addFromString('Overzichten/Reserveringen.csv', adm_csv_tekst(['Datum', 'Tijd', 'Personen', 'Naam', 'Telefoon', 'E-mail', 'Opmerking', 'Status', 'Gemaakt op'], array_map(function($r) { return [$r['dag'], $r['tijd'], (int)($r['p'] ?? 1), $r['naam'] ?? '', $r['tel'] ?? '', $r['mail'] ?? '', $r['opm'] ?? '', $r['status'] ?? '', $r['op'] ?? '']; }, $rsl))); }
     foreach ($vk as $d) {
         $nm = substr($d['datum'], 0, 4) . '/' . adm_bestandsnaam($d['datum'] . ' ' . $d['klant']['naam'] . ' ' . $d['nummer'] . ' ' . $f(adm_tot($d)['incl'])) . '.pdf';
         if (!empty($d['extern'])) { $pd = adm_pdf_pad($d['pdf'] ?? ''); if ($pd !== '' && is_file($pd)) { $z->addFile($pd, 'Verkoopfacturen/' . $nm); } else { $ontbreekt[] = 'Pdf van verkoopfactuur ' . $d['nummer']; } }
@@ -5384,7 +6174,7 @@ function adm_alles_maak(&$fout) {
     foreach (adm_voorbeeld() ? [] : read_json(ADM_BANKBEST_DIR . '/lijst.json', []) as $b) { if (is_file(ADM_BANKBEST_DIR . '/' . $b['bestand'])) { $z->addFile(ADM_BANKBEST_DIR . '/' . $b['bestand'], 'Bankbestanden/' . adm_bestandsnaam($b['naam'])); } }
     /* De gegevens zelf, zodat je ze later in een ander programma kunt inlezen (zonder wachtwoorden en sleutels) */
     if (!adm_voorbeeld()) {
-        foreach (['adm_klanten.json', 'adm_docs.json', 'adm_inkoop.json', 'adm_bank.json', 'adm_bankregels.json', 'adm_agenda.json', 'adm_maillog.json'] as $jf) { if (is_file(DATA_DIR . '/' . $jf)) { $z->addFile(DATA_DIR . '/' . $jf, 'Gegevens (voor een ander programma)/' . $jf); } }
+        foreach (['adm_klanten.json', 'adm_docs.json', 'adm_inkoop.json', 'adm_bank.json', 'adm_bankregels.json', 'adm_agenda.json', 'adm_maillog.json', 'reserveringen.json'] as $jf) { if (is_file(DATA_DIR . '/' . $jf)) { $z->addFile(DATA_DIR . '/' . $jf, 'Gegevens (voor een ander programma)/' . $jf); } }
         $ins = read_json(ADM_INST, []); foreach (['taak_sleutel', 'agenda_sleutel'] as $k) { unset($ins[$k]); }
         $z->addFromString('Gegevens (voor een ander programma)/adm_inst.json', json_encode($ins, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
     }
@@ -5610,8 +6400,8 @@ function adm_v_agenda() {
     $pad = rtrim(str_replace('\\', '/', dirname((string)($_SERVER['SCRIPT_NAME'] ?? '/admin.php'))), '/');
     $ics = $host . $pad . '/admin.php?agenda=' . $sl;
     $dagen = ['zondag', 'maandag', 'dinsdag', 'woensdag', 'donderdag', 'vrijdag', 'zaterdag'];
-    $kleur = ['afspraak' => 'st-open', 'opname' => 'st-verstuurd', 'klus' => 'st-akkoord', 'factuur' => 'st-concept', 'ontvangen' => 'st-betaald', 'betalen' => 'st-telaat', 'btw' => 'st-afgewezen'];
-    $label = ['afspraak' => 'Afspraak', 'opname' => 'Opname', 'klus' => 'Klus', 'factuur' => 'Factuur', 'ontvangen' => 'Ontvangen', 'betalen' => 'Betalen', 'btw' => 'Btw'];
+    $kleur = ['afspraak' => 'st-open', 'opname' => 'st-verstuurd', 'klus' => 'st-akkoord', 'factuur' => 'st-concept', 'ontvangen' => 'st-betaald', 'betalen' => 'st-telaat', 'btw' => 'st-afgewezen', 'online' => 'st-akkoord'];
+    $label = ['online' => 'Online geboekt', 'afspraak' => 'Afspraak', 'opname' => 'Opname', 'klus' => 'Klus', 'factuur' => 'Factuur', 'ontvangen' => 'Ontvangen', 'betalen' => 'Betalen', 'btw' => 'Btw'];
     ?>
     <div class="adm-acties">
       <a class="btn sm" href="admin.php?adm=afspraak">+ Nieuwe afspraak</a>
@@ -6449,6 +7239,7 @@ define('DEMO_FILE', DATA_DIR . '/demo-aan.txt');
 /* Openbare offerte of factuur voor de klant (link uit de mail) */
 if (isset($_GET['doc']) || (($_POST['action'] ?? '') === 'adm_akkoord')) { adm_publiek(); }
 if (isset($_GET['taak']) || isset($_GET['agenda']) || isset($_GET['download']) || isset($_GET['herinnering']) || isset($_GET['bijlage'])) { adm_openbaar(); }
+if (isset($_GET['res'])) { res_openbaar(); }
 $demoEnabled = $config && file_exists(DEMO_FILE);
 if ($demoEnabled && isset($_GET['demo']) && empty($_SESSION['ff_admin'])) {
     session_regenerate_id(true);
@@ -6512,6 +7303,7 @@ if ($logged_in && isset($_POST['action'])) {
     $pages = load_pages();
     $action = $_POST['action'];
     if (strpos($action, 'adm_') === 0) { adm_acties($action); }
+    if (strpos($action, 'res_') === 0) { res_acties($action); }
 
     if ($action === 'save') {
         $title = trim($_POST['title'] ?? '');
@@ -6807,6 +7599,7 @@ $showForm = $logged_in && (isset($_GET['new']) || $editing);
 $showAccount = $logged_in && isset($_GET['account']);
 $showSettings = $logged_in && isset($_GET['instellingen']);
 $showAdm = $logged_in && isset($_GET['adm']);
+$showRes = $logged_in && isset($_GET['reserveren']);
 $uploadLimit = ini_get('upload_max_filesize');
 $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (string)($_SERVER['HTTP_HOST'] ?? '')));
 ?>
@@ -6850,7 +7643,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
   .card .url{color:#8fb3ff;font-size:13px;text-decoration:none;word-break:break-all;}
   .card .badge{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#fff;background:var(--blue);padding:2px 8px;border-radius:999px;align-self:flex-start;}
   .folderform{display:flex;align-items:center;gap:8px;border-top:1px solid var(--line);padding-top:10px;font-size:13.5px;color:var(--mut);}
-  select,input[type=text],input[type=email],input[type=url],input[type=password],textarea{width:100%;background:#0c121c;border:1px solid var(--line);color:#fff;border-radius:10px;padding:11px 12px;font-family:inherit;font-size:15px;}
+  select,input[type=text],input[type=email],input[type=url],input[type=password],input[type=number],input[type=tel],input[type=date],input[type=time],textarea{color-scheme:dark;width:100%;background:#0c121c;border:1px solid var(--line);color:#fff;border-radius:10px;padding:11px 12px;font-family:inherit;font-size:15px;}
   input[type=color]{width:64px;height:44px;border:1px solid var(--line);border-radius:10px;background:#0c121c;padding:4px;cursor:pointer;}
   .folderform select{padding:6px 8px;font-size:13.5px;}
   textarea{min-height:140px;resize:vertical;}
@@ -6995,8 +7788,9 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     <div class="wrap">
       <a class="brand" href="admin.php"><?php if (logo_url() !== ''): ?><img src="<?= h(logo_url()) ?>" alt="" /><?php endif; ?><?= h(st('naam')) ?> <span>ADMIN</span></a>
       <div class="row">
-        <a class="btn ghost sm<?= (!$showSettings && !$showAccount && !$showAdm) ? ' on' : '' ?>" href="admin.php">Projecten</a>
+        <a class="btn ghost sm<?= (!$showSettings && !$showAccount && !$showAdm && !$showRes) ? ' on' : '' ?>" href="admin.php">Projecten</a>
         <a class="btn ghost sm<?= $showAdm ? ' on' : '' ?>" href="admin.php?adm">Administratie</a>
+        <a class="btn ghost sm<?= $showRes ? ' on' : '' ?>" href="admin.php?reserveren=1">Reserveren<?php $rsN = $showRes ? 0 : res_nieuw_aantal(); if ($rsN): ?> <span style="display:inline-block;min-width:20px;padding:0 6px;border-radius:999px;background:#ff5d5d;color:#fff;font-size:12px;line-height:20px;text-align:center"><?= $rsN ?></span><?php endif; ?></a>
         <a class="btn ghost sm<?= $showSettings ? ' on' : '' ?>" href="admin.php?instellingen=1">Instellingen</a>
         <a class="btn ghost sm<?= $showAccount ? ' on' : '' ?>" href="admin.php?account=1">Inloggegevens</a>
         <a class="btn ghost sm" href="/" target="_blank">Website bekijken</a>
@@ -7024,6 +7818,9 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
 
       <?php elseif ($showAdm): ?>
         <?php adm_view(); ?>
+
+      <?php elseif ($showRes): ?>
+        <?php res_beheer_view(); ?>
 
       <?php elseif ($showAccount): ?>
         <h1>Inloggegevens</h1>
@@ -7181,6 +7978,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
                   <?php if ($k === 'strook'): ?><div class="hint" style="margin:4px 0 0 28px">De namen van je diensten. Hoe de balk eruitziet, kies je hierboven bij Opbouw.</div><?php endif; ?>
                   <?php if ($k === 'diensten'): ?><div class="hint" style="margin:4px 0 0 28px">Je diensten vul je verderop in, bij Diensten.</div><?php endif; ?>
                   <?php if ($k === 'projecten'): ?><div class="hint" style="margin:4px 0 0 28px">Projecten die je in de map Uitgelicht zet.</div><?php endif; ?>
+                  <?php if ($k === 'reserveren'): ?><div class="hint" style="margin:4px 0 0 28px">De kalender om online te reserveren. Instellen doe je bovenaan bij <a href="admin.php?reserveren=1" style="color:#8fb3ff">Reserveren</a>.</div><?php endif; ?>
                   <?php if ($k === 'voorna'): ?>
                     <details class="blk-in"><summary>Inhoud: foto's van voor en na</summary>
                       <div class="two"><div class="field"><label>Titel</label><input type="text" name="voorna_titel" maxlength="80" value="<?= h(st('voorna_titel')) ?>" /></div><div class="field"><label>Korte tekst</label><input type="text" name="voorna_intro" maxlength="200" value="<?= h(st('voorna_intro')) ?>" /></div></div>
@@ -7447,6 +8245,15 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     "h2:Opbouw en details": "Hiermee maak je je website echt eigen: hoe de blokken op de voorpagina eruitzien, welk lettertype je gebruikt en hoe rond de knoppen zijn. Probeer gerust iets uit, je kunt het altijd terugzetten.",
     "h2:Extra": "Extra instellingen. Die heb je meestal niet nodig, maar ze kunnen handig zijn.",
     "h3:Extra kleuren (optioneel)": "Wil je nog meer eigen kleuren? Vink een kleur aan en kies hem. Uitgevinkt gebruikt je website de kleur van de stijl. Let op dat tekst goed leesbaar blijft.",
+    "f:rstitel": "De kop boven de kalender, bijvoorbeeld Reserveer een tafel of Maak een afspraak.",
+    "f:rsstap": "Om de hoeveel minuten er een tijd te kiezen is. Elke 30 minuten geeft bijvoorbeeld 18.00, 18.30, 19.00.",
+    "f:rsduur": "Hoe lang een gast ongeveer blijft. Zolang telt zijn plek als bezet, ook voor de tijden erna.",
+    "f:rsplaatsen": "Hoeveel gasten er tegelijk kunnen zijn, bijvoorbeeld het aantal stoelen. Voor afspraken: hoeveel klanten je tegelijk kunt helpen. Is een tijd vol, dan ziet niemand hem meer.",
+    "f:rsmax": "De grootste groep die online mag reserveren. Grotere groepen vragen we om contact op te nemen.",
+    "f:rsvooruit": "Hoe ver in de toekomst gasten kunnen reserveren.",
+    "f:rsvooraf": "Hoe lang van tevoren een reservering minimaal moet. Bij 2 uur kan om 16.00 uur niemand meer voor 17.00 uur reserveren.",
+    "f:rsdicht": "Dagen waarop je dicht bent, zoals vakanties of feestdagen. Die dagen staan grijs in de kalender.",
+    "f:rsmelding": "Naar dit adres sturen we een melding bij elke nieuwe reservering of annulering.",
     "f:banner": "Een grote foto bovenaan je voorpagina. Kies een liggende foto; op een telefoon wordt de zijkant soms iets afgesneden.",
     "f:banner_vorm": "Achter de titel: je titel en knop staan op de foto, met een donkere waas zodat de tekst leesbaar blijft. Als strook: de foto staat als brede baan onder het menu en je titel staat eronder.",
     "f:bdfoto": "Kies een foto of plaatje van je telefoon of computer. Dit blok komt op je voorpagina, op de plek die je met de pijltjes kiest.",
