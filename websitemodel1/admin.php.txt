@@ -29,7 +29,7 @@ define('MAX_PHOTO_BYTES', 8 * 1024 * 1024);
 define('MAX_DIENSTEN', 9);
 
 $RESERVED = ['admin', 'assets', 'data', 'index', 'uploads', 'site', 'favicon', 'error', 'stats', 'cgi-bin',
-             'sitemap', 'robots', 'contact', 'bedankt', 'projecten', 'diensten', 'reserveren', 'occasions', 'aanbod', 'beoordelingen'];
+             'sitemap', 'robots', 'contact', 'bedankt', 'projecten', 'diensten', 'reserveren', 'occasions', 'aanbod', 'beoordelingen', 'menukaart'];
 
 /* ===========================================================
    Instellingen
@@ -1113,7 +1113,7 @@ function site_header($backUrl = '', $backLabel = '') {
     $out = slogan_bar() . '<header class="top"><div class="wrap">' . brand_html() . '<nav class="menu" aria-label="Menu">';
     if ($backUrl === '') {
         if (!empty(services())) { $out .= '<a class="nav" href="/#diensten">Diensten</a>'; }
-        $out .= '<a class="nav" href="/#projecten">Projecten</a>' . ab_menu_link();
+        $out .= '<a class="nav" href="/#projecten">Projecten</a>' . ab_menu_link() . mk_menu_link();
     } else {
         $out .= '<a class="back" href="' . h($backUrl) . '" onclick="try{var r=document.referrer;if(r&&r.indexOf(location.origin+\'/\')===0&&history.length>1){history.back();return false;}}catch(e){}return true;"><svg viewBox="0 0 24 24" fill="none" width="16" height="16" aria-hidden="true"><path d="M19 12H5M11 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="long">' . h($backLabel) . '</span><span class="short">Terug</span></a>';
     }
@@ -1199,7 +1199,7 @@ function site_lists($pages) {
 /* ===========================================================
    Blokken op de voorpagina: volgorde en aan/uit, plus de nieuwe blokken
    =========================================================== */
-$BLOKKEN = ['strook' => 'Balk met diensten', 'diensten' => 'Diensten', 'projecten' => 'Uitgelichte projecten', 'voorna' => 'Voor en na (foto\'s)', 'werkwijze' => 'Werkwijze in stappen', 'cijfers' => 'Cijfers', 'over' => 'Over ons', 'vragen' => 'Veelgestelde vragen', 'reserveren' => 'Afspraakplanner (kalender)', 'aanbod' => 'Aanbod: occasions of producten', 'beoordelingen' => 'Beoordelingen (sterren)', 'beeld1' => 'Eigen afbeelding 1', 'beeld2' => 'Eigen afbeelding 2', 'beeld3' => 'Eigen afbeelding 3'];
+$BLOKKEN = ['strook' => 'Balk met diensten', 'diensten' => 'Diensten', 'projecten' => 'Uitgelichte projecten', 'voorna' => 'Voor en na (foto\'s)', 'werkwijze' => 'Werkwijze in stappen', 'cijfers' => 'Cijfers', 'over' => 'Over ons', 'vragen' => 'Veelgestelde vragen', 'reserveren' => 'Afspraakplanner (kalender)', 'aanbod' => 'Aanbod: occasions of producten', 'beoordelingen' => 'Beoordelingen (sterren)', 'menukaart' => 'Menukaart (horeca)', 'beeld1' => 'Eigen afbeelding 1', 'beeld2' => 'Eigen afbeelding 2', 'beeld3' => 'Eigen afbeelding 3'];
 $BEELD_VORMEN = ['links' => 'Foto links, tekst rechts', 'rechts' => 'Foto rechts, tekst links', 'breed' => 'Grote foto over de hele breedte', 'klein' => 'Kleine foto in het midden (bijvoorbeeld een logo of keurmerk)'];
 function beeld_item($n) {
     global $ST, $BEELD_VORMEN;
@@ -1240,6 +1240,7 @@ function blok_inhoud($k) {
     if (preg_match('/^beeld([1-3])$/', $k, $m)) { return beeld_item((int)$m[1] - 1)['foto'] !== '' ? [1] : []; }
     if ($k === 'reserveren') { return !empty(res_inst()['aan']) ? [1] : []; }
     if ($k === 'beoordelingen') { return bd_inst()['aan'] && bd_zichtbaar() ? [1] : []; }
+    if ($k === 'menukaart') { return mk_inst()['aan'] && mk_aantal(mk_data(), true) ? [1] : []; }
     if ($k === 'aanbod') { return !empty(ab_inst()['aan']) && array_filter(ab_lijst(), function($x) { return ($x['status'] ?? '') !== 'verkocht'; }) ? [1] : []; }
     return [];
 }
@@ -1284,6 +1285,8 @@ function blok_html($k, $sky) {
         $o .= bd_blok_html($sky);
     } elseif ($k === 'aanbod') {
         $o .= ab_blok_html($sky);
+    } elseif ($k === 'menukaart') {
+        $o .= mk_blok_html($sky);
     } elseif ($k === 'reserveren') {
         $ri = res_inst();
         $o .= '<section class="' . $cl . '" id="reserveren"><div class="wrap">' . blok_kop($ri['titel'] !== '' ? $ri['titel'] : 'Reserveren', $ri['intro']) . res_widget($ri) . '</div></section>' . "\n";
@@ -1998,6 +2001,7 @@ function write_contact_pages() {
     write_reserveren_page();
     write_aanbod_pages();
     write_beoordelingen_page();
+    write_menukaart_page();
 }
 function write_seo_files($pages) {
     $u = site_url();
@@ -2007,6 +2011,7 @@ function write_seo_files($pages) {
     $urls[] = ['loc' => $u . '/contact/', 'lastmod' => $today];
     if (!empty(res_inst()['aan'])) { $urls[] = ['loc' => $u . '/reserveren/', 'lastmod' => $today]; }
     if (bd_inst()['aan'] && bd_zichtbaar()) { $urls[] = ['loc' => $u . '/beoordelingen/', 'lastmod' => $today]; }
+    if (mk_zichtbaar()) { $urls[] = ['loc' => $u . '/menukaart/', 'lastmod' => $today]; }
     $abi = ab_inst();
     if (!empty($abi['aan'])) {
         $urls[] = ['loc' => $u . '/' . $abi['slug'] . '/', 'lastmod' => $today];
@@ -3876,6 +3881,658 @@ function bd_beheer_view() {
       <div style="margin-top:14px"><button class="btn" type="submit">Opslaan</button></div>
     </form>
     <?php
+}
+
+/* ===========================================================
+   Menukaart voor horeca: meerdere kaarten (lunch, diner, dranken),
+   rubrieken, gerechten met prijs, kenmerken en de 14 allergenen,
+   tijdelijk uitverkocht, inladen uit Excel en een eigen pdf erbij.
+   =========================================================== */
+define('MK_INST', DATA_DIR . '/menukaart_inst.json');
+define('MK_FILE', DATA_DIR . '/menukaart.json');
+define('MK_PDF_MAX', 15 * 1024 * 1024);
+$MK_KENMERKEN = ['vega' => 'Vegetarisch', 'vegan' => 'Vegan', 'gv' => 'Glutenvrij', 'pittig' => 'Pittig', 'nieuw' => 'Nieuw', 'huis' => 'Specialiteit van het huis'];
+$MK_ALLERGENEN = ['gluten' => 'Gluten', 'schaaldieren' => 'Schaaldieren', 'ei' => 'Ei', 'vis' => 'Vis', 'pinda' => "Pinda's", 'soja' => 'Soja', 'melk' => 'Melk', 'noten' => 'Noten', 'selderij' => 'Selderij', 'mosterd' => 'Mosterd', 'sesam' => 'Sesamzaad', 'sulfiet' => 'Sulfiet', 'lupine' => 'Lupine', 'weekdieren' => 'Weekdieren'];
+$MK_STATUS = ['ok' => 'Op de kaart', 'uit' => 'Tijdelijk uitverkocht', 'weg' => 'Verborgen'];
+
+function mk_inst() {
+    $x = read_json(MK_INST, []);
+    $in = ['aan' => !empty($x['aan'])];
+    $in['naam'] = trim((string)($x['naam'] ?? '')) !== '' ? cut((string)$x['naam'], 30) : 'Menukaart';
+    $in['titel'] = trim((string)($x['titel'] ?? '')) !== '' ? cut((string)$x['titel'], 90) : 'Onze menukaart';
+    $in['intro'] = trim((string)($x['intro'] ?? '')) !== '' ? cut((string)$x['intro'], 300) : 'Vers bereid, met liefde voor het vak. Kijk wat je vandaag bij ons kunt eten en drinken.';
+    $in['allergenen'] = isset($x['allergenen']) ? !empty($x['allergenen']) : true;
+    $in['allergie_tekst'] = trim((string)($x['allergie_tekst'] ?? '')) !== '' ? cut((string)$x['allergie_tekst'], 400) : 'Heb je een allergie of een dieetwens? Vraag het ons gerust, we denken graag met je mee.';
+    $in['pdf'] = basename((string)($x['pdf'] ?? ''));
+    $in['pdf_naam'] = cut((string)($x['pdf_naam'] ?? ''), 120);
+    if ($in['pdf'] !== '' && !is_file(UPLOAD_DIR . '/menukaart/' . $in['pdf'])) { $in['pdf'] = ''; }
+    return $in;
+}
+function mk_data() {
+    $d = read_json(MK_FILE, []);
+    $k = isset($d['kaarten']) && is_array($d['kaarten']) ? $d['kaarten'] : [];
+    $uit = [];
+    foreach ($k as $kaart) {
+        if (!is_array($kaart) || ($kaart['id'] ?? '') === '') continue;
+        $kaart['rubrieken'] = array_values(array_filter((array)($kaart['rubrieken'] ?? []), 'is_array'));
+        foreach ($kaart['rubrieken'] as $i => $r) { $kaart['rubrieken'][$i]['gerechten'] = array_values(array_filter((array)($r['gerechten'] ?? []), 'is_array')); }
+        $uit[] = $kaart;
+    }
+    return $uit;
+}
+function mk_bewaar($kaarten) { write_json(MK_FILE, ['kaarten' => array_values($kaarten)]); }
+function mk_id() { return bin2hex(random_bytes(4)); }
+function mk_eur($c) { return "\u{20AC}\u{00A0}" . number_format($c / 100, 2, ',', '.'); }
+function mk_aantal($kaarten, $alleenZichtbaar = false) {
+    $n = 0;
+    foreach ($kaarten as $k) { foreach ($k['rubrieken'] as $r) { foreach ($r['gerechten'] as $g) { if (!$alleenZichtbaar || ($g['status'] ?? 'ok') !== 'weg') $n++; } } }
+    return $n;
+}
+function mk_slug_kaart($k) { $s = slugify((string)($k['naam'] ?? '')); return $s !== '' ? $s : 'kaart-' . $k['id']; }
+function mk_zichtbaar() {
+    $in = mk_inst();
+    return $in['aan'] && (mk_aantal(mk_data(), true) > 0 || $in['pdf'] !== '');
+}
+function mk_menu_link() {
+    $in = mk_inst();
+    return mk_zichtbaar() ? '<a class="nav" href="/menukaart/">' . h($in['naam']) . '</a>' : '';
+}
+
+/* ---------- Pagina op de website ---------- */
+function mk_css() {
+    return <<<'CSS'
+<style>
+.mkhero{background:var(--navy);color:#fff;padding:clamp(44px,6vw,80px) 0 clamp(36px,5vw,56px);}
+.mkhero h1{font-size:clamp(34px,5vw,58px);} .mkhero p{margin:14px 0 0;color:rgba(255,255,255,.82);max-width:62ch;font-size:18px;}
+.mkhero .btn{margin-top:20px;}
+.mkwrap{padding:clamp(24px,4vw,44px) 0 clamp(48px,7vw,90px);background:var(--sky);}
+.mk-tabs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;}
+.mk-tabs button,.mk-tabs a{font:inherit;font-size:16px;font-weight:700;padding:10px 18px;border-radius:999px;border:1.5px solid var(--line);background:#fff;color:var(--navy);cursor:pointer;text-decoration:none;}
+.mk-tabs button.on{background:var(--navy);border-color:var(--navy);color:#fff;}
+.mk-filter{background:#fff;border:1px solid var(--line);border-radius:16px;padding:14px 16px;margin-bottom:18px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+.mk-filter>span{font-weight:700;font-size:14.5px;margin-right:4px;}
+.mk-filter button{font:inherit;font-size:14px;font-weight:600;padding:7px 13px;border-radius:999px;border:1.5px solid var(--line);background:#fff;color:var(--navy);cursor:pointer;}
+.mk-filter button.on{background:var(--blue);border-color:var(--blue);color:#fff;}
+.mk-filter details{position:relative;}
+.mk-filter summary{list-style:none;cursor:pointer;font-size:14px;font-weight:600;padding:7px 13px;border-radius:999px;border:1.5px solid var(--line);background:#fff;}
+.mk-filter summary::-webkit-details-marker{display:none;}
+.mk-filter details[open] summary,.mk-filter summary.on{background:var(--navy);border-color:var(--navy);color:#fff;}
+.mk-allg{position:absolute;z-index:20;left:0;top:calc(100% + 6px);background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 18px 40px -18px rgba(0,0,0,.4);padding:12px 14px;display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;width:min(380px,calc(100vw - 48px));color:var(--navy);}
+.mk-allg label{display:flex;gap:8px;align-items:center;font-size:14.5px;cursor:pointer;}
+.mk-allg p{grid-column:1 / -1;margin:6px 0 0;font-size:13px;color:var(--muted);}
+.mk-tel{font-size:14px;color:var(--muted);margin:-6px 0 14px;min-height:1em;}
+.mk-kaart[hidden]{display:none;}
+.mk-kinfo{color:var(--muted);margin:-4px 0 16px;font-size:15.5px;}
+.mk-kinfo b{color:var(--navy);}
+.mk-sprong{display:flex;gap:6px;overflow-x:auto;padding:2px 0 12px;margin-bottom:6px;scrollbar-width:thin;}
+.mk-sprong a{flex:none;font-size:14px;font-weight:600;padding:6px 12px;border-radius:999px;background:#fff;border:1px solid var(--line);color:var(--navy);text-decoration:none;}
+.mk-rub{background:#fff;border:1px solid var(--line);border-radius:18px;padding:clamp(18px,3vw,30px);margin-bottom:18px;scroll-margin-top:90px;}
+.mk-rub[hidden]{display:none;}
+.mk-rub h2{font-size:clamp(22px,2.6vw,28px);margin:0;}
+.mk-rub>p{margin:6px 0 0;color:var(--muted);}
+.mk-gl{display:grid;gap:0;margin-top:10px;}
+.mk-g{padding:14px 0;border-bottom:1px dashed var(--line);}
+.mk-g:last-child{border-bottom:0;padding-bottom:0;}
+.mk-g[hidden]{display:none;}
+.mk-r{display:flex;align-items:baseline;gap:10px;}
+.mk-r h3{font-size:17.5px;margin:0;line-height:1.3;}
+.mk-r i{flex:1;border-bottom:2px dotted var(--line);transform:translateY(-4px);min-width:20px;}
+.mk-r b{font-size:17px;white-space:nowrap;}
+.mk-r b small{font-weight:500;color:var(--muted);font-size:13.5px;margin-left:4px;}
+.mk-g p{margin:4px 0 0;color:var(--muted);font-size:15.5px;line-height:1.5;}
+.mk-l{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;}
+.mk-k{font-style:normal;font-size:12.5px;font-weight:700;padding:3px 9px;border-radius:999px;background:var(--sky);color:var(--navy);}
+.mk-k.vega,.mk-k.vegan{background:#e3f5ea;color:#17673b;} .mk-k.gv{background:#fdf1dc;color:#7a4e0b;} .mk-k.pittig{background:#fde4e1;color:#a8261b;}
+.mk-k.nieuw{background:#e4ecff;color:#1f4fbf;} .mk-k.huis{background:#2a2a2a;color:#fff;}
+.mk-a{font-size:13.5px;color:var(--muted);}
+.mk-onb{display:none;font-size:13.5px;color:#a8261b;}
+.mk-filteraan .mk-g.onb .mk-onb{display:inline;}
+.mk-g.uit h3,.mk-g.uit .mk-r b{color:var(--muted);text-decoration:line-through;}
+.mk-uit{font-style:normal;font-size:12.5px;font-weight:700;padding:3px 9px;border-radius:999px;background:#f3f4f6;color:#4b5563;}
+.mk-leeg{background:#fff;border:1.5px dashed var(--line);border-radius:16px;padding:26px;text-align:center;color:var(--muted);}
+.mk-voet{margin-top:26px;background:#fff;border:1px solid var(--line);border-radius:16px;padding:clamp(18px,3vw,26px);}
+.mk-voet h2{font-size:20px;margin:0 0 8px;}
+.mk-voet p{margin:0 0 10px;}
+.mk-voet .mk-l{margin-top:4px;}
+.mk-blok{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;}
+.mk-blok .mk-g{background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px 18px;}
+.mk-blok-k{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px;align-items:center;}
+@media print{.mkhero,.mk-filter,.mk-tabs,.mk-sprong,.mk-tel{display:none!important;} .mk-kaart[hidden]{display:block!important;} .mkwrap{background:#fff;padding:0;} .mk-rub{border:0;break-inside:avoid;}}
+</style>
+CSS;
+}
+function mk_gerecht_html($g, $toonAllerg) {
+    global $MK_KENMERKEN, $MK_ALLERGENEN;
+    $st = $g['status'] ?? 'ok';
+    $ken = array_values(array_intersect(array_keys($MK_KENMERKEN), (array)($g['kenmerken'] ?? [])));
+    $all = array_values(array_intersect(array_keys($MK_ALLERGENEN), (array)($g['allergenen'] ?? [])));
+    $bekend = !empty($g['allerg_ingevuld']);
+    $o = '<div class="mk-g' . ($st === 'uit' ? ' uit' : '') . ($toonAllerg && !$bekend ? ' onb' : '') . '" data-k="' . h(implode(' ', $ken)) . '" data-a="' . h(implode(' ', $all)) . '" data-b="' . ($bekend ? '1' : '0') . '">';
+    $prijs = (int)($g['prijs'] ?? 0);
+    $o .= '<div class="mk-r"><h3>' . h($g['naam']) . '</h3><i aria-hidden="true"></i><b>' . ($prijs > 0 ? h(mk_eur($prijs)) : '') . (trim((string)($g['prijs_tekst'] ?? '')) !== '' ? '<small>' . h($g['prijs_tekst']) . '</small>' : '') . '</b></div>';
+    if (trim((string)($g['oms'] ?? '')) !== '') { $o .= '<p>' . nl2br(h(trim($g['oms']))) . '</p>'; }
+    $l = '';
+    if ($st === 'uit') { $l .= '<em class="mk-uit">Tijdelijk uitverkocht</em>'; }
+    foreach ($ken as $k) { $l .= '<em class="mk-k ' . h($k) . '">' . h($MK_KENMERKEN[$k]) . '</em>'; }
+    if ($toonAllerg) {
+        if ($bekend && $all) { $l .= '<span class="mk-a">Bevat: ' . h(mb_strtolower(implode(', ', array_map(function($a) use ($MK_ALLERGENEN) { return $MK_ALLERGENEN[$a]; }, $all)), 'UTF-8')) . '</span>'; }
+        elseif ($bekend) { $l .= '<span class="mk-a">Zonder de 14 bekende allergenen</span>'; }
+        $l .= '<span class="mk-onb">Allergenen niet ingevuld, vraag het ons</span>';
+    }
+    if ($l !== '') { $o .= '<div class="mk-l">' . $l . '</div>'; }
+    return $o . '</div>';
+}
+function mk_jsonld($in, $kaarten) {
+    $secs = [];
+    foreach ($kaarten as $k) {
+        $rs = [];
+        foreach ($k['rubrieken'] as $r) {
+            $items = [];
+            foreach ($r['gerechten'] as $g) {
+                if (($g['status'] ?? 'ok') === 'weg') continue;
+                $it = ['@type' => 'MenuItem', 'name' => $g['naam']];
+                if (trim((string)($g['oms'] ?? '')) !== '') $it['description'] = cut(trim($g['oms']), 300);
+                if ((int)($g['prijs'] ?? 0) > 0) $it['offers'] = ['@type' => 'Offer', 'price' => number_format($g['prijs'] / 100, 2, '.', ''), 'priceCurrency' => 'EUR'];
+                $diet = [];
+                if (in_array('vegan', (array)($g['kenmerken'] ?? []), true)) $diet[] = 'https://schema.org/VeganDiet';
+                if (in_array('vega', (array)($g['kenmerken'] ?? []), true)) $diet[] = 'https://schema.org/VegetarianDiet';
+                if (in_array('gv', (array)($g['kenmerken'] ?? []), true)) $diet[] = 'https://schema.org/GlutenFreeDiet';
+                if ($diet) $it['suitableForDiet'] = $diet;
+                $items[] = $it;
+            }
+            if ($items) $rs[] = ['@type' => 'MenuSection', 'name' => $r['naam'], 'hasMenuItem' => $items];
+        }
+        if ($rs) $secs[] = ['@type' => 'MenuSection', 'name' => $k['naam'], 'hasMenuSection' => $rs];
+    }
+    $ld = ['@context' => 'https://schema.org', '@type' => 'Menu', 'name' => $in['titel'], 'url' => site_url() . '/menukaart/', 'hasMenuSection' => $secs];
+    return '<script type="application/ld+json">' . json_encode($ld, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG) . '</script>';
+}
+function mk_pdf_url($in) { return $in['pdf'] !== '' ? '/uploads/menukaart/' . rawurlencode($in['pdf']) : ''; }
+function render_menukaart_page() {
+    global $MK_KENMERKEN, $MK_ALLERGENEN;
+    $in = mk_inst();
+    $kaarten = [];
+    foreach (mk_data() as $k) {
+        $k['rubrieken'] = array_values(array_filter(array_map(function($r) { $r['gerechten'] = array_values(array_filter($r['gerechten'], function($g) { return ($g['status'] ?? 'ok') !== 'weg'; })); return $r; }, $k['rubrieken']), function($r) { return count($r['gerechten']) > 0; }));
+        if ($k['rubrieken']) $kaarten[] = $k;
+    }
+    $desc = cut($in['titel'] . ' van ' . st('naam') . (st('plaats') !== '' ? ' in ' . st('plaats') : '') . '. ' . $in['intro'], 160);
+    $out = site_head($in['titel'] . ' | ' . st('naam'), $desc, '/menukaart/', business_jsonld() . ($kaarten ? mk_jsonld($in, $kaarten) : ''), true);
+    $out .= mk_css() . "\n</head>\n<body>\n" . site_header();
+    $out .= '<main><section class="mkhero"><div class="wrap"><h1>' . h($in['titel']) . '</h1><p>' . h($in['intro']) . '</p>';
+    if ($in['pdf'] !== '') { $out .= '<a class="btn primary" href="' . h(mk_pdf_url($in)) . '" target="_blank" rel="noopener">' . ($in['pdf_naam'] !== '' ? h($in['pdf_naam']) . ' (pdf)' : 'Menukaart als pdf') . '</a>'; }
+    $out .= '</div></section><section class="mkwrap"><div class="wrap" id="mkRoot">';
+    if (!$kaarten) {
+        $out .= '<div class="mk-leeg">' . ($in['pdf'] !== '' ? 'Bekijk onze menukaart in de pdf hierboven.' : 'Onze menukaart staat hier binnenkort.') . '</div>';
+    } else {
+        if (count($kaarten) > 1) {
+            $out .= '<div class="mk-tabs" role="tablist" aria-label="Kaarten">';
+            foreach ($kaarten as $i => $k) { $out .= '<button type="button" role="tab" data-k="' . h(mk_slug_kaart($k)) . '"' . ($i === 0 ? ' class="on" aria-selected="true"' : ' aria-selected="false"') . '>' . h($k['naam']) . '</button>'; }
+            $out .= '</div>';
+        }
+        $heeftKen = [];
+        foreach ($kaarten as $k) { foreach ($k['rubrieken'] as $r) { foreach ($r['gerechten'] as $g) { foreach ((array)($g['kenmerken'] ?? []) as $kk) { $heeftKen[$kk] = 1; } } } }
+        $filt = array_intersect_key(['vega' => 'Vegetarisch', 'vegan' => 'Vegan', 'gv' => 'Glutenvrij'], $heeftKen);
+        if ($filt || $in['allergenen']) {
+            $out .= '<div class="mk-filter" id="mkFilter" hidden><span>Filter:</span>';
+            foreach ($filt as $kk => $l) { $out .= '<button type="button" data-f="' . h($kk) . '" aria-pressed="false">' . h($l) . '</button>'; }
+            if ($in['allergenen']) {
+                $out .= '<details><summary>Ik ben allergisch voor...</summary><div class="mk-allg">';
+                foreach ($MK_ALLERGENEN as $ak => $al) { $out .= '<label><input type="checkbox" value="' . h($ak) . '" /> ' . h($al) . '</label>'; }
+                $out .= '<p>Gerechten met dit allergeen verdwijnen uit de lijst. Twijfel je? Vraag het ons altijd even.</p></div></details>';
+            }
+            $out .= '</div><p class="mk-tel" id="mkTel" aria-live="polite"></p>';
+        }
+        foreach ($kaarten as $i => $k) {
+            $ks = mk_slug_kaart($k);
+            $out .= '<div class="mk-kaart" id="kaart-' . h($ks) . '" data-k="' . h($ks) . '"' . ($i > 0 ? ' data-later="1"' : '') . '>';
+            if (count($kaarten) > 1) { $out .= '<h2 class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">' . h($k['naam']) . '</h2>'; }
+            $info = array_filter([trim((string)($k['tijd'] ?? '')) !== '' ? '<b>' . h($k['tijd']) . '</b>' : '', trim((string)($k['oms'] ?? '')) !== '' ? h($k['oms']) : '']);
+            if ($info) { $out .= '<p class="mk-kinfo">' . implode(' &middot; ', $info) . '</p>'; }
+            if (count($k['rubrieken']) > 2) {
+                $out .= '<nav class="mk-sprong" aria-label="Rubrieken">';
+                foreach ($k['rubrieken'] as $r) { $out .= '<a href="#r-' . h($r['id']) . '">' . h($r['naam']) . '</a>'; }
+                $out .= '</nav>';
+            }
+            foreach ($k['rubrieken'] as $r) {
+                $out .= '<section class="mk-rub" id="r-' . h($r['id']) . '"><h2>' . h($r['naam']) . '</h2>' . (trim((string)($r['oms'] ?? '')) !== '' ? '<p>' . h($r['oms']) . '</p>' : '') . '<div class="mk-gl">';
+                foreach ($r['gerechten'] as $g) { $out .= mk_gerecht_html($g, $in['allergenen']); }
+                $out .= '</div></section>';
+            }
+            $out .= '</div>';
+        }
+        $out .= '<div class="mk-voet"><h2>Goed om te weten</h2><p>' . h($in['allergie_tekst']) . '</p>';
+        $leg = array_intersect_key($MK_KENMERKEN, $heeftKen);
+        if ($leg) { $out .= '<div class="mk-l">'; foreach ($leg as $kk => $l) { $out .= '<em class="mk-k ' . h($kk) . '">' . h($l) . '</em>'; } $out .= '</div>'; }
+        $out .= '<p style="margin:12px 0 0;font-size:14px;color:var(--muted)">Alle prijzen zijn in euro, inclusief btw.</p></div>';
+    }
+    $out .= '</div></section></main>' . cta_band() . site_footer();
+    $out .= <<<'JS'
+<script>
+(function () {
+  var root = document.getElementById('mkRoot'); if (!root) return;
+  var kaarten = root.querySelectorAll('.mk-kaart'), tabs = root.querySelectorAll('.mk-tabs button');
+  var filt = document.getElementById('mkFilter'), tel = document.getElementById('mkTel');
+  var gekozen = { k: {}, a: {} };
+  function toonKaart(ks) {
+    var ok = false; kaarten.forEach(function (k) { if (k.getAttribute('data-k') === ks) ok = true; });
+    if (!ok && kaarten.length) ks = kaarten[0].getAttribute('data-k');
+    kaarten.forEach(function (k) { k.hidden = kaarten.length > 1 && k.getAttribute('data-k') !== ks; });
+    tabs.forEach(function (t) { var on = t.getAttribute('data-k') === ks; t.className = on ? 'on' : ''; t.setAttribute('aria-selected', on ? 'true' : 'false'); });
+    pas();
+  }
+  tabs.forEach(function (t) { t.onclick = function () { toonKaart(t.getAttribute('data-k')); try { history.replaceState(null, '', '#kaart-' + t.getAttribute('data-k')); } catch (e) {} }; });
+  function pas() {
+    var kk = Object.keys(gekozen.k), aa = Object.keys(gekozen.a), aan = kk.length || aa.length, n = 0;
+    root.classList.toggle('mk-filteraan', !!aa.length);
+    root.querySelectorAll('.mk-g').forEach(function (g) {
+      var ken = (g.getAttribute('data-k') || '').split(' '), all = (g.getAttribute('data-a') || '').split(' '), toon = true;
+      kk.forEach(function (f) { if (f === 'vega') { if (ken.indexOf('vega') < 0 && ken.indexOf('vegan') < 0) toon = false; } else if (ken.indexOf(f) < 0) toon = false; });
+      aa.forEach(function (a) { if (all.indexOf(a) >= 0) toon = false; });
+      g.hidden = !toon;
+      if (toon && !g.closest('.mk-kaart').hidden) n++;
+    });
+    root.querySelectorAll('.mk-rub').forEach(function (r) { r.hidden = !r.querySelector('.mk-g:not([hidden])'); });
+    if (tel) tel.textContent = aan ? (n === 1 ? '1 gerecht past bij je keuze.' : n + ' gerechten passen bij je keuze.') : '';
+  }
+  if (filt) {
+    filt.hidden = false;
+    filt.querySelectorAll('button[data-f]').forEach(function (b) { b.onclick = function () { var f = b.getAttribute('data-f'); if (gekozen.k[f]) delete gekozen.k[f]; else gekozen.k[f] = 1; b.className = gekozen.k[f] ? 'on' : ''; b.setAttribute('aria-pressed', gekozen.k[f] ? 'true' : 'false'); pas(); }; });
+    var sm = filt.querySelector('summary');
+    filt.querySelectorAll('.mk-allg input').forEach(function (c) { c.onchange = function () { if (c.checked) gekozen.a[c.value] = 1; else delete gekozen.a[c.value]; var n = Object.keys(gekozen.a).length; sm.textContent = n ? 'Allergisch voor ' + n + ' ' + (n === 1 ? 'allergeen' : 'allergenen') : 'Ik ben allergisch voor...'; sm.className = n ? 'on' : ''; pas(); }; });
+    document.addEventListener('click', function (e) { var d = filt.querySelector('details'); if (d && d.open && !d.contains(e.target)) d.open = false; });
+  }
+  var h = (location.hash || '').replace('#kaart-', '');
+  if (location.hash.indexOf('#r-') === 0) { var r = document.getElementById(location.hash.slice(1)); if (r) h = r.closest('.mk-kaart').getAttribute('data-k'); }
+  toonKaart(h);
+  root.querySelectorAll('.mk-sprong a').forEach(function (a) { a.onclick = function (e) { var t = document.getElementById(a.getAttribute('href').slice(1)); if (t) { e.preventDefault(); t.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }; });
+})();
+</script>
+JS;
+    return $out . "\n</body>\n</html>\n";
+}
+function write_menukaart_page() {
+    $dir = ROOT . '/menukaart';
+    if (mk_zichtbaar()) {
+        if (!is_dir($dir)) { mkdir($dir, 0755, true); }
+        @file_put_contents($dir . '/.ff-menukaart', '1');
+        schrijf_pagina($dir, stijl_pagina(render_menukaart_page()));
+    } elseif (is_dir($dir) && is_file($dir . '/.ff-menukaart')) {
+        @unlink($dir . '/index.php'); @unlink($dir . '/index.html'); @unlink($dir . '/.ff-menukaart'); @rmdir($dir);
+    }
+}
+function mk_blok_html($sky) {
+    $in = mk_inst();
+    $alle = []; $uitg = [];
+    foreach (mk_data() as $k) { foreach ($k['rubrieken'] as $r) { foreach ($r['gerechten'] as $g) {
+        if (($g['status'] ?? 'ok') !== 'ok') continue;
+        if (array_intersect(['huis', 'nieuw'], (array)($g['kenmerken'] ?? []))) $uitg[] = $g; else $alle[] = $g;
+    } } }
+    $toon = array_slice(array_merge($uitg, $alle), 0, 6);
+    $alle = $toon;
+    $o = '<section class="section blok-menukaart' . ($sky ? ' sky' : '') . '" id="menukaart"><div class="wrap">' . blok_kop($in['titel'], $in['intro']) . mk_css() . '<div class="mk-blok">';
+    foreach ($toon as $g) { $o .= mk_gerecht_html($g, false); }
+    $o .= '</div><div class="mk-blok-k">';
+    if ($alle) { $o .= '<a class="btn primary" href="/menukaart/">Bekijk de hele menukaart</a>'; }
+    if ($in['pdf'] !== '') { $o .= '<a class="btn" href="' . h(mk_pdf_url($in)) . '" target="_blank" rel="noopener">' . ($in['pdf_naam'] !== '' ? h($in['pdf_naam']) . ' (pdf)' : 'Menukaart als pdf') . '</a>'; }
+    return $o . '</div></div></section>' . "\n";
+}
+
+/* ---------- Beheer ---------- */
+function mk_terug($url, $tekst) { $_SESSION['ff_notice'] = $tekst; header('Location: ' . $url); exit; }
+function mk_vind(&$kaarten, $kid) { foreach ($kaarten as $i => $k) { if ($k['id'] === $kid) return $i; } return null; }
+function mk_gerecht_uit_post($g) {
+    global $MK_KENMERKEN, $MK_ALLERGENEN, $MK_STATUS;
+    $g['naam'] = cut(trim(preg_replace('/\s+/', ' ', (string)($_POST['naam'] ?? ''))), 120);
+    $g['oms'] = cut(trim(str_replace("\r\n", "\n", (string)($_POST['oms'] ?? ''))), 600);
+    $g['prijs'] = ab_prijs_in($_POST['prijs'] ?? '');
+    $g['prijs_tekst'] = cut(trim((string)($_POST['prijs_tekst'] ?? '')), 30);
+    $g['kenmerken'] = array_values(array_intersect(array_keys($MK_KENMERKEN), (array)($_POST['kenmerken'] ?? [])));
+    $g['allerg_ingevuld'] = ($_POST['allerg_ingevuld'] ?? '') === '1';
+    $g['allergenen'] = $g['allerg_ingevuld'] ? array_values(array_intersect(array_keys($MK_ALLERGENEN), (array)($_POST['allergenen'] ?? []))) : [];
+    $st = (string)($_POST['status'] ?? 'ok');
+    $g['status'] = isset($MK_STATUS[$st]) ? $st : 'ok';
+    return $g;
+}
+function mk_schuif(&$arr, $i, $r) {
+    $j = $i + ($r === 'op' ? -1 : 1);
+    if ($j < 0 || $j >= count($arr)) return;
+    $t = $arr[$i]; $arr[$i] = $arr[$j]; $arr[$j] = $t;
+}
+function mk_klaar() { write_menukaart_page(); write_seo_files(load_pages()); }
+function mk_acties($action) {
+    global $MK_STATUS, $MK_KENMERKEN, $MK_ALLERGENEN;
+    $kaarten = mk_data();
+    $kid = (string)($_POST['kaart'] ?? '');
+    $ki = $kid !== '' ? mk_vind($kaarten, $kid) : null;
+    $terug = 'admin.php?menukaart=1' . ($ki !== null ? '&k=' . rawurlencode($kid) : '');
+    if ($action === 'mk_inst') {
+        $oud = read_json(MK_INST, []);
+        $x = ['aan' => !empty($_POST['mk_aan']), 'naam' => cut(trim((string)($_POST['mk_naam'] ?? '')), 30), 'titel' => cut(trim((string)($_POST['mk_titel'] ?? '')), 90),
+              'intro' => cut(trim((string)($_POST['mk_intro'] ?? '')), 300), 'allergenen' => !empty($_POST['mk_allergenen']), 'allergie_tekst' => cut(trim((string)($_POST['mk_allergie'] ?? '')), 400),
+              'pdf' => (string)($oud['pdf'] ?? ''), 'pdf_naam' => (string)($oud['pdf_naam'] ?? '')];
+        if ($x['naam'] === 'Menukaart') $x['naam'] = '';
+        if ($x['titel'] === 'Onze menukaart') $x['titel'] = '';
+        write_json(MK_INST, $x);
+        rebuild_everything(load_pages());
+        mk_terug($terug . '#instellen', 'Opgeslagen.' . ($x['aan'] ? (mk_zichtbaar() ? ' Je menukaart staat op je website.' : ' Zet er nog gerechten op, dan verschijnt hij op je website.') : ' Je menukaart staat niet op je website.'));
+    }
+    if ($action === 'mk_kaart') {
+        $naam = cut(trim((string)($_POST['naam'] ?? '')), 40);
+        if ($naam === '') mk_terug($terug, 'Geef de kaart een naam, bijvoorbeeld Lunch of Diner.');
+        $vel = ['naam' => $naam, 'tijd' => cut(trim((string)($_POST['tijd'] ?? '')), 60), 'oms' => cut(trim((string)($_POST['oms'] ?? '')), 200)];
+        if ($ki !== null) { $kaarten[$ki] = array_merge($kaarten[$ki], $vel); }
+        else { $kid = mk_id(); $kaarten[] = array_merge(['id' => $kid, 'rubrieken' => []], $vel); }
+        mk_bewaar($kaarten); mk_klaar();
+        mk_terug('admin.php?menukaart=1&k=' . rawurlencode($kid), 'Kaart ' . $naam . ' opgeslagen.');
+    }
+    if ($action === 'mk_kaart_del' && $ki !== null) {
+        $naam = $kaarten[$ki]['naam']; array_splice($kaarten, $ki, 1);
+        mk_bewaar($kaarten); mk_klaar();
+        mk_terug('admin.php?menukaart=1', 'Kaart ' . $naam . ' is verwijderd.');
+    }
+    if ($ki === null && in_array($action, ['mk_rubriek', 'mk_rubriek_del', 'mk_gerecht', 'mk_gerecht_del', 'mk_status'], true)) mk_terug('admin.php?menukaart=1', 'Die kaart bestaat niet meer.');
+    $rid = (string)($_POST['rubriek'] ?? '');
+    $ri = null;
+    if ($ki !== null) { foreach ($kaarten[$ki]['rubrieken'] as $i => $r) { if ($r['id'] === $rid) { $ri = $i; break; } } }
+    if ($action === 'mk_rubriek') {
+        $naam = cut(trim((string)($_POST['naam'] ?? '')), 60);
+        if ($naam === '') mk_terug($terug, 'Geef de rubriek een naam, bijvoorbeeld Voorgerechten.');
+        $vel = ['naam' => $naam, 'oms' => cut(trim((string)($_POST['oms'] ?? '')), 200)];
+        if ($ri !== null) { $kaarten[$ki]['rubrieken'][$ri] = array_merge($kaarten[$ki]['rubrieken'][$ri], $vel); }
+        else { $rid = mk_id(); $kaarten[$ki]['rubrieken'][] = array_merge(['id' => $rid, 'gerechten' => []], $vel); }
+        mk_bewaar($kaarten); mk_klaar();
+        mk_terug($terug . '#r-' . $rid, 'Rubriek ' . $naam . ' opgeslagen.');
+    }
+    if ($action === 'mk_rubriek_del' && $ri !== null) {
+        $naam = $kaarten[$ki]['rubrieken'][$ri]['naam']; array_splice($kaarten[$ki]['rubrieken'], $ri, 1);
+        mk_bewaar($kaarten); mk_klaar();
+        mk_terug($terug, 'Rubriek ' . $naam . ' is verwijderd, met de gerechten erin.');
+    }
+    if ($action === 'mk_gerecht') {
+        if ($ri === null) mk_terug($terug, 'Kies een rubriek voor dit gerecht.');
+        $gid = (string)($_POST['id'] ?? '');
+        $oudR = null; $oudG = null;
+        if ($gid !== '') { foreach ($kaarten[$ki]['rubrieken'] as $i => $r) { foreach ($r['gerechten'] as $j => $g) { if ($g['id'] === $gid) { $oudR = $i; $oudG = $j; } } } }
+        $g = $oudR !== null ? $kaarten[$ki]['rubrieken'][$oudR]['gerechten'][$oudG] : ['id' => mk_id()];
+        $g = mk_gerecht_uit_post($g);
+        if ($g['naam'] === '') mk_terug($terug, 'Vul de naam van het gerecht in.');
+        if ($oudR !== null && $oudR === $ri) { $kaarten[$ki]['rubrieken'][$ri]['gerechten'][$oudG] = $g; }
+        else {
+            if ($oudR !== null) { array_splice($kaarten[$ki]['rubrieken'][$oudR]['gerechten'], $oudG, 1); }
+            $kaarten[$ki]['rubrieken'][$ri]['gerechten'][] = $g;
+        }
+        mk_bewaar($kaarten); mk_klaar();
+        if (!empty($_POST['nog_een'])) mk_terug($terug . '&nieuw=' . rawurlencode($rid), $g['naam'] . ' opgeslagen. Vul nu het volgende gerecht in.');
+        mk_terug($terug . '#g-' . $g['id'], $g['naam'] . ' opgeslagen.');
+    }
+    if ($action === 'mk_gerecht_del' || $action === 'mk_status' || $action === 'mk_schuif') {
+        $gid = (string)($_POST['id'] ?? ''); $naam = '';
+        $soort = (string)($_POST['soort'] ?? 'gerecht'); $rich = ($_POST['richting'] ?? '') === 'op' ? 'op' : 'neer';
+        if ($action === 'mk_schuif' && $soort === 'kaart' && $ki !== null) { mk_schuif($kaarten, $ki, $rich); }
+        elseif ($action === 'mk_schuif' && $soort === 'rubriek' && $ri !== null) { mk_schuif($kaarten[$ki]['rubrieken'], $ri, $rich); }
+        elseif ($ki !== null) {
+            foreach ($kaarten[$ki]['rubrieken'] as $i => $r) { foreach ($r['gerechten'] as $j => $g) { if ($g['id'] === $gid) {
+                $naam = $g['naam'];
+                if ($action === 'mk_gerecht_del') { array_splice($kaarten[$ki]['rubrieken'][$i]['gerechten'], $j, 1); break 2; }
+                if ($action === 'mk_status') { $st = (string)($_POST['status'] ?? ''); if (isset($MK_STATUS[$st])) $kaarten[$ki]['rubrieken'][$i]['gerechten'][$j]['status'] = $st; break 2; }
+                if ($action === 'mk_schuif') { mk_schuif($kaarten[$ki]['rubrieken'][$i]['gerechten'], $j, $rich); break 2; }
+            } } }
+        }
+        mk_bewaar($kaarten); mk_klaar();
+        if (!empty($_POST['ajax'])) { header('Content-Type: application/json'); echo json_encode(['ok' => 1]); exit; }
+        mk_terug($terug . ($action === 'mk_schuif' && $soort === 'gerecht' ? '#g-' . rawurlencode($gid) : ($soort === 'rubriek' ? '#r-' . rawurlencode($rid) : '')), $action === 'mk_gerecht_del' ? ($naam !== '' ? $naam . ' is verwijderd.' : 'Niet gevonden.') : 'Bijgewerkt.');
+    }
+    if ($action === 'mk_pdf') {
+        $f = $_FILES['pdf'] ?? null;
+        if (!$f || $f['error'] !== UPLOAD_ERR_OK) mk_terug('admin.php?menukaart=1#pdf', $f && $f['error'] !== UPLOAD_ERR_NO_FILE ? upload_error_text($f['error'], $f['name']) : 'Kies eerst een pdf-bestand.');
+        if ($f['size'] > MK_PDF_MAX) mk_terug('admin.php?menukaart=1#pdf', 'Dit bestand is te groot. Een pdf mag maximaal 15 MB zijn.');
+        $kop = (string)file_get_contents($f['tmp_name'], false, null, 0, 5);
+        if ($kop !== '%PDF-') mk_terug('admin.php?menukaart=1#pdf', 'Dit is geen pdf-bestand. Sla je menukaart op als pdf en probeer het opnieuw.');
+        $dir = UPLOAD_DIR . '/menukaart';
+        if (!is_dir($dir)) mkdir($dir, 0755, true);
+        $oud = read_json(MK_INST, []);
+        if (!empty($oud['pdf'])) @unlink($dir . '/' . basename($oud['pdf']));
+        $naam = 'menukaart-' . date('Ymd') . '-' . substr(mk_id(), 0, 6) . '.pdf';
+        if (!move_uploaded_file($f['tmp_name'], $dir . '/' . $naam)) mk_terug('admin.php?menukaart=1#pdf', 'Opslaan van de pdf lukte niet. Probeer het opnieuw.');
+        $oud['pdf'] = $naam; $oud['pdf_naam'] = cut(trim((string)($_POST['pdf_naam'] ?? '')), 120);
+        write_json(MK_INST, $oud);
+        rebuild_everything(load_pages());
+        mk_terug('admin.php?menukaart=1#pdf', 'De pdf staat erbij. Bezoekers kunnen hem openen en printen.');
+    }
+    if ($action === 'mk_pdf_del') {
+        $oud = read_json(MK_INST, []);
+        if (!empty($oud['pdf'])) @unlink(UPLOAD_DIR . '/menukaart/' . basename($oud['pdf']));
+        $oud['pdf'] = ''; $oud['pdf_naam'] = '';
+        write_json(MK_INST, $oud);
+        rebuild_everything(load_pages());
+        mk_terug('admin.php?menukaart=1#pdf', 'De pdf is weggehaald.');
+    }
+    if ($action === 'mk_import') {
+        $f = $_FILES['bestand'] ?? null;
+        if (!$f || $f['error'] !== UPLOAD_ERR_OK) mk_terug('admin.php?menukaart=1#inladen', 'Kies eerst een Excel- of CSV-bestand.');
+        $bin = (string)file_get_contents($f['tmp_name']);
+        $rijen = substr($bin, 0, 2) === 'PK' ? adm_xlsx_rijen($bin) : adm_csv_rijen(mb_check_encoding($bin, 'UTF-8') ? $bin : mb_convert_encoding($bin, 'UTF-8', 'Windows-1252'));
+        if (count($rijen) < 2) mk_terug('admin.php?menukaart=1#inladen', 'In dit bestand staan geen regels. Zet op de eerste regel de kopjes en daaronder elk gerecht op een eigen regel.');
+        $kop = array_map(function($c) { return preg_replace('/[^a-z]/', '', mb_strtolower((string)$c, 'UTF-8')); }, $rijen[0]);
+        $alias = ['kaart' => ['kaart', 'menu', 'menukaart'], 'rubriek' => ['rubriek', 'categorie', 'groep', 'gang', 'soort'], 'naam' => ['naam', 'gerecht', 'product', 'titel', 'drank', 'artikel'],
+                  'oms' => ['omschrijving', 'beschrijving', 'tekst', 'ingredienten', 'uitleg'], 'prijs' => ['prijs', 'verkoopprijs', 'bedrag', 'price'], 'prijs_tekst' => ['prijstekst', 'eenheid', 'per'],
+                  'kenmerken' => ['kenmerken', 'kenmerk', 'dieet', 'labels'], 'allergenen' => ['allergenen', 'allergeen', 'allergie', 'allergien', 'bevat']];
+        $kolom = [];
+        foreach ($alias as $veld => $namen) { foreach ($kop as $i => $c) { if (in_array($c, $namen, true)) { $kolom[$veld] = $i; break; } } }
+        if (!isset($kolom['naam'])) mk_terug('admin.php?menukaart=1#inladen', 'Ik vind geen kolom met de naam van het gerecht. Gebruik de kopjes Kaart, Rubriek, Gerecht, Omschrijving, Prijs, Kenmerken en Allergenen. Download het voorbeeldbestand.');
+        if (!empty($_POST['leeg'])) $kaarten = [];
+        $zoekK = function($naam) use (&$kaarten) { foreach ($kaarten as $i => $k) { if (mb_strtolower($k['naam'], 'UTF-8') === mb_strtolower($naam, 'UTF-8')) return $i; } $kaarten[] = ['id' => mk_id(), 'naam' => $naam, 'tijd' => '', 'oms' => '', 'rubrieken' => []]; return count($kaarten) - 1; };
+        $kenW = ['vegetarisch' => 'vega', 'vega' => 'vega', 'veg' => 'vega', 'vegan' => 'vegan', 'veganistisch' => 'vegan', 'glutenvrij' => 'gv', 'pittig' => 'pittig', 'spicy' => 'pittig', 'nieuw' => 'nieuw', 'huis' => 'huis', 'specialiteit' => 'huis', 'specialiteitvanhethuis' => 'huis', 'huisspecialiteit' => 'huis'];
+        $allW = ['gluten' => 'gluten', 'tarwe' => 'gluten', 'schaaldieren' => 'schaaldieren', 'ei' => 'ei', 'eieren' => 'ei', 'vis' => 'vis', 'pinda' => 'pinda', 'pindas' => 'pinda', 'aardnoten' => 'pinda', 'soja' => 'soja', 'melk' => 'melk', 'lactose' => 'melk', 'noten' => 'noten', 'selderij' => 'selderij', 'mosterd' => 'mosterd', 'sesam' => 'sesam', 'sesamzaad' => 'sesam', 'sulfiet' => 'sulfiet', 'sulfieten' => 'sulfiet', 'zwaveldioxide' => 'sulfiet', 'lupine' => 'lupine', 'weekdieren' => 'weekdieren'];
+        $woorden = function($t) { return array_filter(array_map(function($w) { return preg_replace('/[^a-z]/', '', mb_strtolower(trim($w), 'UTF-8')); }, preg_split('/[;,|\/]+/', (string)$t)), 'strlen'); };
+        $n = 0; $onbekend = [];
+        foreach (array_slice($rijen, 1, 2000) as $r) {
+            $w = function($v) use ($r, $kolom) { return isset($kolom[$v]) ? trim((string)($r[$kolom[$v]] ?? '')) : ''; };
+            $naam = cut($w('naam'), 120);
+            if ($naam === '') continue;
+            $kI = $zoekK(cut($w('kaart') !== '' ? $w('kaart') : 'Menukaart', 40));
+            $rn = cut($w('rubriek') !== '' ? $w('rubriek') : 'Gerechten', 60);
+            $rI = null; foreach ($kaarten[$kI]['rubrieken'] as $i => $rr) { if (mb_strtolower($rr['naam'], 'UTF-8') === mb_strtolower($rn, 'UTF-8')) { $rI = $i; break; } }
+            if ($rI === null) { $kaarten[$kI]['rubrieken'][] = ['id' => mk_id(), 'naam' => $rn, 'oms' => '', 'gerechten' => []]; $rI = count($kaarten[$kI]['rubrieken']) - 1; }
+            $g = ['id' => mk_id(), 'naam' => $naam, 'oms' => cut($w('oms'), 600), 'prijs' => ab_prijs_in($w('prijs')), 'prijs_tekst' => cut($w('prijs_tekst'), 30), 'kenmerken' => [], 'allergenen' => [], 'allerg_ingevuld' => false, 'status' => 'ok'];
+            foreach ($woorden($w('kenmerken')) as $kw) { if (isset($kenW[$kw])) $g['kenmerken'][] = $kenW[$kw]; elseif ($kw !== '') $onbekend[$kw] = 1; }
+            $g['kenmerken'] = array_values(array_unique($g['kenmerken']));
+            if (isset($kolom['allergenen']) && $w('allergenen') !== '') {
+                $g['allerg_ingevuld'] = true;
+                foreach ($woorden($w('allergenen')) as $aw) { if (isset($allW[$aw])) $g['allergenen'][] = $allW[$aw]; elseif (!in_array($aw, ['geen', 'nee', 'none'], true)) $onbekend[$aw] = 1; }
+                $g['allergenen'] = array_values(array_unique($g['allergenen']));
+            }
+            $kaarten[$kI]['rubrieken'][$rI]['gerechten'][] = $g; $n++;
+        }
+        mk_bewaar($kaarten); mk_klaar();
+        mk_terug('admin.php?menukaart=1', $n . ($n === 1 ? ' gerecht' : ' gerechten') . ' ingeladen.' . ($onbekend ? ' Deze woorden herkende ik niet en heb ik overgeslagen: ' . implode(', ', array_slice(array_keys($onbekend), 0, 12)) . '.' : '') . ' Controleer bij elk gerecht de allergenen.');
+    }
+}
+function mk_voorbeeld_csv() {
+    $r = [['Kaart', 'Rubriek', 'Gerecht', 'Omschrijving', 'Prijs', 'Kenmerken', 'Allergenen'],
+          ['Lunch', 'Broodjes', 'Broodje gezond', 'Ham, kaas, ei, tomaat en komkommer', '8,50', '', 'gluten; ei; melk'],
+          ['Lunch', 'Soepen', 'Tomatensoep', 'Huisgemaakt, met basilicum', '6,75', 'vegetarisch', 'selderij'],
+          ['Diner', 'Voorgerechten', 'Carpaccio', 'Met truffelmayonaise en Parmezaanse kaas', '12,50', 'specialiteit', 'ei; melk; mosterd'],
+          ['Diner', 'Hoofdgerechten', 'Thaise curry', 'Met jasmijnrijst en verse groenten', '19,50', 'vegan; pittig', 'soja; pinda'],
+          ['Dranken', 'Warme dranken', 'Cappuccino', '', '3,40', '', 'melk']];
+    $o = "\xEF\xBB\xBF";
+    foreach ($r as $rij) { $o .= implode(';', array_map(function($c) { return '"' . str_replace('"', '""', $c) . '"'; }, $rij)) . "\r\n"; }
+    header('Content-Type: text/csv; charset=UTF-8'); header('Content-Disposition: attachment; filename="voorbeeld-menukaart.csv"');
+    echo $o; exit;
+}
+function mk_csv_rijen() {
+    global $MK_KENMERKEN, $MK_ALLERGENEN, $MK_STATUS;
+    $uit = [];
+    foreach (mk_data() as $k) { foreach ($k['rubrieken'] as $r) { foreach ($r['gerechten'] as $g) {
+        $uit[] = [$k['naam'], $r['naam'], $g['naam'], $g['oms'] ?? '', (int)($g['prijs'] ?? 0) > 0 ? number_format($g['prijs'] / 100, 2, ',', '') : '', implode('; ', array_map(function($x) use ($MK_KENMERKEN) { return $MK_KENMERKEN[$x] ?? $x; }, (array)($g['kenmerken'] ?? []))),
+                  !empty($g['allerg_ingevuld']) ? (($g['allergenen'] ?? []) ? implode('; ', array_map(function($x) use ($MK_ALLERGENEN) { return $MK_ALLERGENEN[$x] ?? $x; }, $g['allergenen'])) : 'geen') : '', $MK_STATUS[$g['status'] ?? 'ok'] ?? ''];
+    } } }
+    return $uit;
+}
+function mk_beheer_view() {
+    global $MK_KENMERKEN, $MK_ALLERGENEN, $MK_STATUS;
+    $in = mk_inst(); $kaarten = mk_data();
+    $kid = (string)($_GET['k'] ?? ''); $ki = mk_vind($kaarten, $kid);
+    if ($ki === null && $kaarten && !isset($_GET['nieuwe_kaart'])) { $ki = 0; $kid = $kaarten[0]['id']; }
+    $kaart = $ki !== null ? $kaarten[$ki] : null;
+    $gid = (string)($_GET['g'] ?? ''); $nieuwIn = (string)($_GET['nieuw'] ?? '');
+    $ger = null; $gerR = '';
+    if ($kaart && $gid !== '') { foreach ($kaart['rubrieken'] as $r) { foreach ($r['gerechten'] as $g) { if ($g['id'] === $gid) { $ger = $g; $gerR = $r['id']; } } } }
+    $basis = 'admin.php?menukaart=1&amp;k=' . h(rawurlencode($kid));
+    ?>
+    <style>
+      .mk-kt{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px;}
+      .mk-kt a{display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:999px;border:1px solid #263049;background:#141b2b;color:#e8eefc;text-decoration:none;font-weight:700;}
+      .mk-kt a.on{background:#2f6fed;border-color:#2f6fed;color:#fff;}
+      .mk-kt a small{font-weight:500;opacity:.75;}
+      .mk-rb{background:#101726;border:1px solid #263049;border-radius:14px;padding:14px;margin-bottom:14px;scroll-margin-top:80px;}
+      .mk-rbk{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:8px;}
+      .mk-rbk h3{margin:0;font-size:19px;} .mk-rbk small{color:#9fb0cc;font-weight:500;}
+      .mk-gr{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;background:#141b2b;border:1px solid #263049;border-radius:10px;padding:9px 10px;margin-top:6px;scroll-margin-top:80px;}
+      .mk-gr b{display:block;} .mk-gr small{color:#9fb0cc;}
+      .mk-gr.uit{opacity:.7;} .mk-gr.weg{opacity:.45;}
+      .mk-gr select{width:auto;padding:6px 8px;font-size:13.5px;}
+      .mk-ga{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;}
+      .mk-pijl{min-width:36px;padding:6px 0 !important;justify-content:center;}
+      @media (max-width:640px){.mk-gr{grid-template-columns:1fr;} .mk-ga{justify-content:flex-start;}}
+      .mk-chk{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:4px 14px;}
+      .mk-chk .check{margin:0;}
+      .mk-onbekend{color:#ffb86b;}
+      .mk-mini{display:inline;margin:0;}
+    </style>
+    <?php if ($kaart && ($ger || $nieuwIn !== '')): $g = $ger ?: ['id' => '', 'naam' => '', 'oms' => '', 'prijs' => 0, 'prijs_tekst' => '', 'kenmerken' => [], 'allergenen' => [], 'allerg_ingevuld' => false, 'status' => 'ok']; $rSel = $ger ? $gerR : $nieuwIn; ?>
+      <p><a class="btn ghost sm" href="<?= $basis ?>">&larr; Terug naar <?= h($kaart['naam']) ?></a></p>
+      <h1><?= $g['id'] === '' ? 'Nieuw gerecht' : h($g['naam']) ?></h1>
+      <form class="formcard" method="post">
+        <input type="hidden" name="action" value="mk_gerecht" /><input type="hidden" name="kaart" value="<?= h($kaart['id']) ?>" /><input type="hidden" name="id" value="<?= h($g['id']) ?>" />
+        <div class="field"><label for="mknaam">Naam</label><input type="text" id="mknaam" name="naam" maxlength="120" required value="<?= h($g['naam']) ?>" placeholder="Bijvoorbeeld: Carpaccio" <?= $g['id'] === '' ? 'autofocus' : '' ?> /></div>
+        <div class="field"><label for="mkoms">Omschrijving (mag leeg)</label><textarea id="mkoms" name="oms" class="short" maxlength="600" placeholder="Bijvoorbeeld: Met truffelmayonaise, rucola en Parmezaanse kaas"><?= h($g['oms'] ?? '') ?></textarea></div>
+        <div class="two">
+          <div class="field"><label for="mkprijs">Prijs in euro</label><input type="text" id="mkprijs" name="prijs" inputmode="decimal" value="<?= (int)($g['prijs'] ?? 0) > 0 ? h(number_format($g['prijs'] / 100, 2, ',', '.')) : '' ?>" placeholder="Bijvoorbeeld: 12,50" /></div>
+          <div class="field"><label for="mkprijstekst">Bij de prijs (mag leeg)</label><input type="text" id="mkprijstekst" name="prijs_tekst" maxlength="30" value="<?= h($g['prijs_tekst'] ?? '') ?>" placeholder="Bijvoorbeeld: p.p. of per glas" /></div>
+        </div>
+        <div class="field"><label for="mkrub">Rubriek</label><select id="mkrub" name="rubriek"><?php foreach ($kaart['rubrieken'] as $r): ?><option value="<?= h($r['id']) ?>"<?= $r['id'] === $rSel ? ' selected' : '' ?>><?= h($r['naam']) ?></option><?php endforeach; ?></select></div>
+        <div class="field"><label>Kenmerken</label><div class="mk-chk"><?php foreach ($MK_KENMERKEN as $k => $l): ?><label class="check"><input type="checkbox" name="kenmerken[]" value="<?= $k ?>" <?= in_array($k, (array)($g['kenmerken'] ?? []), true) ? 'checked' : '' ?> /> <span><?= h($l) ?></span></label><?php endforeach; ?></div></div>
+        <div class="field"><label>Allergenen</label>
+          <label class="check"><input type="radio" name="allerg_ingevuld" value="0" <?= empty($g['allerg_ingevuld']) ? 'checked' : '' ?> /> <span>Nog niet ingevuld</span></label>
+          <label class="check"><input type="radio" name="allerg_ingevuld" value="1" <?= !empty($g['allerg_ingevuld']) ? 'checked' : '' ?> /> <span>Ingevuld: dit gerecht bevat de allergenen die ik hieronder aanvink (niets aangevinkt = geen van de 14)</span></label>
+          <div class="mk-chk" id="mkAllg" style="margin-top:8px"><?php foreach ($MK_ALLERGENEN as $k => $l): ?><label class="check"><input type="checkbox" name="allergenen[]" value="<?= $k ?>" <?= in_array($k, (array)($g['allergenen'] ?? []), true) ? 'checked' : '' ?> /> <span><?= h($l) ?></span></label><?php endforeach; ?></div>
+          <div class="hint">Dit zijn de 14 allergenen die volgens de Europese regels genoemd moeten worden. Vul ze zorgvuldig in: gasten met een allergie vertrouwen erop. Zolang het op Nog niet ingevuld staat, ziet de gast: vraag het ons.</div>
+        </div>
+        <div class="field"><label for="mkstatus">Status</label><select id="mkstatus" name="status"><?php foreach ($MK_STATUS as $k => $l): ?><option value="<?= $k ?>"<?= ($g['status'] ?? 'ok') === $k ? ' selected' : '' ?>><?= h($l) ?></option><?php endforeach; ?></select><div class="hint">Tijdelijk uitverkocht: het gerecht blijft zichtbaar, doorgestreept. Verborgen: het staat even niet op je website.</div></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px"><button class="btn" type="submit">Opslaan</button><?php if ($g['id'] === ''): ?><button class="btn ghost" type="submit" name="nog_een" value="1">Opslaan en nog een toevoegen</button><?php endif; ?></div>
+      </form>
+      <?php if ($g['id'] !== ''): ?><form method="post" onsubmit="return confirm('Dit gerecht verwijderen?')"><input type="hidden" name="action" value="mk_gerecht_del" /><input type="hidden" name="kaart" value="<?= h($kaart['id']) ?>" /><input type="hidden" name="id" value="<?= h($g['id']) ?>" /><button class="btn ghost sm" type="submit">Verwijderen</button></form><?php endif; ?>
+      <script>
+      (function () {
+        var r = document.querySelectorAll('input[name="allerg_ingevuld"]'), box = document.getElementById('mkAllg');
+        function zet() { var aan = document.querySelector('input[name="allerg_ingevuld"]:checked').value === '1'; box.style.opacity = aan ? '1' : '.45'; box.querySelectorAll('input').forEach(function (c) { c.disabled = !aan; }); }
+        r.forEach(function (x) { x.onchange = zet; }); zet();
+      })();
+      </script>
+    <?php else: ?>
+      <h1><?= h($in['naam']) ?></h1>
+      <p class="sub">Zet je kaarten op je website: lunch, diner, dranken of wat je maar hebt. Per gerecht een prijs, kenmerken zoals vegetarisch, en de allergenen. Is iets op? Zet het met 1 tik op uitverkocht.</p>
+      <?php if (empty($in['aan'])): ?><div class="formcard" style="border-color:#ff9b4a"><h2>Je menukaart staat nog niet op je website</h2><p class="hint" style="margin:0">Maak je kaarten en gerechten, vink onderaan <strong>Menukaart op mijn website</strong> aan en klik op Opslaan.</p></div><?php endif; ?>
+      <div class="mk-kt">
+        <?php foreach ($kaarten as $k): ?><a href="admin.php?menukaart=1&amp;k=<?= h(rawurlencode($k['id'])) ?>" class="<?= $kaart && $k['id'] === $kaart['id'] ? 'on' : '' ?>"><?= h($k['naam']) ?> <small><?= mk_aantal([$k]) ?></small></a><?php endforeach; ?>
+        <a href="admin.php?menukaart=1&amp;nieuwe_kaart=1" class="<?= !$kaart ? 'on' : '' ?>">+ Nieuwe kaart</a>
+      </div>
+      <?php if (!$kaart): ?>
+        <form class="formcard" method="post">
+          <input type="hidden" name="action" value="mk_kaart" />
+          <h2><?= $kaarten ? 'Nieuwe kaart' : 'Maak je eerste kaart' ?></h2>
+          <div class="field"><label for="mkknaam">Naam van de kaart</label><input type="text" id="mkknaam" name="naam" maxlength="40" required list="mkKaartNamen" placeholder="Bijvoorbeeld: Lunch, Diner of Dranken" /><datalist id="mkKaartNamen"><option value="Lunch"></option><option value="Diner"></option><option value="Dranken"></option><option value="Kinderkaart"></option><option value="Desserts"></option><option value="Borrelkaart"></option><option value="Afhalen"></option></datalist></div>
+          <div class="two"><div class="field"><label for="mkktijd">Wanneer (mag leeg)</label><input type="text" id="mkktijd" name="tijd" maxlength="60" placeholder="Bijvoorbeeld: van 12.00 tot 16.00 uur" /></div><div class="field"><label for="mkkoms">Korte tekst (mag leeg)</label><input type="text" id="mkkoms" name="oms" maxlength="200" /></div></div>
+          <button class="btn" type="submit">Kaart maken</button>
+        </form>
+      <?php else: ?>
+        <div class="adm-acties" style="margin-bottom:12px">
+          <?php if (!empty($in['aan']) && mk_zichtbaar()): ?><a class="btn ghost sm" href="/menukaart/#kaart-<?= h(mk_slug_kaart($kaart)) ?>" target="_blank">Bekijk op je website</a><?php endif; ?>
+          <a class="btn ghost sm" href="#inladen">Veel tegelijk inladen</a>
+        </div>
+        <?php foreach ($kaart['rubrieken'] as $rn => $r): ?>
+          <div class="mk-rb" id="r-<?= h($r['id']) ?>">
+            <div class="mk-rbk"><h3><?= h($r['naam']) ?> <small><?= count($r['gerechten']) ?></small></h3>
+              <div class="mk-ga">
+                <?php foreach (['op' => '&uarr;', 'neer' => '&darr;'] as $rr => $pl): if (($rr === 'op' && $rn === 0) || ($rr === 'neer' && $rn === count($kaart['rubrieken']) - 1)) continue; ?><form method="post" class="mk-mini"><input type="hidden" name="action" value="mk_schuif" /><input type="hidden" name="soort" value="rubriek" /><input type="hidden" name="richting" value="<?= $rr ?>" /><input type="hidden" name="kaart" value="<?= h($kaart['id']) ?>" /><input type="hidden" name="rubriek" value="<?= h($r['id']) ?>" /><button class="btn ghost sm mk-pijl" type="submit" aria-label="Rubriek <?= $rr === 'op' ? 'omhoog' : 'omlaag' ?>"><?= $pl ?></button></form><?php endforeach; ?>
+                <a class="btn sm" href="<?= $basis ?>&amp;nieuw=<?= h(rawurlencode($r['id'])) ?>">+ Gerecht</a>
+              </div>
+            </div>
+            <?php if (trim((string)($r['oms'] ?? '')) !== ''): ?><p class="hint" style="margin:0 0 6px"><?= h($r['oms']) ?></p><?php endif; ?>
+            <?php foreach ($r['gerechten'] as $gn => $g): $st = $g['status'] ?? 'ok'; ?>
+              <div class="mk-gr <?= h($st) ?>" id="g-<?= h($g['id']) ?>">
+                <div><b><?= h($g['naam']) ?></b><small><?= (int)($g['prijs'] ?? 0) > 0 ? h(mk_eur((int)$g['prijs'])) . (trim((string)($g['prijs_tekst'] ?? '')) !== '' ? ' ' . h($g['prijs_tekst']) : '') : 'Geen prijs' ?><?php foreach ((array)($g['kenmerken'] ?? []) as $kk): ?> &middot; <?= h($MK_KENMERKEN[$kk] ?? $kk) ?><?php endforeach; ?> &middot; <?= !empty($g['allerg_ingevuld']) ? ($g['allergenen'] ? count($g['allergenen']) . ' allergen' . (count($g['allergenen']) === 1 ? '' : 'en') : 'geen allergenen') : '<span class="mk-onbekend">allergenen nog niet ingevuld</span>' ?></small></div>
+                <div class="mk-ga">
+                  <select class="mk-st" data-id="<?= h($g['id']) ?>" aria-label="Status van <?= h($g['naam']) ?>"><?php foreach ($MK_STATUS as $k => $l): ?><option value="<?= $k ?>"<?= $st === $k ? ' selected' : '' ?>><?= h($l) ?></option><?php endforeach; ?></select>
+                  <?php foreach (['op' => '&uarr;', 'neer' => '&darr;'] as $rr => $pl): if (($rr === 'op' && $gn === 0) || ($rr === 'neer' && $gn === count($r['gerechten']) - 1)) continue; ?><form method="post" class="mk-mini"><input type="hidden" name="action" value="mk_schuif" /><input type="hidden" name="soort" value="gerecht" /><input type="hidden" name="richting" value="<?= $rr ?>" /><input type="hidden" name="kaart" value="<?= h($kaart['id']) ?>" /><input type="hidden" name="id" value="<?= h($g['id']) ?>" /><button class="btn ghost sm mk-pijl" type="submit" aria-label="<?= $rr === 'op' ? 'Omhoog' : 'Omlaag' ?>"><?= $pl ?></button></form><?php endforeach; ?>
+                  <a class="btn ghost sm" href="<?= $basis ?>&amp;g=<?= h(rawurlencode($g['id'])) ?>">Bewerken</a>
+                </div>
+              </div>
+            <?php endforeach; ?>
+            <?php if (!$r['gerechten']): ?><p class="hint" style="margin:6px 0 0">Nog geen gerechten. Klik op + Gerecht.</p><?php endif; ?>
+            <details style="margin-top:10px"><summary class="hint" style="cursor:pointer">Rubriek aanpassen of verwijderen</summary>
+              <form method="post" style="margin-top:8px"><input type="hidden" name="action" value="mk_rubriek" /><input type="hidden" name="kaart" value="<?= h($kaart['id']) ?>" /><input type="hidden" name="rubriek" value="<?= h($r['id']) ?>" />
+                <div class="two"><div class="field"><label for="mkrn<?= $rn ?>">Naam</label><input type="text" id="mkrn<?= $rn ?>" name="naam" maxlength="60" value="<?= h($r['naam']) ?>" required /></div><div class="field"><label for="mkro<?= $rn ?>">Korte tekst (mag leeg)</label><input type="text" id="mkro<?= $rn ?>" name="oms" maxlength="200" value="<?= h($r['oms'] ?? '') ?>" /></div></div>
+                <button class="btn sm" type="submit">Opslaan</button>
+              </form>
+              <form method="post" onsubmit="return confirm('Deze rubriek verwijderen, met alle gerechten erin?')" style="margin-top:8px"><input type="hidden" name="action" value="mk_rubriek_del" /><input type="hidden" name="kaart" value="<?= h($kaart['id']) ?>" /><input type="hidden" name="rubriek" value="<?= h($r['id']) ?>" /><button class="btn ghost sm" type="submit">Rubriek verwijderen</button></form>
+            </details>
+          </div>
+        <?php endforeach; ?>
+        <form class="formcard" method="post" style="margin-top:6px">
+          <input type="hidden" name="action" value="mk_rubriek" /><input type="hidden" name="kaart" value="<?= h($kaart['id']) ?>" />
+          <h2>Nieuwe rubriek</h2>
+          <div class="two"><div class="field"><label for="mkrnaam">Naam</label><input type="text" id="mkrnaam" name="naam" maxlength="60" required list="mkRubNamen" placeholder="Bijvoorbeeld: Voorgerechten" /><datalist id="mkRubNamen"><option value="Voorgerechten"></option><option value="Soepen"></option><option value="Salades"></option><option value="Hoofdgerechten"></option><option value="Vis"></option><option value="Vlees"></option><option value="Vegetarisch"></option><option value="Bijgerechten"></option><option value="Desserts"></option><option value="Broodjes"></option><option value="Warme dranken"></option><option value="Frisdranken"></option><option value="Bieren"></option><option value="Wijnen"></option></datalist></div><div class="field"><label for="mkroms">Korte tekst (mag leeg)</label><input type="text" id="mkroms" name="oms" maxlength="200" placeholder="Bijvoorbeeld: Geserveerd met brood en boter" /></div></div>
+          <button class="btn" type="submit">Rubriek toevoegen</button>
+        </form>
+        <details class="formcard"><summary style="cursor:pointer;font-weight:700">Kaart <?= h($kaart['naam']) ?> aanpassen, verplaatsen of verwijderen</summary>
+          <form method="post" style="margin-top:12px">
+            <input type="hidden" name="action" value="mk_kaart" /><input type="hidden" name="kaart" value="<?= h($kaart['id']) ?>" />
+            <div class="field"><label for="mkknaam">Naam van de kaart</label><input type="text" id="mkknaam" name="naam" maxlength="40" required value="<?= h($kaart['naam']) ?>" /></div>
+            <div class="two"><div class="field"><label for="mkktijd">Wanneer (mag leeg)</label><input type="text" id="mkktijd" name="tijd" maxlength="60" value="<?= h($kaart['tijd'] ?? '') ?>" placeholder="Bijvoorbeeld: van 12.00 tot 16.00 uur" /></div><div class="field"><label for="mkkoms">Korte tekst (mag leeg)</label><input type="text" id="mkkoms" name="oms" maxlength="200" value="<?= h($kaart['oms'] ?? '') ?>" /></div></div>
+            <button class="btn sm" type="submit">Opslaan</button>
+          </form>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+            <?php foreach (['op' => 'Naar links', 'neer' => 'Naar rechts'] as $rr => $pl): if (($rr === 'op' && $ki === 0) || ($rr === 'neer' && $ki === count($kaarten) - 1)) continue; ?><form method="post" class="mk-mini"><input type="hidden" name="action" value="mk_schuif" /><input type="hidden" name="soort" value="kaart" /><input type="hidden" name="richting" value="<?= $rr ?>" /><input type="hidden" name="kaart" value="<?= h($kaart['id']) ?>" /><button class="btn ghost sm" type="submit"><?= $pl ?></button></form><?php endforeach; ?>
+            <form method="post" class="mk-mini" onsubmit="return confirm('De hele kaart <?= h(addslashes($kaart['naam'])) ?> verwijderen, met alle rubrieken en gerechten?')"><input type="hidden" name="action" value="mk_kaart_del" /><input type="hidden" name="kaart" value="<?= h($kaart['id']) ?>" /><button class="btn ghost sm" type="submit">Kaart verwijderen</button></form>
+          </div>
+        </details>
+        <script>
+        (function () {
+          document.querySelectorAll('.mk-st').forEach(function (s) { s.onchange = function () { var fd = new FormData(); fd.append('action', 'mk_status'); fd.append('ajax', '1'); fd.append('kaart', <?= json_encode($kaart['id']) ?>); fd.append('id', s.getAttribute('data-id')); fd.append('status', s.value); s.disabled = true; fetch('admin.php?menukaart=1', { method: 'POST', body: fd, credentials: 'same-origin' }).then(function () { s.disabled = false; s.closest('.mk-gr').className = 'mk-gr ' + s.value; }); }; });
+        })();
+        </script>
+      <?php endif; ?>
+      <form class="formcard" method="post" enctype="multipart/form-data" id="inladen" style="margin-top:22px">
+        <input type="hidden" name="action" value="mk_import" />
+        <h2>Veel tegelijk inladen</h2>
+        <p class="hint" style="margin:-4px 0 12px">Heb je je kaart al in Excel? Zet op de eerste regel de kopjes Kaart, Rubriek, Gerecht, Omschrijving, Prijs, Kenmerken en Allergenen, en daaronder elk gerecht op een eigen regel. Meerdere kenmerken of allergenen scheid je met een puntkomma.</p>
+        <div class="field"><label for="mkbestand">Excel- of CSV-bestand</label><input type="file" id="mkbestand" name="bestand" accept=".xlsx,.csv,.txt" required /></div>
+        <label class="check"><input type="checkbox" name="leeg" value="1" /> <span>Mijn huidige menukaart eerst helemaal leegmaken</span></label>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px"><button class="btn" type="submit">Inladen</button><a class="btn ghost sm" href="admin.php?menukaart_voorbeeld=1">Voorbeeldbestand downloaden</a></div>
+      </form>
+      <form class="formcard" method="post" enctype="multipart/form-data" id="pdf">
+        <input type="hidden" name="action" value="mk_pdf" />
+        <h2>Je eigen pdf erbij</h2>
+        <?php if ($in['pdf'] !== ''): ?><p style="margin:0 0 10px">Nu staat erbij: <a href="<?= h(mk_pdf_url($in)) ?>" target="_blank" style="color:#8fb3ff"><?= h($in['pdf_naam'] !== '' ? $in['pdf_naam'] : 'je menukaart (pdf)') ?></a></p><?php endif; ?>
+        <p class="hint" style="margin:-4px 0 12px">Heb je een mooie menukaart als pdf, bijvoorbeeld van je drukker? Zet hem erbij. Bezoekers kunnen hem dan openen of printen. Maximaal 15 MB.</p>
+        <div class="two"><div class="field"><label for="mkpdf">Pdf-bestand</label><input type="file" id="mkpdf" name="pdf" accept="application/pdf,.pdf" required /></div><div class="field"><label for="mkpdfnaam">Naam op de knop (mag leeg)</label><input type="text" id="mkpdfnaam" name="pdf_naam" maxlength="120" placeholder="Bijvoorbeeld: Wijnkaart" value="<?= h($in['pdf_naam']) ?>" /></div></div>
+        <button class="btn" type="submit"><?= $in['pdf'] !== '' ? 'Pdf vervangen' : 'Pdf toevoegen' ?></button>
+      </form>
+      <?php if ($in['pdf'] !== ''): ?><form method="post" onsubmit="return confirm('De pdf weghalen?')" style="margin-top:-6px"><input type="hidden" name="action" value="mk_pdf_del" /><button class="btn ghost sm" type="submit">Pdf weghalen</button></form><?php endif; ?>
+      <form class="formcard" method="post" id="instellen">
+        <input type="hidden" name="action" value="mk_inst" />
+        <h2>Instellingen</h2>
+        <label class="check" style="font-size:17px"><input type="checkbox" name="mk_aan" value="1" <?= !empty($in['aan']) ? 'checked' : '' ?> /> <span><strong>Menukaart op mijn website</strong></span></label>
+        <div class="two" style="margin-top:12px"><div class="field"><label for="mknaamm">Naam in het menu</label><input type="text" id="mknaamm" name="mk_naam" maxlength="30" value="<?= h($in['naam']) ?>" /></div><div class="field"><label for="mktitel">Titel van de pagina</label><input type="text" id="mktitel" name="mk_titel" maxlength="90" value="<?= h($in['titel']) ?>" /></div></div>
+        <div class="field"><label for="mkintro">Korte tekst</label><input type="text" id="mkintro" name="mk_intro" maxlength="300" value="<?= h($in['intro']) ?>" /></div>
+        <label class="check"><input type="checkbox" name="mk_allergenen" value="1" <?= $in['allergenen'] ? 'checked' : '' ?> /> <span>Allergenen bij de gerechten laten zien, met een filter <strong>Ik ben allergisch voor...</strong></span></label>
+        <div class="field" style="margin-top:10px"><label for="mkallergie">Tekst onder de kaart</label><input type="text" id="mkallergie" name="mk_allergie" maxlength="400" value="<?= h($in['allergie_tekst']) ?>" /></div>
+        <div style="margin-top:16px"><button class="btn" type="submit">Opslaan en website bijwerken</button></div>
+      </form>
+    <?php endif;
 }
 
 /* ===========================================================
@@ -7268,6 +7925,8 @@ function adm_alles_maak(&$fout) {
     $z->addFromString('Overzichten/Klanten.csv', adm_csv_tekst(['Naam', 'Contactpersoon', 'E-mail', 'Telefoon', 'Adres', 'Postcode', 'Plaats', 'KvK', 'Btw-nummer', 'Notitie'], array_map(function($k) { return [$k['naam'], $k['contact'] ?? '', $k['email'] ?? '', $k['tel'] ?? '', $k['straat'] ?? '', $k['postcode'] ?? '', $k['plaats'] ?? '', $k['kvk'] ?? '', $k['btw'] ?? '', $k['notitie'] ?? '']; }, $klanten)));
     $abl = ab_lijst();
     if ($abl) { $z->addFromString('Overzichten/Aanbod.csv', adm_csv_tekst(['Titel', 'Merk/categorie', 'Model/soort', 'Kenteken', 'Prijs', 'Bouwjaar', 'Km', 'Brandstof', 'Status'], array_map(function($x) { return [ab_titel($x), $x['merk'] ?? '', $x['model'] ?? '', $x['kenteken'] ?? '', number_format((int)($x['prijs'] ?? 0) / 100, 2, ',', ''), $x['bouwjaar'] ?? '', $x['km'] ?? '', $x['brandstof'] ?? '', $x['status'] ?? '']; }, $abl))); }
+    $mkl = mk_csv_rijen();
+    if ($mkl) { $z->addFromString('Overzichten/Menukaart.csv', adm_csv_tekst(['Kaart', 'Rubriek', 'Gerecht', 'Omschrijving', 'Prijs', 'Kenmerken', 'Allergenen', 'Status'], $mkl)); }
     $rsl = res_lijst();
     if ($rsl) { $z->addFromString('Overzichten/Reserveringen.csv', adm_csv_tekst(['Datum', 'Tijd', 'Personen', 'Naam', 'Telefoon', 'E-mail', 'Opmerking', 'Status', 'Gemaakt op'], array_map(function($r) { return [$r['dag'], $r['tijd'], (int)($r['p'] ?? 1), $r['naam'] ?? '', $r['tel'] ?? '', $r['mail'] ?? '', $r['opm'] ?? '', $r['status'] ?? '', $r['op'] ?? '']; }, $rsl))); }
     foreach ($vk as $d) {
@@ -7284,7 +7943,7 @@ function adm_alles_maak(&$fout) {
     foreach (adm_voorbeeld() ? [] : read_json(ADM_BANKBEST_DIR . '/lijst.json', []) as $b) { if (is_file(ADM_BANKBEST_DIR . '/' . $b['bestand'])) { $z->addFile(ADM_BANKBEST_DIR . '/' . $b['bestand'], 'Bankbestanden/' . adm_bestandsnaam($b['naam'])); } }
     /* De gegevens zelf, zodat je ze later in een ander programma kunt inlezen (zonder wachtwoorden en sleutels) */
     if (!adm_voorbeeld()) {
-        foreach (['adm_klanten.json', 'adm_docs.json', 'adm_inkoop.json', 'adm_bank.json', 'adm_bankregels.json', 'adm_agenda.json', 'adm_maillog.json', 'reserveringen.json', 'aanbod.json', 'beoordelingen.json'] as $jf) { if (is_file(DATA_DIR . '/' . $jf)) { $z->addFile(DATA_DIR . '/' . $jf, 'Gegevens (voor een ander programma)/' . $jf); } }
+        foreach (['adm_klanten.json', 'adm_docs.json', 'adm_inkoop.json', 'adm_bank.json', 'adm_bankregels.json', 'adm_agenda.json', 'adm_maillog.json', 'reserveringen.json', 'aanbod.json', 'beoordelingen.json', 'menukaart.json'] as $jf) { if (is_file(DATA_DIR . '/' . $jf)) { $z->addFile(DATA_DIR . '/' . $jf, 'Gegevens (voor een ander programma)/' . $jf); } }
         $ins = read_json(ADM_INST, []); foreach (['taak_sleutel', 'agenda_sleutel'] as $k) { unset($ins[$k]); }
         $z->addFromString('Gegevens (voor een ander programma)/adm_inst.json', json_encode($ins, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
     }
@@ -8367,7 +9026,7 @@ if ($is_demo && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action
 }
 $logged_in = $config && (!empty($_SESSION['ff_admin']) || $is_demo);
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-10-23-beoordelingen');
+define('SITE_BOUW', '2026-10-23-menukaart');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -8393,6 +9052,7 @@ if ($logged_in && ($_GET['adm'] ?? '') === 'alles') {
 }
 if ($logged_in && isset($_GET['aanbod_rdw'])) { header('Content-Type: application/json; charset=UTF-8'); echo json_encode(ab_rdw((string)$_GET['aanbod_rdw']), JSON_UNESCAPED_UNICODE); exit; }
 if ($logged_in && isset($_GET['aanbod_voorbeeld'])) { ab_voorbeeld_csv(); }
+if ($logged_in && isset($_GET['menukaart_voorbeeld'])) { mk_voorbeeld_csv(); }
 if ($logged_in && !$is_demo && !$ADM_ALLEEN_LEZEN && ($_SERVER['REQUEST_METHOD'] ?? '') === 'GET' && !isset($_GET['aanbod_rdw'])) {
     $abi = ab_inst();
     if (!empty($abi['aan'])) { foreach (ab_lijst() as $x) { if (!ab_zichtbaar($abi, $x) && is_dir(ROOT . '/' . $abi['slug'] . '/' . $x['slug'])) { write_aanbod_pages(); write_seo_files(load_pages()); break; } } }
@@ -8422,6 +9082,7 @@ if ($logged_in && isset($_POST['action'])) {
     if (strpos($action, 'adm_') === 0) { adm_acties($action); }
     if (strpos($action, 'res_') === 0) { res_acties($action); }
     if (strpos($action, 'ab_') === 0) { ab_acties($action); }
+    if (strpos($action, 'mk_') === 0) { mk_acties($action); }
     if (strpos($action, 'bd_') === 0) { bd_acties($action); }
 
     if ($action === 'save') {
@@ -8721,6 +9382,7 @@ $showAdm = $logged_in && isset($_GET['adm']);
 $showRes = $logged_in && isset($_GET['reserveren']);
 $showAb = $logged_in && isset($_GET['aanbod']);
 $showBd = $logged_in && isset($_GET['beoordelingen']);
+$showMk = $logged_in && isset($_GET['menukaart']);
 $uploadLimit = ini_get('upload_max_filesize');
 $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (string)($_SERVER['HTTP_HOST'] ?? '')));
 ?>
@@ -8909,9 +9571,10 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     <div class="wrap">
       <a class="brand" href="admin.php"><?php if (logo_url() !== ''): ?><img src="<?= h(logo_url()) ?>" alt="" /><?php endif; ?><?= h(st('naam')) ?> <span>ADMIN</span></a>
       <div class="row">
-        <a class="btn ghost sm<?= (!$showSettings && !$showAccount && !$showAdm && !$showRes && !$showAb && !$showBd) ? ' on' : '' ?>" href="admin.php">Projecten</a>
+        <a class="btn ghost sm<?= (!$showSettings && !$showAccount && !$showAdm && !$showRes && !$showAb && !$showBd && !$showMk) ? ' on' : '' ?>" href="admin.php">Projecten</a>
         <a class="btn ghost sm<?= $showAdm ? ' on' : '' ?>" href="admin.php?adm">Administratie</a>
         <a class="btn ghost sm<?= $showAb ? ' on' : '' ?>" href="admin.php?aanbod=1"><?= h(ab_inst()['aan'] ? ab_inst()['naam'] : 'Aanbod') ?></a>
+        <a class="btn ghost sm<?= $showMk ? ' on' : '' ?>" href="admin.php?menukaart=1"><?= h(mk_inst()['naam']) ?></a>
         <a class="btn ghost sm<?= $showBd ? ' on' : '' ?>" href="admin.php?beoordelingen=1">Beoordelingen<?php $bdN = $showBd ? 0 : bd_nieuw_aantal(); if ($bdN): ?> <span style="display:inline-block;min-width:20px;padding:0 6px;border-radius:999px;background:#ff5d5d;color:#fff;font-size:12px;line-height:20px;text-align:center"><?= $bdN ?></span><?php endif; ?></a>
         <a class="btn ghost sm<?= $showRes ? ' on' : '' ?>" href="admin.php?reserveren=1">Afspraakplanner<?php $rsN = $showRes ? 0 : res_nieuw_aantal(); if ($rsN): ?> <span style="display:inline-block;min-width:20px;padding:0 6px;border-radius:999px;background:#ff5d5d;color:#fff;font-size:12px;line-height:20px;text-align:center"><?= $rsN ?></span><?php endif; ?></a>
         <a class="btn ghost sm<?= $showSettings ? ' on' : '' ?>" href="admin.php?instellingen=1">Instellingen</a>
@@ -8950,6 +9613,9 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
 
       <?php elseif ($showBd): ?>
         <?php bd_beheer_view(); ?>
+
+      <?php elseif ($showMk): ?>
+        <?php mk_beheer_view(); ?>
 
       <?php elseif ($showAccount): ?>
         <h1>Inloggegevens</h1>
@@ -9111,6 +9777,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
                   <?php if ($k === 'projecten'): ?><div class="hint" style="margin:4px 0 0 28px">Projecten die je in de map Uitgelicht zet.</div><?php endif; ?>
                   <?php if ($k === 'beoordelingen'): ?><div class="hint" style="margin:4px 0 0 28px">Sterren en teksten van je klanten. Instellen doe je bovenaan bij <a href="admin.php?beoordelingen=1" style="color:#8fb3ff">Beoordelingen</a>.</div><?php endif; ?>
                   <?php if ($k === 'aanbod'): ?><div class="hint" style="margin:4px 0 0 28px">Je nieuwste 6 auto's of producten. Toevoegen doe je bovenaan bij <a href="admin.php?aanbod=1" style="color:#8fb3ff">Aanbod</a>.</div><?php endif; ?>
+                  <?php if ($k === 'menukaart'): ?><div class="hint" style="margin:4px 0 0 28px">Een paar gerechten van je kaart, met een knop naar de hele menukaart. Specialiteiten en nieuwe gerechten gaan voor. Invullen doe je bovenaan bij <a href="admin.php?menukaart=1" style="color:#8fb3ff">Menukaart</a>.</div><?php endif; ?>
                   <?php if ($k === 'reserveren'): ?><div class="hint" style="margin:4px 0 0 28px">De kalender om online te reserveren. Instellen doe je bovenaan bij <a href="admin.php?reserveren=1" style="color:#8fb3ff">Afspraakplanner</a>.</div><?php endif; ?>
                   <?php if ($k === 'voorna'): ?>
                     <details class="blk-in"><summary>Inhoud: foto's van voor en na</summary>
@@ -9383,6 +10050,18 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     "f:abmodel": "Bijvoorbeeld Focus of Fiesta. Bezoekers die een merk kiezen, zien daarna alle modellen die je hebt.",
     "f:abprijs": "Alleen het bedrag, bijvoorbeeld 14950. Laat je het leeg, dan staat er Prijs op aanvraag.",
     "f:abprijsoud": "Was de prijs eerst hoger? Vul die hier in, dan staat hij doorgestreept naast de nieuwe prijs.",
+    "f:mknaam": "De naam zoals hij op de kaart staat, bijvoorbeeld Carpaccio of Cappuccino.",
+    "f:mkoms": "Wat erin zit of hoe het geserveerd wordt. Kort houden: een of twee regels.",
+    "f:mkprijs": "Alleen het bedrag, inclusief btw, bijvoorbeeld 12,50. Laat je het leeg, dan staat er geen prijs.",
+    "f:mkprijstekst": "Komt klein achter de prijs, bijvoorbeeld p.p., per glas of per fles.",
+    "f:mkrub": "In welke rubriek dit gerecht staat. Kies je een andere, dan verhuist het gerecht daarheen.",
+    "f:mkstatus": "Op = op? Zet het op Tijdelijk uitverkocht. Dat kan ook met 1 tik in het overzicht.",
+    "f:mkknaam": "Bijvoorbeeld Lunch, Diner, Dranken of Kinderkaart. Op je website staat elke kaart als een eigen knop.",
+    "f:mkktijd": "Wanneer deze kaart geldt, bijvoorbeeld van 12.00 tot 16.00 uur. Mag leeg.",
+    "f:mkrnaam": "Een groep op de kaart, bijvoorbeeld Voorgerechten, Hoofdgerechten of Wijnen.",
+    "f:mkbestand": "Een Excel-bestand (.xlsx) of CSV met de kopjes Kaart, Rubriek, Gerecht, Omschrijving, Prijs, Kenmerken en Allergenen.",
+    "f:mkpdf": "Een pdf van je menukaart, bijvoorbeeld van je drukker. Bezoekers kunnen hem openen en printen.",
+    "f:mkallergie": "Staat onder de kaart. Bijvoorbeeld wat gasten met een allergie moeten doen.",
     "f:abnaam": "Zo heet de knop in het menu van je website, bijvoorbeeld Occasions, Aanbod of Collectie.",
     "f:abdagen": "Hoe lang een verkochte auto of uitverkocht product nog met dat label op je website blijft staan.",
     "f:abbestand": "Een Excel-bestand (.xlsx) of CSV. Op de eerste regel de kopjes, zoals Kenteken, Merk, Model, Prijs, Bouwjaar en Km.",
