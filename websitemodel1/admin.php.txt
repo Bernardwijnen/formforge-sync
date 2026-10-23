@@ -62,6 +62,8 @@ function default_settings() {
         'kleur_donker'     => '#0b1f3a',
         'kleur_accent'     => '#1d4ed8',
         'chat_url'         => '',
+        'whatsapp'         => '',
+        'whatsapp_tekst'   => '',
         'logo'             => '',
         'stijl'            => 'stoer',
         'opbouw_hero'      => 'standaard',
@@ -164,6 +166,28 @@ function valid_color($c, $fallback) {
 function logo_url() {
     $l = st('logo');
     return $l !== '' ? '/uploads/site/' . rawurlencode($l) : '';
+}
+/* WhatsApp: nummer omzetten naar het internationale formaat voor wa.me */
+function whatsapp_nummer() {
+    $n = preg_replace('/[^0-9+]/', '', st('whatsapp'));
+    if ($n === '') return '';
+    if (strpos($n, '+') === 0) { $n = substr($n, 1); }
+    elseif (strpos($n, '00') === 0) { $n = substr($n, 2); }
+    elseif (strpos($n, '0') === 0) { $n = '31' . substr($n, 1); }
+    $n = preg_replace('/[^0-9]/', '', $n);
+    return strlen($n) >= 9 && strlen($n) <= 15 ? $n : '';
+}
+function whatsapp_url() {
+    $n = whatsapp_nummer();
+    if ($n === '') return '';
+    $t = st('whatsapp_tekst') !== '' ? st('whatsapp_tekst') : 'Hallo ' . st('naam') . ', ik heb een vraag.';
+    return 'https://wa.me/' . $n . '?text=' . rawurlencode($t);
+}
+function whatsapp_fab() {
+    $u = whatsapp_url();
+    if ($u === '') return '';
+    return '<a class="wafab' . (chat_url() !== '' ? ' hoog' : '') . '" href="' . h($u) . '" target="_blank" rel="noopener" aria-label="Stuur ons een WhatsApp-bericht"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3a9 9 0 0 0-7.8 13.5L3 21l4.6-1.2A9 9 0 1 0 12 3Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 8.5c.3 2.6 2.1 4.9 5 6l1.4-1.3-1.8-1.2-.9.7c-1-.5-1.8-1.3-2.3-2.3l.7-.9-1.2-1.8L9 8.5Z" fill="currentColor"/></svg><span>WhatsApp</span></a>'
+         . '<style>.wafab{position:fixed;right:calc(16px + env(safe-area-inset-right,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:51;display:inline-flex;align-items:center;gap:8px;background:#25d366;color:#fff;text-decoration:none;font-weight:700;font-size:15px;line-height:1;padding:12px 18px 12px 14px;border-radius:999px;box-shadow:0 14px 30px -12px rgba(0,0,0,.45);font-family:inherit;} .wafab:hover{filter:brightness(1.06);} .wafab svg{width:24px;height:24px;flex:none;} .chatfab{bottom:calc(76px + env(safe-area-inset-bottom,0px)) !important;} @media (max-width:520px){.wafab span{display:none;} .wafab{padding:14px;} .foot .wrap{padding-bottom:96px;}} @media print{.wafab{display:none;}}</style>';
 }
 function chat_url() {
     $c = st('chat_url');
@@ -1109,6 +1133,7 @@ function nap_block() {
     if (st('tel') !== '') $contact[] = '<a href="tel:' . h(tel_link(st('tel'))) . '">' . h(st('tel')) . '</a>';
     if (st('tel2') !== '') $contact[] = '<a href="tel:' . h(tel_link(st('tel2'))) . '">' . h(st('tel2')) . '</a>';
     if (st('email') !== '') $contact[] = '<a href="mailto:' . h(st('email')) . '">' . h(st('email')) . '</a>';
+    if (whatsapp_url() !== '') $contact[] = '<a href="' . h(whatsapp_url()) . '" target="_blank" rel="noopener">WhatsApp</a>';
     $contact[] = '<a href="/contact/">Contactformulier</a>';
     $cols[] = '<strong>Contact</strong><br />' . implode('<br />', $contact);
     $extra = '';
@@ -1131,7 +1156,7 @@ function site_footer() {
     $y = date('Y');
     return '<footer class="foot"><div class="wrap">' . nap_block()
          . '<div class="legal"><span>&copy; ' . $y . ' ' . h(st('naam')) . '</span><span class="logins"><a class="login" href="/admin.php" rel="nofollow">Website beheren</a><a class="login" href="/admin.php?adm" rel="nofollow">Administratie</a></span></div>'
-         . '</div></footer>' . "\n" . chat_fab();
+         . '</div></footer>' . "\n" . chat_fab() . whatsapp_fab();
 }
 /* Blauwe balk onderaan met contactknoppen */
 function cta_band($dienstKey = '') {
@@ -1757,6 +1782,7 @@ CSS;
     if (st('tel2') !== '') $direct[] = '<a href="tel:' . h(tel_link(st('tel2'))) . '">' . h(st('tel2')) . '</a>';
     if (st('email') !== '') $direct[] = '<a href="mailto:' . h(st('email')) . '">' . h(st('email')) . '</a>';
     if (chat_url() !== '') $direct[] = '<a href="' . h(chat_url()) . '">Chat met ons</a>';
+    if (whatsapp_url() !== '') $direct[] = '<a href="' . h(whatsapp_url()) . '" target="_blank" rel="noopener">Stuur ons een WhatsApp</a>';
     if (!empty($direct)) $side .= '<h3>Liever direct contact?</h3><p>' . implode('<br />', $direct) . '</p>';
     $adres = array_filter([st('straat'), trim(st('postcode') . ' ' . st('plaats'))]);
     if (!empty($adres)) $side .= '<h3>Adres</h3><p>' . h(st('naam')) . '<br />' . implode('<br />', array_map('h', $adres)) . '</p>';
@@ -8042,7 +8068,7 @@ if ($is_demo && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action
 }
 $logged_in = $config && (!empty($_SESSION['ff_admin']) || $is_demo);
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-10-23-aanbod');
+define('SITE_BOUW', '2026-10-23-whatsapp');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -8191,7 +8217,7 @@ if ($logged_in && isset($_POST['action'])) {
         $txt = ['naam' => 80, 'slogan' => 140, 'eyebrow' => 80, 'hero_titel' => 90, 'hero_tekst' => 300, 'knop_tekst' => 40,
                 'diensten_titel' => 60, 'diensten_intro' => 300, 'cta_titel' => 90, 'cta_tekst' => 300,
                 'seo_titel' => 70, 'seo_omschrijving' => 160, 'straat' => 100, 'postcode' => 12, 'plaats' => 60,
-                'provincie' => 60, 'tel' => 30, 'tel2' => 30, 'kvk' => 20, 'werkgebied' => 140];
+                'provincie' => 60, 'tel' => 30, 'tel2' => 30, 'kvk' => 20, 'werkgebied' => 140, 'whatsapp' => 25, 'whatsapp_tekst' => 140];
         foreach ($txt as $k => $max) { $new[$k] = cut(trim(preg_replace('/\s+/', ' ', $_POST[$k] ?? '')), $max); }
         $new['tijden'] = cut(trim(str_replace("\r\n", "\n", $_POST['tijden'] ?? '')), 300);
         if ($new['naam'] === '') { $new['naam'] = 'Uw Bedrijfsnaam'; }
@@ -8649,6 +8675,8 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
               <div class="field"><label for="provincie">Provincie</label><input type="text" id="provincie" name="provincie" maxlength="60" value="<?= h(st('provincie')) ?>" /></div>
               <div class="field"><label for="tel">Telefoon</label><input type="text" id="tel" name="tel" maxlength="30" value="<?= h(st('tel')) ?>" /></div>
               <div class="field"><label for="tel2">Tweede telefoonnummer (optioneel)</label><input type="text" id="tel2" name="tel2" maxlength="30" value="<?= h(st('tel2')) ?>" /></div>
+              <div class="field"><label for="whatsapp">WhatsApp-nummer (optioneel)</label><input type="text" id="whatsapp" name="whatsapp" maxlength="25" placeholder="Bijvoorbeeld: 06 12345678" value="<?= h(st('whatsapp')) ?>" /><div class="hint">Vul je je nummer in, dan staat er op elke pagina rechtsonder een groene WhatsApp-knop. Bezoekers sturen je dan met 1 tik een bericht.<?php if (st('whatsapp') !== '' && whatsapp_nummer() === ''): ?> <strong style="color:#ff9b9b">Dit nummer klopt niet.</strong><?php endif; ?></div></div>
+              <div class="field"><label for="whatsapp_tekst">Eerste zin van het bericht (optioneel)</label><input type="text" id="whatsapp_tekst" name="whatsapp_tekst" maxlength="140" placeholder="Hallo <?= h(st('naam')) ?>, ik heb een vraag." value="<?= h(st('whatsapp_tekst')) ?>" /><div class="hint">Deze tekst staat alvast klaar als de bezoeker op de knop tikt. Hij kan hem zelf nog aanpassen.</div></div>
               <div class="field"><label for="email">E-mailadres</label><input type="email" id="email" name="email" value="<?= h(st('email')) ?>" /><div class="hint">Hier komen ook de berichten van het contactformulier binnen.</div></div>
               <div class="field"><label for="kvk">KvK-nummer (optioneel)</label><input type="text" id="kvk" name="kvk" maxlength="20" value="<?= h(st('kvk')) ?>" /></div>
               <?php $fi = adm_inst(); ?>
@@ -9053,6 +9081,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     "f:abdagen": "Hoe lang een verkochte auto of uitverkocht product nog met dat label op je website blijft staan.",
     "f:abbestand": "Een Excel-bestand (.xlsx) of CSV. Op de eerste regel de kopjes, zoals Kenteken, Merk, Model, Prijs, Bouwjaar en Km.",
     "f:rsherinner": "Rond 6 uur 's ochtends krijgt de klant automatisch een mail met zijn afspraak. Dat werkt alleen als de klant een e-mailadres heeft ingevuld.",
+    "f:whatsapp": "Het nummer waarop je WhatsApp gebruikt. Een 06-nummer is goed, wij maken er zelf het juiste formaat van.",
     "f:rstitel": "De kop boven de kalender, bijvoorbeeld Reserveer een tafel of Maak een afspraak.",
     "f:rsstap": "Om de hoeveel minuten er een tijd te kiezen is. Elke 30 minuten geeft bijvoorbeeld 18.00, 18.30, 19.00.",
     "f:rsduur": "Hoe lang een gast ongeveer blijft. Zolang telt zijn plek als bezet, ook voor de tijden erna.",
