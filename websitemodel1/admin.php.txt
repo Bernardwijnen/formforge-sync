@@ -29,7 +29,7 @@ define('MAX_PHOTO_BYTES', 8 * 1024 * 1024);
 define('MAX_DIENSTEN', 9);
 
 $RESERVED = ['admin', 'assets', 'data', 'index', 'uploads', 'site', 'favicon', 'error', 'stats', 'cgi-bin',
-             'sitemap', 'robots', 'contact', 'bedankt', 'projecten', 'diensten', 'reserveren'];
+             'sitemap', 'robots', 'contact', 'bedankt', 'projecten', 'diensten', 'reserveren', 'occasions', 'aanbod'];
 
 /* ===========================================================
    Instellingen
@@ -1089,13 +1089,13 @@ function site_header($backUrl = '', $backLabel = '') {
     $out = slogan_bar() . '<header class="top"><div class="wrap">' . brand_html() . '<nav class="menu" aria-label="Menu">';
     if ($backUrl === '') {
         if (!empty(services())) { $out .= '<a class="nav" href="/#diensten">Diensten</a>'; }
-        $out .= '<a class="nav" href="/#projecten">Projecten</a>';
+        $out .= '<a class="nav" href="/#projecten">Projecten</a>' . ab_menu_link();
     } else {
         $out .= '<a class="back" href="' . h($backUrl) . '" onclick="try{var r=document.referrer;if(r&&r.indexOf(location.origin+\'/\')===0&&history.length>1){history.back();return false;}}catch(e){}return true;"><svg viewBox="0 0 24 24" fill="none" width="16" height="16" aria-hidden="true"><path d="M19 12H5M11 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="long">' . h($backLabel) . '</span><span class="short">Terug</span></a>';
     }
     $ri = res_inst();
-    if (!empty($ri['aan']) && !empty($ri['knop'])) { $out .= '<a class="nav" href="/contact/">Contact</a><a class="cta" href="/reserveren/">Reserveren</a></nav></div></header>' . "\n"; }
-    else { $out .= (!empty($ri['aan']) ? '<a class="nav" href="/reserveren/">Reserveren</a>' : '') . '<a class="cta" href="/contact/">Contact</a></nav></div></header>' . "\n"; }
+    if (!empty($ri['aan']) && !empty($ri['knop'])) { $out .= '<a class="nav" href="/contact/">Contact</a><a class="cta" href="/reserveren/">' . h($ri['knoptekst']) . '</a></nav></div></header>' . "\n"; }
+    else { $out .= (!empty($ri['aan']) ? '<a class="nav" href="/reserveren/">' . h($ri['knoptekst']) . '</a>' : '') . '<a class="cta" href="/contact/">Contact</a></nav></div></header>' . "\n"; }
     return $out;
 }
 function nap_block() {
@@ -1174,7 +1174,7 @@ function site_lists($pages) {
 /* ===========================================================
    Blokken op de voorpagina: volgorde en aan/uit, plus de nieuwe blokken
    =========================================================== */
-$BLOKKEN = ['strook' => 'Balk met diensten', 'diensten' => 'Diensten', 'projecten' => 'Uitgelichte projecten', 'voorna' => 'Voor en na (foto\'s)', 'werkwijze' => 'Werkwijze in stappen', 'cijfers' => 'Cijfers', 'over' => 'Over ons', 'vragen' => 'Veelgestelde vragen', 'reserveren' => 'Online reserveren (kalender)', 'beeld1' => 'Eigen afbeelding 1', 'beeld2' => 'Eigen afbeelding 2', 'beeld3' => 'Eigen afbeelding 3'];
+$BLOKKEN = ['strook' => 'Balk met diensten', 'diensten' => 'Diensten', 'projecten' => 'Uitgelichte projecten', 'voorna' => 'Voor en na (foto\'s)', 'werkwijze' => 'Werkwijze in stappen', 'cijfers' => 'Cijfers', 'over' => 'Over ons', 'vragen' => 'Veelgestelde vragen', 'reserveren' => 'Afspraakplanner (kalender)', 'aanbod' => 'Aanbod: occasions of producten', 'beeld1' => 'Eigen afbeelding 1', 'beeld2' => 'Eigen afbeelding 2', 'beeld3' => 'Eigen afbeelding 3'];
 $BEELD_VORMEN = ['links' => 'Foto links, tekst rechts', 'rechts' => 'Foto rechts, tekst links', 'breed' => 'Grote foto over de hele breedte', 'klein' => 'Kleine foto in het midden (bijvoorbeeld een logo of keurmerk)'];
 function beeld_item($n) {
     global $ST, $BEELD_VORMEN;
@@ -1214,6 +1214,7 @@ function blok_inhoud($k) {
     if ($k === 'over') { return st('over_tekst') !== '' ? [1] : []; }
     if (preg_match('/^beeld([1-3])$/', $k, $m)) { return beeld_item((int)$m[1] - 1)['foto'] !== '' ? [1] : []; }
     if ($k === 'reserveren') { return !empty(res_inst()['aan']) ? [1] : []; }
+    if ($k === 'aanbod') { return !empty(ab_inst()['aan']) && array_filter(ab_lijst(), function($x) { return ($x['status'] ?? '') !== 'verkocht'; }) ? [1] : []; }
     return [];
 }
 function blok_kop($titel, $intro) {
@@ -1253,6 +1254,8 @@ function blok_html($k, $sky) {
         foreach (preg_split("/\n\s*\n/", st('over_tekst')) as $al) { $o .= '<p>' . nl2br(h(trim($al))) . '</p>'; }
         if (st('over_naam') !== '') { $o .= '<p class="ov-naam">' . h(st('over_naam')) . '</p>'; }
         $o .= '</div></div></div></section>' . "\n";
+    } elseif ($k === 'aanbod') {
+        $o .= ab_blok_html($sky);
     } elseif ($k === 'reserveren') {
         $ri = res_inst();
         $o .= '<section class="' . $cl . '" id="reserveren"><div class="wrap">' . blok_kop($ri['titel'] !== '' ? $ri['titel'] : 'Reserveren', $ri['intro']) . res_widget($ri) . '</div></section>' . "\n";
@@ -1770,6 +1773,8 @@ CSS;
   var sel = document.getElementById('dienst');
   var d = (q.get('dienst') || '').replace(/[^a-z0-9]/g, '');
   if (sel && d && sel.querySelector('option[value="' + d + '"]')) { sel.value = d; }
+  var over = (q.get('over') || '').slice(0, 200), ber = document.getElementById('bericht');
+  if (over && ber && !ber.value) { ber.value = 'Ik heb interesse in: ' + over + '\n\n'; }
   var meldingen = {
     naam: 'Vul uw naam in.',
     contact: 'Vul een telefoonnummer of e-mailadres in, zodat wij u kunnen bereiken.',
@@ -1962,6 +1967,7 @@ function write_contact_pages() {
         schrijf_pagina($dir, stijl_pagina($html));
     }
     write_reserveren_page();
+    write_aanbod_pages();
 }
 function write_seo_files($pages) {
     $u = site_url();
@@ -1970,6 +1976,11 @@ function write_seo_files($pages) {
     foreach (services() as $s) { $urls[] = ['loc' => $u . '/' . $s['slug'] . '/', 'lastmod' => $today]; }
     $urls[] = ['loc' => $u . '/contact/', 'lastmod' => $today];
     if (!empty(res_inst()['aan'])) { $urls[] = ['loc' => $u . '/reserveren/', 'lastmod' => $today]; }
+    $abi = ab_inst();
+    if (!empty($abi['aan'])) {
+        $urls[] = ['loc' => $u . '/' . $abi['slug'] . '/', 'lastmod' => $today];
+        foreach (ab_lijst() as $x) { if (ab_zichtbaar($abi, $x)) { $urls[] = ['loc' => $u . '/' . $abi['slug'] . '/' . rawurlencode($x['slug']) . '/', 'lastmod' => substr((string)($x['gewijzigd'] ?? $x['aangemaakt'] ?? $today), 0, 10) ?: $today]; } }
+    }
     foreach ($pages as $p) {
         if (page_folder($p) === '') continue;
         $d = substr((string)($p['updated'] ?? ($p['created'] ?? '')), 0, 10);
@@ -2016,7 +2027,7 @@ function res_inst() {
     if (isset($x['soort']) && in_array($x['soort'], ['tafel', 'afspraak'], true)) { $in['soort'] = $x['soort']; }
     elseif (isset($x['personen'])) { $in['soort'] = !empty($x['personen']) ? 'tafel' : 'afspraak'; }
     $in['personen'] = $in['soort'] === 'tafel';
-    foreach (['titel' => 80, 'intro' => 300, 'melding' => 120] as $k => $m) { if (isset($x[$k]) && is_string($x[$k])) $in[$k] = cut($x[$k], $m); }
+    foreach (['titel' => 80, 'intro' => 300, 'melding' => 120, 'knoptekst' => 30] as $k => $m) { if (isset($x[$k]) && is_string($x[$k])) $in[$k] = cut($x[$k], $m); }
     foreach (['plaatsen' => [1, 2000], 'max_p' => [1, 100], 'duur' => [5, 600], 'stap' => [5, 240], 'vooruit' => [1, 730], 'vooraf' => [0, 168]] as $k => $r) {
         if (isset($x[$k]) && is_numeric($x[$k])) $in[$k] = max($r[0], min($r[1], (int)$x[$k]));
     }
@@ -2035,6 +2046,7 @@ function res_inst() {
         }
     }
     if ($in['soort'] === 'afspraak' && !$in['diensten']) { $in['diensten'] = [['naam' => 'Afspraak', 'duur' => max(5, (int)$in['stap']), 'prijs' => 0, 'oms' => '']]; }
+    if (trim((string)($in['knoptekst'] ?? '')) === '') { $in['knoptekst'] = $in['soort'] === 'afspraak' ? 'Afspraakplanner' : 'Reserveren'; }
     if (trim($in['titel']) === '') { $in['titel'] = $in['soort'] === 'afspraak' ? 'Maak een afspraak' : 'Reserveer een tafel'; }
     if (trim($in['intro']) === '') { $in['intro'] = $in['soort'] === 'afspraak' ? 'Kies een dag, een tijd en wat u wilt laten doen. U krijgt direct een bevestiging per mail.' : 'Kies een dag en een tijd. U krijgt direct een bevestiging per mail.'; }
     return $in;
@@ -2488,6 +2500,7 @@ function res_widget($in) {
       var rij = maak('div', 'rw-rij'); rij.appendChild(veld('Voornaam', 'voornaam', 'text', 'given-name', true)); rij.appendChild(veld('Achternaam', 'achternaam', 'text', 'family-name', true)); f.appendChild(rij);
       var rij2 = maak('div', 'rw-rij'); rij2.appendChild(veld('Telefoonnummer', 'tel', 'tel', 'tel', true)); rij2.appendChild(veld('E-mailadres', 'mail', 'email', 'email', true)); f.appendChild(rij2);
       f.appendChild(veld('Opmerking (mag leeg)', 'opm', 'textarea', '', false));
+      try { var pre = new URLSearchParams(location.search).get('opm'); if (pre) { f.querySelector('textarea[name=opm]').value = pre.slice(0, 200); } } catch (e) {}
       var hp = maak('div', 'rw-hp'); hp.setAttribute('aria-hidden', 'true'); var hi = document.createElement('input'); hi.name = 'website'; hi.tabIndex = -1; hi.autocomplete = 'off'; hp.appendChild(hi); f.appendChild(hp);
       var knop = maak('button', 'btn primary', Woord + ' bevestigen'); knop.type = 'submit'; f.appendChild(knop);
       f.onsubmit = function (e) {
@@ -2564,6 +2577,8 @@ function res_acties($action) {
         $x['melding'] = filter_var($mail, FILTER_VALIDATE_EMAIL) ? $mail : '';
         $fout = [];
         foreach (['Reserveer een tafel', 'Maak een afspraak'] as $std) { if ($x['titel'] === $std) $x['titel'] = ''; }
+        $x['knoptekst'] = cut(trim(preg_replace('/\s+/', ' ', (string)($_POST['rs_knoptekst'] ?? ''))), 30);
+        if (in_array($x['knoptekst'], ['Afspraakplanner', 'Reserveren'], true)) { $x['knoptekst'] = ''; }
         if (strpos($x['intro'], 'U krijgt direct een bevestiging per mail.') !== false && strpos($x['intro'], 'Kies een dag') === 0) { $x['intro'] = ''; }
         $x['diensten'] = [];
         foreach ((array)($_POST['rd_naam'] ?? []) as $n => $nm) {
@@ -2591,7 +2606,7 @@ function res_acties($action) {
         write_json(RES_INST, $x);
         if ($mail !== '' && $x['melding'] === '') { $fout[] = 'Het e-mailadres voor meldingen klopt niet en is leeggelaten.'; }
         rebuild_everything(load_pages());
-        $_SESSION['ff_notice'] = $fout ? implode(' ', $fout) : ($x['aan'] ? 'Opgeslagen. Online ' . ($soort === 'afspraak' ? 'afspraken maken' : 'reserveren') . ' staat aan op je website.' : 'Opgeslagen. Online reserveren staat uit.');
+        $_SESSION['ff_notice'] = $fout ? implode(' ', $fout) : ($x['aan'] ? 'Opgeslagen. De afspraakplanner staat aan op je website.' : 'Opgeslagen. De afspraakplanner staat uit.');
         header('Location: admin.php?reserveren=1#instellen'); exit;
     }
     if ($action === 'res_annuleer' || $action === 'res_bevestig') {
@@ -2666,12 +2681,12 @@ function res_beheer_view() {
       @media (max-width:560px){.rs-week{grid-template-columns:1fr 1fr;} .rs-week .rs-wd{grid-column:1 / -1;}}
     </style>
     <?php $W = res_woord($in); $Wn = $W === 'afspraak' ? 'afspraken' : 'reserveringen'; ?>
-    <h1>Reserveren</h1>
+    <h1>Afspraakplanner</h1>
     <p class="sub">Bezoekers kiezen op je website een dag en een vrije tijd<?= $in['soort'] === 'afspraak' ? ' en wat ze willen laten doen' : '' ?>. Volle tijden zien ze niet. Alles komt ook in de agenda van je administratie.</p>
     <?php if (empty($in['aan'])): ?>
-      <div class="formcard" style="border-color:#ff9b4a"><h2>Online reserveren staat nog uit</h2><p class="hint" style="margin:0">Kies hieronder of het om <strong>tafels</strong> (restaurant) of <strong>afspraken</strong> (kapper, barber, schoonheidssalon) gaat, stel je dagen en tijden in en zet het vinkje <strong>Online reserveren aan</strong> aan. Daarna komt er een pagina /reserveren/ op je website, en een knop Reserveren bovenaan.</p></div>
+      <div class="formcard" style="border-color:#ff9b4a"><h2>De afspraakplanner staat nog uit</h2><p class="hint" style="margin:0">Kies hieronder of het om <strong>tafels</strong> (restaurant) of <strong>afspraken</strong> (kapper, barber, schoonheidssalon) gaat, stel je dagen en tijden in en zet het vinkje <strong>Afspraakplanner aan</strong> aan. Daarna komt er een pagina /reserveren/ op je website, en een knop Reserveren bovenaan.</p></div>
     <?php else: ?>
-      <p style="margin:-6px 0 18px"><a class="btn ghost sm" href="/reserveren/" target="_blank">Bekijk de reserveringspagina</a></p>
+      <p style="margin:-6px 0 18px"><a class="btn ghost sm" href="/reserveren/" target="_blank">Bekijk de afspraakplanner op je website</a></p>
     <?php endif; ?>
 
     <div class="formcard">
@@ -2711,8 +2726,8 @@ function res_beheer_view() {
 
     <form class="formcard" method="post" id="instellen">
       <input type="hidden" name="action" value="res_inst" />
-      <h2>Instellingen voor reserveren</h2>
-      <label class="check" style="font-size:17px"><input type="checkbox" name="rs_aan" value="1" <?= !empty($in['aan']) ? 'checked' : '' ?> /> <span><strong>Online reserveren aan</strong></span></label>
+      <h2>Instellingen van de afspraakplanner</h2>
+      <label class="check" style="font-size:17px"><input type="checkbox" name="rs_aan" value="1" <?= !empty($in['aan']) ? 'checked' : '' ?> /> <span><strong>Afspraakplanner aan</strong></span></label>
       <div class="field" style="margin-top:12px"><label>Waarvoor gebruik je het?</label>
         <label class="check"><input type="radio" name="rs_soort" value="tafel" <?= $in['soort'] === 'tafel' ? 'checked' : '' ?> onchange="rsSoort()" /> <span><strong>Tafels reserveren</strong>, voor een restaurant, lunchroom of caf&#xE9;: gasten kiezen met hoeveel personen ze komen</span></label>
         <label class="check"><input type="radio" name="rs_soort" value="afspraak" <?= $in['soort'] === 'afspraak' ? 'checked' : '' ?> onchange="rsSoort()" /> <span><strong>Afspraken</strong>, voor een kapper, barber, schoonheidssalon of praktijk: klanten kiezen een behandeling met tijd en prijs</span></label>
@@ -2733,7 +2748,8 @@ function res_beheer_view() {
         <button type="button" class="btn ghost sm" onclick="var e=document.querySelector('.rs-drij[hidden]');if(e){e.hidden=false;}if(!document.querySelector('.rs-drij[hidden]')){this.hidden=true;}">+ Nog een behandeling</button>
         <div class="hint">Naam, hoe lang het duurt en de prijs in euro. Laat de naam leeg om een behandeling weg te halen.</div>
       </div>
-      <label class="check" style="margin-top:14px"><input type="checkbox" name="rs_knop" value="1" <?= !empty($in['knop']) ? 'checked' : '' ?> /> <span>Bovenaan op je website een knop <strong>Reserveren</strong> in plaats van Contact</span></label>
+      <label class="check" style="margin-top:14px"><input type="checkbox" name="rs_knop" value="1" <?= !empty($in['knop']) ? 'checked' : '' ?> /> <span>Bovenaan op je website een opvallende knop in plaats van Contact</span></label>
+      <div class="field" style="margin-top:8px"><label for="rsknoptekst">Tekst op die knop</label><input type="text" id="rsknoptekst" name="rs_knoptekst" maxlength="30" value="<?= h($in['knoptekst']) ?>" placeholder="Afspraakplanner" /><div class="hint">Bijvoorbeeld Afspraakplanner, Afspraak maken, Reserveren of Boek nu.</div></div>
       <div class="two" style="margin-top:12px"><div class="field"><label for="rstitel">Titel van de pagina</label><input type="text" id="rstitel" name="rs_titel" maxlength="80" value="<?= h($in['titel']) ?>" /></div><div class="field"><label for="rsintro">Korte tekst</label><input type="text" id="rsintro" name="rs_intro" maxlength="300" value="<?= h($in['intro']) ?>" /></div></div>
 
       <h3 style="margin:18px 0 10px">Wanneer kan er gereserveerd worden?</h3>
@@ -2772,6 +2788,694 @@ function res_beheer_view() {
     rsSoort();
     </script>
     <?php
+}
+
+/* ===========================================================
+   Aanbod: occasions voor autobedrijven, of producten voor een etalage
+   Lijst met filters (merk, model, zoeken), een eigen pagina per item,
+   kenteken opzoeken bij de RDW en veel tegelijk inladen uit Excel/CSV.
+   =========================================================== */
+define('AB_INST', DATA_DIR . '/aanbod_inst.json');
+define('AB_FILE', DATA_DIR . '/aanbod.json');
+define('AB_MAX_FOTO', 30);
+$AB_MERKEN = ['Abarth', 'Alfa Romeo', 'Aston Martin', 'Audi', 'Bentley', 'BMW', 'BYD', 'Cadillac', 'Chevrolet', 'Chrysler', 'Citro' . "\u{00EB}" . 'n', 'Cupra', 'Dacia', 'Daihatsu', 'DS', 'Ferrari', 'Fiat', 'Ford', 'Honda', 'Hyundai', 'Isuzu', 'Iveco', 'Jaguar', 'Jeep', 'Kia', 'Lamborghini', 'Lancia', 'Land Rover', 'Lexus', 'Lotus', 'Lynk & Co', 'Maserati', 'Mazda', 'McLaren', 'Mercedes-Benz', 'MG', 'Mini', 'Mitsubishi', 'Nissan', 'Opel', 'Peugeot', 'Polestar', 'Porsche', 'Renault', 'Rolls-Royce', 'Saab', 'Seat', 'Skoda', 'Smart', 'SsangYong', 'Subaru', 'Suzuki', 'Tesla', 'Toyota', 'Volkswagen', 'Volvo'];
+$AB_BRANDSTOF = ['Benzine', 'Diesel', 'Elektrisch', 'Hybride', 'Plug-in hybride', 'LPG', 'Waterstof', 'Aardgas'];
+$AB_TRANS = ['Handgeschakeld', 'Automaat'];
+$AB_STATUS = ['beschikbaar' => 'Beschikbaar', 'gereserveerd' => 'Gereserveerd', 'verkocht' => 'Verkocht'];
+function ab_inst() {
+    global $AB_MERKEN;
+    $x = read_json(AB_INST, []);
+    $in = ['aan' => !empty($x['aan']), 'soort' => ($x['soort'] ?? 'auto') === 'product' ? 'product' : 'auto'];
+    $auto = $in['soort'] === 'auto';
+    $in['naam'] = trim((string)($x['naam'] ?? '')) !== '' ? cut((string)$x['naam'], 30) : ($auto ? 'Occasions' : 'Aanbod');
+    $in['titel'] = trim((string)($x['titel'] ?? '')) !== '' ? cut((string)$x['titel'], 90) : ($auto ? 'Onze occasions' : 'Ons aanbod');
+    $in['intro'] = trim((string)($x['intro'] ?? '')) !== '' ? cut((string)$x['intro'], 300) : ($auto ? 'Kies een merk en bekijk alle auto' . "'" . 's die nu bij ons te koop staan.' : 'Bekijk wat wij op dit moment in huis hebben.');
+    $in['merken'] = isset($x['merken']) && is_array($x['merken']) ? array_values(array_filter(array_map(function($m) { return cut(trim((string)$m), 40); }, $x['merken']), 'strlen')) : ($auto ? $AB_MERKEN : []);
+    $in['verkocht_dagen'] = isset($x['verkocht_dagen']) ? max(0, min(90, (int)$x['verkocht_dagen'])) : 14;
+    $in['proefrit'] = isset($x['proefrit']) ? !empty($x['proefrit']) : true;
+    $in['kenteken_tonen'] = !empty($x['kenteken_tonen']);
+    $in['slug'] = $auto ? 'occasions' : 'aanbod';
+    $in['woord'] = $auto ? 'auto' : 'product';
+    $in['kop1'] = $auto ? 'Merk' : 'Categorie';
+    $in['kop2'] = $auto ? 'Model' : 'Soort';
+    return $in;
+}
+function ab_lijst() { $l = read_json(AB_FILE, []); return is_array($l) ? array_values(array_filter($l, 'is_array')) : []; }
+function ab_bewaar($l) { write_json(AB_FILE, array_values($l)); }
+function ab_eur($c) { return "\u{20AC} " . number_format($c / 100, 0, ',', '.') . ($c % 100 ? ',' . sprintf('%02d', $c % 100) : ',-'); }
+function ab_km($k) { return number_format((int)$k, 0, ',', '.') . ' km'; }
+function ab_titel($x) {
+    if (trim((string)($x['titel'] ?? '')) !== '') return $x['titel'];
+    return trim(implode(' ', array_filter([$x['merk'] ?? '', $x['model'] ?? '', $x['uitvoering'] ?? ''])));
+}
+function ab_foto_url($x, $f) { return '/uploads/aanbod/' . rawurlencode($x['id']) . '/' . rawurlencode($f); }
+function ab_zichtbaar($in, $x) {
+    if (($x['status'] ?? '') !== 'verkocht') return true;
+    $op = (string)($x['verkocht_op'] ?? '');
+    return $in['verkocht_dagen'] > 0 && $op !== '' && strtotime($op . ' +' . $in['verkocht_dagen'] . ' days') >= strtotime(date('Y-m-d'));
+}
+function ab_statuslabel($in, $s) {
+    if ($in['soort'] === 'product') return ['beschikbaar' => 'Op voorraad', 'gereserveerd' => 'Bijna op', 'verkocht' => 'Uitverkocht'][$s] ?? '';
+    return ['beschikbaar' => '', 'gereserveerd' => 'Gereserveerd', 'verkocht' => 'Verkocht'][$s] ?? '';
+}
+function ab_kenmerken($in, $x) {
+    if ($in['soort'] !== 'auto') return [];
+    $k = [];
+    if (!empty($x['bouwjaar'])) $k['Bouwjaar'] = (string)$x['bouwjaar'];
+    if (($x['km'] ?? '') !== '' && $x['km'] !== null) $k['Kilometerstand'] = ab_km($x['km']);
+    if (!empty($x['brandstof'])) $k['Brandstof'] = $x['brandstof'];
+    if (!empty($x['transmissie'])) $k['Transmissie'] = $x['transmissie'];
+    if (!empty($x['vermogen'])) $k['Vermogen'] = (int)$x['vermogen'] . ' pk';
+    if (!empty($x['kleur'])) $k['Kleur'] = $x['kleur'];
+    if (!empty($x['carrosserie'])) $k['Carrosserie'] = $x['carrosserie'];
+    if (!empty($x['deuren'])) $k['Deuren'] = (string)$x['deuren'];
+    if (!empty($x['zitplaatsen'])) $k['Zitplaatsen'] = (string)$x['zitplaatsen'];
+    if (!empty($x['apk'])) $k['APK tot'] = date('d-m-Y', strtotime($x['apk']));
+    if ($in['kenteken_tonen'] && !empty($x['kenteken'])) $k['Kenteken'] = ab_kenteken_tekst($x['kenteken']);
+    return $k;
+}
+function ab_kenteken_tekst($k) {
+    $k = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', (string)$k));
+    if (strlen($k) !== 6) return $k;
+    $d = preg_split('/(?<=[A-Z])(?=\d)|(?<=\d)(?=[A-Z])/', $k);
+    if (count($d) === 3) return implode('-', $d);
+    if (count($d) === 2) { $a = strlen($d[0]) === 4 ? [substr($d[0], 0, 2), substr($d[0], 2), $d[1]] : (strlen($d[1]) === 4 ? [$d[0], substr($d[1], 0, 2), substr($d[1], 2)] : $d); return implode('-', $a); }
+    return substr($k, 0, 2) . '-' . substr($k, 2, 2) . '-' . substr($k, 4, 2);
+}
+/* Kenteken opzoeken in de open data van de RDW */
+function ab_http_json($url) {
+    $b = null;
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 8, CURLOPT_CONNECTTIMEOUT => 6, CURLOPT_HTTPHEADER => ['Accept: application/json']]);
+        $r = curl_exec($ch); $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE); curl_close($ch);
+        if ($r !== false && $code >= 200 && $code < 300) $b = $r;
+    } else {
+        $r = @file_get_contents($url, false, stream_context_create(['http' => ['timeout' => 8]]));
+        if ($r !== false) $b = $r;
+    }
+    if ($b === null) return null;
+    $d = json_decode($b, true);
+    return is_array($d) ? $d : null;
+}
+function ab_mooi($t) {
+    $t = trim((string)$t);
+    if ($t === '') return '';
+    $o = mb_convert_case(mb_strtolower($t, 'UTF-8'), MB_CASE_TITLE, 'UTF-8');
+    foreach (['Bmw' => 'BMW', 'Mg ' => 'MG ', 'Ds ' => 'DS ', 'Gti' => 'GTI', 'Tdi' => 'TDI', 'Tsi' => 'TSI', 'Suv' => 'SUV', 'Amg' => 'AMG', 'Byd' => 'BYD', 'Rs' => 'RS', 'Vw' => 'VW'] as $a => $b) { $o = preg_replace('/\b' . preg_quote(trim($a), '/') . '\b/u', trim($b), $o); }
+    return $o;
+}
+function ab_rdw($kenteken) {
+    $k = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', (string)$kenteken));
+    if (!preg_match('/^[A-Z0-9]{4,8}$/', $k)) return ['fout' => 'Vul een geldig kenteken in, bijvoorbeeld 12-ABC-3.'];
+    $a = ab_http_json('https://opendata.rdw.nl/resource/m9d7-ebf2.json?kenteken=' . $k);
+    if ($a === null) return ['fout' => 'De RDW is nu niet bereikbaar. Probeer het later nog eens, of vul de gegevens zelf in.'];
+    if (!$a) return ['fout' => 'De RDW kent dit kenteken niet. Kijk of je het goed hebt ingevuld.'];
+    $v = $a[0];
+    $b = ab_http_json('https://opendata.rdw.nl/resource/8ys7-d773.json?kenteken=' . $k) ?: [];
+    $uit = ['kenteken' => ab_kenteken_tekst($k)];
+    $merk = ab_mooi($v['merk'] ?? '');
+    if (strcasecmp($merk, 'Mercedes-Benz') === 0 || stripos($merk, 'Mercedes') === 0) $merk = 'Mercedes-Benz';
+    $uit['merk'] = $merk;
+    $model = ab_mooi($v['handelsbenaming'] ?? '');
+    if ($merk !== '' && stripos($model, $merk . ' ') === 0) { $model = trim(substr($model, strlen($merk))); }
+    $uit['model'] = $model;
+    $dt = (string)($v['datum_eerste_toelating'] ?? '');
+    if (preg_match('/^(\d{4})/', $dt, $m)) $uit['bouwjaar'] = (int)$m[1];
+    if (!empty($v['eerste_kleur']) && stripos($v['eerste_kleur'], 'niet geregistreerd') === false) $uit['kleur'] = ab_mooi($v['eerste_kleur']);
+    if (!empty($v['aantal_deuren'])) $uit['deuren'] = (int)$v['aantal_deuren'];
+    if (!empty($v['aantal_zitplaatsen'])) $uit['zitplaatsen'] = (int)$v['aantal_zitplaatsen'];
+    if (!empty($v['inrichting']) && stripos($v['inrichting'], 'niet geregistreerd') === false) $uit['carrosserie'] = ab_mooi($v['inrichting']);
+    $apk = (string)($v['vervaldatum_apk'] ?? '');
+    if (preg_match('/^(\d{4})(\d{2})(\d{2})$/', $apk, $m)) $uit['apk'] = $m[1] . '-' . $m[2] . '-' . $m[3];
+    $soorten = []; $kw = 0;
+    foreach ($b as $r) {
+        $s = mb_strtolower((string)($r['brandstof_omschrijving'] ?? ''), 'UTF-8');
+        if ($s !== '') $soorten[] = $s;
+        $kw = max($kw, (float)($r['nettomaximumvermogen'] ?? 0));
+    }
+    $soorten = array_values(array_unique($soorten));
+    if ($soorten) {
+        $el = in_array('elektriciteit', $soorten, true);
+        if ($el && count($soorten) === 1) $uit['brandstof'] = 'Elektrisch';
+        elseif ($el) $uit['brandstof'] = 'Hybride';
+        else $uit['brandstof'] = ['benzine' => 'Benzine', 'diesel' => 'Diesel', 'lpg' => 'LPG', 'waterstof' => 'Waterstof', 'cng' => 'Aardgas', 'alcohol' => 'Benzine'][$soorten[0]] ?? ab_mooi($soorten[0]);
+    }
+    if ($kw > 0) $uit['vermogen'] = (int)round($kw * 1.35962);
+    return $uit;
+}
+
+/* ---------- Pagina's op de website ---------- */
+function ab_kaart($in, $x) {
+    $f = $x['fotos'][0] ?? '';
+    $lab = ab_statuslabel($in, $x['status']);
+    $spec = [];
+    if ($in['soort'] === 'auto') {
+        if (!empty($x['bouwjaar'])) $spec[] = (string)$x['bouwjaar'];
+        if (($x['km'] ?? '') !== '' && $x['km'] !== null) $spec[] = ab_km($x['km']);
+        if (!empty($x['brandstof'])) $spec[] = $x['brandstof'];
+        if (!empty($x['transmissie'])) $spec[] = $x['transmissie'];
+    } elseif (!empty($x['model'])) { $spec[] = $x['model']; }
+    return '<a class="ab-kaart' . ($x['status'] === 'verkocht' ? ' weg' : '') . '" href="/' . $in['slug'] . '/' . h($x['slug']) . '/">'
+         . '<span class="ab-img">' . ($f !== '' ? '<img src="' . h(ab_foto_url($x, $f)) . '" alt="' . h(ab_titel($x)) . '" loading="lazy" />' : '') . ($lab !== '' ? '<i class="ab-lab ' . h($x['status']) . '">' . h($lab) . '</i>' : '') . '</span>'
+         . '<span class="ab-txt"><b>' . h(ab_titel($x)) . '</b>' . ($spec ? '<small>' . h(implode(" \u{b7} ", $spec)) . '</small>' : '')
+         . '<em>' . ((int)($x['prijs'] ?? 0) > 0 ? h(ab_eur((int)$x['prijs'])) : 'Prijs op aanvraag') . ((int)($x['prijs_oud'] ?? 0) > (int)($x['prijs'] ?? 0) && (int)$x['prijs'] > 0 ? ' <s>' . h(ab_eur((int)$x['prijs_oud'])) . '</s>' : '') . '</em></span></a>';
+}
+function ab_css() {
+    return <<<'CSS'
+<style>
+.abhero{background:var(--navy);color:#fff;padding:clamp(44px,6vw,80px) 0 clamp(36px,5vw,56px);}
+.abhero h1{font-size:clamp(34px,5vw,58px);} .abhero p{margin:14px 0 0;color:rgba(255,255,255,.8);max-width:60ch;font-size:18px;}
+.abwrap{padding:clamp(28px,5vw,56px) 0 clamp(48px,7vw,90px);background:var(--sky);}
+.ab-filter{background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:22px;display:grid;gap:12px;}
+.ab-chips{display:flex;flex-wrap:wrap;gap:8px;}
+.ab-chips button{font:inherit;font-size:14.5px;font-weight:600;padding:8px 14px;border-radius:999px;border:1.5px solid var(--line);background:#fff;color:var(--navy);cursor:pointer;}
+.ab-chips button span{color:var(--muted);font-weight:500;margin-left:4px;}
+.ab-chips button.on{background:var(--navy);border-color:var(--navy);color:#fff;} .ab-chips button.on span{color:rgba(255,255,255,.7);}
+.ab-chips.modellen button{font-size:13.5px;padding:6px 12px;}
+.ab-chips.modellen button.on{background:var(--blue);border-color:var(--blue);}
+.ab-rij{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:10px;}
+@media (max-width:760px){.ab-rij{grid-template-columns:1fr 1fr;} .ab-rij input{grid-column:1 / -1;}}
+.ab-rij input,.ab-rij select{width:100%;font:inherit;font-size:15px;color:var(--navy);background:#fff;border:1.5px solid var(--line);border-radius:10px;padding:10px 12px;}
+.ab-aantal{color:var(--muted);font-size:15px;margin:0 0 14px;}
+.ab-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:18px;}
+.ab-kaart{display:flex;flex-direction:column;background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden;text-decoration:none;color:var(--navy);transition:transform .15s ease,box-shadow .15s ease;}
+.ab-kaart:hover{transform:translateY(-3px);box-shadow:0 22px 40px -26px rgba(0,0,0,.4);}
+.ab-kaart.weg{opacity:.7;}
+.ab-img{position:relative;aspect-ratio:4/3;background:var(--sky);overflow:hidden;display:block;}
+.ab-img img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
+.ab-lab{position:absolute;left:12px;top:12px;font-style:normal;font-size:12.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;padding:5px 10px;border-radius:999px;background:#fff;color:var(--navy);}
+.ab-lab.verkocht{background:#dc2626;color:#fff;} .ab-lab.gereserveerd{background:#f59e0b;color:#1f2937;} .ab-lab.beschikbaar{background:#16a34a;color:#fff;}
+.ab-txt{padding:16px 18px 18px;display:flex;flex-direction:column;gap:6px;flex:1;}
+.ab-txt b{font-size:18px;line-height:1.25;} .ab-txt small{color:var(--muted);font-size:14px;}
+.ab-txt em{font-style:normal;font-weight:800;font-size:20px;margin-top:auto;padding-top:6px;color:var(--navy);} .ab-txt s{font-weight:500;font-size:15px;color:var(--muted);}
+.ab-leeg{background:#fff;border:1.5px dashed var(--line);border-radius:16px;padding:30px;text-align:center;color:var(--muted);}
+.ab-det{display:grid;grid-template-columns:1.25fr .75fr;grid-template-areas:"gal zij" "oms zij";gap:clamp(20px,4vw,40px);align-items:start;}
+.ab-det .ab-gal{grid-area:gal;} .ab-det .ab-zij{grid-area:zij;} .ab-det .ab-oms{grid-area:oms;margin-top:0;}
+@media (max-width:900px){.ab-det{grid-template-columns:1fr;grid-template-areas:"gal" "zij" "oms";} .ab-zij{position:static;}}
+.ab-gal{display:grid;gap:10px;}
+.ab-groot{position:relative;aspect-ratio:4/3;border-radius:16px;overflow:hidden;background:#111;}
+.ab-groot img{width:100%;height:100%;object-fit:contain;display:block;}
+.ab-groot button{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:44px;border-radius:50%;border:0;background:rgba(255,255,255,.9);color:#111;font-size:24px;cursor:pointer;}
+.ab-groot .vo{left:12px;} .ab-groot .na{right:12px;}
+.ab-groot .tel{position:absolute;right:12px;bottom:12px;background:rgba(0,0,0,.6);color:#fff;font-size:13px;font-weight:700;padding:4px 10px;border-radius:999px;}
+.ab-duims{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;scroll-snap-type:x mandatory;}
+.ab-duims button{flex:none;width:92px;aspect-ratio:4/3;border-radius:10px;overflow:hidden;border:2px solid transparent;padding:0;cursor:pointer;background:var(--sky);scroll-snap-align:start;}
+.ab-duims button.on{border-color:var(--blue);} .ab-duims img{width:100%;height:100%;object-fit:cover;display:block;}
+.ab-zij{background:#fff;border:1px solid var(--line);border-radius:16px;padding:clamp(20px,3vw,28px);position:sticky;top:96px;}
+.ab-zij h1{font-size:clamp(26px,3vw,34px);line-height:1.15;}
+.ab-prijs{font-size:30px;font-weight:800;margin:12px 0 4px;} .ab-prijs s{font-size:18px;font-weight:500;color:var(--muted);margin-left:8px;}
+.ab-acts{display:grid;gap:10px;margin-top:18px;} .ab-acts .btn{justify-content:center;}
+.ab-acts .btn.quiet{color:var(--navy);box-shadow:inset 0 0 0 1.5px var(--line);}
+.ab-specs{width:100%;border-collapse:collapse;margin-top:20px;font-size:15.5px;}
+.ab-specs th{text-align:left;font-weight:500;color:var(--muted);padding:9px 0;border-bottom:1px solid var(--line);width:45%;}
+.ab-specs td{padding:9px 0;border-bottom:1px solid var(--line);font-weight:600;}
+.ab-oms{margin-top:28px;background:#fff;border:1px solid var(--line);border-radius:16px;padding:clamp(20px,3vw,30px);}
+.ab-oms h2{font-size:24px;margin-bottom:12px;} .ab-oms p{margin:0 0 1em;}
+.ab-oms ul{columns:2;margin:0;padding-left:20px;} @media (max-width:600px){.ab-oms ul{columns:1;}}
+.ab-oms li{margin-bottom:6px;}
+.ab-verkocht{background:#dc2626;color:#fff;font-weight:700;border-radius:12px;padding:10px 14px;margin-top:12px;}
+.ab-terug{display:inline-flex;align-items:center;gap:6px;color:var(--navy);font-weight:600;text-decoration:none;margin-bottom:18px;}
+</style>
+CSS;
+}
+function ab_menu_link() {
+    $in = ab_inst();
+    return !empty($in['aan']) ? '<a class="nav" href="/' . $in['slug'] . '/">' . h($in['naam']) . '</a>' : '';
+}
+function render_aanbod_lijst($in, $items) {
+    $data = [];
+    foreach ($items as $x) {
+        $data[] = ['m' => (string)($x['merk'] ?? ''), 'd' => (string)($x['model'] ?? ''), 'p' => (int)($x['prijs'] ?? 0), 'j' => (int)($x['bouwjaar'] ?? 0), 'k' => ($x['km'] ?? '') === '' ? -1 : (int)$x['km'],
+                   'b' => (string)($x['brandstof'] ?? ''), 't' => mb_strtolower(ab_titel($x) . ' ' . ($x['uitvoering'] ?? '') . ' ' . ($x['kleur'] ?? ''), 'UTF-8'), 'o' => (string)($x['aangemaakt'] ?? ''), 'h' => ab_kaart($in, $x)];
+    }
+    $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+    $cfg = json_encode(['kop1' => $in['kop1'], 'woord' => $in['woord'], 'auto' => $in['soort'] === 'auto'], JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP);
+    $out = site_head($in['titel'] . ' | ' . st('naam'), cut($in['intro'] . ' ' . st('naam') . (st('plaats') !== '' ? ', ' . st('plaats') : '') . '.', 160), '/' . $in['slug'] . '/', business_jsonld(), true);
+    $out .= ab_css() . "\n</head>\n<body>\n" . site_header();
+    $out .= '<main><section class="abhero"><div class="wrap"><h1>' . h($in['titel']) . '</h1><p>' . h($in['intro']) . '</p></div></section>';
+    $out .= '<section class="abwrap"><div class="wrap">';
+    $out .= '<div class="ab-filter" id="abFilter"><div class="ab-chips" id="abMerken" role="group" aria-label="' . h($in['kop1']) . '"></div><div class="ab-chips modellen" id="abModellen" role="group" aria-label="' . h($in['kop2']) . '" hidden></div>';
+    $out .= '<div class="ab-rij"><input type="search" id="abZoek" placeholder="Zoeken..." aria-label="Zoeken" />';
+    if ($in['soort'] === 'auto') {
+        $out .= '<select id="abBrandstof" aria-label="Brandstof"><option value="">Alle brandstoffen</option></select>';
+        $out .= '<select id="abMax" aria-label="Maximale prijs"><option value="0">Elke prijs</option>';
+        foreach ([5000, 7500, 10000, 15000, 20000, 25000, 30000, 40000, 50000, 75000] as $p) { $out .= '<option value="' . ($p * 100) . '">Tot ' . h(ab_eur($p * 100)) . '</option>'; }
+        $out .= '</select>';
+    } else { $out .= '<span></span><span></span>'; }
+    $out .= '<select id="abSort" aria-label="Sorteren"><option value="nieuw">Nieuwste eerst</option><option value="pl">Prijs laag-hoog</option><option value="ph">Prijs hoog-laag</option>' . ($in['soort'] === 'auto' ? '<option value="km">Minste kilometers</option><option value="jr">Nieuwste bouwjaar</option>' : '') . '</select></div></div>';
+    $out .= '<p class="ab-aantal" id="abAantal"></p><div class="ab-grid" id="abGrid"></div>';
+    $out .= '<noscript><div class="ab-grid">';
+    foreach ($items as $x) { $out .= ab_kaart($in, $x); }
+    $out .= '</div></noscript></div></section></main>';
+    $out .= cta_band() . site_footer();
+    $out .= '<script>var AB=' . $json . ',ABC=' . $cfg . ';</script>' . "\n";
+    $out .= <<<'JS'
+<script>
+(function () {
+  var st = { m: '', d: '', z: '', b: '', x: 0, s: 'nieuw' };
+  try { var hs = new URLSearchParams(location.hash.slice(1)); st.m = hs.get('merk') || ''; st.d = hs.get('model') || ''; } catch (e) {}
+  var elM = document.getElementById('abMerken'), elD = document.getElementById('abModellen'), grid = document.getElementById('abGrid'), aantal = document.getElementById('abAantal');
+  var zoek = document.getElementById('abZoek'), bs = document.getElementById('abBrandstof'), mx = document.getElementById('abMax'), so = document.getElementById('abSort');
+  function telling(sleutel, filter) { var t = {}; AB.forEach(function (x) { if (filter && !filter(x)) return; var k = x[sleutel]; if (!k) return; t[k] = (t[k] || 0) + 1; }); return Object.keys(t).sort(function (a, b) { return a.localeCompare(b, 'nl'); }).map(function (k) { return [k, t[k]]; }); }
+  function knop(tekst, n, aan, klik) { var b = document.createElement('button'); b.type = 'button'; b.textContent = tekst; if (n != null) { var s = document.createElement('span'); s.textContent = n; b.appendChild(s); } if (aan) b.className = 'on'; b.onclick = klik; return b; }
+  if (bs) { telling('b').forEach(function (r) { var o = document.createElement('option'); o.value = r[0]; o.textContent = r[0] + ' (' + r[1] + ')'; bs.appendChild(o); }); }
+  function teken() {
+    elM.innerHTML = '';
+    elM.appendChild(knop(ABC.auto ? 'Alle merken' : 'Alles', AB.length, st.m === '', function () { st.m = ''; st.d = ''; teken(); }));
+    telling('m').forEach(function (r) { elM.appendChild(knop(r[0], r[1], st.m === r[0], function () { st.m = r[0]; st.d = ''; teken(); })); });
+    elD.innerHTML = '';
+    if (st.m) {
+      var mods = telling('d', function (x) { return x.m === st.m; });
+      if (mods.length) {
+        elD.hidden = false;
+        elD.appendChild(knop('Alle ' + st.m, null, st.d === '', function () { st.d = ''; teken(); }));
+        mods.forEach(function (r) { elD.appendChild(knop(r[0], r[1], st.d === r[0], function () { st.d = r[0]; teken(); })); });
+      } else { elD.hidden = true; }
+    } else { elD.hidden = true; }
+    var z = st.z.toLowerCase().trim();
+    var lijst = AB.filter(function (x) {
+      if (st.m && x.m !== st.m) return false; if (st.d && x.d !== st.d) return false;
+      if (st.b && x.b !== st.b) return false; if (st.x && (!x.p || x.p > st.x)) return false;
+      if (z && x.t.indexOf(z) < 0) return false; return true;
+    });
+    var srt = { pl: function (a, b) { return (a.p || 1e12) - (b.p || 1e12); }, ph: function (a, b) { return b.p - a.p; }, km: function (a, b) { return (a.k < 0 ? 1e12 : a.k) - (b.k < 0 ? 1e12 : b.k); }, jr: function (a, b) { return b.j - a.j; }, nieuw: function (a, b) { return a.o < b.o ? 1 : -1; } };
+    lijst.sort(srt[st.s] || srt.nieuw);
+    aantal.textContent = lijst.length + ' ' + (lijst.length === 1 ? ABC.woord : (ABC.auto ? "auto's" : 'producten')) + (st.m ? ' van ' + st.m + (st.d ? ' ' + st.d : '') : '');
+    grid.innerHTML = lijst.length ? lijst.map(function (x) { return x.h; }).join('') : '<div class="ab-leeg">Niets gevonden. Kies een ander filter of bel ons gerust.</div>';
+    try { history.replaceState(null, '', st.m ? '#merk=' + encodeURIComponent(st.m) + (st.d ? '&model=' + encodeURIComponent(st.d) : '') : location.pathname); } catch (e) {}
+  }
+  zoek.oninput = function () { st.z = zoek.value; teken(); };
+  if (bs) bs.onchange = function () { st.b = bs.value; teken(); };
+  if (mx) mx.onchange = function () { st.x = parseInt(mx.value, 10) || 0; teken(); };
+  so.onchange = function () { st.s = so.value; teken(); };
+  teken();
+})();
+</script>
+JS;
+    return $out . "\n</body>\n</html>\n";
+}
+function render_aanbod_item($in, $x) {
+    $titel = ab_titel($x);
+    $fotos = array_values($x['fotos'] ?? []);
+    $prijs = (int)($x['prijs'] ?? 0);
+    $desc = cut($titel . ($prijs > 0 ? ' voor ' . ab_eur($prijs) : '') . '. ' . implode(', ', array_slice(array_values(ab_kenmerken($in, $x)), 0, 4)) . '. Te koop bij ' . st('naam') . '.', 160);
+    $ld = ['@context' => 'https://schema.org', '@type' => $in['soort'] === 'auto' ? 'Car' : 'Product', 'name' => $titel, 'url' => site_url() . '/' . $in['slug'] . '/' . $x['slug'] . '/'];
+    if ($fotos) $ld['image'] = array_map(function($f) use ($x) { return site_url() . ab_foto_url($x, $f); }, array_slice($fotos, 0, 5));
+    if (!empty($x['merk'])) $ld['brand'] = ['@type' => 'Brand', 'name' => $x['merk']];
+    if ($in['soort'] === 'auto') {
+        if (!empty($x['model'])) $ld['model'] = $x['model'];
+        if (!empty($x['bouwjaar'])) $ld['vehicleModelDate'] = (string)$x['bouwjaar'];
+        if (($x['km'] ?? '') !== '' && $x['km'] !== null) $ld['mileageFromOdometer'] = ['@type' => 'QuantitativeValue', 'value' => (int)$x['km'], 'unitCode' => 'KMT'];
+        if (!empty($x['brandstof'])) $ld['fuelType'] = $x['brandstof'];
+    }
+    if ($prijs > 0) $ld['offers'] = ['@type' => 'Offer', 'price' => number_format($prijs / 100, 2, '.', ''), 'priceCurrency' => 'EUR', 'availability' => $x['status'] === 'verkocht' ? 'https://schema.org/SoldOut' : 'https://schema.org/InStock'];
+    $extra = '<script type="application/ld+json">' . json_encode($ld, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG) . '</script>';
+    $out = site_head($titel . ' | ' . st('naam'), $desc, '/' . $in['slug'] . '/' . $x['slug'] . '/', $extra, true, $fotos ? site_url() . ab_foto_url($x, $fotos[0]) : '');
+    $out .= ab_css() . "\n</head>\n<body>\n" . site_header('/' . $in['slug'] . '/', 'Alle ' . mb_strtolower($in['naam'], 'UTF-8'));
+    $out .= '<main><section class="abwrap"><div class="wrap"><a class="ab-terug" href="/' . $in['slug'] . '/' . (!empty($x['merk']) ? '#merk=' . rawurlencode($x['merk']) : '') . '">&larr; ' . h(!empty($x['merk']) ? 'Meer ' . $x['merk'] : 'Terug naar het overzicht') . '</a><div class="ab-det">';
+    $out .= '<div class="ab-gal">';
+    if ($fotos) {
+        $out .= '<div class="ab-groot"><img id="abFoto" src="' . h(ab_foto_url($x, $fotos[0])) . '" alt="' . h($titel) . '" />';
+        if (count($fotos) > 1) $out .= '<button type="button" class="vo" aria-label="Vorige foto">&lsaquo;</button><button type="button" class="na" aria-label="Volgende foto">&rsaquo;</button><span class="tel" id="abTel">1 / ' . count($fotos) . '</span>';
+        $out .= '</div>';
+        if (count($fotos) > 1) {
+            $out .= '<div class="ab-duims">';
+            foreach ($fotos as $i => $f) { $out .= '<button type="button"' . ($i === 0 ? ' class="on"' : '') . ' data-i="' . $i . '" aria-label="Foto ' . ($i + 1) . '"><img src="' . h(ab_foto_url($x, $f)) . '" alt="" loading="lazy" /></button>'; }
+            $out .= '</div>';
+        }
+    } else { $out .= '<div class="ab-groot"></div>'; }
+    $out .= '</div>';
+    $out .= '<aside class="ab-zij"><h1>' . h($titel) . '</h1>';
+    if ($x['status'] === 'verkocht') { $out .= '<div class="ab-verkocht">' . h(ab_statuslabel($in, 'verkocht')) . '</div>'; }
+    elseif ($x['status'] === 'gereserveerd') { $out .= '<div class="ab-verkocht" style="background:#f59e0b;color:#1f2937">' . h(ab_statuslabel($in, 'gereserveerd')) . '</div>'; }
+    $out .= '<div class="ab-prijs">' . ($prijs > 0 ? h(ab_eur($prijs)) : 'Prijs op aanvraag') . ((int)($x['prijs_oud'] ?? 0) > $prijs && $prijs > 0 ? '<s>' . h(ab_eur((int)$x['prijs_oud'])) . '</s>' : '') . '</div>';
+    $sp = ab_kenmerken($in, $x);
+    if ($in['soort'] !== 'auto' && !empty($x['merk'])) { $sp = array_merge([$in['kop1'] => $x['merk']] + (!empty($x['model']) ? [$in['kop2'] => $x['model']] : []), $sp); }
+    if ($sp) { $out .= '<table class="ab-specs">'; foreach ($sp as $k => $v) { $out .= '<tr><th>' . h($k) . '</th><td>' . h($v) . '</td></tr>'; } $out .= '</table>'; }
+    if ($x['status'] !== 'verkocht') {
+        $out .= '<div class="ab-acts">';
+        $out .= '<a class="btn primary" href="/contact/?over=' . h(rawurlencode($titel . ($prijs > 0 ? ' (' . ab_eur($prijs) . ')' : ''))) . '">Ik heb interesse</a>';
+        $ri = res_inst();
+        if ($in['soort'] === 'auto' && $in['proefrit'] && !empty($ri['aan'])) { $out .= '<a class="btn quiet" href="/reserveren/?opm=' . h(rawurlencode('Proefrit: ' . $titel)) . '">Proefrit plannen</a>'; }
+        if (st('tel') !== '') { $out .= '<a class="btn quiet" href="tel:' . h(tel_link(st('tel'))) . '">Bel ' . h(st('tel')) . '</a>'; }
+        $out .= '</div>';
+    }
+    $out .= '</aside>';
+    if (trim((string)($x['tekst'] ?? '')) !== '' || trim((string)($x['opties'] ?? '')) !== '') {
+        $out .= '<div class="ab-oms">';
+        if (trim((string)($x['tekst'] ?? '')) !== '') { $out .= '<h2>Omschrijving</h2>'; foreach (preg_split("/\n\s*\n/", trim($x['tekst'])) as $al) { $out .= '<p>' . nl2br(h(trim($al))) . '</p>'; } }
+        $opt = array_filter(array_map('trim', preg_split("/\r?\n/", (string)($x['opties'] ?? ''))), 'strlen');
+        if ($opt) { $out .= '<h2>' . ($in['soort'] === 'auto' ? 'Opties en extra' . "'" . 's' : 'Kenmerken') . '</h2><ul>'; foreach ($opt as $o) { $out .= '<li>' . h($o) . '</li>'; } $out .= '</ul>'; }
+        $out .= '</div>';
+    }
+    $out .= '</div></div></section></main>' . site_footer();
+    if (count($fotos) > 1) {
+        $urls = json_encode(array_map(function($f) use ($x) { return ab_foto_url($x, $f); }, $fotos), JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP);
+        $out .= '<script>var ABF=' . $urls . ';</script>' . <<<'JS'
+<script>
+(function () {
+  var i = 0, img = document.getElementById('abFoto'), tel = document.getElementById('abTel'), duims = document.querySelectorAll('.ab-duims button');
+  function zet(n) { i = (n + ABF.length) % ABF.length; img.src = ABF[i]; tel.textContent = (i + 1) + ' / ' + ABF.length; duims.forEach(function (d, k) { d.classList.toggle('on', k === i); }); if (duims[i]) duims[i].scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
+  document.querySelector('.ab-groot .vo').onclick = function () { zet(i - 1); };
+  document.querySelector('.ab-groot .na').onclick = function () { zet(i + 1); };
+  duims.forEach(function (d) { d.onclick = function () { zet(parseInt(d.getAttribute('data-i'), 10)); }; });
+  var x0 = null; img.addEventListener('touchstart', function (e) { x0 = e.touches[0].clientX; }, { passive: true });
+  img.addEventListener('touchend', function (e) { if (x0 === null) return; var dx = e.changedTouches[0].clientX - x0; if (Math.abs(dx) > 40) zet(i + (dx < 0 ? 1 : -1)); x0 = null; });
+})();
+</script>
+JS;
+    }
+    return $out . "\n</body>\n</html>\n";
+}
+function ab_rm_map($dir) {
+    if (!is_dir($dir)) return;
+    foreach (scandir($dir) as $f) { if ($f === '.' || $f === '..') continue; $p = $dir . '/' . $f; is_dir($p) ? ab_rm_map($p) : @unlink($p); }
+    @rmdir($dir);
+}
+function write_aanbod_pages() {
+    $in = ab_inst();
+    foreach (['occasions', 'aanbod'] as $sl) {
+        $dir = ROOT . '/' . $sl;
+        if (empty($in['aan']) || $sl !== $in['slug']) {
+            if (is_dir($dir) && is_file($dir . '/.ff-aanbod')) { ab_rm_map($dir); }
+            continue;
+        }
+        if (!is_dir($dir)) mkdir($dir, 0755, true);
+        @file_put_contents($dir . '/.ff-aanbod', '1');
+        $items = array_values(array_filter(ab_lijst(), function($x) use ($in) { return ab_zichtbaar($in, $x); }));
+        schrijf_pagina($dir, stijl_pagina(render_aanbod_lijst($in, $items)));
+        $houd = [];
+        foreach ($items as $x) {
+            $d = $dir . '/' . $x['slug'];
+            if (!is_dir($d)) mkdir($d, 0755, true);
+            $kop = '<?php $ffp = dirname(__DIR__, 2) . ' . "'/licentie.php'; if (is_file(\$ffp)) { require \$ffp; } ?>";
+            file_put_contents($d . '/index.php', $kop . stijl_pagina(render_aanbod_item($in, $x)), LOCK_EX);
+            $houd[$x['slug']] = 1;
+        }
+        foreach (scandir($dir) as $f) { if ($f[0] !== '.' && is_dir($dir . '/' . $f) && !isset($houd[$f])) ab_rm_map($dir . '/' . $f); }
+    }
+}
+function ab_blok_html($sky) {
+    $in = ab_inst();
+    $items = array_values(array_filter(ab_lijst(), function($x) { return ($x['status'] ?? '') !== 'verkocht'; }));
+    usort($items, function($a, $b) { return strcmp((string)($b['aangemaakt'] ?? ''), (string)($a['aangemaakt'] ?? '')); });
+    $alle = count($items);
+    $items = array_slice($items, 0, 6);
+    $o = '<section class="section blok-aanbod' . ($sky ? ' sky' : '') . '" id="aanbod"><div class="wrap">' . blok_kop($in['titel'], $in['intro']) . ab_css() . '<div class="ab-grid">';
+    foreach ($items as $x) { $o .= ab_kaart($in, $x); }
+    $o .= '</div><p style="margin-top:26px"><a class="btn primary" href="/' . $in['slug'] . '/">Bekijk ' . ($alle > 6 ? 'alle ' . $alle . ' ' : 'het hele aanbod: ') . h(mb_strtolower($in['naam'], 'UTF-8')) . '</a></p></div></section>' . "\n";
+    return $o;
+}
+
+/* ---------- Beheer ---------- */
+function ab_uniek_slug($titel, $id, $lijst) {
+    $base = slugify($titel !== '' ? $titel : 'item');
+    if ($base === '') $base = 'item';
+    $base = substr($base, 0, 60);
+    $s = $base . '-' . substr($id, -4);
+    foreach ($lijst as $x) { if (($x['slug'] ?? '') === $s && $x['id'] !== $id) { $s = $base . '-' . $id; break; } }
+    return $s;
+}
+function ab_getal($v) { $v = preg_replace('/[^0-9]/', '', (string)$v); return $v === '' ? '' : (int)$v; }
+function ab_prijs_in($v) {
+    $v = trim(str_replace(["\u{20AC}", ' ', 'EUR', 'eur'], '', (string)$v));
+    if ($v === '' || $v === '-') return 0;
+    $v = preg_replace('/,-$/', '', $v);
+    if (preg_match('/^\d{1,3}(\.\d{3})+(,\d{1,2})?$/', $v)) { $v = str_replace('.', '', $v); }
+    $v = str_replace(',', '.', $v);
+    return is_numeric($v) ? (int)round((float)$v * 100) : 0;
+}
+function ab_uit_post($x) {
+    global $AB_STATUS;
+    $k = function($n, $max) { return cut(trim(preg_replace('/\s+/', ' ', (string)($_POST[$n] ?? ''))), $max); };
+    foreach (['merk' => 40, 'model' => 60, 'uitvoering' => 90, 'titel' => 120, 'brandstof' => 30, 'transmissie' => 30, 'kleur' => 30, 'carrosserie' => 40] as $n => $m) { $x[$n] = $k($n, $m); }
+    $x['kenteken'] = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', (string)($_POST['kenteken'] ?? '')));
+    foreach (['bouwjaar', 'km', 'vermogen', 'deuren', 'zitplaatsen'] as $n) { $x[$n] = ab_getal($_POST[$n] ?? ''); }
+    $x['apk'] = preg_match('/^\d{4}-\d\d-\d\d$/', (string)($_POST['apk'] ?? '')) ? $_POST['apk'] : '';
+    $x['prijs'] = ab_prijs_in($_POST['prijs'] ?? '');
+    $x['prijs_oud'] = ab_prijs_in($_POST['prijs_oud'] ?? '');
+    $x['tekst'] = cut(trim(str_replace("\r\n", "\n", (string)($_POST['tekst'] ?? ''))), 6000);
+    $x['opties'] = cut(trim(str_replace("\r\n", "\n", (string)($_POST['opties'] ?? ''))), 4000);
+    $st = (string)($_POST['status'] ?? 'beschikbaar');
+    $nieuw = isset($AB_STATUS[$st]) ? $st : 'beschikbaar';
+    if ($nieuw === 'verkocht' && ($x['status'] ?? '') !== 'verkocht') $x['verkocht_op'] = date('Y-m-d');
+    if ($nieuw !== 'verkocht') $x['verkocht_op'] = '';
+    $x['status'] = $nieuw;
+    return $x;
+}
+function ab_klaar_terug($url, $tekst) { $_SESSION['ff_notice'] = $tekst; header('Location: ' . $url); exit; }
+function ab_acties($action) {
+    $in = ab_inst();
+    if ($action === 'ab_inst') {
+        $soort = ($_POST['ab_soort'] ?? '') === 'product' ? 'product' : 'auto';
+        $merken = array_values(array_unique(array_filter(array_map(function($m) { return cut(trim($m), 40); }, preg_split("/\r?\n|,/", (string)($_POST['ab_merken'] ?? ''))), 'strlen')));
+        $x = ['aan' => !empty($_POST['ab_aan']), 'soort' => $soort, 'naam' => cut(trim((string)($_POST['ab_naam'] ?? '')), 30), 'titel' => cut(trim((string)($_POST['ab_titel'] ?? '')), 90),
+              'intro' => cut(trim((string)($_POST['ab_intro'] ?? '')), 300), 'merken' => $merken, 'verkocht_dagen' => max(0, min(90, (int)($_POST['ab_dagen'] ?? 14))),
+              'proefrit' => !empty($_POST['ab_proefrit']), 'kenteken_tonen' => !empty($_POST['ab_kenteken'])];
+        if ($soort !== $in['soort']) { foreach (['naam', 'titel', 'intro'] as $kk) { $x[$kk] = ''; } if ($soort === 'product' && $merken === ab_inst()['merken']) { $x['merken'] = []; } }
+        foreach (['Occasions', 'Aanbod'] as $s) { if ($x['naam'] === $s) $x['naam'] = ''; }
+        foreach (['Onze occasions', 'Ons aanbod'] as $s) { if ($x['titel'] === $s) $x['titel'] = ''; }
+        write_json(AB_INST, $x);
+        rebuild_everything(load_pages());
+        ab_klaar_terug('admin.php?aanbod=1#instellen', 'Opgeslagen.' . ($x['aan'] ? ' Je aanbod staat op je website.' : ' Je aanbod staat niet op je website.'));
+    }
+    if ($action === 'ab_save') {
+        $lijst = ab_lijst(); $id = (string)($_POST['id'] ?? ''); $i = null;
+        foreach ($lijst as $k => $x) { if ($x['id'] === $id) { $i = $k; break; } }
+        $x = $i !== null ? $lijst[$i] : ['id' => bin2hex(random_bytes(5)), 'aangemaakt' => date('Y-m-d H:i:s'), 'fotos' => [], 'status' => 'beschikbaar'];
+        $x = ab_uit_post($x);
+        $fouten = [];
+        $weg = (array)($_POST['foto_weg'] ?? []);
+        $map = UPLOAD_DIR . '/aanbod/' . $x['id'];
+        $x['fotos'] = array_values(array_filter((array)($x['fotos'] ?? []), function($f) use ($weg, $map) { if (in_array($f, $weg, true)) { @unlink($map . '/' . basename($f)); return false; } return true; }));
+        $hoofd = (string)($_POST['foto_hoofd'] ?? '');
+        if ($hoofd !== '' && in_array($hoofd, $x['fotos'], true)) { $x['fotos'] = array_values(array_merge([$hoofd], array_diff($x['fotos'], [$hoofd]))); }
+        if (!empty($_FILES['fotos']) && is_array($_FILES['fotos']['name'])) {
+            ensure_upload_dir();
+            for ($n = 0; $n < count($_FILES['fotos']['name']); $n++) {
+                $err = $_FILES['fotos']['error'][$n];
+                if ($err === UPLOAD_ERR_NO_FILE) continue;
+                if (count($x['fotos']) >= AB_MAX_FOTO) { $fouten[] = 'Er kunnen maximaal ' . AB_MAX_FOTO . " foto's bij."; break; }
+                if ($err !== UPLOAD_ERR_OK) { $fouten[] = upload_error_text($err, $_FILES['fotos']['name'][$n]); continue; }
+                $f = save_one_image($_FILES['fotos']['tmp_name'][$n], $_FILES['fotos']['name'][$n], $map, '', $fouten);
+                if ($f !== '') $x['fotos'][] = $f;
+            }
+        }
+        if (ab_titel($x) === '') { $x['titel'] = $in['soort'] === 'auto' ? 'Auto' : 'Product'; }
+        $x['slug'] = ab_uniek_slug(ab_titel($x), $x['id'], $lijst);
+        $x['gewijzigd'] = date('Y-m-d H:i:s');
+        if ($i !== null) { $lijst[$i] = $x; } else { $lijst[] = $x; }
+        ab_bewaar($lijst);
+        write_aanbod_pages();
+        ab_klaar_terug('admin.php?aanbod=1&id=' . rawurlencode($x['id']), 'Opgeslagen: ' . ab_titel($x) . '.' . ($fouten ? ' ' . implode(' ', $fouten) : ''));
+    }
+    if ($action === 'ab_status') {
+        global $AB_STATUS;
+        $lijst = ab_lijst(); $id = (string)($_POST['id'] ?? ''); $st = (string)($_POST['status'] ?? '');
+        foreach ($lijst as $k => $x) { if ($x['id'] === $id && isset($AB_STATUS[$st])) { if ($st === 'verkocht' && $x['status'] !== 'verkocht') $lijst[$k]['verkocht_op'] = date('Y-m-d'); if ($st !== 'verkocht') $lijst[$k]['verkocht_op'] = ''; $lijst[$k]['status'] = $st; } }
+        ab_bewaar($lijst); write_aanbod_pages();
+        if (!empty($_POST['ajax'])) { header('Content-Type: application/json'); echo json_encode(['ok' => 1]); exit; }
+        ab_klaar_terug('admin.php?aanbod=1', 'Bijgewerkt.');
+    }
+    if ($action === 'ab_del') {
+        $lijst = ab_lijst(); $id = (string)($_POST['id'] ?? ''); $naam = '';
+        foreach ($lijst as $k => $x) { if ($x['id'] === $id) { $naam = ab_titel($x); ab_rm_map(UPLOAD_DIR . '/aanbod/' . basename($x['id'])); unset($lijst[$k]); } }
+        ab_bewaar($lijst); write_aanbod_pages();
+        ab_klaar_terug('admin.php?aanbod=1', $naam !== '' ? $naam . ' is verwijderd, met de foto' . "'" . 's.' : 'Niet gevonden.');
+    }
+    if ($action === 'ab_import') {
+        $f = $_FILES['bestand'] ?? null;
+        if (!$f || $f['error'] !== UPLOAD_ERR_OK) ab_klaar_terug('admin.php?aanbod=1#inladen', 'Kies eerst een Excel- of CSV-bestand.');
+        $bin = (string)file_get_contents($f['tmp_name']);
+        $rijen = substr($bin, 0, 2) === 'PK' ? adm_xlsx_rijen($bin) : adm_csv_rijen(mb_check_encoding($bin, 'UTF-8') ? $bin : mb_convert_encoding($bin, 'UTF-8', 'Windows-1252'));
+        if (count($rijen) < 2) ab_klaar_terug('admin.php?aanbod=1#inladen', 'In dit bestand staan geen regels. De eerste regel moet de kopjes bevatten, daaronder elke regel 1 ' . $in['woord'] . '.');
+        $kop = array_map(function($c) { return preg_replace('/[^a-z]/', '', mb_strtolower((string)$c, 'UTF-8')); }, $rijen[0]);
+        $alias = ['merk' => ['merk', 'categorie', 'category', 'brand'], 'model' => ['model', 'soort', 'subcategorie', 'type'], 'uitvoering' => ['uitvoering', 'versie'], 'titel' => ['titel', 'naam', 'name', 'product', 'omschrijvingkort'],
+                  'prijs' => ['prijs', 'vraagprijs', 'price', 'verkoopprijs'], 'prijs_oud' => ['oudeprijs', 'van', 'vanprijs'], 'bouwjaar' => ['bouwjaar', 'jaar'], 'km' => ['km', 'kmstand', 'kilometerstand', 'kilometers'],
+                  'brandstof' => ['brandstof'], 'transmissie' => ['transmissie', 'versnellingsbak', 'bak'], 'kleur' => ['kleur'], 'kenteken' => ['kenteken'], 'vermogen' => ['vermogen', 'pk'],
+                  'carrosserie' => ['carrosserie', 'carroserie'], 'deuren' => ['deuren'], 'zitplaatsen' => ['zitplaatsen'], 'tekst' => ['omschrijving', 'tekst', 'beschrijving', 'description'], 'opties' => ['opties', 'extras', 'kenmerken'], 'status' => ['status']];
+        $kolom = [];
+        foreach ($alias as $veld => $namen) { foreach ($kop as $i => $c) { if (in_array($c, $namen, true)) { $kolom[$veld] = $i; break; } } }
+        if (!isset($kolom['merk']) && !isset($kolom['titel']) && !isset($kolom['kenteken'])) ab_klaar_terug('admin.php?aanbod=1#inladen', 'Ik herken de kopjes niet. Gebruik bijvoorbeeld: ' . ($in['soort'] === 'auto' ? 'Kenteken, Merk, Model, Prijs, Bouwjaar, Km' : 'Naam, Categorie, Prijs, Omschrijving') . '. Download het voorbeeldbestand.');
+        $lijst = ab_lijst(); $n = 0; $rdw = 0; @set_time_limit(300);
+        foreach (array_slice($rijen, 1, 1000) as $r) {
+            $w = function($v) use ($r, $kolom) { return isset($kolom[$v]) ? trim((string)($r[$kolom[$v]] ?? '')) : ''; };
+            if (implode('', array_map('trim', array_map('strval', $r))) === '') continue;
+            $x = ['id' => bin2hex(random_bytes(5)), 'aangemaakt' => date('Y-m-d H:i:s', time() - $n), 'fotos' => [], 'status' => 'beschikbaar', 'verkocht_op' => ''];
+            foreach (['merk', 'model', 'uitvoering', 'titel', 'brandstof', 'transmissie', 'kleur', 'carrosserie'] as $v) { $x[$v] = cut($w($v), 90); }
+            foreach (['bouwjaar', 'km', 'vermogen', 'deuren', 'zitplaatsen'] as $v) { $x[$v] = ab_getal($w($v)); }
+            $x['kenteken'] = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', $w('kenteken')));
+            $x['prijs'] = ab_prijs_in($w('prijs')); $x['prijs_oud'] = ab_prijs_in($w('prijs_oud'));
+            $x['tekst'] = cut($w('tekst'), 6000); $x['opties'] = cut(str_replace([';', '|'], "\n", $w('opties')), 4000); $x['apk'] = '';
+            $s = mb_strtolower($w('status'), 'UTF-8'); if (in_array($s, ['verkocht', 'gereserveerd'], true)) { $x['status'] = $s; if ($s === 'verkocht') $x['verkocht_op'] = date('Y-m-d'); }
+            if ($in['soort'] === 'auto' && $x['kenteken'] !== '' && $rdw < 60 && ($x['merk'] === '' || $x['bouwjaar'] === '')) {
+                $g = ab_rdw($x['kenteken']); $rdw++;
+                if (empty($g['fout'])) { foreach ($g as $kk => $vv) { if ($kk !== 'kenteken' && ($x[$kk] ?? '') === '') $x[$kk] = $vv; } }
+            }
+            if (ab_titel($x) === '') continue;
+            $x['slug'] = ab_uniek_slug(ab_titel($x), $x['id'], $lijst);
+            $lijst[] = $x; $n++;
+        }
+        ab_bewaar($lijst); write_aanbod_pages();
+        ab_klaar_terug('admin.php?aanbod=1', $n . ' ' . ($n === 1 ? $in['woord'] : ($in['soort'] === 'auto' ? "auto's" : 'producten')) . ' ingeladen.' . ($rdw ? ' Bij ' . $rdw . ' heb ik de gegevens bij de RDW opgezocht.' : '') . " Voeg nu per stuk de foto's toe.");
+    }
+}
+function ab_voorbeeld_csv() {
+    $in = ab_inst();
+    $r = $in['soort'] === 'auto'
+        ? [['Kenteken', 'Merk', 'Model', 'Uitvoering', 'Prijs', 'Bouwjaar', 'Km', 'Brandstof', 'Transmissie', 'Kleur', 'Omschrijving', 'Opties'], ['', 'Volkswagen', 'Golf', '1.5 TSI Life', '18950', '2020', '64200', 'Benzine', 'Handgeschakeld', 'Grijs', 'Dealer onderhouden, 1e eigenaar.', 'Navigatie; Cruise control; Parkeersensoren'], ['', 'Ford', 'Focus', '1.0 EcoBoost Titanium', '14500', '2019', '88000', 'Benzine', 'Automaat', 'Blauw', '', 'Airco; Stoelverwarming']]
+        : [['Naam', 'Categorie', 'Soort', 'Prijs', 'Omschrijving', 'Kenmerken'], ['Eiken tafel 200 cm', 'Tafels', 'Eettafels', '899', 'Massief eiken, geolied.', 'Lengte 200 cm; Breedte 95 cm'], ['Stoel Lisa', 'Stoelen', 'Eetkamerstoelen', '129', 'Zachte zitting, stof grijs.', '']];
+    $o = "\xEF\xBB\xBF";
+    foreach ($r as $rij) { $o .= implode(';', array_map(function($c) { return '"' . str_replace('"', '""', $c) . '"'; }, $rij)) . "\r\n"; }
+    header('Content-Type: text/csv; charset=UTF-8'); header('Content-Disposition: attachment; filename="voorbeeld-' . $in['slug'] . '.csv"');
+    echo $o; exit;
+}
+function ab_beheer_view() {
+    global $AB_BRANDSTOF, $AB_TRANS, $AB_STATUS;
+    $in = ab_inst(); $lijst = ab_lijst(); $auto = $in['soort'] === 'auto';
+    $id = (string)($_GET['id'] ?? ''); $nieuw = isset($_GET['nieuw']);
+    $x = null;
+    foreach ($lijst as $y) { if ($y['id'] === $id) { $x = $y; break; } }
+    ?>
+    <style>
+      .ab-l{display:grid;gap:8px;}
+      .ab-r{display:grid;grid-template-columns:76px 1fr auto;gap:12px;align-items:center;background:#141b2b;border:1px solid #263049;border-radius:12px;padding:8px;}
+      .ab-r img,.ab-r .ph{width:76px;height:57px;object-fit:cover;border-radius:8px;background:#0c121c;display:block;}
+      .ab-r b{display:block;} .ab-r small{color:#9fb0cc;}
+      .ab-r select{width:auto;padding:7px 9px;font-size:13.5px;}
+      .ab-r.verkocht{opacity:.6;}
+      .ab-acts2{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;}
+      @media (max-width:640px){.ab-r{grid-template-columns:64px 1fr;} .ab-acts2{grid-column:1 / -1;justify-content:flex-start;}}
+      .ab-fotos{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;margin-bottom:10px;}
+      .ab-fotos figure{margin:0;background:#0c121c;border:1px solid #263049;border-radius:10px;overflow:hidden;}
+      .ab-fotos img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;}
+      .ab-fotos figcaption{padding:6px 8px;font-size:12.5px;display:grid;gap:4px;}
+      .ab-zoek{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px;} .ab-zoek input{flex:1;min-width:180px;}
+      .ab-rdw{display:flex;gap:8px;} .ab-rdw input{text-transform:uppercase;font-weight:700;letter-spacing:.06em;}
+      .ab-tel{color:#9fb0cc;font-size:14px;margin:-6px 0 12px;}
+    </style>
+    <?php if ($x || $nieuw): $x = $x ?: ['id' => '', 'fotos' => [], 'status' => 'beschikbaar']; $v = function($k) use ($x) { return h((string)($x[$k] ?? '')); }; ?>
+      <p><a class="btn ghost sm" href="admin.php?aanbod=1">&larr; Terug naar het overzicht</a><?php if ($x['id'] !== '' && !empty($in['aan']) && ab_zichtbaar($in, $x)): ?> <a class="btn ghost sm" href="/<?= h($in['slug'] . '/' . $x['slug']) ?>/" target="_blank">Bekijk op je website</a><?php endif; ?></p>
+      <h1><?= $x['id'] === '' ? ($auto ? 'Nieuwe auto' : 'Nieuw product') : h(ab_titel($x)) ?></h1>
+      <form class="formcard" method="post" enctype="multipart/form-data" id="abForm">
+        <input type="hidden" name="action" value="ab_save" /><input type="hidden" name="id" value="<?= h($x['id']) ?>" />
+        <?php if ($auto): ?>
+          <div class="field"><label for="abken">Kenteken</label><div class="ab-rdw"><input type="text" id="abken" name="kenteken" maxlength="10" value="<?= h(ab_kenteken_tekst($x['kenteken'] ?? '')) ?>" placeholder="12-ABC-3" /><button type="button" class="btn sm" id="abRdw">Gegevens ophalen</button></div><div class="hint" id="abRdwMsg">Vul het kenteken in en klik op Gegevens ophalen. Merk, model, bouwjaar, kleur, brandstof en vermogen komen dan uit de openbare gegevens van de RDW. Kilometerstand, prijs en transmissie vul je zelf in.</div></div>
+        <?php endif; ?>
+        <div class="two">
+          <div class="field"><label for="abmerk"><?= h($in['kop1']) ?></label><input type="text" id="abmerk" name="merk" list="abMerkLijst" maxlength="40" value="<?= $v('merk') ?>" /><datalist id="abMerkLijst"><?php foreach (array_unique(array_merge($in['merken'], array_filter(array_map(function($y) { return (string)($y['merk'] ?? ''); }, $lijst), 'strlen'))) as $m): ?><option value="<?= h($m) ?>"></option><?php endforeach; ?></datalist></div>
+          <div class="field"><label for="abmodel"><?= h($in['kop2']) ?></label><input type="text" id="abmodel" name="model" list="abModelLijst" maxlength="60" value="<?= $v('model') ?>" /><datalist id="abModelLijst"><?php foreach (array_unique(array_filter(array_map(function($y) { return (string)($y['model'] ?? ''); }, $lijst), 'strlen')) as $m): ?><option value="<?= h($m) ?>"></option><?php endforeach; ?></datalist></div>
+        </div>
+        <?php if ($auto): ?><div class="field"><label for="abuitv">Uitvoering (mag leeg)</label><input type="text" id="abuitv" name="uitvoering" maxlength="90" value="<?= $v('uitvoering') ?>" placeholder="Bijvoorbeeld: 1.0 EcoBoost Titanium" /></div><?php endif; ?>
+        <div class="field"><label for="abtitel"><?= $auto ? 'Eigen titel (mag leeg)' : 'Naam' ?></label><input type="text" id="abtitel" name="titel" maxlength="120" value="<?= $v('titel') ?>" placeholder="<?= $auto ? 'Leeg = merk, model en uitvoering' : 'Bijvoorbeeld: Eiken tafel 200 cm' ?>" /></div>
+        <div class="two">
+          <div class="field"><label for="abprijs">Prijs in euro</label><input type="text" id="abprijs" name="prijs" inputmode="decimal" value="<?= (int)($x['prijs'] ?? 0) > 0 ? h(number_format($x['prijs'] / 100, $x['prijs'] % 100 ? 2 : 0, ',', '.')) : '' ?>" placeholder="Leeg = prijs op aanvraag" /></div>
+          <div class="field"><label for="abprijsoud">Oude prijs (mag leeg)</label><input type="text" id="abprijsoud" name="prijs_oud" inputmode="decimal" value="<?= (int)($x['prijs_oud'] ?? 0) > 0 ? h(number_format($x['prijs_oud'] / 100, $x['prijs_oud'] % 100 ? 2 : 0, ',', '.')) : '' ?>" placeholder="Wordt doorgestreept" /></div>
+        </div>
+        <?php if ($auto): ?>
+        <div class="two">
+          <div class="field"><label for="abjaar">Bouwjaar</label><input type="number" id="abjaar" name="bouwjaar" min="1900" max="2100" value="<?= $v('bouwjaar') ?>" /></div>
+          <div class="field"><label for="abkm">Kilometerstand</label><input type="text" id="abkm" name="km" inputmode="numeric" value="<?= ($x['km'] ?? '') !== '' ? h(number_format((int)$x['km'], 0, ',', '.')) : '' ?>" /></div>
+        </div>
+        <div class="two">
+          <div class="field"><label for="abbrand">Brandstof</label><select id="abbrand" name="brandstof"><option value="">Kies</option><?php foreach (array_unique(array_merge($AB_BRANDSTOF, array_filter([$x['brandstof'] ?? '']))) as $o): ?><option<?= ($x['brandstof'] ?? '') === $o ? ' selected' : '' ?>><?= h($o) ?></option><?php endforeach; ?></select></div>
+          <div class="field"><label for="abtrans">Transmissie</label><select id="abtrans" name="transmissie"><option value="">Kies</option><?php foreach ($AB_TRANS as $o): ?><option<?= ($x['transmissie'] ?? '') === $o ? ' selected' : '' ?>><?= h($o) ?></option><?php endforeach; ?></select></div>
+        </div>
+        <div class="two">
+          <div class="field"><label for="abkleur">Kleur</label><input type="text" id="abkleur" name="kleur" maxlength="30" value="<?= $v('kleur') ?>" /></div>
+          <div class="field"><label for="abpk">Vermogen (pk)</label><input type="number" id="abpk" name="vermogen" min="0" max="2000" value="<?= $v('vermogen') ?>" /></div>
+        </div>
+        <div class="two">
+          <div class="field"><label for="abcar">Carrosserie</label><input type="text" id="abcar" name="carrosserie" maxlength="40" value="<?= $v('carrosserie') ?>" placeholder="Bijvoorbeeld: Hatchback" /></div>
+          <div class="field"><label for="abapk">APK tot</label><input type="date" id="abapk" name="apk" value="<?= $v('apk') ?>" /></div>
+        </div>
+        <div class="two">
+          <div class="field"><label for="abdeur">Deuren</label><input type="number" id="abdeur" name="deuren" min="0" max="9" value="<?= $v('deuren') ?>" /></div>
+          <div class="field"><label for="abzit">Zitplaatsen</label><input type="number" id="abzit" name="zitplaatsen" min="0" max="99" value="<?= $v('zitplaatsen') ?>" /></div>
+        </div>
+        <?php endif; ?>
+        <div class="field"><label for="abtekst">Omschrijving (mag leeg)</label><textarea id="abtekst" name="tekst" maxlength="6000"><?= $v('tekst') ?></textarea></div>
+        <div class="field"><label for="abopties"><?= $auto ? "Opties, \u{e9}\u{e9}n per regel (mag leeg)" : "Kenmerken, \u{e9}\u{e9}n per regel (mag leeg)" ?></label><textarea id="abopties" name="opties" class="short" maxlength="4000" placeholder="<?= $auto ? 'Navigatie&#10;Cruise control&#10;Trekhaak' : 'Lengte 200 cm&#10;Massief eiken' ?>"><?= $v('opties') ?></textarea></div>
+        <div class="field"><label>Foto's</label>
+          <?php if (!empty($x['fotos'])): ?><div class="ab-fotos"><?php foreach ($x['fotos'] as $i => $f): ?><figure><img src="<?= h(ab_foto_url($x, $f)) ?>" alt="" loading="lazy" /><figcaption><label class="check" style="margin:0"><input type="radio" name="foto_hoofd" value="<?= h($f) ?>" <?= $i === 0 ? 'checked' : '' ?> /> <span>Hoofdfoto</span></label><label class="check" style="margin:0"><input type="checkbox" name="foto_weg[]" value="<?= h($f) ?>" /> <span>Weghalen</span></label></figcaption></figure><?php endforeach; ?></div><?php endif; ?>
+          <input type="file" id="abfotos" name="fotos[]" accept="image/jpeg,image/png,image/webp" multiple />
+          <div class="hint">Je kunt meerdere foto's tegelijk kiezen, tot <?= AB_MAX_FOTO ?> per <?= h($in['woord']) ?>. De hoofdfoto staat in het overzicht.</div>
+        </div>
+        <div class="field"><label for="abstatus">Status</label><select id="abstatus" name="status"><?php foreach ($AB_STATUS as $k => $l): ?><option value="<?= $k ?>"<?= ($x['status'] ?? '') === $k ? ' selected' : '' ?>><?= h($in['soort'] === 'product' ? ab_statuslabel($in, $k) : $l) ?></option><?php endforeach; ?></select><div class="hint"><?= $in['verkocht_dagen'] > 0 ? 'Zet je hem op ' . h(mb_strtolower(ab_statuslabel($in, 'verkocht'), 'UTF-8')) . ', dan blijft hij nog ' . $in['verkocht_dagen'] . ' dagen zichtbaar met dat label en verdwijnt hij daarna vanzelf van je website.' : 'Zet je hem op verkocht, dan verdwijnt hij meteen van je website.' ?></div></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px"><button class="btn" type="submit">Opslaan</button></div>
+      </form>
+      <?php if ($x['id'] !== ''): ?><form method="post" onsubmit="return confirm('Helemaal verwijderen, met alle foto\'s?')" style="margin-top:-6px"><input type="hidden" name="action" value="ab_del" /><input type="hidden" name="id" value="<?= h($x['id']) ?>" /><button class="btn ghost sm" type="submit">Verwijderen</button></form><?php endif; ?>
+      <?php if ($auto): ?>
+      <script>
+      (function () {
+        var b = document.getElementById('abRdw'); if (!b) return;
+        var msg = document.getElementById('abRdwMsg');
+        b.onclick = function () {
+          var k = document.getElementById('abken').value; b.disabled = true; b.textContent = 'Even zoeken...';
+          fetch('admin.php?aanbod_rdw=' + encodeURIComponent(k), { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (d) {
+            b.disabled = false; b.textContent = 'Gegevens ophalen';
+            if (d.fout) { msg.textContent = d.fout; msg.style.color = '#ff9b9b'; return; }
+            var map = { kenteken: 'abken', merk: 'abmerk', model: 'abmodel', bouwjaar: 'abjaar', kleur: 'abkleur', vermogen: 'abpk', carrosserie: 'abcar', apk: 'abapk', deuren: 'abdeur', zitplaatsen: 'abzit', brandstof: 'abbrand' };
+            var n = 0; Object.keys(map).forEach(function (k2) { if (d[k2] === undefined || d[k2] === '') return; var e = document.getElementById(map[k2]); if (!e) return; if (e.tagName === 'SELECT' && !Array.prototype.some.call(e.options, function (o) { return o.value === String(d[k2]); })) { var o = document.createElement('option'); o.textContent = d[k2]; e.appendChild(o); } e.value = d[k2]; n++; });
+            msg.style.color = '#6ee7a8'; msg.textContent = 'Gevonden: ' + [d.merk, d.model, d.bouwjaar].filter(Boolean).join(' ') + '. Controleer de gegevens en vul kilometerstand, prijs en transmissie zelf in.';
+          }).catch(function () { b.disabled = false; b.textContent = 'Gegevens ophalen'; msg.textContent = 'Het ophalen lukte niet. Vul de gegevens zelf in.'; msg.style.color = '#ff9b9b'; });
+        };
+      })();
+      </script>
+      <?php endif; ?>
+    <?php else: ?>
+      <h1><?= h($in['naam']) ?></h1>
+      <p class="sub"><?= $auto ? "Zet je auto's op je website. Bezoekers kiezen een merk en zien dan alle modellen die je hebt." : 'Zet je producten op je website, met foto' . "'" . 's, prijs en omschrijving. Bezoekers kiezen een categorie en zien alles wat erin zit.' ?></p>
+      <?php if (empty($in['aan'])): ?><div class="formcard" style="border-color:#ff9b4a"><h2>Je aanbod staat nog niet op je website</h2><p class="hint" style="margin:0">Kies onderaan of het om auto's of producten gaat, vink <strong>Aanbod op mijn website</strong> aan en klik op Opslaan. Je kunt alvast <?= $auto ? "auto's" : 'producten' ?> toevoegen.</p></div><?php endif; ?>
+      <div class="adm-acties" style="margin-bottom:14px"><a class="btn sm" href="admin.php?aanbod=1&amp;nieuw=1">+ <?= $auto ? 'Nieuwe auto' : 'Nieuw product' ?></a><a class="btn ghost sm" href="#inladen">Veel tegelijk inladen</a><?php if (!empty($in['aan'])): ?><a class="btn ghost sm" href="/<?= h($in['slug']) ?>/" target="_blank">Bekijk op je website</a><?php endif; ?></div>
+      <?php $tel = ['beschikbaar' => 0, 'gereserveerd' => 0, 'verkocht' => 0]; foreach ($lijst as $y) { $tel[$y['status'] ?? 'beschikbaar'] = ($tel[$y['status'] ?? 'beschikbaar'] ?? 0) + 1; } ?>
+      <p class="ab-tel"><?= count($lijst) ?> in totaal: <?= $tel['beschikbaar'] ?> <?= h(mb_strtolower(ab_statuslabel($in, 'beschikbaar') ?: 'beschikbaar', 'UTF-8')) ?>, <?= $tel['gereserveerd'] ?> <?= h(mb_strtolower(ab_statuslabel($in, 'gereserveerd'), 'UTF-8')) ?>, <?= $tel['verkocht'] ?> <?= h(mb_strtolower(ab_statuslabel($in, 'verkocht'), 'UTF-8')) ?></p>
+      <?php if ($lijst): ?>
+        <div class="ab-zoek"><input type="search" id="abZoekA" placeholder="Zoeken op merk, model of kenteken" aria-label="Zoeken" /></div>
+        <div class="ab-l" id="abLijstA">
+          <?php usort($lijst, function($a, $b) { return strcmp((string)($b['aangemaakt'] ?? ''), (string)($a['aangemaakt'] ?? '')); }); foreach ($lijst as $y): $f = $y['fotos'][0] ?? ''; ?>
+            <div class="ab-r <?= h($y['status']) ?>" data-z="<?= h(mb_strtolower(ab_titel($y) . ' ' . ($y['kenteken'] ?? '') . ' ' . ab_kenteken_tekst($y['kenteken'] ?? ''), 'UTF-8')) ?>">
+              <?php if ($f !== ''): ?><img src="<?= h(ab_foto_url($y, $f)) ?>" alt="" loading="lazy" /><?php else: ?><span class="ph"></span><?php endif; ?>
+              <div><b><?= h(ab_titel($y)) ?></b><small><?= (int)($y['prijs'] ?? 0) > 0 ? h(ab_eur((int)$y['prijs'])) : 'Prijs op aanvraag' ?><?= !empty($y['kenteken']) ? ' &middot; ' . h(ab_kenteken_tekst($y['kenteken'])) : '' ?> &middot; <?= count($y['fotos'] ?? []) ?> foto<?= count($y['fotos'] ?? []) === 1 ? '' : "'s" ?></small></div>
+              <div class="ab-acts2"><select class="ab-st" data-id="<?= h($y['id']) ?>" aria-label="Status"><?php foreach ($AB_STATUS as $k => $l): ?><option value="<?= $k ?>"<?= $y['status'] === $k ? ' selected' : '' ?>><?= h($in['soort'] === 'product' ? ab_statuslabel($in, $k) : $l) ?></option><?php endforeach; ?></select><a class="btn ghost sm" href="admin.php?aanbod=1&amp;id=<?= h(rawurlencode($y['id'])) ?>">Bewerken</a></div>
+            </div>
+          <?php endforeach; ?>
+        </div>
+        <script>
+        (function () {
+          var z = document.getElementById('abZoekA');
+          z.oninput = function () { var q = z.value.toLowerCase().trim(); document.querySelectorAll('#abLijstA .ab-r').forEach(function (r) { r.style.display = !q || r.getAttribute('data-z').indexOf(q) >= 0 ? '' : 'none'; }); };
+          document.querySelectorAll('.ab-st').forEach(function (s) { s.onchange = function () { var fd = new FormData(); fd.append('action', 'ab_status'); fd.append('ajax', '1'); fd.append('id', s.getAttribute('data-id')); fd.append('status', s.value); s.disabled = true; fetch('admin.php?aanbod=1', { method: 'POST', body: fd, credentials: 'same-origin' }).then(function () { s.disabled = false; s.closest('.ab-r').className = 'ab-r ' + s.value; }); }; });
+        })();
+        </script>
+      <?php endif; ?>
+      <form class="formcard" method="post" enctype="multipart/form-data" id="inladen" style="margin-top:22px">
+        <input type="hidden" name="action" value="ab_import" />
+        <h2>Veel tegelijk inladen</h2>
+        <p class="hint" style="margin:-4px 0 12px">Zet je <?= $auto ? "auto's" : 'producten' ?> in Excel, met op de eerste regel de kopjes en daaronder elke regel 1 <?= h($in['woord']) ?>. <?= $auto ? 'Heb je alleen het kenteken? Dan zoek ik merk, model, bouwjaar en de rest zelf op bij de RDW.' : '' ?> Foto's voeg je daarna per stuk toe.</p>
+        <div class="field"><label for="abbestand">Excel- of CSV-bestand</label><input type="file" id="abbestand" name="bestand" accept=".xlsx,.csv,.txt" required /></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn" type="submit">Inladen</button><a class="btn ghost sm" href="admin.php?aanbod_voorbeeld=1">Voorbeeldbestand downloaden</a></div>
+      </form>
+      <form class="formcard" method="post" id="instellen">
+        <input type="hidden" name="action" value="ab_inst" />
+        <h2>Instellingen</h2>
+        <label class="check" style="font-size:17px"><input type="checkbox" name="ab_aan" value="1" <?= !empty($in['aan']) ? 'checked' : '' ?> /> <span><strong>Aanbod op mijn website</strong></span></label>
+        <div class="field" style="margin-top:12px"><label>Wat verkoop je?</label>
+          <label class="check"><input type="radio" name="ab_soort" value="auto" <?= $auto ? 'checked' : '' ?> /> <span><strong>Auto's</strong> (occasions): met kenteken, merk, model, bouwjaar, kilometerstand en brandstof</span></label>
+          <label class="check"><input type="radio" name="ab_soort" value="product" <?= !$auto ? 'checked' : '' ?> /> <span><strong>Producten</strong>: met categorie, soort, prijs en kenmerken, bijvoorbeeld meubels, fietsen of gereedschap</span></label>
+        </div>
+        <div class="two"><div class="field"><label for="abnaam">Naam in het menu</label><input type="text" id="abnaam" name="ab_naam" maxlength="30" value="<?= h($in['naam']) ?>" /></div><div class="field"><label for="abkop">Titel van de pagina</label><input type="text" id="abkop" name="ab_titel" maxlength="90" value="<?= h($in['titel']) ?>" /></div></div>
+        <div class="field"><label for="abintro">Korte tekst</label><input type="text" id="abintro" name="ab_intro" maxlength="300" value="<?= h($in['intro']) ?>" /></div>
+        <div class="field"><label for="abmerken"><?= $auto ? 'Merken in je lijst' : 'Categorie' . "\u{00EB}" . 'n in je lijst' ?> (&#xE9;&#xE9;n per regel)</label><textarea id="abmerken" name="ab_merken" class="short" style="min-height:140px"><?= h(implode("\n", $in['merken'])) ?></textarea><div class="hint">Hieruit kies je bij het toevoegen. Op je website staan alleen de <?= $auto ? 'merken' : 'categorie' . "\u{00EB}" . 'n' ?> waarvan je echt iets hebt, met het aantal erachter.</div></div>
+        <div class="two">
+          <div class="field"><label for="abdagen">Verkocht nog zichtbaar</label><select id="abdagen" name="ab_dagen"><?php foreach ([0 => 'Meteen weg', 3 => '3 dagen', 7 => '1 week', 14 => '2 weken', 30 => '1 maand'] as $o => $l): ?><option value="<?= $o ?>"<?= $in['verkocht_dagen'] === $o ? ' selected' : '' ?>><?= $l ?></option><?php endforeach; ?></select></div>
+          <div class="field"><label>&nbsp;</label><?php if ($auto): ?><label class="check" style="margin:0"><input type="checkbox" name="ab_kenteken" value="1" <?= $in['kenteken_tonen'] ? 'checked' : '' ?> /> <span>Kenteken op de website laten zien</span></label><?php endif; ?></div>
+        </div>
+        <?php if ($auto): ?><label class="check"><input type="checkbox" name="ab_proefrit" value="1" <?= $in['proefrit'] ? 'checked' : '' ?> /> <span>Knop <strong>Proefrit plannen</strong> bij elke auto (werkt als je afspraakplanner aan staat)</span></label><?php endif; ?>
+        <div style="margin-top:16px"><button class="btn" type="submit">Opslaan en website bijwerken</button></div>
+      </form>
+    <?php endif;
 }
 
 /* ===========================================================
@@ -6158,6 +6862,8 @@ function adm_alles_maak(&$fout) {
     global $ADM_INDELING;
     $z->addFromString('Overzichten/Bank.csv', adm_csv_tekst(['Datum', 'Naam', 'Omschrijving', 'Bedrag', 'Indeling'], array_map(function($t) use ($f, $ADM_INDELING) { return [$t['datum'], $t['naam'], $t['oms'], $f($t['bedrag']), $ADM_INDELING[$t['indeling']] ?? $t['indeling']]; }, $bank)));
     $z->addFromString('Overzichten/Klanten.csv', adm_csv_tekst(['Naam', 'Contactpersoon', 'E-mail', 'Telefoon', 'Adres', 'Postcode', 'Plaats', 'KvK', 'Btw-nummer', 'Notitie'], array_map(function($k) { return [$k['naam'], $k['contact'] ?? '', $k['email'] ?? '', $k['tel'] ?? '', $k['straat'] ?? '', $k['postcode'] ?? '', $k['plaats'] ?? '', $k['kvk'] ?? '', $k['btw'] ?? '', $k['notitie'] ?? '']; }, $klanten)));
+    $abl = ab_lijst();
+    if ($abl) { $z->addFromString('Overzichten/Aanbod.csv', adm_csv_tekst(['Titel', 'Merk/categorie', 'Model/soort', 'Kenteken', 'Prijs', 'Bouwjaar', 'Km', 'Brandstof', 'Status'], array_map(function($x) { return [ab_titel($x), $x['merk'] ?? '', $x['model'] ?? '', $x['kenteken'] ?? '', number_format((int)($x['prijs'] ?? 0) / 100, 2, ',', ''), $x['bouwjaar'] ?? '', $x['km'] ?? '', $x['brandstof'] ?? '', $x['status'] ?? '']; }, $abl))); }
     $rsl = res_lijst();
     if ($rsl) { $z->addFromString('Overzichten/Reserveringen.csv', adm_csv_tekst(['Datum', 'Tijd', 'Personen', 'Naam', 'Telefoon', 'E-mail', 'Opmerking', 'Status', 'Gemaakt op'], array_map(function($r) { return [$r['dag'], $r['tijd'], (int)($r['p'] ?? 1), $r['naam'] ?? '', $r['tel'] ?? '', $r['mail'] ?? '', $r['opm'] ?? '', $r['status'] ?? '', $r['op'] ?? '']; }, $rsl))); }
     foreach ($vk as $d) {
@@ -6174,7 +6880,7 @@ function adm_alles_maak(&$fout) {
     foreach (adm_voorbeeld() ? [] : read_json(ADM_BANKBEST_DIR . '/lijst.json', []) as $b) { if (is_file(ADM_BANKBEST_DIR . '/' . $b['bestand'])) { $z->addFile(ADM_BANKBEST_DIR . '/' . $b['bestand'], 'Bankbestanden/' . adm_bestandsnaam($b['naam'])); } }
     /* De gegevens zelf, zodat je ze later in een ander programma kunt inlezen (zonder wachtwoorden en sleutels) */
     if (!adm_voorbeeld()) {
-        foreach (['adm_klanten.json', 'adm_docs.json', 'adm_inkoop.json', 'adm_bank.json', 'adm_bankregels.json', 'adm_agenda.json', 'adm_maillog.json', 'reserveringen.json'] as $jf) { if (is_file(DATA_DIR . '/' . $jf)) { $z->addFile(DATA_DIR . '/' . $jf, 'Gegevens (voor een ander programma)/' . $jf); } }
+        foreach (['adm_klanten.json', 'adm_docs.json', 'adm_inkoop.json', 'adm_bank.json', 'adm_bankregels.json', 'adm_agenda.json', 'adm_maillog.json', 'reserveringen.json', 'aanbod.json'] as $jf) { if (is_file(DATA_DIR . '/' . $jf)) { $z->addFile(DATA_DIR . '/' . $jf, 'Gegevens (voor een ander programma)/' . $jf); } }
         $ins = read_json(ADM_INST, []); foreach (['taak_sleutel', 'agenda_sleutel'] as $k) { unset($ins[$k]); }
         $z->addFromString('Gegevens (voor een ander programma)/adm_inst.json', json_encode($ins, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
     }
@@ -7256,7 +7962,7 @@ if ($is_demo && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action
 }
 $logged_in = $config && (!empty($_SESSION['ff_admin']) || $is_demo);
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-10-23-indeling');
+define('SITE_BOUW', '2026-10-23-aanbod');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -7279,6 +7985,12 @@ if ($logged_in && ($_GET['adm'] ?? '') === 'alles') {
     adm_schoon_uitvoer();
     header('Content-Type: application/zip'); header('Content-Length: ' . filesize($ar[0])); header('Content-Disposition: attachment; filename="' . $ar[1] . '"');
     readfile($ar[0]); @unlink($ar[0]); exit;
+}
+if ($logged_in && isset($_GET['aanbod_rdw'])) { header('Content-Type: application/json; charset=UTF-8'); echo json_encode(ab_rdw((string)$_GET['aanbod_rdw']), JSON_UNESCAPED_UNICODE); exit; }
+if ($logged_in && isset($_GET['aanbod_voorbeeld'])) { ab_voorbeeld_csv(); }
+if ($logged_in && !$is_demo && !$ADM_ALLEEN_LEZEN && ($_SERVER['REQUEST_METHOD'] ?? '') === 'GET' && !isset($_GET['aanbod_rdw'])) {
+    $abi = ab_inst();
+    if (!empty($abi['aan'])) { foreach (ab_lijst() as $x) { if (!ab_zichtbaar($abi, $x) && is_dir(ROOT . '/' . $abi['slug'] . '/' . $x['slug'])) { write_aanbod_pages(); write_seo_files(load_pages()); break; } } }
 }
 if ($logged_in && ($_GET['adm'] ?? '') === 'docpdf') {
     $ddocs = adm_docs(); $di = adm_vind($ddocs, (string)($_GET['id'] ?? ''));
@@ -7304,6 +8016,7 @@ if ($logged_in && isset($_POST['action'])) {
     $action = $_POST['action'];
     if (strpos($action, 'adm_') === 0) { adm_acties($action); }
     if (strpos($action, 'res_') === 0) { res_acties($action); }
+    if (strpos($action, 'ab_') === 0) { ab_acties($action); }
 
     if ($action === 'save') {
         $title = trim($_POST['title'] ?? '');
@@ -7600,6 +8313,7 @@ $showAccount = $logged_in && isset($_GET['account']);
 $showSettings = $logged_in && isset($_GET['instellingen']);
 $showAdm = $logged_in && isset($_GET['adm']);
 $showRes = $logged_in && isset($_GET['reserveren']);
+$showAb = $logged_in && isset($_GET['aanbod']);
 $uploadLimit = ini_get('upload_max_filesize');
 $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (string)($_SERVER['HTTP_HOST'] ?? '')));
 ?>
@@ -7788,9 +8502,10 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     <div class="wrap">
       <a class="brand" href="admin.php"><?php if (logo_url() !== ''): ?><img src="<?= h(logo_url()) ?>" alt="" /><?php endif; ?><?= h(st('naam')) ?> <span>ADMIN</span></a>
       <div class="row">
-        <a class="btn ghost sm<?= (!$showSettings && !$showAccount && !$showAdm && !$showRes) ? ' on' : '' ?>" href="admin.php">Projecten</a>
+        <a class="btn ghost sm<?= (!$showSettings && !$showAccount && !$showAdm && !$showRes && !$showAb) ? ' on' : '' ?>" href="admin.php">Projecten</a>
         <a class="btn ghost sm<?= $showAdm ? ' on' : '' ?>" href="admin.php?adm">Administratie</a>
-        <a class="btn ghost sm<?= $showRes ? ' on' : '' ?>" href="admin.php?reserveren=1">Reserveren<?php $rsN = $showRes ? 0 : res_nieuw_aantal(); if ($rsN): ?> <span style="display:inline-block;min-width:20px;padding:0 6px;border-radius:999px;background:#ff5d5d;color:#fff;font-size:12px;line-height:20px;text-align:center"><?= $rsN ?></span><?php endif; ?></a>
+        <a class="btn ghost sm<?= $showAb ? ' on' : '' ?>" href="admin.php?aanbod=1"><?= h(ab_inst()['aan'] ? ab_inst()['naam'] : 'Aanbod') ?></a>
+        <a class="btn ghost sm<?= $showRes ? ' on' : '' ?>" href="admin.php?reserveren=1">Afspraakplanner<?php $rsN = $showRes ? 0 : res_nieuw_aantal(); if ($rsN): ?> <span style="display:inline-block;min-width:20px;padding:0 6px;border-radius:999px;background:#ff5d5d;color:#fff;font-size:12px;line-height:20px;text-align:center"><?= $rsN ?></span><?php endif; ?></a>
         <a class="btn ghost sm<?= $showSettings ? ' on' : '' ?>" href="admin.php?instellingen=1">Instellingen</a>
         <a class="btn ghost sm<?= $showAccount ? ' on' : '' ?>" href="admin.php?account=1">Inloggegevens</a>
         <a class="btn ghost sm" href="/" target="_blank">Website bekijken</a>
@@ -7821,6 +8536,9 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
 
       <?php elseif ($showRes): ?>
         <?php res_beheer_view(); ?>
+
+      <?php elseif ($showAb): ?>
+        <?php ab_beheer_view(); ?>
 
       <?php elseif ($showAccount): ?>
         <h1>Inloggegevens</h1>
@@ -7978,7 +8696,8 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
                   <?php if ($k === 'strook'): ?><div class="hint" style="margin:4px 0 0 28px">De namen van je diensten. Hoe de balk eruitziet, kies je hierboven bij Opbouw.</div><?php endif; ?>
                   <?php if ($k === 'diensten'): ?><div class="hint" style="margin:4px 0 0 28px">Je diensten vul je verderop in, bij Diensten.</div><?php endif; ?>
                   <?php if ($k === 'projecten'): ?><div class="hint" style="margin:4px 0 0 28px">Projecten die je in de map Uitgelicht zet.</div><?php endif; ?>
-                  <?php if ($k === 'reserveren'): ?><div class="hint" style="margin:4px 0 0 28px">De kalender om online te reserveren. Instellen doe je bovenaan bij <a href="admin.php?reserveren=1" style="color:#8fb3ff">Reserveren</a>.</div><?php endif; ?>
+                  <?php if ($k === 'aanbod'): ?><div class="hint" style="margin:4px 0 0 28px">Je nieuwste 6 auto's of producten. Toevoegen doe je bovenaan bij <a href="admin.php?aanbod=1" style="color:#8fb3ff">Aanbod</a>.</div><?php endif; ?>
+                  <?php if ($k === 'reserveren'): ?><div class="hint" style="margin:4px 0 0 28px">De kalender om online te reserveren. Instellen doe je bovenaan bij <a href="admin.php?reserveren=1" style="color:#8fb3ff">Afspraakplanner</a>.</div><?php endif; ?>
                   <?php if ($k === 'voorna'): ?>
                     <details class="blk-in"><summary>Inhoud: foto's van voor en na</summary>
                       <div class="two"><div class="field"><label>Titel</label><input type="text" name="voorna_titel" maxlength="80" value="<?= h(st('voorna_titel')) ?>" /></div><div class="field"><label>Korte tekst</label><input type="text" name="voorna_intro" maxlength="200" value="<?= h(st('voorna_intro')) ?>" /></div></div>
@@ -8245,6 +8964,14 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     "h2:Opbouw en details": "Hiermee maak je je website echt eigen: hoe de blokken op de voorpagina eruitzien, welk lettertype je gebruikt en hoe rond de knoppen zijn. Probeer gerust iets uit, je kunt het altijd terugzetten.",
     "h2:Extra": "Extra instellingen. Die heb je meestal niet nodig, maar ze kunnen handig zijn.",
     "h3:Extra kleuren (optioneel)": "Wil je nog meer eigen kleuren? Vink een kleur aan en kies hem. Uitgevinkt gebruikt je website de kleur van de stijl. Let op dat tekst goed leesbaar blijft.",
+    "f:abken": "Het kenteken van de auto. Met Gegevens ophalen zoeken we merk, model, bouwjaar en meer op bij de RDW.",
+    "f:abmerk": "Kies uit de lijst of typ zelf. Op je website kiezen bezoekers eerst hierop.",
+    "f:abmodel": "Bijvoorbeeld Focus of Fiesta. Bezoekers die een merk kiezen, zien daarna alle modellen die je hebt.",
+    "f:abprijs": "Alleen het bedrag, bijvoorbeeld 14950. Laat je het leeg, dan staat er Prijs op aanvraag.",
+    "f:abprijsoud": "Was de prijs eerst hoger? Vul die hier in, dan staat hij doorgestreept naast de nieuwe prijs.",
+    "f:abnaam": "Zo heet de knop in het menu van je website, bijvoorbeeld Occasions, Aanbod of Collectie.",
+    "f:abdagen": "Hoe lang een verkochte auto of uitverkocht product nog met dat label op je website blijft staan.",
+    "f:abbestand": "Een Excel-bestand (.xlsx) of CSV. Op de eerste regel de kopjes, zoals Kenteken, Merk, Model, Prijs, Bouwjaar en Km.",
     "f:rstitel": "De kop boven de kalender, bijvoorbeeld Reserveer een tafel of Maak een afspraak.",
     "f:rsstap": "Om de hoeveel minuten er een tijd te kiezen is. Elke 30 minuten geeft bijvoorbeeld 18.00, 18.30, 19.00.",
     "f:rsduur": "Hoe lang een gast ongeveer blijft. Zolang telt zijn plek als bezet, ook voor de tijden erna.",
