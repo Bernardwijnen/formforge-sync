@@ -4999,7 +4999,7 @@ function adm_demo2_auto($basis) {
     $basis['inkoop'] = [
         $ink('idemo1', 'Onderdelengroothandel Voorbeeld', 'OG-778120', -3, 48612, 8437, 'open', ['afzender' => 'facturen@voorbeeld-onderdelen.nl', 'oms' => 'Remblokken, filters en olie']),
         $ink('idemo2', 'Bandencentrale Voorbeeld', 'BC-2026-1180', -6, 30250, 5250, 'open', ['afzender' => 'factuur@voorbeeld-banden.nl', 'oms' => '8 winterbanden']),
-        $ink('idemo3', 'Diagnoseapparatuur GmbH', 'R-55412', -20, 59900, 0, 'betaald', ['btwsoort' => 'verlegd', 'betaald_op' => $dg(-12), 'afzender' => 'rechnung@voorbeeld.de', 'oms' => 'Software-update, btw verlegd']),
+        $ink('idemo3', 'Diagnoseapparatuur GmbH', 'R-55412', -20, 59900, 0, 'betaald', ['btwsoort' => 'eu', 'betaald_op' => $dg(-12), 'afzender' => 'rechnung@voorbeeld.de', 'oms' => 'Software-update, btw verlegd']),
         $ink('idemo4', 'Onderdelengroothandel Voorbeeld', 'OG-776004', -33, 51127, 8873, 'betaald', ['betaald_op' => $dg(-5), 'afzender' => 'facturen@voorbeeld-onderdelen.nl']),
     ];
     $tx = function($id, $dag, $bedrag, $naam, $oms, $ind, $extra = []) use ($dg) {
@@ -5624,11 +5624,17 @@ function adm_acties($action) {
 }
 
 /* ---------- overzicht per kwartaal en export voor de boekhouder ---------- */
+/* Soorten btw op inkoop. Bij verlegd betaal je de btw zelf aan de Belastingdienst en trek je hem in dezelfde aangifte weer af:
+   verlegd = Nederlandse leverancier (rubriek 2a), eu = leverancier in een ander EU-land (4b), buiten = dienst van buiten de EU (4a). */
+function adm_btwsoorten() { return ['nl' => 'Nederlandse btw', 'verlegd' => 'Btw verlegd (Nederlandse leverancier)', 'eu' => 'Ander EU-land (btw verlegd)', 'buiten' => 'Dienst van buiten de EU', 'geen' => 'Geen btw (bijv. verzekering)']; }
+function adm_btwsoort_kort($s) { return ['nl' => 'Nederlandse btw', 'verlegd' => 'Btw verlegd (2a)', 'eu' => 'EU, btw verlegd (4b)', 'buiten' => 'Buiten EU, btw verlegd (4a)', 'geen' => 'Geen btw'][$s] ?? ''; }
+function adm_is_verlegd($x) { return in_array($x['btwsoort'] ?? '', ['verlegd', 'eu', 'buiten'], true); }
+function adm_verlegd_btw($x) { return adm_is_verlegd($x) ? (int)round((int)$x['bedrag'] * (in_array((int)($x['vpct'] ?? 21), [21, 9], true) ? (int)($x['vpct'] ?? 21) : 21) / 100) : 0; }
 function adm_kwartalen($docs, $jaar, $inkoop = null, $bank = null) {
     if ($inkoop === null) { $inkoop = adm_inkoop(); }
     if ($bank === null) { $bank = adm_bank(); }
     $q = [];
-    for ($n = 1; $n <= 4; $n++) { $q[$n] = ['aantal' => 0, 'excl' => 0, 'g21' => 0, 'b21' => 0, 'g9' => 0, 'b9' => 0, 'g0' => 0, 'btw' => 0, 'incl' => 0, 'voor' => 0, 'inkN' => 0, 'voorbank' => 0, 'bankN' => 0, 'nog' => 0, 'controleren' => 0, 'betalen' => 0]; }
+    for ($n = 1; $n <= 4; $n++) { $q[$n] = ['aantal' => 0, 'excl' => 0, 'g21' => 0, 'b21' => 0, 'g9' => 0, 'b9' => 0, 'g0' => 0, 'g2a' => 0, 'b2a' => 0, 'g4a' => 0, 'b4a' => 0, 'g4b' => 0, 'b4b' => 0, 'verl' => 0, 'btw' => 0, 'incl' => 0, 'voor' => 0, 'inkN' => 0, 'voorbank' => 0, 'bankN' => 0, 'nog' => 0, 'controleren' => 0, 'betalen' => 0]; }
     $kw = function($d) { return (int)ceil((int)substr($d, 5, 2) / 3); };
     foreach ($docs as $d) {
         if ($d['soort'] !== 'factuur' || $d['status'] === 'concept' || substr($d['datum'], 0, 4) !== (string)$jaar) continue;
@@ -5646,6 +5652,10 @@ function adm_kwartalen($docs, $jaar, $inkoop = null, $bank = null) {
         $n = $kw($x['datum']);
         $q[$n]['inkN']++;
         if ($x['btwsoort'] === 'nl') { $q[$n]['voor'] += (int)$x['btw']; }
+        if (adm_is_verlegd($x)) {
+            $r = ['verlegd' => '2a', 'eu' => '4b', 'buiten' => '4a'][$x['btwsoort']]; $vb = adm_verlegd_btw($x);
+            $q[$n]['g' . $r] += (int)$x['bedrag']; $q[$n]['b' . $r] += $vb; $q[$n]['verl'] += $vb;
+        }
         if (!empty($x['controleren']) && $x['status'] === 'open') { $q[$n]['controleren']++; }
     }
     foreach ($bank as $t) {
@@ -5743,7 +5753,7 @@ function adm_demo2() {
         $ink('idemo1', 'Bouwmaterialen Zuid B.V.', 'BZ-24418', -3, 32549, 5649, 'open', ['afzender' => 'facturen@voorbeeld-bouw.nl']),
         $ink('idemo2', 'Verfgroothandel De Kwast', 'VK2026-0912', -12, 9727, 1688, 'open', ['afzender' => 'administratie@voorbeeld-verf.nl', 'controleren' => true]),
         $ink('idemo3', 'Verzekeringen Limburg', '10175509', -36, 24221, 0, 'open', ['btwsoort' => 'geen', 'afzender' => 'info@voorbeeld-verzekering.nl']),
-        $ink('idemo4', 'Gereedschap GmbH', 'R-8013228', -28, 199017, 0, 'betaald', ['btwsoort' => 'verlegd', 'betaald_op' => $dg(-20), 'afzender' => 'rechnung@voorbeeld.de', 'oms' => 'Rechnung, btw verlegd']),
+        $ink('idemo4', 'Gereedschap GmbH', 'R-8013228', -28, 199017, 0, 'betaald', ['btwsoort' => 'eu', 'betaald_op' => $dg(-20), 'afzender' => 'rechnung@voorbeeld.de', 'oms' => 'Rechnung, btw verlegd']),
         $ink('idemo5', 'Bouwmaterialen Zuid B.V.', 'BZ-23990', -45, 28664, 4975, 'betaald', ['betaald_op' => $dg(-30), 'afzender' => 'facturen@voorbeeld-bouw.nl']),
         $ink('idemo6', 'Telefoon en Internet', 'TI-77120', -60, 4235, 735, 'betaald', ['bron' => 'hand', 'betaald_op' => $dg(-55)]),
     ];
@@ -6154,7 +6164,7 @@ function adm_pdf_velden($tekst) {
     }
     if ($beste === null && $alle) { $beste = max(array_column($alle, 1)); }
     $r['bedrag'] = $beste;
-    if (preg_match('/btw\s*verlegd|verlegd|reverse\s*charge|steuerschuldnerschaft|autoliquidation/i', $tekst)) { $r['verlegd'] = true; $r['btw'] = 0; }
+    if (preg_match('/btw\s*verlegd|verlegd|reverse\s*charge|steuerschuldnerschaft|autoliquidation/i', $tekst)) { $r['verlegd'] = true; $r['btw'] = 0; $r['soort'] = preg_match('/reverse\s*charge|steuerschuldnerschaft|autoliquidation|intracommunautaire|innergemeinschaftlich/i', $tekst) ? 'eu' : 'verlegd'; }
     else {
         foreach ($regels as $i => $rg) {
             if (preg_match('/\b(btw|vat|mwst|ust|umsatzsteuer|omzetbelasting)\b/i', $rg) && !preg_match('/btw[\s-]*(nr|nummer|id)|vat\s*(no|number|id)|ust[\s-]*id/i', $rg)) {
@@ -6185,7 +6195,7 @@ function adm_ink_van_pdf($bin, $lev, $afzender, $termijn, $bron, $onderwerp = ''
     $datum = $v['datum'] !== '' && $v['datum'] <= date('Y-m-d', strtotime('+7 days')) && $v['datum'] >= date('Y-m-d', strtotime('-3 years')) ? $v['datum'] : date('Y-m-d');
     $bedrag = (int)($v['bedrag'] ?? 0);
     $btw = $v['btw'];
-    $soort = $v['verlegd'] ? 'verlegd' : 'nl';
+    $soort = $v['verlegd'] ? ($v['soort'] ?? 'verlegd') : 'nl';
     $controleren = $tekst === '' || $v['bedrag'] === null || $v['datum'] === '' || ($btw === null && !$v['verlegd']);
     if ($btw === null) { $btw = 0; }
     return ['id' => adm_id('i'), 'leverancier' => cut($lev, 100), 'afzender' => $afzender, 'nummer' => cut($v['nummer'], 40), 'datum' => $datum, 'termijn' => (int)$termijn,
@@ -6711,8 +6721,9 @@ function adm_acties2($action) {
             $x['nummer'] = cut(trim((string)($_POST['nummer'] ?? '')), 40);
             $d = (string)($_POST['datum'] ?? ''); $x['datum'] = preg_match('/^\d{4}-\d{2}-\d{2}$/', $d) ? $d : date('Y-m-d');
             $x['bedrag'] = adm_cent($_POST['bedrag'] ?? '');
-            $x['btwsoort'] = in_array($_POST['btwsoort'] ?? '', ['nl', 'verlegd', 'geen'], true) ? $_POST['btwsoort'] : 'nl';
+            $x['btwsoort'] = array_key_exists((string)($_POST['btwsoort'] ?? ''), adm_btwsoorten()) ? (string)$_POST['btwsoort'] : 'nl';
             $x['btw'] = $x['btwsoort'] === 'nl' ? adm_cent($_POST['btw'] ?? '') : 0;
+            $x['vpct'] = (int)($_POST['vpct'] ?? 21) === 9 ? 9 : 21;
             $x['controleren'] = false;
         } else { $x['controleren'] = true; }
         $x['termijn'] = max(0, min(180, (int)($_POST['termijn'] ?? 30)));
@@ -6961,7 +6972,7 @@ function adm_export_inkoop() {
     fputcsv($out, ['Datum', 'Leverancier', 'Factuurnummer', 'Omschrijving', 'Bedrag incl. btw', 'Btw', 'Btw-soort', 'Vervaldatum', 'Status', 'Betaald op'], ';');
     foreach (array_reverse(adm_inkoop()) as $x) {
         if (substr($x['datum'], 0, 4) !== (string)$jaar || $x['status'] === 'genegeerd') continue;
-        fputcsv($out, [$x['datum'], $x['leverancier'], $x['nummer'], $x['oms'], $f($x['bedrag']), $f($x['btw']), ['nl' => 'Nederlandse btw', 'verlegd' => 'Btw verlegd', 'geen' => 'Geen btw'][$x['btwsoort']] ?? '', $x['verval'], adm_ink_status($x)[1], $x['betaald_op']], ';');
+        fputcsv($out, [$x['datum'], $x['leverancier'], $x['nummer'], $x['oms'], $f($x['bedrag']), $f(adm_is_verlegd($x) ? adm_verlegd_btw($x) : $x['btw']), adm_btwsoort_kort($x['btwsoort']), $x['verval'], adm_ink_status($x)[1], $x['betaald_op']], ';');
     }
     fclose($out);
 }
@@ -7012,7 +7023,7 @@ function adm_v_inkoop() {
     echo '<div class="adm-scroll"><table class="adm-tab"><thead><tr><th class="mob-weg">Datum</th><th>Leverancier</th><th class="r">Bedrag</th><th class="r mob-weg">Btw</th><th>Status</th><th class="mob-weg"></th></tr></thead><tbody>';
     foreach ($rijen as $x) {
         $s = adm_ink_status($x); $u = 'admin.php?adm=ink&id=' . rawurlencode($x['id']);
-        $btw = $x['btwsoort'] === 'verlegd' ? 'verlegd' : ($x['btwsoort'] === 'geen' ? 'geen' : adm_eur($x['btw']));
+        $btw = adm_is_verlegd($x) ? ['verlegd' => 'verlegd', 'eu' => 'EU verlegd', 'buiten' => 'buiten EU'][$x['btwsoort']] : ($x['btwsoort'] === 'geen' ? 'geen' : adm_eur($x['btw']));
         echo '<tr class="klik" onclick="location.href=\'' . h($u) . '\'"><td class="mob-weg">' . h(date('d-m-Y', strtotime($x['datum']))) . '</td>'
            . '<td><a href="' . h($u) . '">' . h($x['leverancier']) . '</a><span class="sub2">' . h(trim(($x['nummer'] !== '' ? 'Nr. ' . $x['nummer'] : '') . ($x['oms'] !== '' ? '  ' . cut($x['oms'], 50) : ''))) . '</span>'
            . '<span class="sub2 mob-ja">' . h(date('d-m-Y', strtotime($x['datum']))) . '</span>'
@@ -7046,7 +7057,8 @@ function adm_v_ink() {
           <div class="field"><label for="inr">Factuurnummer</label><input type="text" id="inr" name="nummer" maxlength="40" value="<?= h($x['nummer']) ?>" /></div>
           <div class="field"><label for="idat">Factuurdatum</label><input type="date" id="idat" name="datum" value="<?= h($x['datum']) ?>" /></div>
           <div class="field"><label for="ibed">Totaal inclusief btw</label><input type="text" inputmode="decimal" id="ibed" name="bedrag" value="<?= h(adm_invoer((int)$x['bedrag'])) ?>" placeholder="0,00" /></div>
-          <div class="field"><label for="isrt">Btw</label><select id="isrt" name="btwsoort" onchange="document.getElementById('ibtwv').hidden=this.value!=='nl'"><option value="nl"<?= $x['btwsoort'] === 'nl' ? ' selected' : '' ?>>Nederlandse btw</option><option value="verlegd"<?= $x['btwsoort'] === 'verlegd' ? ' selected' : '' ?>>Btw verlegd of buitenland</option><option value="geen"<?= $x['btwsoort'] === 'geen' ? ' selected' : '' ?>>Geen btw (bijvoorbeeld verzekering)</option></select></div>
+          <div class="field"><label for="isrt">Btw</label><select id="isrt" name="btwsoort" onchange="document.getElementById('ibtwv').hidden=this.value!=='nl';document.getElementById('ivpv').hidden=['verlegd','eu','buiten'].indexOf(this.value)<0"><?php foreach (adm_btwsoorten() as $bk => $bl): ?><option value="<?= h($bk) ?>"<?= $x['btwsoort'] === $bk ? ' selected' : '' ?>><?= h($bl) ?></option><?php endforeach; ?></select></div>
+          <div class="field" id="ivpv"<?= adm_is_verlegd($x) ? '' : ' hidden' ?>><label for="ivp">Verlegd btw-tarief</label><select id="ivp" name="vpct"><option value="21"<?= (int)($x['vpct'] ?? 21) !== 9 ? ' selected' : '' ?>>21% (meestal)</option><option value="9"<?= (int)($x['vpct'] ?? 21) === 9 ? ' selected' : '' ?>>9%</option></select><?php if (adm_is_verlegd($x) && (int)$x['bedrag'] > 0): ?><div class="hint">Verlegde btw: <?= h(adm_eur(adm_verlegd_btw($x))) ?>. Die geef je aan bij rubriek <?= ['verlegd' => '2a', 'eu' => '4b', 'buiten' => '4a'][$x['btwsoort']] ?> en trek je weer af bij 5b.</div><?php endif; ?></div>
           <div class="field" id="ibtwv"<?= $x['btwsoort'] !== 'nl' ? ' hidden' : '' ?>><label for="ibtw">Btw-bedrag</label><input type="text" inputmode="decimal" id="ibtw" name="btw" value="<?= h(adm_invoer((int)$x['btw'])) ?>" placeholder="0,00" /><div class="hint"><button type="button" class="linkknop" onclick="var b=document.getElementById('ibed').value.replace(/\./g,'').replace(',','.');var n=parseFloat(b)||0;document.getElementById('ibtw').value=(Math.round(n*100-n*10000/121)/100).toFixed(2).replace('.',',');">Reken 21% uit</button> &#xB7; <button type="button" class="linkknop" onclick="var b=document.getElementById('ibed').value.replace(/\./g,'').replace(',','.');var n=parseFloat(b)||0;document.getElementById('ibtw').value=(Math.round(n*100-n*10000/109)/100).toFixed(2).replace('.',',');">9%</button></div></div>
           <div class="field"><label for="iter">Betaaltermijn (dagen)</label><input type="number" id="iter" name="termijn" min="0" max="180" value="<?= (int)$x['termijn'] ?>" /></div>
         </div>
@@ -7620,7 +7632,7 @@ function adm_demo_inkpdf($x) {
     adm_pw_tekst($p, 192, 80, adm_eur($excl), 10, false, '#1c2330', 'r');
     adm_pw_lijn($p, 120, 90, 192, 90, 0.4);
     adm_pw_tekst($p, 120, 97, 'Subtotaal', 10); adm_pw_tekst($p, 192, 97, adm_eur($excl), 10, false, '#1c2330', 'r');
-    adm_pw_tekst($p, 120, 103, $x['btwsoort'] === 'verlegd' ? 'Btw verlegd' : ($x['btwsoort'] === 'geen' ? 'Vrijgesteld van btw' : 'Btw 21%'), 10); adm_pw_tekst($p, 192, 103, adm_eur($x['btw']), 10, false, '#1c2330', 'r');
+    adm_pw_tekst($p, 120, 103, adm_is_verlegd($x) ? adm_btwsoort_kort($x['btwsoort']) : ($x['btwsoort'] === 'geen' ? 'Vrijgesteld van btw' : 'Btw 21%'), 10); adm_pw_tekst($p, 192, 103, adm_eur(adm_is_verlegd($x) ? adm_verlegd_btw($x) : $x['btw']), 10, false, '#1c2330', 'r');
     adm_pw_tekst($p, 120, 111, 'Totaal te betalen', 11, true); adm_pw_tekst($p, 192, 111, adm_eur($x['bedrag']), 11, true, '#1c2330', 'r');
     adm_pw_tekst($p, 18, 140, 'Dit is een voorbeeldfactuur voor de demo van de administratie.', 9, false, '#6a7486');
     return adm_pw_maak($p, 'Factuur ' . $x['nummer']);
@@ -8155,7 +8167,11 @@ function adm_btw_pdf($kw, $q, $verkoop, $inkoop, $bankGeen) {
     $rij($p, 'Omzet 21% (1a)', $q['g21'], $y); $rij($p, 'Btw 21% (1a)', $q['b21'], $y);
     $rij($p, 'Omzet 9% (1b)', $q['g9'], $y); $rij($p, 'Btw 9% (1b)', $q['b9'], $y);
     $rij($p, 'Omzet 0% of verlegd (1e)', $q['g0'], $y);
+    if ($q['g2a'] || $q['b2a']) { $rij($p, 'Inkoop btw verlegd naar jou (2a)', $q['g2a'], $y); $rij($p, 'Btw verlegd (2a)', $q['b2a'], $y); }
+    if ($q['g4a'] || $q['b4a']) { $rij($p, 'Diensten van buiten de EU (4a)', $q['g4a'], $y); $rij($p, 'Btw (4a)', $q['b4a'], $y); }
+    if ($q['g4b'] || $q['b4b']) { $rij($p, 'Inkoop uit EU-landen (4b)', $q['g4b'], $y); $rij($p, 'Btw (4b)', $q['b4b'], $y); }
     $rij($p, 'Voorbelasting uit inkoopfacturen (5b)', $q['voor'], $y);
+    if ($q['verl']) { $rij($p, 'Verlegde btw weer aftrekken (ook 5b)', $q['verl'], $y); }
     if ($q['voorbank']) { $rij($p, 'Voorbelasting geschat, betalingen zonder factuur', $q['voorbank'], $y); }
     adm_pw_lijn($p, $L, $y - 3, 132, $y - 3, 0.4, $donker); $y += 1.5;
     $rij($p, 'Btw te betalen (indicatie)', $q['betalen'], $y, true);
@@ -8182,7 +8198,7 @@ function adm_btw_pdf($kw, $q, $verkoop, $inkoop, $bankGeen) {
         $y += 6;
     };
     $lijst($p, 'Verkoopfacturen', ['Datum', 'Klant', 'Nummer', 'Btw', 'Bedrag incl.'], array_map(function($d) { $t = adm_tot($d); return [date('d-m-Y', strtotime($d['datum'])), $d['klant']['naam'], $d['nummer'], adm_eur($t['btw']), adm_eur($t['incl'])]; }, $verkoop), $y);
-    $lijst($p, 'Inkoopfacturen', ['Datum', 'Leverancier', 'Nummer', 'Btw', 'Bedrag incl.'], array_map(function($x) { return [date('d-m-Y', strtotime($x['datum'])), $x['leverancier'], $x['nummer'], $x['btwsoort'] === 'nl' ? adm_eur($x['btw']) : ($x['btwsoort'] === 'verlegd' ? 'verlegd' : 'geen'), adm_eur($x['bedrag'])]; }, $inkoop), $y);
+    $lijst($p, 'Inkoopfacturen', ['Datum', 'Leverancier', 'Nummer', 'Btw', 'Bedrag incl.'], array_map(function($x) { return [date('d-m-Y', strtotime($x['datum'])), $x['leverancier'], $x['nummer'], $x['btwsoort'] === 'nl' ? adm_eur($x['btw']) : (adm_is_verlegd($x) ? 'verlegd ' . adm_eur(adm_verlegd_btw($x)) : 'geen'), adm_eur($x['bedrag'])]; }, $inkoop), $y);
     if ($bankGeen) { $lijst($p, 'Zakelijke betalingen zonder factuur (btw geschat)', ['Datum', 'Naam', 'Omschrijving', 'Btw', 'Bedrag'], array_map(function($t) { $pc = (int)$t['btw']; return [date('d-m-Y', strtotime($t['datum'])), $t['naam'], $t['oms'], $t['indeling'] === 'zakelijk_geen' ? adm_eur((int)round(-$t['bedrag'] * $pc / (100 + $pc))) : 'geen', adm_eur($t['bedrag'])]; }, $bankGeen), $y); }
     return adm_pw_maak($p, 'Btw-overzicht kwartaal ' . $n . ' ' . $jaar);
 }
@@ -8216,7 +8232,7 @@ function adm_pakket_maak($kw, &$fout) {
     $z->addFromString('Btw-overzicht kwartaal ' . $n . ' ' . $jaar . '.pdf', adm_btw_pdf($kw, $q, $verkoop, $ink, $geen));
     $f = function($c) { return number_format($c / 100, 2, ',', ''); };
     $z->addFromString('Overzicht/Verkoop.csv', adm_csv_tekst(['Datum', 'Nummer', 'Klant', 'Excl. btw', 'Btw', 'Incl. btw', 'Status', 'Betaald op'], array_map(function($d) use ($f) { $t = adm_tot($d); return [$d['datum'], $d['nummer'], $d['klant']['naam'], $f($t['excl']), $f($t['btw']), $f($t['incl']), adm_status($d)[1], $d['betaald_op']]; }, $verkoop)));
-    $z->addFromString('Overzicht/Inkoop.csv', adm_csv_tekst(['Datum', 'Leverancier', 'Nummer', 'Incl. btw', 'Btw', 'Btw-soort', 'Status', 'Betaald op'], array_map(function($x) use ($f) { return [$x['datum'], $x['leverancier'], $x['nummer'], $f($x['bedrag']), $f($x['btw']), $x['btwsoort'], adm_ink_status($x)[1], $x['betaald_op']]; }, $ink)));
+    $z->addFromString('Overzicht/Inkoop.csv', adm_csv_tekst(['Datum', 'Leverancier', 'Nummer', 'Incl. btw', 'Btw', 'Btw-soort', 'Status', 'Betaald op'], array_map(function($x) use ($f) { return [$x['datum'], $x['leverancier'], $x['nummer'], $f($x['bedrag']), $f(adm_is_verlegd($x) ? adm_verlegd_btw($x) : $x['btw']), adm_btwsoort_kort($x['btwsoort']), adm_ink_status($x)[1], $x['betaald_op']]; }, $ink)));
     global $ADM_INDELING;
     $z->addFromString('Overzicht/Bank.csv', adm_csv_tekst(['Datum', 'Naam', 'Omschrijving', 'Bedrag', 'Indeling', 'Btw-tarief (zonder factuur)'], array_map(function($t) use ($f, $ADM_INDELING) { return [$t['datum'], $t['naam'], $t['oms'], $f($t['bedrag']), $ADM_INDELING[$t['indeling']] ?? '', $t['indeling'] === 'zakelijk_geen' ? $t['btw'] . '%' : '']; }, $bk)));
     foreach ($verkoop as $d) {
@@ -8620,7 +8636,7 @@ function adm_ocr_js($id) {
           var n=0,zet=function(id,w){var e=document.getElementById(id);if(e&&w!==null&&w!==''&&w!==undefined){e.value=w;n++;}};
           var eur=function(c){return c===null||c===undefined?null:(c/100).toFixed(2).replace('.',',');};
           zet('inr',v.nummer);zet('idat',v.datum);zet('ibed',eur(v.bedrag));
-          if(v.verlegd){document.getElementById('isrt').value='verlegd';document.getElementById('ibtwv').hidden=true;}else{zet('ibtw',eur(v.btw));}
+          if(v.verlegd){document.getElementById('isrt').value=v.soort||'verlegd';document.getElementById('ibtwv').hidden=true;document.getElementById('ivpv').hidden=false;}else{zet('ibtw',eur(v.btw));}
           st.textContent=n?'Klaar: '+n+' gegevens ingevuld. Controleer ze goed, tekstherkenning kan een cijfer verkeerd lezen.':'Er kon niets bruikbaars gelezen worden. Vul de gegevens zelf in.';
         }).catch(function(){ st.textContent='Tekstherkenning lukte niet. Vul de gegevens zelf in.'; knop.disabled=false; });
       });
@@ -8875,10 +8891,11 @@ function adm_v_overzicht($docs, $inst) {
       <?php if (!$kor): ?>
       <details style="margin:16px 0 0">
         <summary>Hulp bij je btw-aangifte</summary>
-        <p class="hint" style="margin:10px 0">De bedragen per vakje van de aangifte. De Belastingdienst wil hele euro's: rond de omzet af naar beneden. Voorbelasting (5b) is de btw uit je inkoopfacturen, plus de geschatte btw van zakelijke betalingen zonder factuur. Die laatste mag je officieel pas aftrekken als je de factuur hebt.</p>
+        <p class="hint" style="margin:10px 0">De bedragen per vakje van de aangifte. De Belastingdienst wil hele euro's: rond de omzet af naar beneden. Voorbelasting (5b) is de btw uit je inkoopfacturen, plus de geschatte btw van zakelijke betalingen zonder factuur, plus de verlegde btw uit 2a, 4a en 4b: die geef je aan en trek je in dezelfde aangifte weer af, dus per saldo betaal je er niets voor. Die laatste mag je officieel pas aftrekken als je de factuur hebt.</p>
         <div class="adm-scroll"><table class="adm-tab adm-btw">
-          <thead><tr><th>Kwartaal</th><th class="r">1a omzet 21%</th><th class="r">1a btw</th><th class="r">1b omzet 9%</th><th class="r">1b btw</th><th class="r">1e omzet 0%</th><th class="r">5b voorbelasting</th></tr></thead>
-          <tbody><?php foreach ($q as $n => $r): ?><tr><td>Q<?= $n ?></td><td class="r"><?= h(adm_eur($r['g21'])) ?></td><td class="r"><?= h(adm_eur($r['b21'])) ?></td><td class="r"><?= h(adm_eur($r['g9'])) ?></td><td class="r"><?= h(adm_eur($r['b9'])) ?></td><td class="r"><?= h(adm_eur($r['g0'])) ?></td><td class="r"><?= h(adm_eur($r['voor'] + $r['voorbank'])) ?></td></tr><?php endforeach; ?></tbody>
+          <?php $vr = array_filter(['2a' => 'Inkoop btw verlegd', '4a' => 'Diensten buiten EU', '4b' => 'Inkoop uit EU'], function($rk) use ($som) { return $som('g' . $rk) !== 0; }, ARRAY_FILTER_USE_KEY); ?>
+          <thead><tr><th>Kwartaal</th><th class="r">1a omzet 21%</th><th class="r">1a btw</th><th class="r">1b omzet 9%</th><th class="r">1b btw</th><th class="r">1e omzet 0%</th><?php foreach ($vr as $rk => $rl): ?><th class="r"><?= $rk ?> <?= h(strtolower($rl)) ?></th><th class="r"><?= $rk ?> btw</th><?php endforeach; ?><th class="r">5b voorbelasting</th></tr></thead>
+          <tbody><?php foreach ($q as $n => $r): ?><tr><td>Q<?= $n ?></td><td class="r"><?= h(adm_eur($r['g21'])) ?></td><td class="r"><?= h(adm_eur($r['b21'])) ?></td><td class="r"><?= h(adm_eur($r['g9'])) ?></td><td class="r"><?= h(adm_eur($r['b9'])) ?></td><td class="r"><?= h(adm_eur($r['g0'])) ?></td><?php foreach ($vr as $rk => $rl): ?><td class="r"><?= h(adm_eur($r['g' . $rk])) ?></td><td class="r"><?= h(adm_eur($r['b' . $rk])) ?></td><?php endforeach; ?><td class="r"><?= h(adm_eur($r['voor'] + $r['voorbank'] + $r['verl'])) ?></td></tr><?php endforeach; ?></tbody>
         </table></div>
       </details>
       <?php endif; ?>
@@ -9365,7 +9382,7 @@ if ($is_demo && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action
 }
 $logged_in = $config && (!empty($_SESSION['ff_admin']) || $is_demo);
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-10-23-menulinks');
+define('SITE_BOUW', '2026-10-24-verlegd');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -9769,6 +9786,11 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
   .sub{color:var(--mut);margin:0 0 22px;}
   .btn{display:inline-flex;align-items:center;gap:7px;background:var(--blue);color:#fff;border:none;font-family:inherit;font-weight:600;font-size:15px;padding:10px 16px;border-radius:10px;cursor:pointer;text-decoration:none;}
   .btn:hover{filter:brightness(1.1);}
+  button,.btn{transition:transform .08s ease,filter .08s ease,opacity .15s ease;-webkit-tap-highlight-color:transparent;}
+  button:active:not(:disabled),.btn:active{transform:translateY(1px) scale(.97);filter:brightness(.88);}
+  .btn.ff-bezig,button.ff-bezig{opacity:.75;cursor:progress;pointer-events:none;}
+  .ff-spin{display:inline-block;width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:ffspin .7s linear infinite;vertical-align:-2px;}
+  @keyframes ffspin{to{transform:rotate(360deg);}}
   .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--text);}
   .btn.ghost:hover{border-color:#8fb3ff;}
   .btn.ghost.on{border-color:#8fb3ff;background:#1f2b3d;}
@@ -10400,6 +10422,28 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
   </main>
 <?php endif; ?>
 <script>
+/* Knoppen laten zien dat ze iets doen: na een klik op Opslaan (of een andere verzendknop) staat er Bezig... met een draaiend rondje.
+   Dubbel klikken verstuurt het formulier niet twee keer. Gaat de pagina niet weg (bijvoorbeeld een download), dan komt de knop na 8 seconden terug. */
+(function () {
+  function herstel(b) { if (b && b.classList.contains("ff-bezig")) { b.classList.remove("ff-bezig"); if (b.dataset.ffTekst !== undefined) { b.innerHTML = b.dataset.ffTekst; delete b.dataset.ffTekst; } } }
+  /* Vangen voordat andere scripts het event kunnen tegenhouden; pas na afloop kijken of het formulier echt verstuurd wordt */
+  document.addEventListener("submit", function (e) {
+    var f = e.target;
+    if (!f || f.tagName !== "FORM") return;
+    if (f.dataset.ffBezig === "1") { e.preventDefault(); e.stopImmediatePropagation(); return; }
+    var b = e.submitter || f.querySelector('button[type=submit],button:not([type]),input[type=submit]');
+    setTimeout(function () {
+      if (e.defaultPrevented || !b || b.disabled) return;
+      f.dataset.ffBezig = "1";
+      b.classList.add("ff-bezig");
+      if (b.tagName === "BUTTON") { b.dataset.ffTekst = b.innerHTML; b.innerHTML = '<span class="ff-spin" aria-hidden="true"></span> Bezig...'; }
+      setTimeout(function () { f.dataset.ffBezig = ""; herstel(b); }, 8000);
+    }, 0);
+  }, true);
+  window.addEventListener("pageshow", function () { document.querySelectorAll(".ff-bezig").forEach(herstel); document.querySelectorAll("form[data-ff-bezig]").forEach(function (f) { f.dataset.ffBezig = ""; }); });
+})();
+</script>
+<script>
 /* Hulp bij elk onderdeel: een rond vraagtekentje opent een korte uitleg */
 (function () {
   var H = {
@@ -10576,9 +10620,40 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     "f:ilev": "Van wie de factuur komt, bijvoorbeeld de bouwmarkt of je telefoonaanbieder.",
     "f:inr": "Het nummer dat op de factuur van je leverancier staat.",
     "f:ioms": "Waarvoor de factuur is, bijvoorbeeld: verf en materiaal. Alleen voor jezelf.",
-    "f:ibed": "Het totaalbedrag dat je moet betalen, met btw.",
+    "kop@doc": "Hier zie je wat je met deze offerte of factuur kunt doen. Een concept maak je definitief als alles klopt. Daarna verstuur je hem per mail, zet je hem op betaald als het geld binnen is, of maak je een creditfactuur als er iets niet klopt.",
+    "kop@nieuw": "Stap 1: kies een klant, of kies Nieuwe klant en vul naam en adres in. Stap 2: vul de regels in. Stap 3: klik op Opslaan. Het wordt eerst een concept, dat je daarna nog kunt bekijken en aanpassen.",
+    "kop@bewerk": "Pas aan wat niet klopt en klik op Opslaan. Zolang het een concept is, kun je alles wijzigen.",
+    "kop@ink": "Vul de gegevens in van de rekening die je kreeg: leverancier, nummer, datum, bedrag en btw. Heb je de pdf, zet die erbij. Kies bij Btw de juiste soort, dan komt het in het goede vakje van je btw-aangifte. Klik daarna op Opslaan.",
+    "kop@extern": "Voor een factuur die je buiten deze administratie hebt gemaakt. Vul hem hier in, dan telt hij mee in je omzet en je btw-overzicht.",
+    "kop@afspraak": "Vul in wat het is, de datum en de tijd. Kies eventueel de klant en het adres. Klik op Opslaan, dan staat de afspraak in je agenda.",
+    "kop@mailbox": "Vul je e-mailadres en het wachtwoord van die mailbox in. Daarna gaan offertes en facturen vanaf jouw adres de deur uit en komen inkoopfacturen van je leveranciers vanzelf binnen.",
+    "kop@inst": "Vul deze gegevens een keer in. Ze komen op elke offerte en factuur. Je KvK-nummer, btw-nummer, IBAN en adres moeten volgens de wet op elke factuur staan.",
+    "kop@mail": "Controleer aan wie de mail gaat en pas de tekst aan als je wilt. De pdf gaat als bijlage mee. Kies nu of later versturen en klik op de knop.",
+    "kop@klant": "De gegevens van deze klant. Pas aan wat niet klopt en klik op Opslaan. Daaronder zie je al zijn offertes en facturen.",
+    "n@o:jaar": "Kies het jaar waarvan je de omzet en btw wilt zien.",
+    "n@o:k": "Kies het kwartaal waarvoor je het pakket voor je boekhouder wilt maken.",
+    "n@docs:q": "Typ de naam van een klant, een nummer of een woord uit het onderwerp en druk op Enter.",
+    "n@klanten:q": "Typ een naam, plaats of e-mailadres en druk op Enter.",
+    "n@inkoop:k": "Laat alleen de inkoopfacturen van een bepaald kwartaal zien.",
+    "n@bank:k": "Laat alleen de betalingen van een bepaald kwartaal zien.",
+    "f:ipdf": "Kies de pdf van de rekening die je kreeg. Laat je het bedrag leeg, dan vult de admin de gegevens zelf in uit de pdf. Controleer ze daarna altijd even.",
+    "n:betaald_op": "De datum waarop er betaald is. Vandaag staat al ingevuld. Was het eerder, pas de datum dan aan.",
+    "n@bank:bestand": "Kies het bestand met je afschriften dat je uit je internetbankieren hebt gedownload (MT940, CSV of Excel). Klik daarna op de knop om het in te laden.",
+    "f:onthoud": "Vink dit aan, dan worden betalingen van dezelfde naam voortaan vanzelf op dezelfde manier ingedeeld.",
+    "f:epdf": "De pdf van die factuur, zodat je boekhouder hem ook heeft. Mag leeg blijven.",
+    "n@afspraak:soort": "Afspraak: een gewone afspraak. Opname: je gaat bij een klant kijken en opmeten. Klus: je voert het werk uit.",
+    "f:ahd": "Vink dit aan als het de hele dag duurt. Dan hoef je geen begin- en eindtijd in te vullen.",
+    "n:smtp_aan": "Aangevinkt gaan offertes, facturen en herinneringen vanaf je eigen e-mailadres de deur uit. Klanten zien dan dat ze van jou komen.",
+    "n@mailbox:email": "Het e-mailadres waarvandaan deze leverancier zijn facturen stuurt.",
+    "n@mailbox:naam": "De naam van de leverancier, zoals hij in je inkoop moet staan.",
+    "n@mailbox:termijn": "Binnen hoeveel dagen je de facturen van deze leverancier moet betalen. Meestal is dat 14 of 30 dagen.",
+    "n:kor": "Vink dit alleen aan als je bij de Belastingdienst bent aangemeld voor de kleineondernemersregeling (KOR). Dan staat er geen btw op je facturen.",
+    "n@mail:wanneer": "Nu versturen: de mail gaat meteen weg. Later versturen: kies een dag, dan gaat hij die dag vanzelf weg. Tot dan staat hij in je agenda.",
+    "n@mail:op": "De dag waarop de mail vanzelf wordt verstuurd.",
+    "f:ivp": "Bij verlegde btw betaal je de btw zelf aan de Belastingdienst en trek je hem in dezelfde aangifte weer af. Per saldo betaal je dus niets. Meestal is het 21%. Kies 9% alleen als het om iets met het lage tarief gaat.",
+    "f:ibed": "Het totaalbedrag dat je moet betalen, met btw. Is de btw verlegd, dan staat er geen btw op en vul je gewoon het bedrag van de factuur in.",
     "f:ibtw": "Het btw-bedrag dat op de factuur staat. Dit trek je af bij je btw-aangifte.",
-    "f:isrt": "Het btw-tarief op de factuur. Staat er geen btw op, kies dan 0%.",
+    "f:isrt": "Wat voor btw staat er op de factuur? Nederlandse btw: er staat gewoon btw op. Btw verlegd: een Nederlandse leverancier (bijvoorbeeld een onderaannemer) zet btw verlegd op de factuur. Ander EU-land: de leverancier zit bijvoorbeeld in Duitsland en rekent geen btw. Buiten de EU: een dienst van een bedrijf buiten Europa. Geen btw: er hoort geen btw op, zoals bij een verzekering. Dit bepaalt in welk vakje van je btw-aangifte het komt.",
     "f:eklant": "Voor welke klant de factuur was. Staat de klant er niet tussen, maak dan een nieuwe aan.",
     "f:enkn": "De naam van de nieuwe klant.",
     "f:edat": "De datum die op de factuur staat.",
@@ -10634,9 +10709,13 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     el.appendChild(b);
     el.insertAdjacentElement("afterend", box);
   }
+  var kopGedaan = false;
   document.querySelectorAll("h1, h2, h3").forEach(function (h) {
     var t = (h.childNodes[0] && h.childNodes[0].nodeType === 3 ? h.childNodes[0].nodeValue : h.textContent).trim();
-    voegToe(h, zoek(h.tagName.toLowerCase() + ":" + t));
+    var tekst = zoek(h.tagName.toLowerCase() + ":" + t);
+    /* De eerste kop van een scherm in de administratie zonder eigen uitleg krijgt de uitleg van dat scherm */
+    if (!tekst && h.tagName === "H2" && !kopGedaan && pg !== null && !h.closest(".adm-doc,.papier,.doc,details")) { tekst = H["kop@" + pg]; if (tekst) kopGedaan = true; }
+    voegToe(h, tekst);
   });
   document.querySelectorAll("label[for]").forEach(function (l) {
     var id = l.getAttribute("for");
@@ -10645,6 +10724,23 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
   document.querySelectorAll("label:not([for])").forEach(function (l) {
     if (l.querySelector("input")) return;
     voegToe(l, H["lbl:" + l.textContent.trim()]);
+  });
+  /* Velden op naam (zoekvakjes, keuzes zonder eigen label, aanvinkvakjes) */
+  var gehad = {};
+  document.querySelectorAll("main input, main select, main textarea").forEach(function (e) {
+    if (e.type === "hidden" || e.type === "submit" || (!e.getAttribute("name") && !e.id)) return;
+    var nm = e.getAttribute("name") || "", tekst = (nm && ((pg !== null && H["n@" + pg + ":" + nm]) || H["n:" + nm])) || (e.id && e.closest("label") ? H["f:" + e.id] : "");
+    if (!nm) nm = "#" + e.id;
+    if (!tekst || gehad[nm]) return;
+    var lab = e.id ? document.querySelector('label[for="' + e.id + '"]') : null;
+    if (lab && lab.querySelector(".hulp")) return;
+    gehad[nm] = 1;
+    if (lab && !lab.querySelector("input,select,textarea")) { voegToe(lab, tekst); return; }
+    var groep = nm.charAt(0) === "#" ? [e] : document.querySelectorAll('main [name="' + nm + '"]'), laatste = groep[groep.length - 1];
+    var anker = laatste.closest("label") || laatste;
+    var wrap = document.createElement("span"); wrap.className = "hulpwrap";
+    anker.parentNode.insertBefore(wrap, anker.nextSibling);
+    voegToe(wrap, tekst);
   });
   var fk = document.querySelector('input[name="feest_kleuren"]');
   if (fk) {
