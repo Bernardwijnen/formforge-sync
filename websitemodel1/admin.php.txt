@@ -417,13 +417,13 @@ function stijl_grote_foto() {
 /* ---------- Eigen opbouw, kleuren, letter en vormen ----------
    Komt na de stijl, zodat de keuzes van de klant altijd winnen. */
 $OPBOUW = [
-    'menu' => ['standaard' => 'Standaard', 'midden' => 'Logo in het midden', 'donker' => 'Donkere balk', 'zwevend' => 'Zwevende balk over de foto', 'onderlijn' => 'Strak met een gekleurde lijn'],
-    'hero' => ['standaard' => 'Tekst links, logo rechts', 'rechts' => 'Logo links, tekst rechts', 'midden' => 'Alles in het midden', 'foto' => 'Grote foto als achtergrond', 'kaart' => 'Tekst op een witte kaart', 'golf' => 'Ronde onderkant', 'schuin' => 'Schuine onderkant', 'groot' => 'Schermvullend', 'omlijst' => 'In een afgeronde lijst'],
-    'strook' => ['standaard' => 'Balk met je diensten', 'groot' => 'Grote gekleurde balk', 'lopend' => 'Lopende tekst', 'geen' => 'Geen balk'],
-    'diensten' => ['standaard' => 'Tegels', 'lijst' => 'Lijst onder elkaar', 'donker' => 'Tegels op een donker vlak', 'iconen' => 'In het midden, met ronde cijfers', 'twee' => 'Twee brede kolommen', 'groot' => 'Grote nummers met een streep', 'tijdlijn' => 'Als stappen onder elkaar'],
-    'projecten' => ['standaard' => 'Mappen', 'kaarten' => 'Kaarten met foto', 'foto' => 'Grote foto\'s', 'mozaiek' => 'Een grote en een kleine foto', 'rij' => 'Foto naast de tekst', 'polaroid' => 'Polaroidfoto\'s', 'schuif' => 'Om doorheen te schuiven'],
-    'afsluiter' => ['standaard' => 'Gekleurd vlak', 'licht' => 'Licht vlak', 'kaart' => 'Losse kaart', 'midden' => 'Alles in het midden'],
-    'voet' => ['standaard' => 'Donker', 'licht' => 'Licht', 'midden' => 'In het midden'],
+    'menu' => ['standaard' => 'Standaard', 'midden' => 'Logo in het midden', 'donker' => 'Donkere balk', 'zwevend' => 'Zwevende balk over de foto', 'onderlijn' => 'Strak met een gekleurde lijn', 'glas' => 'Wit en doorschijnend', 'pil' => 'Menu in een lichte pil', 'ruim' => 'Hoog en ruim', 'smal' => 'Smal en compact', 'kader' => 'Losse witte balk met rand'],
+    'hero' => ['standaard' => 'Tekst links, logo rechts', 'rechts' => 'Logo links, tekst rechts', 'midden' => 'Alles in het midden', 'foto' => 'Grote foto als achtergrond', 'kaart' => 'Tekst op een witte kaart', 'golf' => 'Ronde onderkant', 'schuin' => 'Schuine onderkant', 'groot' => 'Schermvullend', 'omlijst' => 'In een afgeronde lijst', 'licht' => 'Wit en ruim, met een lijntje'],
+    'strook' => ['standaard' => 'Balk met je diensten', 'groot' => 'Grote gekleurde balk', 'lopend' => 'Lopende tekst', 'geen' => 'Geen balk', 'licht' => 'Lichte balk', 'lijn' => 'Tussen twee dunne lijnen', 'labels' => 'Losse labels', 'vinkjes' => 'Met vinkjes', 'nummers' => 'Genummerd', 'kaart' => 'Witte kaart over de rand'],
+    'diensten' => ['standaard' => 'Tegels', 'lijst' => 'Lijst onder elkaar', 'donker' => 'Tegels op een donker vlak', 'iconen' => 'In het midden, met ronde cijfers', 'twee' => 'Twee brede kolommen', 'groot' => 'Grote nummers met een streep', 'tijdlijn' => 'Als stappen onder elkaar', 'rand' => 'Kaarten met een gekleurde rand', 'raster' => 'Strak raster met dunne lijnen', 'zacht' => 'Zachte vlakken zonder rand'],
+    'projecten' => ['standaard' => 'Mappen', 'kaarten' => 'Kaarten met foto', 'foto' => 'Grote foto\'s', 'mozaiek' => 'Een grote en een kleine foto', 'rij' => 'Foto naast de tekst', 'polaroid' => 'Polaroidfoto\'s', 'schuif' => 'Om doorheen te schuiven', 'lijst' => 'Lijst met kleine foto', 'strak' => 'Foto met tekst eronder', 'label' => 'Foto met een witte tekstkaart'],
+    'afsluiter' => ['standaard' => 'Gekleurd vlak', 'licht' => 'Licht vlak', 'kaart' => 'Losse kaart', 'midden' => 'Alles in het midden', 'wit' => 'Wit met dunne lijnen', 'rand' => 'Witte kaart met gekleurde rand', 'omlijnd' => 'Omlijnd, in het midden', 'tint' => 'Zachte tint van je kleur', 'groot' => 'Grote kop, veel ruimte', 'streep' => 'Wit met een kleurstreep'],
+    'voet' => ['standaard' => 'Donker', 'licht' => 'Licht', 'midden' => 'In het midden', 'wit' => 'Wit met een dunne lijn', 'compact' => 'Compact, alles op een paar regels', 'kolommen' => 'Kolommen met een kleurlijn', 'tint' => 'Zachte tint van je kleur', 'kaart' => 'In een lichte kaart', 'streep' => 'Wit met een kleurstreep', 'groot' => 'Grote bedrijfsnaam'],
 ];
 $LETTERS = [
     ''          => ['naam' => 'Zoals de stijl', 'fonts' => '', 'kop' => '', 'tekst' => ''],
@@ -667,6 +667,139 @@ function maatwerk_css() {
 .l-voet-licht .legal .login{color:var(--muted) !important;}
 .l-voet-midden .nap{grid-template-columns:repeat(auto-fit,minmax(200px,260px));justify-content:center;text-align:center;}
 .l-voet-midden .legal{justify-content:center;flex-direction:column;align-items:center;gap:6px;text-align:center;}
+/* ===== licht en strak: extra menu ===== */
+.l-menu-glas .top,.l-menu-pil .top,.l-menu-ruim .top,.l-menu-smal .top{background:#fff !important;color:var(--navy) !important;border-bottom:1px solid var(--line) !important;}
+.l-menu-glas .top{background:rgba(255,255,255,.74) !important;backdrop-filter:saturate(1.6) blur(14px);-webkit-backdrop-filter:saturate(1.6) blur(14px);border-bottom-color:rgba(0,0,0,.06) !important;}
+:is(.l-menu-glas,.l-menu-pil,.l-menu-ruim,.l-menu-smal,.l-menu-kader) .top .brand{color:var(--navy);}
+:is(.l-menu-glas,.l-menu-pil,.l-menu-ruim,.l-menu-smal,.l-menu-kader) .menu a:not(.cta){color:var(--navy) !important;background:transparent;}
+:is(.l-menu-glas,.l-menu-ruim,.l-menu-smal,.l-menu-kader) .menu a:not(.cta):hover{background:rgba(0,0,0,.05) !important;}
+.l-menu-pil .menu{background:var(--sky);border-radius:999px;padding:5px;gap:2px;box-shadow:inset 0 0 0 1px var(--line);}
+.l-menu-pil .menu a{border-radius:999px !important;}
+.l-menu-pil .menu a:not(.cta):hover{background:#fff !important;box-shadow:0 2px 8px -4px rgba(0,0,0,.3);}
+.l-menu-pil .menu a.cta{margin-left:2px;}
+.l-menu-ruim .top .wrap{height:104px;}
+.l-menu-ruim .brand{font-size:24px;letter-spacing:-.01em;}
+.l-menu-ruim .brand img{height:64px;max-width:220px;}
+.l-menu-ruim .menu{gap:8px;}
+.l-menu-ruim .menu a{font-size:16px;padding:11px 16px;}
+@media (max-width:700px){.l-menu-ruim .top .wrap{height:80px;}.l-menu-ruim .brand{font-size:20px;}.l-menu-ruim .brand img{height:48px;}}
+.l-menu-smal .top .wrap{height:56px;}
+.l-menu-smal .brand{font-size:16px;}
+.l-menu-smal .brand img{height:34px;}
+.l-menu-smal .menu a{font-size:14px;padding:6px 12px;}
+.l-menu-kader .top{background:transparent !important;border:0 !important;box-shadow:none !important;backdrop-filter:none;padding-top:12px;}
+.l-menu-kader .top .wrap{background:#fff;color:var(--navy);border:1px solid var(--line);border-radius:14px;height:66px;width:calc(100% - 24px);max-width:1160px;padding-left:22px;padding-right:9px;box-shadow:0 12px 30px -24px rgba(0,0,0,.45);}
+/* ===== licht en strak: extra bovenkant ===== */
+.l-hero-licht .hero:not(.has-photo){background:#fff !important;color:var(--navy) !important;border-bottom:1px solid var(--line);}
+.l-hero-licht .hero:not(.has-photo)::after{display:none;}
+.l-hero-licht .hero:not(.has-photo) h1{font-weight:600;letter-spacing:-.03em;max-width:17ch;}
+.l-hero-licht .hero:not(.has-photo) h1::after{content:"";display:block;width:64px;height:4px;border-radius:4px;background:var(--blue);margin-top:28px;}
+.l-hero-licht .hero:not(.has-photo) .lead{color:var(--muted) !important;}
+.l-hero-licht .hero:not(.has-photo) .eyebrow{color:var(--blue) !important;}
+.l-hero-licht .hero:not(.has-photo) .btn.quiet{color:var(--navy) !important;box-shadow:inset 0 0 0 1.5px var(--line) !important;}
+.l-hero-licht .hero:not(.has-photo) .btn.quiet:hover{box-shadow:inset 0 0 0 1.5px var(--navy) !important;}
+.l-hero-licht .hero:not(.has-photo) .btn.primary{background:var(--blue) !important;color:#fff !important;}
+.l-hero-licht .hero .emblem img{filter:none;}
+.l-hero-licht.l-hero-licht .hero-rand{display:none;}
+/* ===== licht en strak: extra balk met diensten ===== */
+:is(.l-strook-licht,.l-strook-lijn,.l-strook-labels,.l-strook-vinkjes,.l-strook-nummers) .servicebar{background:#fff !important;color:var(--navy) !important;}
+:is(.l-strook-licht,.l-strook-lijn,.l-strook-labels,.l-strook-vinkjes,.l-strook-nummers,.l-strook-kaart) .servicebar span::before{background:var(--blue);}
+.l-strook-licht .servicebar{background:var(--sky) !important;border-bottom:1px solid var(--line);}
+.l-strook-lijn .servicebar{border-top:1px solid var(--line);border-bottom:1px solid var(--line);font-size:12.5px;font-weight:600;text-transform:uppercase;letter-spacing:.14em;}
+.l-strook-lijn .servicebar .wrap{gap:8px 22px;padding-top:18px;padding-bottom:18px;}
+.l-strook-lijn .servicebar span{gap:22px;}
+.l-strook-lijn .servicebar span::before{width:1px;height:14px;border-radius:0;background:var(--line);}
+.l-strook-lijn .servicebar span:first-child::before{display:none;}
+.l-strook-labels .servicebar .wrap{gap:10px;padding-top:20px;padding-bottom:20px;}
+.l-strook-labels .servicebar span{padding:8px 16px;border:1px solid var(--line);border-radius:999px;background:#fff;}
+.l-strook-vinkjes .servicebar{border-bottom:1px solid var(--line);}
+.l-strook-vinkjes .servicebar span::before{content:"\2713";width:auto;height:auto;border-radius:0;background:none !important;color:var(--blue);font-weight:800;}
+.l-strook-nummers .servicebar{border-bottom:1px solid var(--line);}
+.l-strook-nummers .servicebar .wrap{counter-reset:ffsb;gap:8px 34px;}
+.l-strook-nummers .servicebar span{counter-increment:ffsb;}
+.l-strook-nummers .servicebar span::before{content:counter(ffsb,decimal-leading-zero);width:auto;height:auto;border-radius:0;background:none !important;color:var(--blue);font-weight:700;font-size:12px;letter-spacing:.06em;}
+.l-strook-kaart .servicebar{background:transparent !important;color:var(--navy) !important;position:relative;z-index:3;margin-top:-34px;}
+.l-strook-kaart .servicebar .wrap{background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 22px 50px -30px rgba(0,0,0,.45);width:calc(100% - 32px);max-width:1080px;padding:20px 28px;}
+/* ===== licht en strak: extra diensten ===== */
+.l-dienst-rand .service{background:#fff;border:1px solid var(--line);border-left:4px solid var(--blue);border-radius:6px !important;box-shadow:none;}
+.l-dienst-rand .service:hover{transform:none;box-shadow:0 14px 30px -24px rgba(0,0,0,.4);border-color:var(--line);border-left-color:var(--navy);}
+.l-dienst-rand .service .num,.l-dienst-raster .service .num{display:block;width:auto;height:auto;background:transparent !important;color:var(--blue) !important;border-radius:0 !important;box-shadow:none !important;font-size:13px;font-weight:700;letter-spacing:.12em;margin-bottom:14px;}
+.l-dienst-raster .services{gap:0;border-top:1px solid var(--line);border-left:1px solid var(--line);}
+.l-dienst-raster .service{background:transparent;border:0;border-right:1px solid var(--line);border-bottom:1px solid var(--line);border-radius:0 !important;padding:36px 32px;box-shadow:none;}
+.l-dienst-raster .service:hover{transform:none;box-shadow:none;background:var(--sky);}
+.l-dienst-raster .service .num{color:var(--muted) !important;margin-bottom:44px;}
+.l-dienst-zacht .service{background:var(--sky);border:0;border-radius:20px !important;box-shadow:none;}
+.l-dienst-zacht .service:hover{background:#fff;transform:none;box-shadow:0 0 0 1px var(--line),0 22px 44px -30px rgba(0,0,0,.4);}
+.l-dienst-zacht .service .num{background:#fff !important;color:var(--blue) !important;border-radius:50% !important;box-shadow:0 0 0 1px var(--line);}
+/* ===== licht en strak: extra projecten ===== */
+:is(.l-proj-lijst,.l-proj-strak,.l-proj-label) .folder{padding-top:0;color:var(--navy);}
+:is(.l-proj-lijst,.l-proj-strak,.l-proj-label) .folder .tab{display:none;}
+:is(.l-proj-lijst,.l-proj-strak,.l-proj-label) .folder .body{background:transparent !important;border-radius:0;min-height:0;padding:0;overflow:visible;justify-content:flex-start;}
+:is(.l-proj-lijst,.l-proj-strak,.l-proj-label) .folder .body::before{display:none;}
+:is(.l-proj-lijst,.l-proj-strak,.l-proj-label) .folder .photo-sheet{position:relative;inset:auto;top:auto;left:auto;right:auto;transform:none !important;padding:0;box-shadow:none;overflow:hidden;}
+:is(.l-proj-lijst,.l-proj-strak,.l-proj-label) .folder .photo-sheet img{border-radius:0;transition:transform .5s ease;}
+:is(.l-proj-lijst,.l-proj-strak,.l-proj-label) .folder:hover .photo-sheet img{transform:scale(1.03);}
+:is(.l-proj-lijst,.l-proj-strak,.l-proj-label) .folder .desc{color:var(--muted);}
+:is(.l-proj-lijst,.l-proj-strak,.l-proj-label) .folder .meta{justify-content:flex-start;color:var(--blue);}
+.l-proj-lijst .folders{grid-template-columns:1fr;gap:0;border-top:1px solid var(--line);}
+.l-proj-lijst .folders.single{max-width:none;}
+.l-proj-lijst .folder .body{display:grid;grid-template-columns:220px 1fr;gap:clamp(18px,3vw,36px);align-items:center;padding:24px 0;border-bottom:1px solid var(--line);}
+.l-proj-lijst .folder .photo-sheet{height:150px;border-radius:10px;}
+.l-proj-lijst .folder h3{font-size:clamp(22px,2.4vw,28px);}
+.l-proj-lijst .folder .meta{margin-top:12px;}
+.l-proj-lijst .folder:hover h3{color:var(--blue);}
+@media (max-width:640px){.l-proj-lijst .folder .body{grid-template-columns:1fr;}.l-proj-lijst .folder .photo-sheet{height:200px;}}
+.l-proj-strak .folder .photo-sheet{height:auto;aspect-ratio:4/3;border-radius:0;}
+.l-proj-strak .folder .front{padding:20px 0 0;border-top:0;}
+.l-proj-strak .folder h3{font-size:clamp(24px,2.6vw,32px);}
+.l-proj-label .folder .photo-sheet{height:auto;aspect-ratio:16/10;border-radius:14px;}
+.l-proj-label .folder .front{background:#fff;border:1px solid var(--line);border-radius:14px;margin:-56px 22px 0;padding:22px 26px;box-shadow:0 24px 50px -30px rgba(0,0,0,.45);transition:transform .3s ease;}
+.l-proj-label .folder:hover .front{transform:translateY(-4px);}
+.l-proj-label .folder h3{font-size:clamp(22px,2.4vw,28px);}
+/* ===== licht en strak: extra contactblok onderaan ===== */
+:is(.l-afsl-wit,.l-afsl-rand,.l-afsl-omlijnd,.l-afsl-tint,.l-afsl-groot,.l-afsl-streep) .band{background:#fff !important;color:var(--navy) !important;}
+:is(.l-afsl-wit,.l-afsl-rand,.l-afsl-omlijnd,.l-afsl-tint,.l-afsl-groot,.l-afsl-streep) .band h2{color:var(--navy);}
+:is(.l-afsl-wit,.l-afsl-rand,.l-afsl-omlijnd,.l-afsl-tint,.l-afsl-groot,.l-afsl-streep) .band p{color:var(--muted) !important;}
+:is(.l-afsl-wit,.l-afsl-rand,.l-afsl-omlijnd,.l-afsl-tint,.l-afsl-groot,.l-afsl-streep) .band .btn.white{background:var(--blue) !important;color:#fff !important;}
+:is(.l-afsl-wit,.l-afsl-rand,.l-afsl-omlijnd,.l-afsl-tint,.l-afsl-groot,.l-afsl-streep) .band .btn.outline{color:var(--navy) !important;box-shadow:inset 0 0 0 1.5px var(--navy) !important;background:transparent !important;}
+.l-afsl-wit .band{border-top:1px solid var(--line);border-bottom:1px solid var(--line);}
+.l-afsl-rand .band,.l-afsl-omlijnd .band{background:transparent !important;padding:clamp(24px,4vw,56px) 0;}
+.l-afsl-rand .band .wrap,.l-afsl-omlijnd .band .wrap{background:#fff;border:1px solid var(--line);width:calc(100% - 32px);max-width:1120px;padding:clamp(28px,4vw,52px);}
+.l-afsl-rand .band .wrap{border-left:6px solid var(--blue);border-radius:12px;}
+.l-afsl-omlijnd .band .wrap{border-radius:26px;flex-direction:column;text-align:center;justify-content:center;}
+.l-afsl-omlijnd .band h2{margin:0 auto;}
+.l-afsl-omlijnd .band p{margin-left:auto;margin-right:auto;}
+.l-afsl-omlijnd .band .acts{justify-content:center;}
+.l-afsl-tint .band{background:var(--sky) !important;background:color-mix(in srgb,var(--blue) 9%,#fff) !important;}
+.l-afsl-groot .band{border-top:1px solid var(--line);}
+.l-afsl-groot .band .wrap{flex-direction:column;align-items:flex-start;padding-top:clamp(70px,10vw,140px);padding-bottom:clamp(70px,10vw,140px);}
+.l-afsl-groot .band h2{font-size:clamp(40px,6.4vw,80px);max-width:16ch;letter-spacing:-.03em;}
+.l-afsl-streep .band h2::before{content:"";display:block;width:56px;height:5px;border-radius:5px;background:var(--blue);margin-bottom:22px;}
+.l-afsl-streep .band{border-bottom:1px solid var(--line);}
+/* ===== licht en strak: extra onderkant ===== */
+:is(.l-voet-wit,.l-voet-compact,.l-voet-kolommen,.l-voet-tint,.l-voet-kaart,.l-voet-streep,.l-voet-groot) .foot{background:#fff !important;color:var(--muted) !important;border-top:1px solid var(--line);}
+:is(.l-voet-wit,.l-voet-compact,.l-voet-kolommen,.l-voet-tint,.l-voet-kaart,.l-voet-streep,.l-voet-groot) .nap{border-bottom-color:var(--line) !important;}
+:is(.l-voet-wit,.l-voet-compact,.l-voet-kolommen,.l-voet-tint,.l-voet-kaart,.l-voet-streep,.l-voet-groot) .nap strong{color:var(--navy) !important;}
+:is(.l-voet-wit,.l-voet-compact,.l-voet-kolommen,.l-voet-tint,.l-voet-kaart,.l-voet-streep,.l-voet-groot) .foot a{color:var(--navy);}
+:is(.l-voet-wit,.l-voet-compact,.l-voet-kolommen,.l-voet-tint,.l-voet-kaart,.l-voet-streep,.l-voet-groot) .foot a:hover{color:var(--blue) !important;}
+:is(.l-voet-wit,.l-voet-compact,.l-voet-kolommen,.l-voet-tint,.l-voet-kaart,.l-voet-streep,.l-voet-groot) .legal .login{color:var(--muted) !important;}
+.l-voet-compact .foot{font-size:14px;}
+.l-voet-compact .foot .wrap{padding-top:24px;}
+.l-voet-compact .nap{display:flex;flex-wrap:wrap;gap:6px 30px;line-height:1.6;padding-bottom:14px;margin-bottom:12px;}
+.l-voet-compact .nap > div{min-width:0;max-width:100%;overflow-wrap:break-word;}
+.l-voet-compact .nap strong:not(:first-child){margin-left:12px;}
+.l-voet-compact .nap br{display:none;}
+.l-voet-compact .nap strong{margin-right:8px;}
+.l-voet-compact .nap a{margin-right:12px;}
+.l-voet-kolommen .nap > div{border-top:3px solid var(--blue);padding-top:16px;}
+.l-voet-kolommen .nap strong{display:block;text-transform:uppercase;letter-spacing:.12em;font-size:12.5px;margin-bottom:6px;}
+.l-voet-kolommen .nap strong + br{display:none;}
+.l-voet-tint .foot{background:var(--sky) !important;background:color-mix(in srgb,var(--blue) 7%,#fff) !important;border-top:0;}
+.l-voet-kaart .foot{background:transparent !important;border-top:0;padding-bottom:16px;}
+.l-voet-kaart .foot .wrap{background:var(--sky);border:1px solid var(--line);border-radius:24px;width:calc(100% - 32px);max-width:1120px;padding:clamp(28px,4vw,48px);}
+@media (max-width:520px){.l-voet-kaart .foot{padding-bottom:90px;}}
+.l-voet-streep .foot{border-top:6px solid var(--blue);}
+.l-voet-groot .nap > div:first-child strong{display:inline-block;font-size:clamp(28px,3.4vw,40px);letter-spacing:-.02em;line-height:1.1;margin-bottom:8px;}
 CSS;
     return $link . "<style id=\"ff-maatwerk\">\n" . $css . "\n</style>\n";
 }
@@ -751,7 +884,17 @@ body{padding-bottom:84px;}
     ['Mozaiek', ['midden', 'schuin', 'geen', 'iconen', 'mozaiek', 'standaard', 'licht']],
     ['Doorschuiven', ['standaard', 'foto', 'lopend', 'groot', 'schuif', 'kaart', 'midden']],
     ['Omlijst', ['zwevend', 'omlijst', 'standaard', 'donker', 'polaroid', 'midden', 'licht']],
-    ['Tijdlijn', ['donker', 'midden', 'geen', 'tijdlijn', 'mozaiek', 'kaart', 'midden']]];
+    ['Tijdlijn', ['donker', 'midden', 'geen', 'tijdlijn', 'mozaiek', 'kaart', 'midden']],
+    ['Wit en strak', ['glas', 'licht', 'lijn', 'raster', 'strak', 'wit', 'wit']],
+    ['Zwitsers', ['smal', 'licht', 'nummers', 'raster', 'lijst', 'groot', 'kolommen']],
+    ['Scandinavisch', ['pil', 'licht', 'labels', 'zacht', 'label', 'omlijnd', 'tint']],
+    ['Architect', ['ruim', 'licht', 'geen', 'rand', 'strak', 'streep', 'streep']],
+    ['Helder', ['kader', 'licht', 'vinkjes', 'zacht', 'label', 'tint', 'kaart']],
+    ['Minimaal', ['smal', 'licht', 'geen', 'lijst', 'lijst', 'wit', 'compact']],
+    ['Tijdschrift', ['ruim', 'midden', 'lijn', 'groot', 'strak', 'groot', 'groot']],
+    ['Zacht en licht', ['glas', 'omlijst', 'kaart', 'zacht', 'kaarten', 'tint', 'tint']],
+    ['Lijnen', ['smal', 'licht', 'lijn', 'raster', 'rij', 'rand', 'kolommen']],
+    ['Wit met kleur', ['kader', 'licht', 'nummers', 'rand', 'label', 'streep', 'streep']]];
   if (!D.foto) { OPB = OPB.filter(function (o, i) { return i === 0 || o[1][1] !== 'foto'; }); }
   var opbNu = 0;
   function fotoBijwerken() {
@@ -9644,7 +9787,7 @@ if ($is_demo && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action
 }
 $logged_in = $config && (!empty($_SESSION['ff_admin']) || $is_demo);
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-10-24-banner');
+define('SITE_BOUW', '2026-10-24-stijlen');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
