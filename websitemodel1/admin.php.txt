@@ -123,6 +123,7 @@ function load_settings() {
 }
 function save_settings($s) {
     ensure_data_dir();
+    versie_voor('settings', $s);
     file_put_contents(SETTINGS_FILE, json_encode($s, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), LOCK_EX);
 }
 $ST = load_settings();
@@ -838,6 +839,129 @@ function home_desc() {
 }
 
 /* ===========================================================
+   Versies: "Terug naar gisteren"
+   Bij elke keer opslaan van Instellingen of Projecten bewaren we hoe de
+   website daarna is (data/versies/). De klant kan elke versie met 1 knop
+   terugzetten. Foto's die worden vervangen of verwijderd gaan eerst naar
+   een prullenbak (data/versies/foto/), zodat een oude versie ze terugkrijgt.
+   =========================================================== */
+define('VERSIE_DIR', DATA_DIR . '/versies');
+define('VERSIE_MAX', 60);
+function versie_staat() {
+    $st = file_exists(SETTINGS_FILE) ? json_decode((string)file_get_contents(SETTINGS_FILE), true) : null;
+    $pg = file_exists(PAGES_FILE) ? json_decode((string)file_get_contents(PAGES_FILE), true) : null;
+    return ['settings' => is_array($st) ? $st : [], 'pages' => is_array($pg) ? $pg : []];
+}
+function versie_bestanden() {
+    $l = is_dir(VERSIE_DIR) ? (glob(VERSIE_DIR . '/v-*.json') ?: []) : [];
+    rsort($l);
+    return $l;
+}
+function versie_lijst() {
+    $uit = [];
+    foreach (versie_bestanden() as $f) {
+        $d = json_decode((string)@file_get_contents($f), true);
+        if (is_array($d) && !empty($d['id'])) { $uit[] = ['id' => $d['id'], 'op' => $d['op'] ?? '', 'wat' => $d['wat'] ?? '']; }
+    }
+    return $uit;
+}
+function versie_schrijf($wat, $staat) {
+    if (!is_dir(VERSIE_DIR)) { @mkdir(VERSIE_DIR, 0755, true); }
+    $mt = microtime(true); $id = date('YmdHis', (int)$mt) . sprintf('%06d', (int)(($mt - floor($mt)) * 1000000)) . '-' . bin2hex(random_bytes(3));
+    @file_put_contents(VERSIE_DIR . '/v-' . $id . '.json', json_encode(['id' => $id, 'op' => date('c'), 'wat' => $wat, 'settings' => $staat['settings'], 'pages' => $staat['pages']], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), LOCK_EX);
+    foreach (array_slice(versie_bestanden(), VERSIE_MAX) as $oud) { @unlink($oud); }
+    // Foto's in de prullenbak die ouder zijn dan 120 dagen mogen weg
+    foreach ((glob(VERSIE_DIR . '/foto/*') ?: []) as $f) { if (is_file($f) && filemtime($f) < time() - 120 * 86400) { @unlink($f); } }
+    return $id;
+}
+/* Wordt aangeroepen vlak voordat settings.json of pages.json wordt overschreven */
+function versie_voor($soort, $nieuw) {
+    if (!empty($GLOBALS['is_demo']) || !empty($GLOBALS['ff_versie_stil'])) return;
+    $oud = versie_staat();
+    // Nog geen enkele versie? Bewaar dan eerst hoe het was, zodat je daar altijd naar terug kunt
+    if (!versie_bestanden() && ($oud['settings'] || $oud['pages'])) { versie_schrijf('Zoals de website was', $oud); }
+    $GLOBALS['ff_versie_wat'][] = $soort === 'settings' ? versie_wat_settings($oud['settings'], $nieuw) : versie_wat_pages($oud['pages'], $nieuw);
+    if (empty($GLOBALS['ff_versie_klaar'])) {
+        $GLOBALS['ff_versie_klaar'] = 1;
+        register_shutdown_function(function () {
+            $w = array_values(array_unique(array_filter($GLOBALS['ff_versie_wat'] ?? [])));
+            if ($w) { versie_schrijf(implode('. ', $w), versie_staat()); }
+        });
+    }
+}
+function versie_wat_settings($oud, $nieuw) {
+    $groepen = ['Bedrijf' => '/^(naam|straat|postcode|plaats|provincie|tel2?|whatsapp.*|email|kvk|tijden|werkgebied)$/', 'Voorpagina' => '/^(slogan|banner.*|eyebrow|hero_.*|knop_.*|cta_.*|menulinks)$/',
+        'Diensten' => '/^diensten.*$/', 'Uiterlijk' => '/^(logo|stijl|kleur_.*|lettertype|vorm|feest_kleuren)$/', 'Opbouw' => '/^opbouw_.*$/',
+        'Blokken' => '/^(blokken|voorna.*|werkwijze.*|cijfers.*|over_.*|vragen.*|beelden|woord_.*)$/', 'Extra' => '/^(seo_.*|site_url|chat_url)$/'];
+    $wat = [];
+    foreach (array_unique(array_merge(array_keys($oud), array_keys($nieuw))) as $k) {
+        if (json_encode($oud[$k] ?? null) === json_encode($nieuw[$k] ?? null)) continue;
+        $g = 'Overig'; foreach ($groepen as $naam => $re) { if (preg_match($re, $k)) { $g = $naam; break; } }
+        $wat[$g] = 1;
+    }
+    return $wat ? 'Instellingen: ' . implode(', ', array_keys($wat)) : '';
+}
+function versie_wat_pages($oud, $nieuw) {
+    $o = []; foreach ($oud as $p) { $o[$p['slug'] ?? ''] = $p; }
+    $n = []; foreach ($nieuw as $p) { $n[$p['slug'] ?? ''] = $p; }
+    $wat = [];
+    foreach ($n as $sl => $p) { if (!isset($o[$sl])) { $wat[] = 'project "' . page_title($p) . '" toegevoegd'; } elseif (json_encode($o[$sl]) !== json_encode($p)) { $wat[] = 'project "' . page_title($p) . '" aangepast'; } }
+    foreach ($o as $sl => $p) { if (!isset($n[$sl])) { $wat[] = 'project "' . page_title($p) . '" verwijderd'; } }
+    return $wat ? ucfirst(implode(', ', array_slice($wat, 0, 3))) . (count($wat) > 3 ? ' en meer' : '') : '';
+}
+/* Foto's niet meteen weggooien, maar in de prullenbak zetten ($rel is het pad binnen uploads/) */
+function foto_weg($rel) {
+    $rel = ltrim(str_replace('\\', '/', (string)$rel), '/');
+    if ($rel === '' || strpos($rel, '..') !== false) return;
+    $bron = UPLOAD_DIR . '/' . $rel;
+    if (!is_file($bron)) return;
+    if (!empty($GLOBALS['is_demo'])) return;
+    $map = VERSIE_DIR . '/foto';
+    if (!is_dir($map)) { @mkdir($map, 0755, true); }
+    $doel = $map . '/' . str_replace('/', '__', $rel);
+    if (!@rename($bron, $doel)) { @unlink($bron); } else { @touch($doel); }
+}
+function foto_map_weg($rel) {
+    $rel = trim(str_replace('\\', '/', (string)$rel), '/');
+    if ($rel === '' || strpos($rel, '..') !== false || !is_dir(UPLOAD_DIR . '/' . $rel)) return;
+    foreach (scandir(UPLOAD_DIR . '/' . $rel) as $f) { if ($f !== '.' && $f !== '..' && is_file(UPLOAD_DIR . '/' . $rel . '/' . $f)) { foto_weg($rel . '/' . $f); } }
+    rrmdir(UPLOAD_DIR . '/' . $rel);
+}
+/* Alle foto's die een versie gebruikt (pad binnen uploads/) */
+function versie_fotos($staat) {
+    $s = $staat['settings']; $uit = [];
+    foreach (['banner', 'logo', 'over_foto'] as $k) { if (!empty($s[$k]) && is_string($s[$k])) $uit[] = 'site/' . basename($s[$k]); }
+    foreach ((array)($s['beelden'] ?? []) as $b) { if (!empty($b['foto'])) $uit[] = 'site/' . basename($b['foto']); }
+    foreach ((array)($s['voorna'] ?? []) as $v) { foreach (['voor', 'na'] as $kk) { if (!empty($v[$kk])) $uit[] = 'site/' . basename($v[$kk]); } }
+    foreach ($staat['pages'] as $p) { foreach ((array)($p['photos'] ?? []) as $f) { $uit[] = ($p['slug'] ?? '') . '/' . basename((string)$f); } }
+    return array_values(array_unique($uit));
+}
+function versie_terugzetten($id) {
+    if (!preg_match('/^[0-9]{14}([0-9]{6})?-[0-9a-f]{6}$/', (string)$id)) return 'Deze versie bestaat niet.';
+    $d = json_decode((string)@file_get_contents(VERSIE_DIR . '/v-' . $id . '.json'), true);
+    if (!is_array($d) || !isset($d['settings'], $d['pages'])) return 'Deze versie kon niet worden gelezen.';
+    $nu = versie_staat();
+    // Foto's die nodig zijn terughalen uit de prullenbak
+    $mist = 0;
+    foreach (versie_fotos($d) as $rel) {
+        if (is_file(UPLOAD_DIR . '/' . $rel)) continue;
+        $pb = VERSIE_DIR . '/foto/' . str_replace('/', '__', $rel);
+        if (is_file($pb)) { if (!is_dir(dirname(UPLOAD_DIR . '/' . $rel))) { @mkdir(dirname(UPLOAD_DIR . '/' . $rel), 0755, true); } @copy($pb, UPLOAD_DIR . '/' . $rel); }
+        else { $mist++; }
+    }
+    // Projectpagina's die in de oude versie niet bestonden, weghalen van de website
+    $oudeSlugs = array_map(function($p) { return $p['slug'] ?? ''; }, $d['pages']);
+    foreach ($nu['pages'] as $p) { $sl = $p['slug'] ?? ''; if ($sl !== '' && preg_match('/^[a-z0-9-]+$/', $sl) && !in_array($sl, $oudeSlugs, true)) { rrmdir(ROOT . '/' . $sl); } }
+    $GLOBALS['ff_versie_stil'] = 1;
+    write_json(PAGES_FILE, array_values($d['pages']));
+    file_put_contents(SETTINGS_FILE, json_encode($d['settings'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), LOCK_EX);
+    $GLOBALS['ST'] = load_settings();
+    rebuild_everything(load_pages());
+    versie_schrijf('Teruggezet naar de versie van ' . nl_datum(substr($d['op'], 0, 10)) . ' ' . substr($d['op'], 11, 5), versie_staat());
+    return $mist ? 'Teruggezet. ' . $mist . ($mist === 1 ? " foto was" : " foto's waren") . ' niet meer te vinden en ' . ($mist === 1 ? 'staat' : 'staan') . ' er niet bij.' : '';
+}
+
+/* ===========================================================
    Opslag
    =========================================================== */
 function ensure_data_dir() {
@@ -862,7 +986,7 @@ function write_json($f, $data) {
 function load_config() { return read_json(CONFIG_FILE, null); }
 function save_config($c) { write_json(CONFIG_FILE, $c); }
 function load_pages() { return read_json(PAGES_FILE, []); }
-function save_pages($pages) { write_json(PAGES_FILE, array_values($pages)); }
+function save_pages($pages) { versie_voor('pages', array_values($pages)); write_json(PAGES_FILE, array_values($pages)); }
 function load_aanvragen() { return read_json(DATA_DIR . '/aanvragen.json', []); }
 
 /* ===========================================================
@@ -2070,6 +2194,30 @@ function rebuild_site($pages) {
 function rebuild_everything($pages) {
     foreach ($pages as $p) { write_page_files($p); }
     rebuild_site($pages);
+}
+
+function versie_view() {
+    $demo = !empty($GLOBALS['is_demo']);
+    echo '<h1>Versies</h1><p class="sub">Elke keer dat je Instellingen of een project opslaat, bewaren we hoe je website er daarna uitzag. Iets per ongeluk veranderd of weggehaald? Zet met 1 knop een eerdere versie terug. Je teksten, foto\'s, kleuren en projecten komen dan terug zoals ze toen waren.</p>';
+    $lijst = $demo ? [
+        ['id' => '', 'op' => date('c', strtotime('-2 hours')), 'wat' => 'Instellingen: Voorpagina'],
+        ['id' => '', 'op' => date('c', strtotime('-1 day 10:12')), 'wat' => 'Project "Nieuwe badkamer" toegevoegd'],
+        ['id' => '', 'op' => date('c', strtotime('-3 days 16:40')), 'wat' => 'Instellingen: Uiterlijk, Opbouw'],
+        ['id' => '', 'op' => date('c', strtotime('-9 days 09:05')), 'wat' => 'Zoals de website was'],
+    ] : versie_lijst();
+    if ($demo) { echo '<div class="ok">In de demo zie je een voorbeeld. Met je eigen website zet je hier echt een versie terug.</div>'; }
+    if (!$lijst) { echo '<div class="formcard"><p class="sub" style="margin:0">Nog geen versies. Zodra je Instellingen of een project opslaat, verschijnt hier de eerste.</p></div>'; return; }
+    echo '<div class="versies">';
+    foreach ($lijst as $i => $v) {
+        $t = strtotime((string)$v['op']);
+        $wanneer = $t ? nl_datum(date('Y-m-d', $t)) . ', ' . date('H:i', $t) : '';
+        echo '<div class="versie' . ($i === 0 ? ' nu' : '') . '"><div class="v-in"><strong>' . h($wanneer) . '</strong><span>' . h($v['wat'] !== '' ? $v['wat'] : 'Opgeslagen') . '</span></div>';
+        if ($i === 0) { echo '<span class="v-nu">Zo staat je website nu</span>'; }
+        elseif ($demo) { echo '<button class="btn ghost sm" type="button" disabled>Terugzetten</button>'; }
+        else { echo '<form method="post" onsubmit="return confirm(\'Je website terugzetten naar ' . h(addslashes($wanneer)) . '? Wat je daarna hebt veranderd, kun je hier ook weer terugzetten.\')"><input type="hidden" name="action" value="versie_terug" /><input type="hidden" name="id" value="' . h($v['id']) . '" /><button class="btn ghost sm" type="submit">Terugzetten</button></form>'; }
+        echo '</div>';
+    }
+    echo '</div><p class="hint" style="margin-top:14px">We bewaren de laatste ' . VERSIE_MAX . ' versies. Je administratie, afspraken en berichten vallen hier niet onder; die blijven altijd zoals ze zijn.</p>';
 }
 
 /* ===========================================================
@@ -9582,7 +9730,7 @@ if ($logged_in && isset($_POST['action'])) {
                     }
                     $photos = [];
                     foreach (($p['photos'] ?? []) as $f) {
-                        if (in_array($f, $remove, true)) { @unlink(UPLOAD_DIR . '/' . $newslug . '/' . basename($f)); }
+                        if (in_array($f, $remove, true)) { foto_weg($newslug . '/' . basename($f)); }
                         else { $photos[] = $f; }
                     }
                     $p['slug'] = $newslug;
@@ -9619,7 +9767,7 @@ if ($logged_in && isset($_POST['action'])) {
         $pages = array_values(array_filter($pages, function($p) use ($slug) { return $p['slug'] !== $slug; }));
         if ($exists && preg_match('/^[a-z0-9-]+$/', $slug)) {
             rrmdir(ROOT . '/' . $slug);
-            rrmdir(UPLOAD_DIR . '/' . $slug);
+            foto_map_weg($slug);
         }
         save_pages($pages);
         rebuild_site($pages);
@@ -9643,6 +9791,11 @@ if ($logged_in && isset($_POST['action'])) {
         header('Location: admin.php?projecten=1'); exit;
     }
 
+    if ($action === 'versie_terug') {
+        $f = versie_terugzetten((string)($_POST['id'] ?? ''));
+        $_SESSION['ff_notice'] = $f !== '' ? $f : 'De website is teruggezet. Bevalt het toch niet? Zet hieronder gewoon een andere versie terug.';
+        header('Location: admin.php?versies=1'); exit;
+    }
     if ($action === 'settings') {
         $new = $ST;
         $mlMsgs = [];
@@ -9746,7 +9899,7 @@ if ($logged_in && isset($_POST['action'])) {
         // Logo
         $upErrors = [];
         if (!empty($_POST['remove_logo']) && $new['logo'] !== '') {
-            @unlink(UPLOAD_DIR . '/site/' . basename($new['logo']));
+            foto_weg('site/' . basename($new['logo']));
             $new['logo'] = '';
         }
         if (!empty($_FILES['logo']) && ($_FILES['logo']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
@@ -9756,7 +9909,7 @@ if ($logged_in && isset($_POST['action'])) {
             } else {
                 $f = save_one_image($_FILES['logo']['tmp_name'], $_FILES['logo']['name'], UPLOAD_DIR . '/site', 'logo-', $upErrors);
                 if ($f !== '') {
-                    if ($new['logo'] !== '') { @unlink(UPLOAD_DIR . '/site/' . basename($new['logo'])); }
+                    if ($new['logo'] !== '') { foto_weg('site/' . basename($new['logo'])); }
                     $new['logo'] = $f;
                 }
             }
@@ -9772,7 +9925,7 @@ if ($logged_in && isset($_POST['action'])) {
             ensure_upload_dir();
             return save_one_image($idx === null ? $f['tmp_name'] : $f['tmp_name'][$idx], $naam, UPLOAD_DIR . '/site', $prefix, $upErrors);
         };
-        $weg = function($f) { if ($f !== '') { @unlink(UPLOAD_DIR . '/site/' . basename($f)); } };
+        $weg = function($f) { if ($f !== '') { foto_weg('site/' . basename($f)); } };
         if (isset($_POST['vn_tekst'])) {
             $oud = is_array($ST['voorna'] ?? null) ? $ST['voorna'] : [];
             $vn = [];
@@ -9873,7 +10026,8 @@ $showBd = $logged_in && isset($_GET['beoordelingen']);
 $showMk = $logged_in && isset($_GET['menukaart']);
 $showProj = $logged_in && isset($_GET['projecten']);
 $showBer = $logged_in && isset($_GET['berichten']);
-$showStart = $logged_in && !$showForm && !$showAccount && !$showSettings && !$showAdm && !$showRes && !$showAb && !$showBd && !$showMk && !$showProj && !$showBer;
+$showVer = $logged_in && isset($_GET['versies']);
+$showStart = $logged_in && !$showForm && !$showAccount && !$showSettings && !$showAdm && !$showRes && !$showAb && !$showBd && !$showMk && !$showProj && !$showBer && !$showVer;
 $uploadLimit = ini_get('upload_max_filesize');
 $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (string)($_SERVER['HTTP_HOST'] ?? '')));
 ?>
@@ -9931,6 +10085,14 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
   .tg-g{font-weight:700;font-size:28px;line-height:1.15;color:var(--text);margin-top:4px;}
   .tg-k{color:var(--mut);font-size:13.5px;}
   .tg-knop{display:flex;gap:8px;flex-wrap:wrap;padding:0 20px 18px;}
+  /* Versies */
+  .versies{display:grid;gap:10px;max-width:860px;}
+  .versie{display:flex;align-items:center;gap:14px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px 16px;}
+  .versie.nu{border-color:#9db5ef;background:#f5f8ff;}
+  .versie .v-in{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0;}
+  .versie .v-in span{color:var(--mut);font-size:14px;}
+  .versie form{margin:0;}
+  .v-nu{font-size:13px;font-weight:600;color:var(--blue);white-space:nowrap;}
   /* Instellingen in stukjes */
   .inst-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 18px;max-width:860px;position:sticky;top:0;z-index:20;background:var(--bg);padding:8px 0;}
   .inst-tabs button{all:unset;cursor:pointer;padding:9px 14px;border-radius:999px;background:#fff;border:1px solid var(--line);font-weight:600;font-size:14px;color:#33415c;}
@@ -10128,6 +10290,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
       <?= $mi('admin.php?projecten=1', 'Projecten', $showProj || $showForm, '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 15l4-4 4 4 3-3 5 5"/>') ?>
       <?= $mi('admin.php?aanbod=1', h(ab_inst()['aan'] ? ab_inst()['naam'] : 'Aanbod'), $showAb, '<path d="M4 8h16l-1.5 11h-13z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>') ?>
       <?= $mi('admin.php?menukaart=1', h(mk_inst()['naam']), $showMk, '<path d="M8 3v8M6 3v5a2 2 0 0 0 4 0V3M8 11v10M16 21V3c-2 1.5-3 4-3 7h3"/>') ?>
+      <?= $mi('admin.php?versies=1', 'Versies', $showVer, '<path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4"/><path d="M12 8v4l3 2"/>') ?>
       <?= $mi('admin.php?beoordelingen=1', 'Beoordelingen', $showBd, '<path d="M12 4l2.4 5 5.6.8-4 3.9 1 5.5-5-2.7-5 2.7 1-5.5-4-3.9 5.6-.8z"/>', $nBd) ?>
       <div class="sg">Klanten en geld</div>
       <?= $mi('admin.php?berichten=1', 'Berichten', $showBer, '<path d="M4 6h16v10H8l-4 3z"/>') ?>
@@ -10563,6 +10726,8 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
           <?php endforeach; ?>
         </div>
 
+      <?php elseif ($showVer): ?>
+        <?php versie_view(); ?>
       <?php elseif ($showBer): ?>
         <?php if ($is_demo): ?>
         <div class="toolbar">
@@ -10661,6 +10826,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
   var H = {
     "h1:Projecten": "Hier staan al je projecten: het werk dat je wilt laten zien. Klik op + Nieuw project om er een toe te voegen. Met Alle pagina's bijwerken bouw je de hele website opnieuw op, bijvoorbeeld na het wisselen van stijl of als er iets niet klopt.",
     "h1:Berichten": "Hier komen de berichten binnen die bezoekers via het contactformulier van je website sturen. Ze komen ook in je mail, op het adres dat je bij Instellingen hebt ingevuld.",
+    "h1:Versies": "Hier staat elke keer dat je je website hebt opgeslagen, de nieuwste bovenaan. Met Terugzetten komt je website weer zoals hij op dat moment was. Ook dat terugzetten wordt een nieuwe versie, dus je kunt het altijd ongedaan maken.",
     "h1:Welkom": "Dit is je startpagina. Bovenaan staat wat er nog te doen is. Met de tegels ga je snel naar het onderdeel dat je nodig hebt. Alles staat ook in het menu links.",
     "h1:Aanvragen": "Hier komen de berichten binnen die bezoekers via het contactformulier van je website sturen. Ze komen ook in je mail, op het adres dat je bij Instellingen hebt ingevuld.",
     "h1:Instellingen": "Hier stel je alles van je website in: je bedrijfsgegevens, de teksten op de voorpagina, je diensten en het uiterlijk. Klik helemaal onderaan op Opslaan en website bijwerken, dan staat het meteen online.",
