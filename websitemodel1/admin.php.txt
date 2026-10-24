@@ -4810,6 +4810,7 @@ function adm_demo() {
     if (demo_branche() === 'restaurant') return adm_demo_restaurant();
     if (demo_branche() === 'autobedrijf') return adm_demo_auto();
     if (demo_branche() === 'schrijver') return adm_demo_schrijver();
+    if (demo_branche() === 'koken') return adm_demo_koken();
     $j = date('Y');
     $dg = function($n) { return date('Y-m-d', strtotime(($n >= 0 ? '+' : '') . $n . ' days')); };
     $k1 = ['id' => 'kdemo1', 'naam' => 'Familie Jansen', 'contact' => '', 'email' => 'jansen@voorbeeld.nl', 'tel' => '06 12345678', 'straat' => 'Dorpsstraat 12', 'postcode' => '6161 AB', 'plaats' => 'Geleen', 'kvk' => '', 'btw' => '', 'notitie' => ''];
@@ -5043,6 +5044,57 @@ function adm_demo_schrijver() {
         $doc('ddemo4', 'offerte', $j . '-O006', 'verstuurd', $k1, $dg(-2), [$r('Schrijfcursus voor volwassenen, 4 avonden', 4, 'avond', 22500)], ['onderwerp' => 'Schrijfcursus voorjaar', 'geldig_tot' => $dg(28), 'verstuurd_op' => $dg(-2)]),
     ];
     return ['klanten' => [$k1, $k2, $k3], 'docs' => $docs];
+}
+/* Voorbeeldgegevens voor een kookstudio met workshops (demo koken) */
+function adm_demo_koken() {
+    $j = date('Y');
+    $dg = function($n) { return date('Y-m-d', strtotime(($n >= 0 ? '+' : '') . $n . ' days')); };
+    $kl = function($id, $naam, $contact, $mail, $straat, $pc, $plaats, $kvk = '') { return ['id' => $id, 'naam' => $naam, 'contact' => $contact, 'email' => $mail, 'tel' => '', 'straat' => $straat, 'postcode' => $pc, 'plaats' => $plaats, 'kvk' => $kvk, 'btw' => '', 'notitie' => '']; };
+    $k1 = $kl('kdemo1', 'Accountantskantoor Voorbeeld', 'Sanne Vermeulen', 'personeel@voorbeeld.nl', 'Stationsstraat 8', '6161 BK', 'Geleen', '12345678');
+    $k2 = $kl('kdemo2', 'Familie Janssen', '', 'janssen@voorbeeld.nl', 'Lindelaan 14', '6163 CD', 'Geleen');
+    $k3 = $kl('kdemo3', 'Sportvereniging Voorbeeld', 'jeugdbestuur', 'jeugd@voorbeeld.nl', 'Sportpark 1', '6131 AA', 'Sittard');
+    $snap = function($k) { unset($k['id'], $k['tel'], $k['notitie']); return $k; };
+    $r = function($oms, $a, $e, $p, $b = 21) { return ['oms' => $oms, 'aantal' => $a, 'eenheid' => $e, 'prijs' => $p, 'btw' => $b]; };
+    $doc = function($id, $soort, $nr, $status, $k, $datum, $regels, $extra = []) use ($snap) {
+        return array_merge(['id' => $id, 'soort' => $soort, 'nummer' => $nr, 'status' => $status, 'credit' => false, 'van' => '',
+            'klant_id' => $k['id'], 'klant' => $snap($k), 'datum' => $datum, 'leverdatum' => '', 'termijn' => 14, 'geldig_tot' => '',
+            'onderwerp' => '', 'regels' => $regels, 'opmerking' => '', 'token' => 'demo-' . $id, 'kor' => false,
+            'betaald_op' => '', 'verstuurd_op' => '', 'akkoord_op' => '', 'aangemaakt' => $datum], $extra);
+    };
+    $docs = [
+        $doc('ddemo1', 'factuur', $j . '-0021', 'betaald', $k1, $dg(-30), [$r('Kookworkshop Italiaanse avond', 12, 'persoon', 4000), $r('Diner en drankjes', 12, 'persoon', 2500, 9)], ['onderwerp' => 'Bedrijfsuitje Italiaanse avond', 'betaald_op' => $dg(-18)]),
+        $doc('ddemo2', 'factuur', $j . '-0022', 'open', $k2, $dg(-9), [$r('Workshop Hollandse winterkost, familiefeest', 8, 'persoon', 5500)], ['onderwerp' => 'Familiefeest zaterdag']),
+        $doc('ddemo3', 'factuur', $j . '-0023', 'open', $k3, $dg(-3), [$r('Kinderworkshop pizza bakken', 10, 'kind', 2500)], ['onderwerp' => 'Kinderworkshop jeugdafdeling']),
+        $doc('ddemo4', 'offerte', $j . '-O008', 'verstuurd', $k1, $dg(-2), [$r('Kerstworkshop met diner', 20, 'persoon', 7500)], ['onderwerp' => 'Kerstworkshop personeel', 'geldig_tot' => $dg(28), 'verstuurd_op' => $dg(-2)]),
+    ];
+    return ['klanten' => [$k1, $k2, $k3], 'docs' => $docs];
+}
+function adm_demo2_koken($basis) {
+    $dg = function($n) { return date('Y-m-d', strtotime(($n >= 0 ? '+' : '') . $n . ' days')); };
+    $ink = function($id, $lev, $nr, $dag, $bedrag, $btw, $status, $extra = []) use ($dg) {
+        return array_merge(['id' => $id, 'leverancier' => $lev, 'afzender' => '', 'nummer' => $nr, 'datum' => $dg($dag), 'termijn' => 30, 'verval' => $dg($dag + 30),
+            'bedrag' => $bedrag, 'btw' => $btw, 'btwsoort' => 'nl', 'oms' => '', 'status' => $status, 'betaald_op' => '', 'pdf' => 'demo', 'hash' => '', 'bron' => 'mail',
+            'controleren' => false, 'aangemaakt' => $dg($dag)], $extra);
+    };
+    $basis['inkoop'] = [
+        $ink('idemo1', 'Groothandel Voorbeeld', 'GH-88213', -10, 48230, 3982, 'betaald', ['betaald_op' => $dg(-6), 'afzender' => 'facturen@voorbeeld-groothandel.nl', 'oms' => 'Boodschappen workshops deze week']),
+        $ink('idemo2', 'Keukenwinkel Voorbeeld', 'KW-2041', -5, 30250, 5250, 'open', ['afzender' => 'info@voorbeeld-keukenwinkel.nl', 'oms' => 'Zes nieuwe pannen en messen']),
+        $ink('idemo3', 'Webhosting Voorbeeld', 'WH-55120', -40, 6050, 1050, 'betaald', ['betaald_op' => $dg(-35), 'afzender' => 'factuur@voorbeeld-hosting.nl']),
+    ];
+    $tx = function($id, $dag, $bedrag, $naam, $oms, $ind, $extra = []) use ($dg) {
+        return array_merge(['id' => $id, 'datum' => $dg($dag), 'bedrag' => $bedrag, 'naam' => $naam, 'iban' => '', 'oms' => $oms, 'indeling' => $ind, 'btw' => 21, 'koppel' => ''], $extra);
+    };
+    $basis['bank'] = [
+        $tx('bdemo1', -18, 90780, 'Accountantskantoor Voorbeeld', 'Factuur ' . date('Y') . '-0021', 'omzet', ['koppel' => 'd:ddemo1']),
+        $tx('bdemo2', -6, -48230, 'Groothandel Voorbeeld', 'Factuur GH-88213', 'zakelijk', ['koppel' => 'i:idemo1']),
+        $tx('bdemo3', -35, -6050, 'Webhosting Voorbeeld', 'Factuur WH-55120', 'zakelijk', ['koppel' => 'i:idemo3']),
+        $tx('bdemo4', -33, -1295, 'Bank', 'Kosten zakelijke rekening', 'zakelijk_vrij'),
+    ];
+    $basis['mail']['afzenders'] = [
+        ['email' => 'facturen@voorbeeld-groothandel.nl', 'naam' => 'Groothandel Voorbeeld', 'termijn' => 14],
+        ['email' => 'info@voorbeeld-keukenwinkel.nl', 'naam' => 'Keukenwinkel Voorbeeld', 'termijn' => 30],
+    ];
+    return $basis;
 }
 function adm_demo2_schrijver($basis) {
     $dg = function($n) { return date('Y-m-d', strtotime(($n >= 0 ? '+' : '') . $n . ' days')); };
@@ -5786,6 +5838,7 @@ function adm_demo2() {
     if (demo_branche() === 'restaurant') return adm_demo2_restaurant($uit);
     if (demo_branche() === 'autobedrijf') return adm_demo2_auto($uit);
     if (demo_branche() === 'schrijver') return adm_demo2_schrijver($uit);
+    if (demo_branche() === 'koken') return adm_demo2_koken($uit);
     return demo_branche() === 'barber' ? adm_demo2_barber($uit) : $uit;
 }
 
@@ -8043,6 +8096,14 @@ function adm_agenda() {
             ['id' => 'ademo3', 'soort' => 'afspraak', 'titel' => 'Signeren bij Boekhandel Voorbeeld', 'datum' => $dg(9), 'tot' => '', 'van' => '13:00', 'totTijd' => '16:00', 'klant_id' => 'kdemo2', 'klant' => 'Boekhandel Voorbeeld', 'adres' => 'Raadhuisstraat 5, Sittard', 'notitie' => ''],
         ];
     }
+    if (adm_voorbeeld() && demo_branche() === 'koken') {
+        $dg = function($n) { return date('Y-m-d', strtotime(($n >= 0 ? '+' : '') . $n . ' days')); };
+        return [
+            ['id' => 'ademo1', 'soort' => 'afspraak', 'titel' => 'Boodschappen bij de groothandel', 'datum' => $dg(1), 'tot' => '', 'van' => '09:00', 'totTijd' => '10:30', 'klant_id' => '', 'klant' => '', 'adres' => '', 'notitie' => 'Lijst voor de Italiaanse avond meenemen.'],
+            ['id' => 'ademo2', 'soort' => 'afspraak', 'titel' => 'Nieuwe recepten uitproberen', 'datum' => $dg(3), 'tot' => '', 'van' => '14:00', 'totTijd' => '16:00', 'klant_id' => '', 'klant' => '', 'adres' => '', 'notitie' => 'Voor de kerstworkshop.'],
+            ['id' => 'ademo3', 'soort' => 'klus', 'titel' => 'Bedrijfsuitje Accountantskantoor Voorbeeld', 'datum' => $dg(6), 'tot' => '', 'van' => '17:30', 'totTijd' => '22:00', 'klant_id' => 'kdemo1', 'klant' => 'Accountantskantoor Voorbeeld', 'adres' => '', 'notitie' => '12 personen, 1 vegetarisch.'],
+        ];
+    }
     if (adm_voorbeeld() && demo_branche() === 'autobedrijf') {
         $dg = function($n) { return date('Y-m-d', strtotime(($n >= 0 ? '+' : '') . $n . ' days')); };
         return [
@@ -9382,7 +9443,7 @@ if ($is_demo && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action
 }
 $logged_in = $config && (!empty($_SESSION['ff_admin']) || $is_demo);
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-10-24-verlegd');
+define('SITE_BOUW', '2026-10-24-koken');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
