@@ -2073,6 +2073,58 @@ function rebuild_everything($pages) {
 }
 
 /* ===========================================================
+   Startpagina van de beheerpagina: overzicht en snel naar het meest gebruikte
+   =========================================================== */
+function start_view($pages) {
+    $demo = !empty($GLOBALS['is_demo']);
+    $vandaag = date('Y-m-d'); $over7 = date('Y-m-d', strtotime('+7 days'));
+    // Administratie: open en te laat betaalde facturen
+    $open = 0; $openN = 0; $laatN = 0;
+    foreach (adm_docs() as $d) {
+        if (($d['soort'] ?? '') !== 'factuur' || !empty($d['credit'])) continue;
+        $st = adm_status($d)[0];
+        if ($st === 'open' || $st === 'telaat') { $open += adm_tot($d)['incl']; $openN++; if ($st === 'telaat') $laatN++; }
+    }
+    // Afspraken
+    $ri = res_inst(); $resAan = !empty($ri['aan']); $resNieuw = res_nieuw_aantal(); $resWeek = 0;
+    if ($resAan) { foreach (res_lijst() as $r) { $dag = (string)($r['dag'] ?? ''); if ($dag >= $vandaag && $dag <= $over7 && !in_array($r['status'] ?? '', ['geannuleerd', 'afgewezen'], true)) $resWeek++; } }
+    // Berichten en beoordelingen
+    $aanv = $demo ? [] : load_aanvragen(); $aanvWeek = 0;
+    foreach ($aanv as $a) { $t = strtotime((string)($a['datum'] ?? '')); if ($t && $t >= strtotime('-7 days')) $aanvWeek++; }
+    $bdNieuw = bd_nieuw_aantal();
+    // Nog te doen
+    $todo = [];
+    if (st('naam') === 'Uw Bedrijfsnaam') $todo[] = ['admin.php?instellingen=1', 'Vul je bedrijfsnaam, contactgegevens en diensten in', 'Dat staat nu nog op de voorbeeldtekst.'];
+    if (st('email') === '') $todo[] = ['admin.php?instellingen=1', 'Vul je e-mailadres in', 'Anders komen berichten van je website nergens aan.'];
+    $inst = adm_inst(); $mist = [];
+    if (st('kvk') === '') $mist[] = 'KvK-nummer';
+    if (($inst['iban'] ?? '') === '') $mist[] = 'IBAN';
+    if (($inst['btwnr'] ?? '') === '' && empty($inst['kor'])) $mist[] = 'btw-nummer';
+    if ($mist && !$demo) $todo[] = ['admin.php?adm=inst', 'Vul je ' . implode(', ', $mist) . ' in', 'Die moeten op elke factuur staan.'];
+    if ($resNieuw) $todo[] = ['admin.php?reserveren=1', $resNieuw . ($resNieuw === 1 ? ' nieuwe afspraak' : ' nieuwe afspraken') . ' bekijken', 'Klanten hebben online geboekt.'];
+    if ($bdNieuw) $todo[] = ['admin.php?beoordelingen=1', $bdNieuw . ($bdNieuw === 1 ? ' nieuwe beoordeling' : ' nieuwe beoordelingen'), 'Lees ze en zet er eventueel een reactie onder.'];
+    if ($laatN) $todo[] = ['admin.php?adm=docs&soort=factuur&f=telaat', $laatN . ($laatN === 1 ? ' factuur is' : ' facturen zijn') . ' te laat betaald', 'Stuur een herinnering.'];
+    $tegel = function($href, $titel, $groot, $klein, $knoppen = '') {
+        return '<div class="tegel"><a class="tg-kop" href="' . h($href) . '"><span class="tg-t">' . h($titel) . '</span><span class="tg-g">' . $groot . '</span><span class="tg-k">' . h($klein) . '</span></a>' . ($knoppen !== '' ? '<div class="tg-knop">' . $knoppen . '</div>' : '') . '</div>';
+    };
+    echo '<h1>Welkom</h1>';
+    echo '<p class="sub">' . (st('naam') !== '' && st('naam') !== 'Uw Bedrijfsnaam' ? 'Beheer van ' . h(st('naam')) . '. ' : '') . 'Wat wil je doen? Kies hieronder, of gebruik het menu.</p>';
+    if ($todo) {
+        echo '<div class="todo"><h2>Nog te doen</h2><ul>';
+        foreach ($todo as $t) { echo '<li><a href="' . h($t[0]) . '"><strong>' . h($t[1]) . '</strong><span>' . h($t[2]) . '</span></a></li>'; }
+        echo '</ul></div>';
+    }
+    echo '<div class="tegels">';
+    echo $tegel('admin.php?instellingen=1', 'Je website', 'Aanpassen', 'Teksten, foto\'s, diensten en kleuren', '<a class="btn sm" href="admin.php?instellingen=1">Instellingen</a><a class="btn ghost sm" href="/" target="_blank" rel="noopener">Website bekijken</a>');
+    echo $tegel('admin.php?reserveren=1', 'Afspraakplanner', $resAan ? (string)$resWeek : 'Uit', $resAan ? ($resWeek === 1 ? 'afspraak de komende 7 dagen' : 'afspraken de komende 7 dagen') : 'Zet hem aan, dan boeken klanten zelf online', '<a class="btn ghost sm" href="admin.php?reserveren=1">' . ($resAan ? 'Agenda bekijken' : 'Aanzetten') . '</a>');
+    echo $tegel('admin.php?adm', 'Administratie', h(adm_eur($open)), $openN === 1 ? 'nog te ontvangen van 1 factuur' : 'nog te ontvangen van ' . $openN . ' facturen', '<a class="btn sm" href="admin.php?adm=nieuw&amp;soort=factuur">+ Factuur</a><a class="btn ghost sm" href="admin.php?adm=nieuw&amp;soort=offerte">+ Offerte</a>');
+    echo $tegel('admin.php?berichten=1', 'Berichten', $demo ? '-' : (string)count($aanv), $demo ? 'via het contactformulier (verborgen in de demo)' : ($aanvWeek ? $aanvWeek . ' in de afgelopen 7 dagen' : 'via het contactformulier'));
+    echo $tegel('admin.php?projecten=1', 'Projecten', (string)count($pages), count($pages) === 1 ? 'project op je website' : 'projecten op je website', '<a class="btn ghost sm" href="admin.php?new=1">+ Nieuw project</a>');
+    echo $tegel('admin.php?beoordelingen=1', 'Beoordelingen', (string)count(bd_lijst()), $bdNieuw ? $bdNieuw . ' nieuw' : 'van je klanten');
+    echo '</div>';
+}
+
+/* ===========================================================
    Online reserveren: kalender met vrije dagen en tijden
    De bezoeker kiest het aantal personen, een dag en een vrije tijd.
    Volle tijden verschijnen niet. Alles staat in data/ van de klant.
@@ -2814,24 +2866,24 @@ function res_beheer_view() {
     foreach ($komend as $r) { $perDag[$r['dag']][] = $r; }
     ?>
     <style>
-      .rs-dag{background:#141b2b;border:1px solid #263049;border-radius:14px;margin:0 0 14px;overflow:hidden;}
+      .rs-dag{background:#f7f9fc;border:1px solid #dfe4ec;border-radius:14px;margin:0 0 14px;overflow:hidden;}
       .rs-dag summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:14px 18px;font-weight:700;}
       .rs-dag summary::-webkit-details-marker{display:none;}
-      .rs-dag summary span{color:#9fb0cc;font-weight:500;}
-      .rs-r{display:grid;grid-template-columns:70px 1fr auto;gap:12px;align-items:center;padding:12px 18px;border-top:1px solid #263049;}
+      .rs-dag summary span{color:#5b6577;font-weight:500;}
+      .rs-r{display:grid;grid-template-columns:70px 1fr auto;gap:12px;align-items:center;padding:12px 18px;border-top:1px solid #dfe4ec;}
       .rs-r.weg{opacity:.5;} .rs-r.weg .rs-n{text-decoration:line-through;}
-      .rs-t{font-size:20px;font-weight:800;} .rs-n{font-weight:700;} .rs-k{color:#9fb0cc;font-size:14px;} .rs-k a{color:#8fb3ff;}
+      .rs-t{font-size:20px;font-weight:800;} .rs-n{font-weight:700;} .rs-k{color:#5b6577;font-size:14px;} .rs-k a{color:#1d4ed8;}
       .rs-b{display:inline-block;font-size:12px;font-weight:700;padding:2px 9px;border-radius:999px;margin-left:6px;vertical-align:middle;}
-      .rs-b.bevestigd{background:#163d2a;color:#6ee7a8;} .rs-b.aanvraag{background:#3a2f12;color:#f6c453;} .rs-b.geannuleerd{background:#3a1f2a;color:#ff9bb5;}
+      .rs-b.bevestigd{background:#e7f6ec;color:#157347;} .rs-b.aanvraag{background:#fff6dc;color:#8a5a00;} .rs-b.geannuleerd{background:#fdecec;color:#b4234a;}
 .rs-acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;} .rs-acts form{margin:0;}
-      .rs-afr{grid-column:1 / -1;background:#0c121c;border:1px solid #263049;border-radius:12px;padding:12px;margin:2px 0 4px;}
+      .rs-afr{grid-column:1 / -1;background:#ffffff;border:1px solid #dfe4ec;border-radius:12px;padding:12px;margin:2px 0 4px;}
       .rs-afr[hidden]{display:none;}
-      .rs-afr-rij{display:grid;grid-template-columns:110px 1fr 110px;gap:8px;} .rs-afr-rij label{font-size:13px;color:#9fb0cc;display:grid;gap:4px;}
+      .rs-afr-rij{display:grid;grid-template-columns:110px 1fr 110px;gap:8px;} .rs-afr-rij label{font-size:13px;color:#5b6577;display:grid;gap:4px;}
       @media (max-width:560px){.rs-afr-rij{grid-template-columns:1fr 1fr;} .rs-afr-rij label:nth-child(2){grid-column:1 / -1;order:3;}}
-      .rs-afr-knop{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;} .rs-afr-knop span{color:#9fb0cc;font-size:14px;}
+      .rs-afr-knop{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;} .rs-afr-knop span{color:#5b6577;font-size:14px;}
       @media (max-width:640px){.rs-r{grid-template-columns:56px 1fr;} .rs-acts{grid-column:1 / -1;justify-content:flex-start;}}
       .rs-dt{display:grid;gap:8px;margin-bottom:10px;}
-      .rs-drij{display:grid;grid-template-columns:2fr 110px 100px;gap:8px;padding:10px;border:1px solid #263049;border-radius:12px;}
+      .rs-drij{display:grid;grid-template-columns:2fr 110px 100px;gap:8px;padding:10px;border:1px solid #dfe4ec;border-radius:12px;}
       .rs-drij .rs-oms{grid-column:1 / -1;}
       .rs-drij[hidden]{display:none;}
       @media (max-width:560px){.rs-drij{grid-template-columns:1fr 1fr;} .rs-drij input:first-child{grid-column:1 / -1;}}
@@ -3509,20 +3561,20 @@ function ab_beheer_view() {
     ?>
     <style>
       .ab-l{display:grid;gap:8px;}
-      .ab-r{display:grid;grid-template-columns:76px 1fr auto;gap:12px;align-items:center;background:#141b2b;border:1px solid #263049;border-radius:12px;padding:8px;}
-      .ab-r img,.ab-r .ph{width:76px;height:57px;object-fit:cover;border-radius:8px;background:#0c121c;display:block;}
-      .ab-r b{display:block;} .ab-r small{color:#9fb0cc;}
+      .ab-r{display:grid;grid-template-columns:76px 1fr auto;gap:12px;align-items:center;background:#f7f9fc;border:1px solid #dfe4ec;border-radius:12px;padding:8px;}
+      .ab-r img,.ab-r .ph{width:76px;height:57px;object-fit:cover;border-radius:8px;background:#ffffff;display:block;}
+      .ab-r b{display:block;} .ab-r small{color:#5b6577;}
       .ab-r select{width:auto;padding:7px 9px;font-size:13.5px;}
       .ab-r.verkocht{opacity:.6;}
       .ab-acts2{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;}
       @media (max-width:640px){.ab-r{grid-template-columns:64px 1fr;} .ab-acts2{grid-column:1 / -1;justify-content:flex-start;}}
       .ab-fotos{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;margin-bottom:10px;}
-      .ab-fotos figure{margin:0;background:#0c121c;border:1px solid #263049;border-radius:10px;overflow:hidden;}
+      .ab-fotos figure{margin:0;background:#ffffff;border:1px solid #dfe4ec;border-radius:10px;overflow:hidden;}
       .ab-fotos img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;}
       .ab-fotos figcaption{padding:6px 8px;font-size:12.5px;display:grid;gap:4px;}
       .ab-zoek{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px;} .ab-zoek input{flex:1;min-width:180px;}
       .ab-rdw{display:flex;gap:8px;} .ab-rdw input{text-transform:uppercase;font-weight:700;letter-spacing:.06em;}
-      .ab-tel{color:#9fb0cc;font-size:14px;margin:-6px 0 12px;}
+      .ab-tel{color:#5b6577;font-size:14px;margin:-6px 0 12px;}
     </style>
     <?php if ($x || $nieuw): $x = $x ?: ['id' => '', 'fotos' => [], 'status' => 'beschikbaar']; $v = function($k) use ($x) { return h((string)($x[$k] ?? '')); }; ?>
       <p><a class="btn ghost sm" href="admin.php?aanbod=1">&larr; Terug naar het overzicht</a><?php if ($x['id'] !== '' && !empty($in['aan']) && ab_zichtbaar($in, $x)): ?> <a class="btn ghost sm" href="/<?= h($in['slug'] . '/' . $x['slug']) ?>/" target="_blank">Bekijk op je website</a><?php endif; ?></p>
@@ -3584,11 +3636,11 @@ function ab_beheer_view() {
           var k = document.getElementById('abken').value; b.disabled = true; b.textContent = 'Even zoeken...';
           fetch('admin.php?aanbod_rdw=' + encodeURIComponent(k), { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (d) {
             b.disabled = false; b.textContent = 'Gegevens ophalen';
-            if (d.fout) { msg.textContent = d.fout; msg.style.color = '#ff9b9b'; return; }
+            if (d.fout) { msg.textContent = d.fout; msg.style.color = '#c62828'; return; }
             var map = { kenteken: 'abken', merk: 'abmerk', model: 'abmodel', bouwjaar: 'abjaar', kleur: 'abkleur', vermogen: 'abpk', carrosserie: 'abcar', apk: 'abapk', deuren: 'abdeur', zitplaatsen: 'abzit', brandstof: 'abbrand' };
             var n = 0; Object.keys(map).forEach(function (k2) { if (d[k2] === undefined || d[k2] === '') return; var e = document.getElementById(map[k2]); if (!e) return; if (e.tagName === 'SELECT' && !Array.prototype.some.call(e.options, function (o) { return o.value === String(d[k2]); })) { var o = document.createElement('option'); o.textContent = d[k2]; e.appendChild(o); } e.value = d[k2]; n++; });
-            msg.style.color = '#6ee7a8'; msg.textContent = 'Gevonden: ' + [d.merk, d.model, d.bouwjaar].filter(Boolean).join(' ') + '. Controleer de gegevens en vul kilometerstand, prijs en transmissie zelf in.';
-          }).catch(function () { b.disabled = false; b.textContent = 'Gegevens ophalen'; msg.textContent = 'Het ophalen lukte niet. Vul de gegevens zelf in.'; msg.style.color = '#ff9b9b'; });
+            msg.style.color = '#157347'; msg.textContent = 'Gevonden: ' + [d.merk, d.model, d.bouwjaar].filter(Boolean).join(' ') + '. Controleer de gegevens en vul kilometerstand, prijs en transmissie zelf in.';
+          }).catch(function () { b.disabled = false; b.textContent = 'Gegevens ophalen'; msg.textContent = 'Het ophalen lukte niet. Vul de gegevens zelf in.'; msg.style.color = '#c62828'; });
         };
       })();
       </script>
@@ -3884,14 +3936,14 @@ function bd_beheer_view() {
     $vr = bd_vragen(); $openstaand = count(array_filter($vr, function($v) { return $v['ingevuld'] === ''; }));
     ?>
     <style>
-      .bdb{background:#141b2b;border:1px solid #263049;border-radius:14px;padding:14px 16px;margin-bottom:10px;}
+      .bdb{background:#f7f9fc;border:1px solid #dfe4ec;border-radius:14px;padding:14px 16px;margin-bottom:10px;}
       .bdb.uit{opacity:.6;}
       .bdb .k{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;}
-      .bdb .s{color:#f5a524;font-size:20px;letter-spacing:2px;} .bdb .s span{color:#3a465c;}
-      .bdb p{margin:8px 0 0;} .bdb small{color:#9fb0cc;}
-      .bdb .lab{font-size:12px;font-weight:700;padding:2px 9px;border-radius:999px;} .lab.online{background:#163d2a;color:#6ee7a8;} .lab.verborgen,.lab.spam{background:#3a1f2a;color:#ff9bb5;} .lab.prive{background:#1d2f55;color:#8fb3ff;}
+      .bdb .s{color:#f5a524;font-size:20px;letter-spacing:2px;} .bdb .s span{color:#cfd6e1;}
+      .bdb p{margin:8px 0 0;} .bdb small{color:#5b6577;}
+      .bdb .lab{font-size:12px;font-weight:700;padding:2px 9px;border-radius:999px;} .lab.online{background:#e7f6ec;color:#157347;} .lab.verborgen,.lab.spam{background:#fdecec;color:#b4234a;} .lab.prive{background:#e8efff;color:#1d4ed8;}
       .bdb form{margin:10px 0 0;} .bdb .rij{display:flex;gap:8px;flex-wrap:wrap;align-items:center;} .bdb select{width:auto;}
-      .bd-sam{display:flex;gap:24px;flex-wrap:wrap;margin:0 0 18px;} .bd-sam div{background:#141b2b;border:1px solid #263049;border-radius:14px;padding:14px 18px;} .bd-sam b{display:block;font-size:26px;} .bd-sam small{color:#9fb0cc;}
+      .bd-sam{display:flex;gap:24px;flex-wrap:wrap;margin:0 0 18px;} .bd-sam div{background:#f7f9fc;border:1px solid #dfe4ec;border-radius:14px;padding:14px 18px;} .bd-sam b{display:block;font-size:26px;} .bd-sam small{color:#5b6577;}
     </style>
     <h1>Beoordelingen</h1>
     <p class="sub">Je klanten krijgen na hun afspraak of opdracht een mail met een persoonlijke link. Zo komen er alleen echte beoordelingen op je website.</p>
@@ -4439,14 +4491,14 @@ function mk_beheer_view() {
     ?>
     <style>
       .mk-kt{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px;}
-      .mk-kt a{display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:999px;border:1px solid #263049;background:#141b2b;color:#e8eefc;text-decoration:none;font-weight:700;}
+      .mk-kt a{display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:999px;border:1px solid #dfe4ec;background:#f7f9fc;color:#1c2330;text-decoration:none;font-weight:700;}
       .mk-kt a.on{background:#2f6fed;border-color:#2f6fed;color:#fff;}
       .mk-kt a small{font-weight:500;opacity:.75;}
-      .mk-rb{background:#101726;border:1px solid #263049;border-radius:14px;padding:14px;margin-bottom:14px;scroll-margin-top:80px;}
+      .mk-rb{background:#f7f9fc;border:1px solid #dfe4ec;border-radius:14px;padding:14px;margin-bottom:14px;scroll-margin-top:80px;}
       .mk-rbk{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:8px;}
-      .mk-rbk h3{margin:0;font-size:19px;} .mk-rbk small{color:#9fb0cc;font-weight:500;}
-      .mk-gr{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;background:#141b2b;border:1px solid #263049;border-radius:10px;padding:9px 10px;margin-top:6px;scroll-margin-top:80px;}
-      .mk-gr b{display:block;} .mk-gr small{color:#9fb0cc;}
+      .mk-rbk h3{margin:0;font-size:19px;} .mk-rbk small{color:#5b6577;font-weight:500;}
+      .mk-gr{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;background:#f7f9fc;border:1px solid #dfe4ec;border-radius:10px;padding:9px 10px;margin-top:6px;scroll-margin-top:80px;}
+      .mk-gr b{display:block;} .mk-gr small{color:#5b6577;}
       .mk-gr.uit{opacity:.7;} .mk-gr.weg{opacity:.45;}
       .mk-gr select{width:auto;padding:6px 8px;font-size:13.5px;}
       .mk-ga{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;}
@@ -4454,7 +4506,7 @@ function mk_beheer_view() {
       @media (max-width:640px){.mk-gr{grid-template-columns:1fr;} .mk-ga{justify-content:flex-start;}}
       .mk-chk{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:4px 14px;}
       .mk-chk .check{margin:0;}
-      .mk-onbekend{color:#ffb86b;}
+      .mk-onbekend{color:#b45309;}
       .mk-mini{display:inline;margin:0;}
     </style>
     <?php if ($kaart && ($ger || $nieuwIn !== '')): $g = $ger ?: ['id' => '', 'naam' => '', 'oms' => '', 'prijs' => 0, 'prijs_tekst' => '', 'kenmerken' => [], 'allergenen' => [], 'allerg_ingevuld' => false, 'status' => 'ok']; $rSel = $ger ? $gerR : $nieuwIn; ?>
@@ -4572,7 +4624,7 @@ function mk_beheer_view() {
       <form class="formcard" method="post" enctype="multipart/form-data" id="pdf">
         <input type="hidden" name="action" value="mk_pdf" />
         <h2>Je eigen pdf erbij</h2>
-        <?php if ($in['pdf'] !== ''): ?><p style="margin:0 0 10px">Nu staat erbij: <a href="<?= h(mk_pdf_url($in)) ?>" target="_blank" style="color:#8fb3ff"><?= h($in['pdf_naam'] !== '' ? $in['pdf_naam'] : 'je menukaart (pdf)') ?></a></p><?php endif; ?>
+        <?php if ($in['pdf'] !== ''): ?><p style="margin:0 0 10px">Nu staat erbij: <a href="<?= h(mk_pdf_url($in)) ?>" target="_blank" style="color:#1d4ed8"><?= h($in['pdf_naam'] !== '' ? $in['pdf_naam'] : 'je menukaart (pdf)') ?></a></p><?php endif; ?>
         <p class="hint" style="margin:-4px 0 12px">Heb je een mooie menukaart als pdf, bijvoorbeeld van je drukker? Zet hem erbij. Bezoekers kunnen hem dan openen of printen. Maximaal 15 MB.</p>
         <div class="two"><div class="field"><label for="mkpdf">Pdf-bestand</label><input type="file" id="mkpdf" name="pdf" accept="application/pdf,.pdf" required /></div><div class="field"><label for="mkpdfnaam">Naam op de knop (mag leeg)</label><input type="text" id="mkpdfnaam" name="pdf_naam" maxlength="120" placeholder="Bijvoorbeeld: Wijnkaart" value="<?= h($in['pdf_naam']) ?>" /></div></div>
         <button class="btn" type="submit"><?= $in['pdf'] !== '' ? 'Pdf vervangen' : 'Pdf toevoegen' ?></button>
@@ -7054,7 +7106,7 @@ function adm_v_inkoop() {
       <a class="adm-stat" href="admin.php?adm=mailbox"><small>Mailbox</small><strong style="font-size:18px;margin-top:8px"><?= $gekoppeld ? 'Gekoppeld' : 'Niet gekoppeld' ?></strong><span><?= $gekoppeld ? ($m['laatst'] !== '' ? 'Opgehaald ' . h(date('d-m H:i', strtotime($m['laatst']))) : 'Nog niet opgehaald') : 'Koppel hem, dan komen facturen vanzelf binnen' ?></span></a>
     </div>
     <?php if ($m['fout'] !== ''): ?><div class="err">Mail ophalen lukte de laatste keer niet: <?= h($m['fout']) ?> <a href="admin.php?adm=mailbox" style="color:#fff">Mailbox controleren</a></div><?php endif; ?>
-    <?php if ($m['kandidaten']): ?><div class="ok">Er <?= count($m['kandidaten']) === 1 ? 'is 1 afzender' : 'zijn ' . count($m['kandidaten']) . ' afzenders' ?> met pdf-bijlagen die nog niet in je lijst <?= count($m['kandidaten']) === 1 ? 'staat' : 'staan' ?>. <a href="admin.php?adm=mailbox#kandidaten" style="color:#8fb3ff;font-weight:600">Bekijk ze</a></div><?php endif; ?>
+    <?php if ($m['kandidaten']): ?><div class="ok">Er <?= count($m['kandidaten']) === 1 ? 'is 1 afzender' : 'zijn ' . count($m['kandidaten']) . ' afzenders' ?> met pdf-bijlagen die nog niet in je lijst <?= count($m['kandidaten']) === 1 ? 'staat' : 'staan' ?>. <a href="admin.php?adm=mailbox#kandidaten" style="color:#1d4ed8;font-weight:600">Bekijk ze</a></div><?php endif; ?>
     <div class="adm-chips">
       <?php foreach (['' => 'Alle', 'open' => 'Open', 'telaat' => 'Te laat', 'betaald' => 'Betaald', 'genegeerd' => 'Genegeerd', 'controleren' => 'Controleren'] as $k => $l): ?><a class="<?= $f === $k ? 'on' : '' ?>" href="admin.php?adm=inkoop<?= $k !== '' ? '&amp;f=' . $k : '' ?><?= $q !== '' ? '&amp;k=' . h($q) : '' ?>"><?= h($l) ?></a><?php endforeach; ?>
       <form method="get"><input type="hidden" name="adm" value="inkoop" /><?php if ($f !== ''): ?><input type="hidden" name="f" value="<?= h($f) ?>" /><?php endif; ?><select name="k" onchange="this.form.submit()" style="width:auto;padding:7px 10px;font-size:14px"><option value="">Alle kwartalen</option><?php foreach (array_keys($kwartalen) as $kw): list($j, $n) = explode('-', $kw); ?><option value="<?= h($kw) ?>"<?= $q === $kw ? ' selected' : '' ?>>Kwartaal <?= $n ?> <?= $j ?></option><?php endforeach; ?></select></form>
@@ -7159,7 +7211,7 @@ function adm_v_nieuwemail($klanten) {
         $nmGekozen = (array)($oud['docs'] ?? (isset($_GET['doc']) ? [(string)$_GET['doc']] : [])); ?>
       <?php if ($nmDocs): ?>
       <div class="field"><label>Offerte of factuur meesturen (mag leeg)</label>
-        <div class="hint" style="margin:0 0 8px">Vink aan wat je mee wilt sturen. Het gaat als pdf mee, met een link om het online te bekijken. <span id="nmFilterTekst"></span> <a href="#" id="nmAlles" hidden onclick="nmToon('');return false;" style="color:#8fb3ff">Alles tonen</a></div>
+        <div class="hint" style="margin:0 0 8px">Vink aan wat je mee wilt sturen. Het gaat als pdf mee, met een link om het online te bekijken. <span id="nmFilterTekst"></span> <a href="#" id="nmAlles" hidden onclick="nmToon('');return false;" style="color:#1d4ed8">Alles tonen</a></div>
         <div id="nmDocs" style="max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:6px 12px">
           <?php foreach ($nmDocs as $d): ?>
             <label class="check" data-mail="<?= h(strtolower((string)($d['klant']['email'] ?? ''))) ?>" style="padding:8px 0;border-bottom:1px solid var(--line)"><input type="checkbox" name="docs[]" value="<?= h($d['id']) ?>"<?= in_array($d['id'], $nmGekozen, true) ? ' checked' : '' ?> /> <span style="font-weight:400"><b><?= h(adm_naam($d)) ?></b> &middot; <?= h($d['klant']['naam'] ?? '') ?> &middot; <?= h(adm_eur(adm_tot($d)['incl'])) ?><span class="sub2" style="display:block"><?= h(nl_datum(substr((string)$d['datum'], 0, 10))) ?><?= ($d['onderwerp'] ?? '') !== '' ? ' &middot; ' . h(cut($d['onderwerp'], 50)) : '' ?></span></span></label>
@@ -7313,11 +7365,11 @@ function adm_v_bank() {
     foreach ($rijen as $t) {
         echo '<tr data-id="' . h($t['id']) . '"><td class="mob-weg" style="white-space:nowrap">' . h(date('d-m-Y', strtotime($t['datum']))) . '</td>'
            . '<td><strong>' . h($t['naam']) . '</strong><span class="sub2">' . h(cut($t['oms'], 90)) . '</span><span class="sub2 mob-ja">' . h(date('d-m-Y', strtotime($t['datum']))) . '</span></td>'
-           . '<td class="r" style="color:' . ($t['bedrag'] < 0 ? '#ff9b9b' : '#7ee2a8') . ';font-weight:600">' . h(adm_eur($t['bedrag'])) . '</td><td>';
+           . '<td class="r" style="color:' . ($t['bedrag'] < 0 ? '#c62828' : '#157347') . ';font-weight:600">' . h(adm_eur($t['bedrag'])) . '</td><td>';
         if ($t['koppel'] !== '' && isset($namen[$t['koppel']])) {
             $kid = substr($t['koppel'], 2);
             $url = $t['koppel'][0] === 'i' ? 'admin.php?adm=ink&amp;id=' . h($kid) : 'admin.php?adm=doc&amp;id=' . h($kid);
-            echo '<span class="st st-betaald">Gekoppeld</span> <a href="' . $url . '" style="font-size:13px;color:#8fb3ff">' . h(cut($namen[$t['koppel']], 40)) . '</a>';
+            echo '<span class="st st-betaald">Gekoppeld</span> <a href="' . $url . '" style="font-size:13px;color:#1d4ed8">' . h(cut($namen[$t['koppel']], 40)) . '</a>';
         } else {
             echo '<div class="adm-ind"><select class="ind" aria-label="Indeling">';
             foreach ($ADM_INDELING as $k => $l) { echo '<option value="' . $k . '"' . ($t['indeling'] === $k ? ' selected' : '') . '>' . h($l) . '</option>'; }
@@ -7965,7 +8017,7 @@ function adm_ml_status($it, $docs, $kort = false) {
     if (!$kort) { $k = (string)($it['kopie'] ?? ''); $uit .= '<span class="ml-r">' . ($k === 'ja' ? 'Kopie staat in je map Verzonden.' : h(ucfirst(substr($k, 5)))) . '</span>'; }
     return $uit;
 }
-function adm_ml_css() { return '.ml-st{display:inline-block;font-size:12.5px;font-weight:700;padding:3px 10px;border-radius:999px;margin-right:6px}.ml-st.rood{background:#4a1d1d;color:#ffb4ad}.ml-st.groen{background:#173d2a;color:#7be3a8}.ml-st.blauw{background:#1d2f55;color:#a9c4ff}.ml-r{display:block;font-size:13px;color:var(--mut,#9aa7bd);margin-top:4px}.ml-item{border-top:1px solid var(--line,#26324a);padding:12px 0}.ml-item:first-child{border-top:0}.ml-o{font-weight:700}.ml-a{font-size:13.5px;color:var(--mut,#9aa7bd);overflow-wrap:anywhere}.ml-k{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}.ml-d{font-size:13px;color:var(--mut,#9aa7bd);white-space:nowrap}'; }
+function adm_ml_css() { return '.ml-st{display:inline-block;font-size:12.5px;font-weight:700;padding:3px 10px;border-radius:999px;margin-right:6px}.ml-st.rood{background:#fdecec;color:#b42318}.ml-st.groen{background:#e7f6ec;color:#157347}.ml-st.blauw{background:#e8efff;color:#1e3a8a}.ml-r{display:block;font-size:13px;color:var(--mut,#5b6577);margin-top:4px}.ml-item{border-top:1px solid var(--line,#dfe4ec);padding:12px 0}.ml-item:first-child{border-top:0}.ml-o{font-weight:700}.ml-a{font-size:13.5px;color:var(--mut,#5b6577);overflow-wrap:anywhere}.ml-k{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}.ml-d{font-size:13px;color:var(--mut,#5b6577);white-space:nowrap}'; }
 function adm_eigen_mail() {
     $m = adm_mailinst();
     return filter_var(st('email'), FILTER_VALIDATE_EMAIL) ? st('email') : (filter_var($m['user'], FILTER_VALIDATE_EMAIL) ? $m['user'] : '');
@@ -8563,7 +8615,7 @@ function adm_v_mail($docs, $inst) {
       </div>
       <div class="field"><label for="mond">Onderwerp</label><input type="text" id="mond" name="onderwerp" value="<?= h($ond) ?>" /></div>
       <div class="field"><label for="mtekst">Bericht</label><textarea id="mtekst" name="tekst" style="min-height:280px"><?= h($tekst) ?></textarea>
-        <div class="hint"><?= $viaMailbox ? 'De mail gaat vanaf je eigen mailbox (' . h($m['user']) . ').' : 'De mail gaat via je website. Antwoordt je klant, dan komt dat bij ' . h(adm_eigen_mail() !== '' ? adm_eigen_mail() : 'je eigen e-mailadres') . ' binnen. Tip: koppel je mailbox bij Inkoop, dan komt je mail beter aan.' ?> <a href="admin.php?adm=docpdf&amp;id=<?= h($d['id']) ?>" target="_blank" rel="noopener" style="color:#8fb3ff">Bekijk de pdf</a></div></div>
+        <div class="hint"><?= $viaMailbox ? 'De mail gaat vanaf je eigen mailbox (' . h($m['user']) . ').' : 'De mail gaat via je website. Antwoordt je klant, dan komt dat bij ' . h(adm_eigen_mail() !== '' ? adm_eigen_mail() : 'je eigen e-mailadres') . ' binnen. Tip: koppel je mailbox bij Inkoop, dan komt je mail beter aan.' ?> <a href="admin.php?adm=docpdf&amp;id=<?= h($d['id']) ?>" target="_blank" rel="noopener" style="color:#1d4ed8">Bekijk de pdf</a></div></div>
       <div class="field">
         <label class="check"><input type="radio" name="wanneer" value="nu" checked onchange="document.getElementById('mlater').hidden=true;document.getElementById('mknop').textContent='Nu versturen'" /> <span>Nu versturen</span></label>
         <label class="check" style="margin-top:6px"><input type="radio" name="wanneer" value="later" onchange="document.getElementById('mlater').hidden=false;document.getElementById('mknop').textContent='Inplannen'" /> <span>Later versturen, op een dag die ik kies</span></label>
@@ -8713,15 +8765,15 @@ function adm_admin_css() {
 .adm-top{display:flex;justify-content:space-between;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-bottom:18px;}
 .adm-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 24px;padding-bottom:12px;border-bottom:1px solid var(--line);}
 .adm-tabs a{padding:8px 14px;border-radius:999px;text-decoration:none;color:var(--mut);font-weight:600;font-size:14.5px;border:1px solid transparent;}
-.adm-tabs a:hover{color:#fff;border-color:var(--line);}
-.adm-tabs a.on{background:#1f2b3d;color:#fff;border-color:#8fb3ff;}
+.adm-tabs a:hover{color:var(--text);border-color:var(--line);}
+.adm-tabs a.on{background:#e8efff;color:#1d4ed8;border-color:#1d4ed8;}
 .adm-stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:26px;}
 .adm-stat{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px;text-decoration:none;display:block;}
 .adm-stat small{display:block;color:var(--mut);font-size:13px;}
 .adm-stat strong{display:block;font-size:24px;margin-top:4px;letter-spacing:-.01em;}
 .adm-stat span{display:block;color:var(--mut);font-size:12.5px;margin-top:2px;}
-.adm-stat.rood strong{color:#ff9b9b;}
-.adm-stat.groen strong{color:#7ee2a8;}
+.adm-stat.rood strong{color:#c62828;}
+.adm-stat.groen strong{color:#157347;}
 .adm-blok{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px 20px;margin-bottom:22px;}
 .adm-blok h2{margin:0 0 12px;font-size:18px;}
 .adm-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
@@ -8729,32 +8781,32 @@ table.adm-tab{width:100%;border-collapse:collapse;font-size:14.5px;}
 .adm-tab th{text-align:left;color:var(--mut);font-weight:600;font-size:12.5px;text-transform:uppercase;letter-spacing:.04em;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;}
 .adm-tab td{padding:11px 10px;border-bottom:1px solid var(--line);vertical-align:middle;}
 .adm-tab tr.klik{cursor:pointer;}
-.adm-tab tr.klik:hover td{background:#1c2636;}
+.adm-tab tr.klik:hover td{background:#f7f9fc;}
 .adm-tab .r{text-align:right;white-space:nowrap;}
 .adm-tab a{text-decoration:none;font-weight:600;}
 .adm-tab .sub2{display:block;color:var(--mut);font-size:12.5px;font-weight:400;}
 .adm-tab tfoot td{font-weight:700;border-bottom:0;}
 .adm-leeg{color:var(--mut);padding:18px 0;}
 .st{display:inline-block;font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px;white-space:nowrap;}
-.st-concept{background:#2b384c;color:#cfd8e6;}
-.st-open,.st-verstuurd{background:#1d3566;color:#cfe0ff;}
-.st-telaat{background:#5a1f1f;color:#ffc2c2;}
-.st-betaald,.st-akkoord{background:#174a31;color:#a6f0c6;}
-.st-afgewezen,.st-verlopen{background:#3d2a2a;color:#e2b7b7;}
+.st-concept{background:#dfe4ec;color:#33415c;}
+.st-open,.st-verstuurd{background:#e8efff;color:#1e3a8a;}
+.st-telaat{background:#fdecec;color:#9b1c1c;}
+.st-betaald,.st-akkoord{background:#e7f6ec;color:#157347;}
+.st-afgewezen,.st-verlopen{background:#fdecec;color:#9b1c1c;}
 .adm-chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:14px;}
 .adm-chips a{font-size:13.5px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);text-decoration:none;color:var(--mut);}
-.adm-chips a.on{color:#fff;border-color:#8fb3ff;background:#1f2b3d;}
+.adm-chips a.on{color:#1d4ed8;border-color:#1d4ed8;background:#e8efff;}
 .adm-chips form{margin-left:auto;display:flex;gap:6px;}
 .adm-chips input{width:220px;padding:7px 11px;font-size:14px;}
 .adm-acties{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 16px;}
 .adm-acties form{display:inline-flex;gap:6px;align-items:center;margin:0;}
 .adm-acties input[type=date]{width:auto;padding:7px 9px;font-size:13.5px;}
 .adm-info{color:var(--mut);font-size:13.5px;margin:0 0 18px;display:flex;gap:6px 18px;flex-wrap:wrap;}
-.adm-info a{color:#8fb3ff;}
+.adm-info a{color:#1d4ed8;}
 .adm-link{display:flex;gap:8px;flex-wrap:wrap;max-width:820px;margin:0 auto 16px;}
 .adm-link input{flex:1 1 260px;width:auto;}
 .adm-link input{font-size:13px;padding:8px 10px;}
-input[type=date],input[type=number],input[type=tel]{width:100%;background:#0c121c;border:1px solid var(--line);color:#fff;border-radius:10px;padding:11px 12px;font-family:inherit;font-size:15px;color-scheme:dark;}
+input[type=date],input[type=number],input[type=tel]{width:100%;background:#ffffff;border:1px solid var(--line);color:var(--text);border-radius:10px;padding:11px 12px;font-family:inherit;font-size:15px;color-scheme:light;}
 .drie{display:grid;grid-template-columns:repeat(3,1fr);gap:0 16px;}
 @media (max-width:760px){.drie{grid-template-columns:1fr 1fr;}}
 @media (max-width:480px){.drie{grid-template-columns:1fr;}}
@@ -8765,13 +8817,13 @@ input[type=date],input[type=number],input[type=tel]{width:100%;background:#0c121
 .regel input,.regel select,.regel textarea{padding:11px 9px;font-size:14.5px;}
 .regel .bedrag{padding:12px 4px;text-align:right;font-weight:600;white-space:nowrap;}
 .regel .weg{background:transparent;border:1px solid var(--line);color:var(--mut);border-radius:10px;height:44px;cursor:pointer;font-size:18px;}
-.regel .weg:hover{color:#ff9b9b;border-color:#6b2a2a;}
+.regel .weg:hover{color:#c62828;border-color:#f3b4b4;}
 .regel label{display:none;}
 .kor .kol-btw{display:none !important;}
 .kor .regel,.kor .regel-kop{grid-template-columns:minmax(180px,1fr) 82px 92px 112px 112px 38px;}
 @media (max-width:760px){
   .regel-kop{display:none;}
-  .regel,.kor .regel{grid-template-columns:1fr 1fr;background:#141c29;border:1px solid var(--line);border-radius:12px;padding:12px;}
+  .regel,.kor .regel{grid-template-columns:1fr 1fr;background:#f7f9fc;border:1px solid var(--line);border-radius:12px;padding:12px;}
   .regel .kol-oms{grid-column:1/-1;}
   .regel label{display:block;font-size:12px;color:var(--mut);margin:0 0 3px;font-weight:600;}
   .regel .bedrag{text-align:left;padding:4px 0 0;}
@@ -8885,7 +8937,7 @@ function adm_mailbg_js() {
     $m = adm_mailinst(); $ts = adm_taak_staat();
     $mlOud = $m['host'] !== '' && $m['pass'] !== '' && adm_ml()['check'] < date('Y-m-d H:i', strtotime('-20 minutes'));
     if (!$mlOud && substr($ts['laatst'], 0, 10) === date('Y-m-d') && ($m['host'] === '' || $m['pass'] === '' || !$m['afzenders'] || ($m['laatst'] !== '' && strtotime($m['laatst']) > time() - 1800))) return;
-    echo '<script>fetch("admin.php?adm=mailbg",{credentials:"same-origin"}).then(function(r){return r.json();}).then(function(j){if(j.nieuw>0){var d=document.createElement("div");d.className="ok";d.innerHTML=j.nieuw+(j.nieuw==1?" nieuwe inkoopfactuur":" nieuwe inkoopfacturen")+" uit je mail opgehaald. <a href=\"admin.php?adm=inkoop\" style=\"color:#8fb3ff;font-weight:600\">Bekijk</a>";var t=document.querySelector(".adm-tabs");t.parentNode.insertBefore(d,t.nextSibling);}}).catch(function(){});</script>';
+    echo '<script>fetch("admin.php?adm=mailbg",{credentials:"same-origin"}).then(function(r){return r.json();}).then(function(j){if(j.nieuw>0){var d=document.createElement("div");d.className="ok";d.innerHTML=j.nieuw+(j.nieuw==1?" nieuwe inkoopfactuur":" nieuwe inkoopfacturen")+" uit je mail opgehaald. <a href=\"admin.php?adm=inkoop\" style=\"color:#1d4ed8;font-weight:600\">Bekijk</a>";var t=document.querySelector(".adm-tabs");t.parentNode.insertBefore(d,t.nextSibling);}}).catch(function(){});</script>';
 }
 
 function adm_v_overzicht($docs, $inst) {
@@ -8913,10 +8965,10 @@ function adm_v_overzicht($docs, $inst) {
       <div class="err"><?= $mlT === 1 ? 'Er is een mail niet aangekomen bij je klant.' : 'Er zijn ' . $mlT . ' mails niet aangekomen bij je klant.' ?> <a href="admin.php?adm=mailbox#verzonden" style="color:#fff;font-weight:700">Bekijk welke</a></div>
     <?php endif; } ?>
     <?php $om = adm_mailinst(); if (empty($is_demo) && ($om['host'] === '' || $om['pass'] === '')): ?>
-      <div class="ok">Koppel je e-mail, dan gaan je offertes en facturen vanaf je eigen adres de deur uit en komen ze goed aan. Het kost 1 minuut: alleen je e-mailadres en wachtwoord. <a href="admin.php?adm=mailbox" style="color:#8fb3ff;font-weight:600">E-mail koppelen</a></div>
+      <div class="ok">Koppel je e-mail, dan gaan je offertes en facturen vanaf je eigen adres de deur uit en komen ze goed aan. Het kost 1 minuut: alleen je e-mailadres en wachtwoord. <a href="admin.php?adm=mailbox" style="color:#1d4ed8;font-weight:600">E-mail koppelen</a></div>
     <?php endif; ?>
     <?php if ($mist && empty($is_demo)): ?>
-      <div class="ok">Voordat je je eerste factuur verstuurt: vul je <?= h(implode(', ', $mist)) ?> in. Die moeten volgens de wet op elke factuur staan. <a href="admin.php?adm=inst" style="color:#8fb3ff;font-weight:600">Gegevens invullen</a></div>
+      <div class="ok">Voordat je je eerste factuur verstuurt: vul je <?= h(implode(', ', $mist)) ?> in. Die moeten volgens de wet op elke factuur staan. <a href="admin.php?adm=inst" style="color:#1d4ed8;font-weight:600">Gegevens invullen</a></div>
     <?php endif; ?>
     <div class="adm-stats">
       <a class="adm-stat" href="admin.php?adm=docs&amp;soort=factuur&amp;f=open"><small>Nog te ontvangen</small><strong><?= h(adm_eur($open)) ?></strong><span><?= $openN ?> open <?= $openN === 1 ? 'factuur' : 'facturen' ?></span></a>
@@ -9055,7 +9107,7 @@ function adm_v_doc($docs, $inst) {
       <?php if (!empty($d['herinnering']['verstuurd']) && $d['herinnering']['verstuurd'] !== 'nee, betaald'): ?><span>Herinnering verstuurd op <?= h(nl_datum(substr($d['herinnering']['verstuurd'], 0, 10))) ?></span><?php elseif (!empty($d['herinnering']['gevraagd'])): ?><span>Gevraagd of er een herinnering uit mag (<?= h(nl_datum(substr($d['herinnering']['gevraagd'], 0, 10))) ?>)</span><?php endif; ?>
     </div>
     <?php if (!empty($d['gepland'])): $g = $d['gepland']; ?>
-      <div class="ok"><?php if (!empty($g['verstuurd'])): ?>Op <?= h(nl_datum(substr($g['verstuurd'], 0, 10))) ?> vanzelf verstuurd naar <?= h($g['aan']) ?>.<?php else: ?>Ingepland: gaat op <strong><?= h(nl_datum($g['datum'])) ?></strong> vanzelf naar <?= h($g['aan']) ?><?= $g['cc'] !== '' ? ' (kopie ' . h($g['cc']) . ')' : '' ?>.<?php if (!empty($g['fout'])): ?> <span style="color:#ffc2c2">Laatste poging lukte niet: <?= h($g['fout']) ?></span><?php endif; ?>
+      <div class="ok"><?php if (!empty($g['verstuurd'])): ?>Op <?= h(nl_datum(substr($g['verstuurd'], 0, 10))) ?> vanzelf verstuurd naar <?= h($g['aan']) ?>.<?php else: ?>Ingepland: gaat op <strong><?= h(nl_datum($g['datum'])) ?></strong> vanzelf naar <?= h($g['aan']) ?><?= $g['cc'] !== '' ? ' (kopie ' . h($g['cc']) . ')' : '' ?>.<?php if (!empty($g['fout'])): ?> <span style="color:#9b1c1c">Laatste poging lukte niet: <?= h($g['fout']) ?></span><?php endif; ?>
         <form method="post" style="display:inline;margin-left:8px"><input type="hidden" name="action" value="adm_plan_weg" /><input type="hidden" name="id" value="<?= $id ?>" /><button class="linkknop" type="submit">Niet meer inplannen</button></form><?php endif; ?></div>
     <?php endif; ?>
     <?php if (!($d['soort'] === 'factuur' && $s === 'concept')): ?>
@@ -9280,7 +9332,7 @@ function adm_v_inst($inst) {
     $vf = adm_volgnummer($voorbeeld, 'factuur'); $vo = adm_volgnummer($voorbeeld, 'offerte');
     ?>
     <h2 style="font-size:22px">Mijn gegevens voor offertes en facturen</h2>
-    <p class="sub">Deze gegevens komen op elke offerte en factuur. Naam, adres, telefoon, e-mail, KvK en logo komen uit je <a href="admin.php?instellingen=1" style="color:#8fb3ff">Instellingen</a>.</p>
+    <p class="sub">Deze gegevens komen op elke offerte en factuur. Naam, adres, telefoon, e-mail, KvK en logo komen uit je <a href="admin.php?instellingen=1" style="color:#1d4ed8">Instellingen</a>.</p>
     <div class="formcard" id="alles" style="border-color:#2f8f5b">
       <h2 style="margin-bottom:6px">Al je gegevens downloaden</h2>
       <p class="hint" style="margin:0 0 12px">Je administratie staat op je eigen hosting, niet bij ons. Met deze knop download je alles in 1 zip: al je facturen, offertes en inkoopfacturen als pdf, je bankbestanden, overzichten voor Excel en je klantenlijst. Handig als kopie, en dit kan altijd, ook als je ooit stopt.</p>
@@ -9288,9 +9340,9 @@ function adm_v_inst($inst) {
     </div>
     <div class="formcard">
       <div class="two">
-        <div><div class="hint" style="margin:0">Bedrijfsnaam</div><?= h(st('naam')) ?: '<span style="color:#ff9b9b">nog niet ingevuld</span>' ?></div>
-        <div><div class="hint" style="margin:0">Adres</div><?= (st('straat') . st('plaats')) !== '' ? h(st('straat') . ', ' . trim(st('postcode') . ' ' . st('plaats'))) : '<span style="color:#ff9b9b">nog niet ingevuld</span>' ?></div>
-        <div style="margin-top:12px"><div class="hint" style="margin:0">KvK-nummer</div><?= st('kvk') !== '' ? h(st('kvk')) : '<span style="color:#ff9b9b">nog niet ingevuld</span>' ?></div>
+        <div><div class="hint" style="margin:0">Bedrijfsnaam</div><?= h(st('naam')) ?: '<span style="color:#c62828">nog niet ingevuld</span>' ?></div>
+        <div><div class="hint" style="margin:0">Adres</div><?= (st('straat') . st('plaats')) !== '' ? h(st('straat') . ', ' . trim(st('postcode') . ' ' . st('plaats'))) : '<span style="color:#c62828">nog niet ingevuld</span>' ?></div>
+        <div style="margin-top:12px"><div class="hint" style="margin:0">KvK-nummer</div><?= st('kvk') !== '' ? h(st('kvk')) : '<span style="color:#c62828">nog niet ingevuld</span>' ?></div>
         <div style="margin-top:12px"><div class="hint" style="margin:0">E-mail en telefoon</div><?= h(trim(st('email') . '  ' . st('tel'))) ?: '-' ?></div>
       </div>
       <p style="margin:14px 0 0"><a class="btn ghost sm" href="admin.php?instellingen=1">Wijzig bij Instellingen</a></p>
@@ -9556,7 +9608,7 @@ if ($logged_in && isset($_POST['action'])) {
             save_pages($pages);
             rebuild_site($pages);
             $_SESSION['ff_notice'] = empty($upErrors) ? 'Project opgeslagen.' : 'Opgeslagen, maar: ' . implode(' ', $upErrors);
-            header('Location: admin.php'); exit;
+            header('Location: admin.php?projecten=1'); exit;
         }
     }
 
@@ -9571,7 +9623,7 @@ if ($logged_in && isset($_POST['action'])) {
         }
         save_pages($pages);
         rebuild_site($pages);
-        header('Location: admin.php'); exit;
+        header('Location: admin.php?projecten=1'); exit;
     }
 
     if ($action === 'set_folder') {
@@ -9582,13 +9634,13 @@ if ($logged_in && isset($_POST['action'])) {
         unset($p);
         save_pages($pages);
         rebuild_site($pages);
-        header('Location: admin.php'); exit;
+        header('Location: admin.php?projecten=1'); exit;
     }
 
     if ($action === 'regenerate_all') {
         rebuild_everything($pages);
         $_SESSION['ff_notice'] = "Alle pagina's zijn bijgewerkt.";
-        header('Location: admin.php'); exit;
+        header('Location: admin.php?projecten=1'); exit;
     }
 
     if ($action === 'settings') {
@@ -9819,6 +9871,9 @@ $showRes = $logged_in && isset($_GET['reserveren']);
 $showAb = $logged_in && isset($_GET['aanbod']);
 $showBd = $logged_in && isset($_GET['beoordelingen']);
 $showMk = $logged_in && isset($_GET['menukaart']);
+$showProj = $logged_in && isset($_GET['projecten']);
+$showBer = $logged_in && isset($_GET['berichten']);
+$showStart = $logged_in && !$showForm && !$showAccount && !$showSettings && !$showAdm && !$showRes && !$showAb && !$showBd && !$showMk && !$showProj && !$showBer;
 $uploadLimit = ini_get('upload_max_filesize');
 $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (string)($_SERVER['HTTP_HOST'] ?? '')));
 ?>
@@ -9831,20 +9886,70 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
 <title>Admin - <?= h(st('naam')) ?></title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <style>
-  :root{--bg:#0f1622;--panel:#18212f;--line:#2b384c;--blue:#2f6bff;--mut:#9aa8bd;--text:#eef2f8;}
+  :root{--bg:#f4f6fa;--panel:#ffffff;--line:#dfe4ec;--blue:#2563eb;--mut:#5b6577;--text:#1c2330;--zacht:#f7f9fc;--licht-blauw:#e8efff;}
   *{box-sizing:border-box;}
   body{margin:0;font-family:Poppins,'Segoe UI',Arial,sans-serif;background:var(--bg);color:var(--text);}
+  /* Indeling: menu links, inhoud rechts */
+  .app{display:flex;min-height:100vh;}
+  .side{width:248px;flex:none;background:#fff;border-right:1px solid var(--line);position:sticky;top:0;height:100vh;overflow-y:auto;padding:18px 14px 30px;}
+  .side .brand{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:4px 10px 18px;text-decoration:none;border-bottom:1px solid var(--line);margin-bottom:10px;}
+  .side .brand img{height:36px;width:auto;max-width:150px;object-fit:contain;margin-bottom:6px;}
+  .side .bn{font-weight:700;font-size:16px;line-height:1.25;color:var(--text);}
+  .side .bt{font-size:12.5px;font-weight:600;color:var(--mut);letter-spacing:.04em;text-transform:uppercase;}
+  .side nav{display:flex;flex-direction:column;gap:2px;}
+  .sg{font-size:11.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8a93a3;padding:16px 10px 6px;}
+  .si{display:flex;align-items:center;gap:11px;padding:9px 10px;border-radius:10px;text-decoration:none;color:#33415c;font-weight:500;font-size:14.5px;}
+  .si svg{width:19px;height:19px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;color:#7b8598;}
+  .si:hover{background:var(--zacht);color:var(--text);}
+  .si.on{background:var(--licht-blauw);color:var(--blue);font-weight:600;}
+  .si.on svg{color:var(--blue);}
+  .si .tel{margin-left:auto;min-width:20px;padding:0 6px;border-radius:999px;background:#e5484d;color:#fff;font-size:12px;line-height:20px;text-align:center;}
+  .hoofd{flex:1;min-width:0;}
+  .mobbar{display:none;}
+  .side-dicht{display:none;}
+  @media (max-width:900px){
+    .side{position:fixed;left:0;top:0;bottom:0;z-index:60;transform:translateX(-105%);transition:transform .2s ease;box-shadow:0 0 40px rgba(28,35,48,.18);}
+    body.menu-open .side{transform:none;}
+    body.menu-open .side-dicht{display:block;position:fixed;inset:0;background:rgba(28,35,48,.35);z-index:55;}
+    .mobbar{display:flex;align-items:center;gap:12px;background:#fff;border-bottom:1px solid var(--line);padding:10px 16px;position:sticky;top:0;z-index:40;}
+    .mobbar .bn{font-weight:700;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+    .menuknop{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);background:#fff;color:var(--text);font:600 14px/1 inherit;font-family:inherit;padding:9px 12px;border-radius:10px;cursor:pointer;}
+    .menuknop svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;}
+  }
+  /* Startpagina */
+  .todo{background:#fff8e6;border:1px solid #f2dca6;border-radius:16px;padding:18px 20px;margin-bottom:22px;max-width:980px;}
+  .todo h2{font-size:17px;margin:0 0 10px;border:0;padding:0;color:#7a5200;}
+  .todo ul{list-style:none;margin:0;padding:0;display:grid;gap:8px;}
+  .todo a{display:flex;flex-direction:column;gap:2px;text-decoration:none;background:#fff;border:1px solid #f2dca6;border-radius:12px;padding:10px 14px;}
+  .todo a:hover{border-color:#d9a92e;}
+  .todo a span{color:var(--mut);font-size:13.5px;}
+  .tegels{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:16px;max-width:980px;}
+  .tegel{background:#fff;border:1px solid var(--line);border-radius:16px;display:flex;flex-direction:column;box-shadow:0 10px 24px -20px rgba(28,35,48,.35);}
+  .tg-kop{display:flex;flex-direction:column;gap:4px;padding:18px 20px 14px;text-decoration:none;flex:1;}
+  .tg-kop:hover .tg-t{color:var(--blue);}
+  .tg-t{font-weight:700;font-size:15px;color:var(--text);}
+  .tg-g{font-weight:700;font-size:28px;line-height:1.15;color:var(--text);margin-top:4px;}
+  .tg-k{color:var(--mut);font-size:13.5px;}
+  .tg-knop{display:flex;gap:8px;flex-wrap:wrap;padding:0 20px 18px;}
+  /* Instellingen in stukjes */
+  .inst-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 18px;max-width:860px;position:sticky;top:0;z-index:20;background:var(--bg);padding:8px 0;}
+  .inst-tabs button{all:unset;cursor:pointer;padding:9px 14px;border-radius:999px;background:#fff;border:1px solid var(--line);font-weight:600;font-size:14px;color:#33415c;}
+  .inst-tabs button:hover{border-color:#9db5ef;}
+  .inst-tabs button[aria-selected="true"]{background:var(--blue);border-color:var(--blue);color:#fff;}
+  @media (max-width:900px){.inst-tabs{top:57px;flex-wrap:nowrap;overflow-x:auto;}.inst-tabs button{white-space:nowrap;}}
+  .inst-stap{color:var(--mut);font-size:13.5px;margin:-8px 0 16px;}
   a{color:inherit;}
-  .wrap{max-width:1100px;margin:0 auto;padding:0 22px;}
+  .wrap{max-width:1100px;margin:0 auto;padding:0 28px;}
+  .hoofd .wrap{margin:0;}
   .bar{border-bottom:1px solid var(--line);}
   .bar .wrap{display:flex;justify-content:space-between;align-items:center;min-height:66px;gap:12px;flex-wrap:wrap;padding-top:10px;padding-bottom:10px;}
   .brand{font-weight:700;text-decoration:none;display:flex;align-items:center;gap:10px;}
   .brand img{height:34px;width:auto;max-width:120px;object-fit:contain;}
-  .brand span{color:#8fb3ff;font-weight:500;}
+  .brand span{color:#1d4ed8;font-weight:500;}
   main{padding:36px 0 80px;}
   h1{font-size:28px;margin:0 0 4px;}
   h2{font-size:20px;margin:0 0 4px;}
-  .formcard h2,.adm-blok h2{color:#8fb3ff;border-left:4px solid #2f6bff;padding-left:12px;line-height:1.25;}
+  .formcard h2,.adm-blok h2{color:#1d4ed8;border-left:4px solid #2f6bff;padding-left:12px;line-height:1.25;}
   .sub{color:var(--mut);margin:0 0 22px;}
   .btn{display:inline-flex;align-items:center;gap:7px;background:var(--blue);color:#fff;border:none;font-family:inherit;font-weight:600;font-size:15px;padding:10px 16px;border-radius:10px;cursor:pointer;text-decoration:none;}
   .btn:hover{filter:brightness(1.1);}
@@ -9854,21 +9959,21 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
   .ff-spin{display:inline-block;width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:ffspin .7s linear infinite;vertical-align:-2px;}
   @keyframes ffspin{to{transform:rotate(360deg);}}
   .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--text);}
-  .btn.ghost:hover{border-color:#8fb3ff;}
-  .btn.ghost.on{border-color:#8fb3ff;background:#1f2b3d;}
-  .btn.danger{background:transparent;border:1px solid #6b2a2a;color:#ff9b9b;}
+  .btn.ghost:hover{border-color:#1d4ed8;}
+  .btn.ghost.on{border-color:#1d4ed8;background:#e8efff;}
+  .btn.danger{background:transparent;border:1px solid #f3b4b4;color:#c62828;}
   .btn.sm{font-size:13.5px;padding:7px 12px;}
   .row{display:flex;gap:8px;flex-wrap:wrap;}
   .toolbar{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:22px;}
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:16px;}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:10px;}
-  .card .thumb{aspect-ratio:16/9;border-radius:10px;background:#111a27 center/cover no-repeat;display:grid;place-items:center;color:var(--mut);font-size:13px;}
+  .card .thumb{aspect-ratio:16/9;border-radius:10px;background:#eef1f6 center/cover no-repeat;display:grid;place-items:center;color:var(--mut);font-size:13px;}
   .card h3{margin:0;font-size:17px;}
-  .card .url{color:#8fb3ff;font-size:13px;text-decoration:none;word-break:break-all;}
+  .card .url{color:#1d4ed8;font-size:13px;text-decoration:none;word-break:break-all;}
   .card .badge{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#fff;background:var(--blue);padding:2px 8px;border-radius:999px;align-self:flex-start;}
   .folderform{display:flex;align-items:center;gap:8px;border-top:1px solid var(--line);padding-top:10px;font-size:13.5px;color:var(--mut);}
-  select,input[type=text],input[type=email],input[type=url],input[type=password],input[type=number],input[type=tel],input[type=date],input[type=time],textarea{color-scheme:dark;width:100%;background:#0c121c;border:1px solid var(--line);color:#fff;border-radius:10px;padding:11px 12px;font-family:inherit;font-size:15px;}
-  input[type=color]{width:64px;height:44px;border:1px solid var(--line);border-radius:10px;background:#0c121c;padding:4px;cursor:pointer;}
+  select,input[type=text],input[type=email],input[type=url],input[type=password],input[type=number],input[type=tel],input[type=date],input[type=time],textarea{color-scheme:light;width:100%;background:#ffffff;border:1px solid var(--line);color:var(--text);border-radius:10px;padding:11px 12px;font-family:inherit;font-size:15px;}
+  input[type=color]{width:64px;height:44px;border:1px solid var(--line);border-radius:10px;background:#ffffff;padding:4px;cursor:pointer;}
   .folderform select{padding:6px 8px;font-size:13.5px;}
   textarea{min-height:140px;resize:vertical;}
   textarea.short{min-height:80px;}
@@ -9882,20 +9987,20 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
   .photos{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;}
   .photos label{display:block;font-weight:400;font-size:12.5px;color:var(--mut);}
   .photos img{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:8px;display:block;margin-bottom:4px;}
-  .err{background:#3a1616;border:1px solid #6b2a2a;color:#ffc2c2;padding:11px 14px;border-radius:9px;margin-bottom:18px;}
-  .ok{background:#16283f;border:1px solid var(--line);color:#cfe0ff;padding:11px 14px;border-radius:9px;margin-bottom:18px;}
+  .err{background:#fdecec;border:1px solid #f3b4b4;color:#9b1c1c;padding:11px 14px;border-radius:9px;margin-bottom:18px;}
+  .ok{background:#eef4ff;border:1px solid var(--line);color:#1e3a8a;padding:11px 14px;border-radius:9px;margin-bottom:18px;}
   .login{max-width:440px;margin:10vh auto 0;}
   details{margin-bottom:18px;} summary{cursor:pointer;font-weight:600;}
   .add-tile{border:1.5px dashed var(--line);border-radius:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;min-height:200px;text-decoration:none;color:var(--mut);}
-  .add-tile:hover{border-color:#8fb3ff;color:#fff;}
-  .add-tile .plus{font-size:34px;color:#8fb3ff;}
+  .add-tile:hover{border-color:#1d4ed8;color:var(--text);}
+  .add-tile .plus{font-size:34px;color:#1d4ed8;}
   .checks{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px;}
-  .checks label{display:flex;align-items:center;gap:10px;font-weight:500;font-size:14.5px;background:#0c121c;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:0;cursor:pointer;}
+  .checks label{display:flex;align-items:center;gap:10px;font-weight:500;font-size:14.5px;background:#ffffff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:0;cursor:pointer;}
   .checks input{width:18px;height:18px;accent-color:#2f6bff;}
   .cats{display:flex;flex-wrap:wrap;gap:6px;}
-  .cats span{font-size:12px;color:#cfe0ff;background:#22314a;border-radius:999px;padding:2px 9px;}
-  .cats span.none{background:#3a2a10;color:#ffd79a;}
-  .dienst{border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:12px;background:#141c29;}
+  .cats span{font-size:12px;color:#1e3a8a;background:#e8efff;border-radius:999px;padding:2px 9px;}
+  .cats span.none{background:#fff6dc;color:#8a5a00;}
+  .dienst{border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:12px;background:#f7f9fc;}
   .dienst h3{margin:0 0 12px;font-size:15px;color:var(--mut);font-weight:600;}
   .colors{display:flex;gap:28px;flex-wrap:wrap;}
   .hulp{display:inline-grid;place-items:center;width:20px;height:20px;margin-left:8px;border-radius:50%;border:0;background:#2f6bff;color:#fff;font:700 12px/1 inherit;font-family:inherit;cursor:pointer;vertical-align:middle;padding:0;}
@@ -9914,14 +10019,14 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
   .colors .field{display:flex;align-items:center;gap:12px;margin:0;}
   .colors .field label{margin:0;}
   .logo-now{display:flex;align-items:center;gap:16px;margin-bottom:12px;}
-  .logo-now img{height:64px;width:auto;max-width:200px;object-fit:contain;background:#0c121c;border:1px solid var(--line);border-radius:10px;padding:6px;}
+  .logo-now img{height:64px;width:auto;max-width:200px;object-fit:contain;background:#ffffff;border:1px solid var(--line);border-radius:10px;padding:6px;}
   .logo-now label{font-weight:400;font-size:14px;color:var(--mut);display:flex;gap:8px;align-items:center;}
   .blk-lijst{display:grid;gap:10px;}
-  .blk{background:#141c29;border:1px solid var(--line);border-radius:12px;padding:12px 14px;}
+  .blk{background:#f7f9fc;border:1px solid var(--line);border-radius:12px;padding:12px 14px;}
   .blk-kop{display:flex;align-items:center;gap:8px;}
   .blk-kop .btn{padding:6px 10px;}
   .blk-in{margin:10px 0 2px 28px;}
-  .blk-in summary{font-size:14px;color:#8fb3ff;}
+  .blk-in summary{font-size:14px;color:#1d4ed8;}
   .blk-in[open] summary{margin-bottom:12px;}
   .blk-sub{border-top:1px solid var(--line);padding-top:12px;margin-top:4px;}
   .blk-mini{display:block;max-width:160px;max-height:100px;object-fit:cover;border-radius:8px;margin-bottom:6px;}
@@ -9931,11 +10036,11 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
   .aanvraag .atop{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;}
   .aanvraag .atop span,.aanvraag .ameta{color:var(--mut);font-size:14px;}
   .aanvraag .acontact{display:flex;gap:16px;flex-wrap:wrap;margin:8px 0;}
-  .aanvraag .acontact a{color:#8fb3ff;font-weight:600;text-decoration:none;}
+  .aanvraag .acontact a{color:#1d4ed8;font-weight:600;text-decoration:none;}
   .aanvraag .abericht{line-height:1.55;}
   .stijlen{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;}
-  .stijl{display:flex !important;gap:10px;align-items:flex-start;background:#0c121c;border:1px solid var(--line);border-radius:12px;padding:12px 14px;cursor:pointer;font-weight:400 !important;margin:0 !important;}
-  .stijl:hover{border-color:#8fb3ff;}
+  .stijl{display:flex !important;gap:10px;align-items:flex-start;background:#ffffff;border:1px solid var(--line);border-radius:12px;padding:12px 14px;cursor:pointer;font-weight:400 !important;margin:0 !important;}
+  .stijl:hover{border-color:#1d4ed8;}
   .stijl input{margin-top:4px;accent-color:#2f6bff;}
   .stijl strong{display:block;font-size:15px;}
   .stijl small{display:block;color:var(--mut);font-size:13px;line-height:1.45;margin-top:2px;}
@@ -10008,28 +10113,40 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     <?php endif; ?>
   </main>
 <?php else: ?>
-  <header class="bar">
-    <div class="wrap">
-      <a class="brand" href="admin.php"><?php if (logo_url() !== ''): ?><img src="<?= h(logo_url()) ?>" alt="" /><?php endif; ?><?= h(st('naam')) ?> <span>ADMIN</span></a>
-      <div class="row">
-        <a class="btn ghost sm<?= (!$showSettings && !$showAccount && !$showAdm && !$showRes && !$showAb && !$showBd && !$showMk) ? ' on' : '' ?>" href="admin.php">Projecten</a>
-        <a class="btn ghost sm<?= $showAdm ? ' on' : '' ?>" href="admin.php?adm">Administratie</a>
-        <a class="btn ghost sm<?= $showAb ? ' on' : '' ?>" href="admin.php?aanbod=1"><?= h(ab_inst()['aan'] ? ab_inst()['naam'] : 'Aanbod') ?></a>
-        <a class="btn ghost sm<?= $showMk ? ' on' : '' ?>" href="admin.php?menukaart=1"><?= h(mk_inst()['naam']) ?></a>
-        <a class="btn ghost sm<?= $showBd ? ' on' : '' ?>" href="admin.php?beoordelingen=1">Beoordelingen<?php $bdN = $showBd ? 0 : bd_nieuw_aantal(); if ($bdN): ?> <span style="display:inline-block;min-width:20px;padding:0 6px;border-radius:999px;background:#ff5d5d;color:#fff;font-size:12px;line-height:20px;text-align:center"><?= $bdN ?></span><?php endif; ?></a>
-        <a class="btn ghost sm<?= $showRes ? ' on' : '' ?>" href="admin.php?reserveren=1">Afspraakplanner<?php $rsN = $showRes ? 0 : res_nieuw_aantal(); if ($rsN): ?> <span style="display:inline-block;min-width:20px;padding:0 6px;border-radius:999px;background:#ff5d5d;color:#fff;font-size:12px;line-height:20px;text-align:center"><?= $rsN ?></span><?php endif; ?></a>
-        <a class="btn ghost sm<?= $showSettings ? ' on' : '' ?>" href="admin.php?instellingen=1">Instellingen</a>
-        <a class="btn ghost sm<?= $showAccount ? ' on' : '' ?>" href="admin.php?account=1">Inloggegevens</a>
-        <a class="btn ghost sm" href="/" target="_blank">Website bekijken</a>
-        <a class="btn ghost sm" href="admin.php?logout=1">Uitloggen</a>
-      </div>
-    </div>
-  </header>
+<?php
+  $nRes = $showRes ? 0 : res_nieuw_aantal(); $nBd = $showBd ? 0 : bd_nieuw_aantal();
+  $ic = function($d) { return '<svg viewBox="0 0 24 24" aria-hidden="true">' . $d . '</svg>'; };
+  $mi = function($href, $label, $on, $icon, $badge = 0, $extra = '') use ($ic) { return '<a class="si' . ($on ? ' on' : '') . '" href="' . $href . '"' . $extra . '>' . $ic($icon) . '<span>' . $label . '</span>' . ($badge ? '<b class="tel">' . (int)$badge . '</b>' : '') . '</a>'; };
+?>
+<div class="app">
+  <aside class="side" id="ffside" aria-label="Menu">
+    <a class="brand" href="admin.php"><?php if (logo_url() !== ''): ?><img src="<?= h(logo_url()) ?>" alt="" /><?php endif; ?><span class="bn"><?= h(st('naam')) ?></span><span class="bt">Beheer</span></a>
+    <nav>
+      <?= $mi('admin.php', 'Start', $showStart, '<path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1z"/>') ?>
+      <div class="sg">Je website</div>
+      <?= $mi('admin.php?instellingen=1', 'Instellingen', $showSettings, '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>') ?>
+      <?= $mi('admin.php?projecten=1', 'Projecten', $showProj || $showForm, '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 15l4-4 4 4 3-3 5 5"/>') ?>
+      <?= $mi('admin.php?aanbod=1', h(ab_inst()['aan'] ? ab_inst()['naam'] : 'Aanbod'), $showAb, '<path d="M4 8h16l-1.5 11h-13z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>') ?>
+      <?= $mi('admin.php?menukaart=1', h(mk_inst()['naam']), $showMk, '<path d="M8 3v8M6 3v5a2 2 0 0 0 4 0V3M8 11v10M16 21V3c-2 1.5-3 4-3 7h3"/>') ?>
+      <?= $mi('admin.php?beoordelingen=1', 'Beoordelingen', $showBd, '<path d="M12 4l2.4 5 5.6.8-4 3.9 1 5.5-5-2.7-5 2.7 1-5.5-4-3.9 5.6-.8z"/>', $nBd) ?>
+      <div class="sg">Klanten en geld</div>
+      <?= $mi('admin.php?berichten=1', 'Berichten', $showBer, '<path d="M4 6h16v10H8l-4 3z"/>') ?>
+      <?= $mi('admin.php?reserveren=1', 'Afspraakplanner', $showRes, '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>', $nRes) ?>
+      <?= $mi('admin.php?adm', 'Administratie', $showAdm, '<path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4M10 12h5M10 16h5"/>') ?>
+      <div class="sg">Account</div>
+      <?= $mi('admin.php?account=1', 'Inloggegevens', $showAccount, '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>') ?>
+      <?= $mi('/', 'Website bekijken', false, '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>', 0, ' target="_blank" rel="noopener"') ?>
+      <?= $mi('admin.php?logout=1', 'Uitloggen', false, '<path d="M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 16l-4-4 4-4M6 12h10"/>') ?>
+    </nav>
+  </aside>
+  <div class="side-dicht" onclick="document.body.classList.remove('menu-open')"></div>
+  <div class="hoofd">
+  <div class="mobbar"><button type="button" class="menuknop" onclick="document.body.classList.toggle('menu-open')" aria-controls="ffside"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>Menu</button><a class="bn" href="admin.php"><?= h(st('naam')) ?></a></div>
   <?php if (!empty($ADM_ALLEEN_LEZEN)): ?>
   <div class="demobar" style="background:#ffcf70;color:#1c2330"><div class="wrap">Je abonnement is gestopt. Je website staat offline en je kunt niets meer wijzigen. Je administratie kun je nog wel bekijken en downloaden. <a href="admin.php?adm=alles" style="color:#1c2330;font-weight:700">Alles downloaden</a> &middot; <a href="<?= h(betaal_link()) ?>" style="color:#1c2330;font-weight:700">Opnieuw starten</a></div></div>
   <?php endif; ?>
   <?php if (!$is_demo && !empty($LIC['waarschuwing'])): ?>
-  <div class="demobar" style="background:#ff9b9b"><div class="wrap">Je laatste betaling voor deze website is niet gelukt. Regel het v&#xF3;&#xF3;r <?= h(nl_datum($LIC['offlineOp'] ?? '')) ?>, anders gaat je website offline. <a href="<?= h(betaal_link()) ?>">Betaling regelen</a></div></div>
+  <div class="demobar" style="background:#c62828"><div class="wrap">Je laatste betaling voor deze website is niet gelukt. Regel het v&#xF3;&#xF3;r <?= h(nl_datum($LIC['offlineOp'] ?? '')) ?>, anders gaat je website offline. <a href="<?= h(betaal_link()) ?>">Betaling regelen</a></div></div>
   <?php endif; ?>
   <?php if ($is_demo): ?>
   <div class="demobar"><div class="wrap">Demo: je kijkt mee in een voorbeeld-admin. Opslaan, wijzigen en verwijderen staan uit. <a href="admin.php?logout=1">Demo afsluiten</a></div></div>
@@ -10087,7 +10204,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
               <div class="field"><label for="provincie">Provincie</label><input type="text" id="provincie" name="provincie" maxlength="60" value="<?= h(st('provincie')) ?>" /></div>
               <div class="field"><label for="tel">Telefoon</label><input type="text" id="tel" name="tel" maxlength="30" value="<?= h(st('tel')) ?>" /></div>
               <div class="field"><label for="tel2">Tweede telefoonnummer (optioneel)</label><input type="text" id="tel2" name="tel2" maxlength="30" value="<?= h(st('tel2')) ?>" /></div>
-              <div class="field"><label for="whatsapp">WhatsApp-nummer (optioneel)</label><input type="text" id="whatsapp" name="whatsapp" maxlength="25" placeholder="Bijvoorbeeld: 06 12345678" value="<?= h(st('whatsapp')) ?>" /><div class="hint">Vul je je nummer in, dan staat er op elke pagina rechtsonder een groene WhatsApp-knop. Bezoekers sturen je dan met 1 tik een bericht.<?php if (st('whatsapp') !== '' && whatsapp_nummer() === ''): ?> <strong style="color:#ff9b9b">Dit nummer klopt niet.</strong><?php endif; ?></div></div>
+              <div class="field"><label for="whatsapp">WhatsApp-nummer (optioneel)</label><input type="text" id="whatsapp" name="whatsapp" maxlength="25" placeholder="Bijvoorbeeld: 06 12345678" value="<?= h(st('whatsapp')) ?>" /><div class="hint">Vul je je nummer in, dan staat er op elke pagina rechtsonder een groene WhatsApp-knop. Bezoekers sturen je dan met 1 tik een bericht.<?php if (st('whatsapp') !== '' && whatsapp_nummer() === ''): ?> <strong style="color:#c62828">Dit nummer klopt niet.</strong><?php endif; ?></div></div>
               <div class="field"><label for="whatsapp_tekst">Eerste zin van het bericht (optioneel)</label><input type="text" id="whatsapp_tekst" name="whatsapp_tekst" maxlength="140" placeholder="Hallo <?= h(st('naam')) ?>, ik heb een vraag." value="<?= h(st('whatsapp_tekst')) ?>" /><div class="hint">Deze tekst staat alvast klaar als de bezoeker op de knop tikt. Hij kan hem zelf nog aanpassen.</div></div>
               <div class="field"><label for="email">E-mailadres</label><input type="email" id="email" name="email" value="<?= h(st('email')) ?>" /><div class="hint">Hier komen ook de berichten van het contactformulier binnen.</div></div>
               <div class="field"><label for="kvk">KvK-nummer (optioneel)</label><input type="text" id="kvk" name="kvk" maxlength="20" value="<?= h(st('kvk')) ?>" /></div>
@@ -10230,10 +10347,10 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
                       <div class="two"><div class="field"><label for="woordenk">Een</label><input type="text" id="woordenk" name="woord_project" maxlength="30" value="<?= h(st('woord_project')) ?>" placeholder="project" /></div><div class="field"><label for="woordmv">Meer</label><input type="text" id="woordmv" name="woord_projecten" maxlength="30" value="<?= h(st('woord_projecten')) ?>" placeholder="projecten" /></div></div>
                       <div class="hint">Bijvoorbeeld boek en boeken, fragment en fragmenten, of klus en klussen. Dit woord staat in het menu en boven je werk op de website.</div>
                     </details><?php endif; ?>
-                  <?php if ($k === 'beoordelingen'): ?><div class="hint" style="margin:4px 0 0 28px">Sterren en teksten van je klanten. Instellen doe je bovenaan bij <a href="admin.php?beoordelingen=1" style="color:#8fb3ff">Beoordelingen</a>.</div><?php endif; ?>
-                  <?php if ($k === 'aanbod'): ?><div class="hint" style="margin:4px 0 0 28px">Je nieuwste 6 auto's of producten. Toevoegen doe je bovenaan bij <a href="admin.php?aanbod=1" style="color:#8fb3ff">Aanbod</a>.</div><?php endif; ?>
-                  <?php if ($k === 'menukaart'): ?><div class="hint" style="margin:4px 0 0 28px">Een paar gerechten van je kaart, met een knop naar de hele menukaart. Specialiteiten en nieuwe gerechten gaan voor. Invullen doe je bovenaan bij <a href="admin.php?menukaart=1" style="color:#8fb3ff">Menukaart</a>.</div><?php endif; ?>
-                  <?php if ($k === 'reserveren'): ?><div class="hint" style="margin:4px 0 0 28px">De kalender om online te reserveren. Instellen doe je bovenaan bij <a href="admin.php?reserveren=1" style="color:#8fb3ff">Afspraakplanner</a>.</div><?php endif; ?>
+                  <?php if ($k === 'beoordelingen'): ?><div class="hint" style="margin:4px 0 0 28px">Sterren en teksten van je klanten. Instellen doe je bovenaan bij <a href="admin.php?beoordelingen=1" style="color:#1d4ed8">Beoordelingen</a>.</div><?php endif; ?>
+                  <?php if ($k === 'aanbod'): ?><div class="hint" style="margin:4px 0 0 28px">Je nieuwste 6 auto's of producten. Toevoegen doe je bovenaan bij <a href="admin.php?aanbod=1" style="color:#1d4ed8">Aanbod</a>.</div><?php endif; ?>
+                  <?php if ($k === 'menukaart'): ?><div class="hint" style="margin:4px 0 0 28px">Een paar gerechten van je kaart, met een knop naar de hele menukaart. Specialiteiten en nieuwe gerechten gaan voor. Invullen doe je bovenaan bij <a href="admin.php?menukaart=1" style="color:#1d4ed8">Menukaart</a>.</div><?php endif; ?>
+                  <?php if ($k === 'reserveren'): ?><div class="hint" style="margin:4px 0 0 28px">De kalender om online te reserveren. Instellen doe je bovenaan bij <a href="admin.php?reserveren=1" style="color:#1d4ed8">Afspraakplanner</a>.</div><?php endif; ?>
                   <?php if ($k === 'voorna'): ?>
                     <details class="blk-in"><summary>Inhoud: foto's van voor en na</summary>
                       <div class="two"><div class="field"><label>Titel</label><input type="text" name="voorna_titel" maxlength="80" value="<?= h(st('voorna_titel')) ?>" /></div><div class="field"><label>Korte tekst</label><input type="text" name="voorna_intro" maxlength="200" value="<?= h(st('voorna_intro')) ?>" /></div></div>
@@ -10398,7 +10515,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
           <div class="row"><button class="btn" type="submit">Opslaan</button><a class="btn ghost" href="admin.php">Annuleren</a></div>
         </form>
 
-      <?php else: ?>
+      <?php elseif ($showProj): ?>
         <?php if (st('naam') === 'Uw Bedrijfsnaam'): ?><div class="ok">Begin bij <a href="admin.php?instellingen=1"><strong>Instellingen</strong></a>: vul de bedrijfsnaam, contactgegevens en diensten in.</div><?php endif; ?>
         <div class="toolbar">
           <div>
@@ -10446,18 +10563,19 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
           <?php endforeach; ?>
         </div>
 
+      <?php elseif ($showBer): ?>
         <?php if ($is_demo): ?>
-        <div class="toolbar" style="margin-top:44px;">
+        <div class="toolbar">
           <div>
-            <h1>Aanvragen</h1>
+            <h1>Berichten</h1>
             <p class="sub" style="margin:0;">Hier zie je met je eigen website alle berichten uit het contactformulier, met naam, telefoon en e-mail. Ze worden ook naar je mail gestuurd. In de demo zijn ze verborgen.</p>
           </div>
         </div>
         <?php else: ?>
         <?php $aanvragen = load_aanvragen(); ?>
-        <div class="toolbar" style="margin-top:44px;">
+        <div class="toolbar">
           <div>
-            <h1>Aanvragen</h1>
+            <h1>Berichten</h1>
             <p class="sub" style="margin:0;"><?= count($aanvragen) ?> via het contactformulier.<?= st('email') !== '' ? ' Ze worden ook gemaild naar ' . h(st('email')) . '.' : ' Vul bij Instellingen een e-mailadres in om ze ook per mail te krijgen.' ?></p>
           </div>
         </div>
@@ -10479,10 +10597,42 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
           </div>
         <?php endif; ?>
         <?php endif; ?>
+      <?php else: ?>
+        <?php start_view($pages); ?>
       <?php endif; ?>
     </div>
   </main>
+  </div>
+</div>
 <?php endif; ?>
+<script>
+/* Instellingen in stukjes: het blijft 1 formulier (opslaan bewaart alles), maar je ziet steeds 1 onderdeel */
+(function () {
+  var f = document.querySelector('form input[name="action"][value="settings"]');
+  f = f && f.form; if (!f) return;
+  var kaarten = Array.prototype.filter.call(f.children, function (e) { return e.classList && e.classList.contains("formcard") && e.querySelector("h2"); });
+  if (kaarten.length < 2) return;
+  var balk = document.createElement("div"); balk.className = "inst-tabs"; balk.setAttribute("role", "tablist");
+  var knoppen = [];
+  function naam(k) { var h = k.querySelector("h2"); return (h.childNodes[0] && h.childNodes[0].nodeType === 3 ? h.childNodes[0].nodeValue : h.textContent).trim(); }
+  function toon(i, scroll) {
+    kaarten.forEach(function (k, j) { k.style.display = j === i ? "" : "none"; knoppen[j].setAttribute("aria-selected", j === i ? "true" : "false"); });
+    try { sessionStorage.setItem("ff_inst_tab", String(i)); } catch (e) {}
+    if (scroll) { var y = balk.getBoundingClientRect().top + window.scrollY - 70; if (window.scrollY > y) window.scrollTo(0, Math.max(0, y)); }
+  }
+  kaarten.forEach(function (k, i) {
+    var b = document.createElement("button"); b.type = "button"; b.setAttribute("role", "tab"); b.textContent = naam(k);
+    b.addEventListener("click", function () { toon(i, true); });
+    knoppen.push(b); balk.appendChild(b);
+  });
+  f.insertBefore(balk, kaarten[0]);
+  var start = 0; try { start = parseInt(sessionStorage.getItem("ff_inst_tab") || "0", 10) || 0; } catch (e) {}
+  if (start >= kaarten.length) start = 0;
+  toon(start, false);
+  /* Klopt er iets niet in een verborgen onderdeel, open dan dat onderdeel zodat je het ziet */
+  f.addEventListener("invalid", function (e) { var k = e.target.closest(".formcard"); var i = kaarten.indexOf(k); if (i >= 0) toon(i, true); }, true);
+})();
+</script>
 <script>
 /* Knoppen laten zien dat ze iets doen: na een klik op Opslaan (of een andere verzendknop) staat er Bezig... met een draaiend rondje.
    Dubbel klikken verstuurt het formulier niet twee keer. Gaat de pagina niet weg (bijvoorbeeld een download), dan komt de knop na 8 seconden terug. */
@@ -10510,6 +10660,8 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
 (function () {
   var H = {
     "h1:Projecten": "Hier staan al je projecten: het werk dat je wilt laten zien. Klik op + Nieuw project om er een toe te voegen. Met Alle pagina's bijwerken bouw je de hele website opnieuw op, bijvoorbeeld na het wisselen van stijl of als er iets niet klopt.",
+    "h1:Berichten": "Hier komen de berichten binnen die bezoekers via het contactformulier van je website sturen. Ze komen ook in je mail, op het adres dat je bij Instellingen hebt ingevuld.",
+    "h1:Welkom": "Dit is je startpagina. Bovenaan staat wat er nog te doen is. Met de tegels ga je snel naar het onderdeel dat je nodig hebt. Alles staat ook in het menu links.",
     "h1:Aanvragen": "Hier komen de berichten binnen die bezoekers via het contactformulier van je website sturen. Ze komen ook in je mail, op het adres dat je bij Instellingen hebt ingevuld.",
     "h1:Instellingen": "Hier stel je alles van je website in: je bedrijfsgegevens, de teksten op de voorpagina, je diensten en het uiterlijk. Klik helemaal onderaan op Opslaan en website bijwerken, dan staat het meteen online.",
     "h1:Inloggegevens": "Hier verander je het e-mailadres en wachtwoord waarmee je inlogt op deze beheerpagina.",
