@@ -1488,6 +1488,19 @@ function ensure_data_dir() {
     if (!is_dir(DATA_DIR)) { mkdir(DATA_DIR, 0755, true); }
     if (!file_exists(DATA_DIR . '/.htaccess')) { file_put_contents(DATA_DIR . '/.htaccess', "Require all denied\n"); }
 }
+/* Browsers laten de pagina's van de website steeds vers ophalen (geen oude, bewaarde versie meer na een wijziging).
+   Er komt een gemarkeerd blok in de .htaccess van de website; de rest van dat bestand blijft precies zoals het is.
+   Foto's krijgen bij elke upload een nieuwe naam en mogen dus gewoon bewaard blijven. */
+function verse_paginas() {
+    $f = ROOT . '/.htaccess';
+    $blok = "# BEGIN FormForge verse paginas\n<IfModule mod_headers.c>\n<FilesMatch \"\\.(html?|php)$\">\nHeader set Cache-Control \"no-cache, must-revalidate\"\n</FilesMatch>\n</IfModule>\n# END FormForge verse paginas\n";
+    $oud = is_file($f) ? (string)@file_get_contents($f) : '';
+    if (is_file($f) && !is_writable($f)) return;
+    if (strpos($oud, '# BEGIN FormForge verse paginas') !== false) return;
+    $nl = strpos($oud, "\r\n") !== false ? "\r\n" : "\n";
+    $nieuw = rtrim($oud) . ($oud !== '' ? $nl . $nl : '') . str_replace("\n", $nl, $blok);
+    @file_put_contents($f, $nieuw, LOCK_EX);
+}
 function ensure_upload_dir() {
     if (!is_dir(UPLOAD_DIR)) { mkdir(UPLOAD_DIR, 0755, true); }
     if (!file_exists(UPLOAD_DIR . '/.htaccess')) {
@@ -10233,8 +10246,8 @@ function venturo_html() {
 <p class="vt-l-terug">Terug naar de onderwerpen</p>
 <p class="vt-l-ander-deel">Iets anders: website of administratie</p>
 <p class="vt-l-mail">Staat je vraag er niet tussen?</p>
-<p class="vt-mailtekst">Mail je vraag naar vragen@formforge.nl. Ben reageert op werkdagen binnen 24 uur, tussen 07.00 en 19.00 uur.</p>
-<a class="vt-mailknop" href="mailto:vragen@formforge.nl">Mail je vraag</a>
+<p class="vt-mailtekst">Mail je vraag naar info@formforge.nl. Ben reageert op werkdagen binnen 24 uur, tussen 07.00 en 19.00 uur.</p>
+<a class="vt-mailknop" href="mailto:info@formforge.nl">Mail je vraag</a>
 <div class="vt-g"><h3>Je website aanpassen</h3>
 <div class="vt-o"><h4>Inloggen en de weg vinden</h4>
 <div class="vt-v"><h5>Hoe kom ik in mijn beheerpagina?</h5><p>Typ je domeinnaam met /admin.php erachter, bijvoorbeeld bakkerijjansen.nl/admin.php. Of klik helemaal onderaan je website op Website beheren. Log in met je e-mailadres en wachtwoord.</p></div>
@@ -10506,7 +10519,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-10-25-verklein');
+define('SITE_BOUW', '2026-10-25-vers');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -10518,6 +10531,7 @@ if ($logged_in && !$is_demo && !$ADM_ALLEEN_LEZEN && ($_SERVER['REQUEST_METHOD']
     if (($bouw['v'] ?? '') !== SITE_BOUW) {
         @set_time_limit(120);
         rebuild_everything(load_pages());
+        verse_paginas();
         write_json(DATA_DIR . '/bouw.json', ['v' => SITE_BOUW, 'op' => date('c')]);
     }
 }
