@@ -10259,6 +10259,7 @@ function venturo_html() {
 <div class="vt-v"><h5>Hoe zet ik een balk met een actie of vakantiebericht bovenaan?</h5><p>Vul in Instellingen bij Voorpagina het veld Balk bovenaan in, bijvoorbeeld: Wij zijn met vakantie tot 18 augustus. Leeg laten betekent geen balk.</p></div>
 <div class="vt-v"><h5>Hoe zet ik een grote foto bovenaan mijn voorpagina?</h5><p>In Instellingen bij Voorpagina, bij Bannerfoto bovenaan. Kies een liggende foto, liefst minstens 1600 pixels breed. Daarna kies je of de foto achter je titel staat of als strook onder het menu.</p></div>
 <div class="vt-v"><h5>Kan ik meerdere bannerfoto's laten wisselen?</h5><p>Ja, tot 5 foto's. In Instellingen bij Voorpagina staat onder Bannerfoto bovenaan het vak Meer bannerfoto's die elkaar afwisselen. Zet daar maximaal 4 extra foto's bij en klik op Opslaan en website bijwerken. De foto's wisselen elkaar dan rustig af, elke 6 seconden, steeds opnieuw. Dat werkt achter je titel en als strook. Gebruik foto's die even breed en hoog zijn. Met Weghalen haal je een foto weer weg.</p></div>
+<div class="vt-v"><h5>Ik krijg de melding dat mijn foto's samen te groot zijn.</h5><p>Je hosting heeft een grens aan hoeveel MB je per keer opslaan kunt versturen. Hoeveel dat is, staat bij het uploaden, en onder je foto's zie je meteen hoeveel MB je gekozen hebt. Grote foto's worden bij het kiezen vanzelf verkleind, meestal tot minder dan 0,5 MB per foto. Is het samen toch te veel, sla dan in twee keer op: kies eerst een paar foto's, klik op Opslaan en website bijwerken, en voeg daarna de rest toe.</p></div>
 <div class="vt-v"><h5>Kan ik extra knoppen in het menu zetten?</h5><p>Ja, maximaal 6, naar pagina's die al op je server staan of naar een andere website. Op een smal scherm, zoals een telefoon, vallen ze weg. Zet daarom ook een link op je voorpagina.</p></div>
 <div class="vt-v"><h5>Hoe verander ik de gekleurde balk onderaan mijn pagina's?</h5><p>In Instellingen bij Voorpagina: Titel van de balk onderaan en Tekst van de balk onderaan.</p></div>
 <div class="vt-v"><h5>Hoe vul ik mijn diensten in?</h5><p>In Instellingen, tabblad Diensten. Je kunt er tot 9 invullen. Per dienst: een naam, een korte omschrijving voor de voorpagina en een uitgebreide tekst voor de eigen pagina van die dienst.</p></div>
@@ -10505,7 +10506,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-10-25-bannerdia');
+define('SITE_BOUW', '2026-10-25-verklein');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -11305,6 +11306,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
                 <?php endfor; ?>
               </div>
               <div class="hint">Zet je hier foto's bij, dan wisselen je bannerfoto's elkaar rustig af, elke 6 seconden, steeds opnieuw. Zo heb je er maximaal 5. Gebruik foto's die even breed en hoog zijn. Bezoekers die "bewegingen beperken" aan hebben staan, zien alleen de eerste foto.</div>
+              <div class="hint"><strong>Let op de grens:</strong> per keer opslaan kun je samen maximaal <?= h(mb_tekst(ini_naar_bytes(ini_get('post_max_size')))) ?> aan bestanden versturen. Dat is de grens van je hosting. Grote foto's worden bij het kiezen vanzelf verkleind, meestal tot minder dan 0,5 MB per foto. Past het toch niet, sla dan in twee keer op.</div><div class="ff-mbteller" aria-live="polite"></div>
               <style>.dia-lijst{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}.dia-vak{border:1px solid var(--line);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:6px}.dia-nr{font-size:12.5px;font-weight:700;color:var(--mut)}.dia-vak input[type=file]{max-width:100%;font-size:13px}</style>
             </div>
             <div class="field"><label for="banner_vorm">Hoe staat de bannerfoto erop?</label><select id="banner_vorm" name="banner_vorm"><option value="achter"<?= st('banner_vorm') !== 'strook' ? ' selected' : '' ?>>Achter de titel en de knop</option><option value="strook"<?= st('banner_vorm') === 'strook' ? ' selected' : '' ?>>Als brede strook boven de titel</option></select></div>
@@ -11739,7 +11741,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
           <div class="field">
             <label for="photos">Foto's toevoegen</label>
             <input type="file" id="photos" name="photos[]" accept="image/jpeg,image/png,image/webp,image/gif" multiple />
-            <div class="hint">Je kunt meerdere foto's tegelijk kiezen. Maximaal 8 MB per foto<?= $uploadLimit ? ' (de server staat maximaal ' . h($uploadLimit) . ' per bestand toe)' : '' ?>. Alle foto's samen maximaal <?= h(ini_get('post_max_size')) ?> per keer. De eerste foto wordt de omslagfoto.</div>
+            <div class="hint">Je kunt meerdere foto's tegelijk kiezen. Maximaal 8 MB per foto<?= $uploadLimit ? ' (de server staat maximaal ' . h($uploadLimit) . ' per bestand toe)' : '' ?>. Alle foto's samen maximaal <?= h(mb_tekst(ini_naar_bytes(ini_get('post_max_size')))) ?> per keer: dat is de grens van je hosting. Grote foto's worden bij het kiezen vanzelf verkleind, meestal tot minder dan 0,5 MB per foto. De eerste foto wordt de omslagfoto.</div><div class="ff-mbteller" aria-live="polite"></div>
           </div>
           <?php if ($editing && !empty($editing['photos'])): ?>
           <div class="field">
@@ -12216,5 +12218,63 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
 })();
 </script>
 <?php if ($logged_in) { echo venturo_html(); } ?>
+<?php if ($logged_in): ?>
+<script>
+/* Foto's in de browser verkleinen voordat ze verstuurd worden (max 2400 pixels, jpg).
+   Zo passen ook meerdere grote foto's tegelijk binnen de grens van de server. Logo's en gifs blijven zoals ze zijn. */
+(function(){
+  var POST = <?= (int)ini_naar_bytes(ini_get('post_max_size')) ?>, MAXPX = 2400, KLEIN = 600 * 1024;
+  var bezig = 0;
+  function mb(b){ return (Math.round(b / 104857.6) / 10).toString().replace('.', ',') + ' MB'; }
+  function laad(file){ return new Promise(function(ok, nee){ var u = URL.createObjectURL(file), im = new Image(); im.onload = function(){ ok([im, u]); }; im.onerror = function(){ URL.revokeObjectURL(u); nee(); }; im.src = u; }); }
+  function doorzichtig(cx, w, h){ try { var d = cx.getImageData(0, 0, w, h).data; for (var i = 3; i < d.length; i += 16) if (d[i] < 250) return true; } catch (e) { return true; } return false; }
+  function verklein(file){
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return Promise.resolve(file);
+    return laad(file).then(function(r){
+      var im = r[0], w = im.naturalWidth, h = im.naturalHeight, f = Math.min(1, MAXPX / Math.max(w, h));
+      if (f === 1 && file.size <= KLEIN) { URL.revokeObjectURL(r[1]); return file; }
+      var c = document.createElement('canvas'); c.width = Math.round(w * f); c.height = Math.round(h * f);
+      var cx = c.getContext('2d'); cx.drawImage(im, 0, 0, c.width, c.height); URL.revokeObjectURL(r[1]);
+      if (file.type === 'image/png' && doorzichtig(cx, c.width, c.height)) return file;
+      return new Promise(function(ok){ c.toBlob(function(b){ ok(b && b.size < file.size ? new File([b], file.name.replace(/\.[a-z0-9]+$/i, '') + '.jpg', { type: 'image/jpeg', lastModified: Date.now() }) : file); }, 'image/jpeg', .86); });
+    }).catch(function(){ return file; });
+  }
+  function totaal(form){ var t = 0; form.querySelectorAll('input[type=file]').forEach(function(i){ for (var k = 0; k < (i.files ? i.files.length : 0); k++) t += i.files[k].size; }); return t; }
+  function melding(form, tekst){
+    var m = form.querySelector('.ff-uploadmelding');
+    if (!m) { m = document.createElement('div'); m.className = 'ff-uploadmelding'; m.setAttribute('role', 'alert'); m.style.cssText = 'margin:12px 0;padding:12px 16px;border-radius:10px;background:#fdecec;color:#9b1c1c;font-weight:600;border:1px solid #f5c2c2'; form.insertBefore(m, form.firstChild); }
+    m.textContent = tekst; m.hidden = !tekst; if (tekst) m.scrollIntoView({ block: 'center' });
+  }
+  function tel(form){
+    var t = totaal(form), te = POST > 0 && t > POST - 512 * 1024;
+    form.querySelectorAll('.ff-mbteller').forEach(function(el){
+      el.style.cssText = 'margin-top:8px;font-size:14px;font-weight:600;color:' + (te ? '#b42318' : '#067647');
+      el.textContent = t > 0 ? (bezig > 0 ? 'Foto\'s worden verkleind...' : 'Gekozen: ' + mb(t) + ' van maximaal ' + mb(POST) + ' per keer.' + (te ? ' Dat is te veel: sla in twee keer op.' : '')) : '';
+    });
+  }
+  document.querySelectorAll('input[type=file]').forEach(function(inp){
+    inp.addEventListener('change', function(){ if (inp.form) setTimeout(function(){ tel(inp.form); }, 0); });
+    var acc = inp.getAttribute('accept') || '';
+    if (inp.name === 'logo' || acc.indexOf('image') < 0 || acc.indexOf('video') >= 0) return;
+    inp.addEventListener('change', function(){
+      if (!inp.files || !inp.files.length || inp._klaar) { inp._klaar = false; return; }
+      var lijst = Array.prototype.slice.call(inp.files); bezig++;
+      Promise.all(lijst.map(verklein)).then(function(nieuw){
+        try { var dt = new DataTransfer(); nieuw.forEach(function(f){ dt.items.add(f); }); inp._klaar = true; inp.files = dt.files; } catch (e) {}
+      }).then(function(){ bezig--; if (inp.form) tel(inp.form); });
+    });
+  });
+  document.querySelectorAll('form').forEach(function(form){
+    if (!form.querySelector('input[type=file]')) return;
+    form.addEventListener('submit', function(e){
+      if (bezig > 0) { e.preventDefault(); melding(form, 'De foto\'s worden nog klaargemaakt. Wacht een paar tellen en klik dan opnieuw op Opslaan.'); return; }
+      var t = totaal(form);
+      if (POST > 0 && t > POST - 512 * 1024) { e.preventDefault(); e.stopImmediatePropagation(); melding(form, 'De gekozen bestanden zijn samen ' + mb(t) + '. De server neemt maximaal ' + mb(POST) + ' per keer aan. Sla in twee keer op: kies eerst een deel van de foto\'s, klik op Opslaan en voeg daarna de rest toe.'); return; }
+      melding(form, '');
+    }, true);
+  });
+})();
+</script>
+<?php endif; ?>
 </body>
 </html>
