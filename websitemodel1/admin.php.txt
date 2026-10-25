@@ -5,9 +5,7 @@
    alles wat per klant verschilt staat in Instellingen.
 
    - Eerste bezoek: e-mailadres en wachtwoord instellen (data/config.json)
-   - Instellingen (bedrijfsgegevens, teksten, diensten, kleuren, logo): data/settings.json
-   - Projecten: data/pages.json, elk project een eigen map /{slug}/index.html
-   - Foto's: /uploads/{slug}/, logo: /uploads/site/
+   - Insa: /uploads/{slug}/, logo: /uploads/site/
    - De admin maakt zelf: index.html, dienstpagina's, /contact/, /bedankt/,
      site.json, sitemap.xml en robots.txt
    - Wachtwoord kwijt: verwijder data/config.json, dan verschijnt het
@@ -78,6 +76,8 @@ function default_settings() {
         'kleur_tekst'      => '',
         'lettertype'       => '',
         'vorm'             => '',
+        'beweging'         => '',
+        'beweging_snelheid' => 'normaal',
         'feest_kleuren'    => '1',
         'blokken'          => [['k' => 'strook', 'aan' => 1], ['k' => 'diensten', 'aan' => 1], ['k' => 'projecten', 'aan' => 1], ['k' => 'voorna', 'aan' => 0], ['k' => 'werkwijze', 'aan' => 0], ['k' => 'cijfers', 'aan' => 0], ['k' => 'over', 'aan' => 0], ['k' => 'vragen', 'aan' => 0]],
         'voorna_titel'     => 'Voor en na',
@@ -436,6 +436,126 @@ $LETTERS = [
     'zakelijk'  => ['naam' => 'Zakelijk (Merriweather)', 'fonts' => 'family=Merriweather:wght@700&family=Inter:wght@400;600', 'kop' => "'Merriweather',Georgia,serif", 'tekst' => "'Inter',sans-serif"],
 ];
 $VORMEN = ['' => 'Zoals de stijl', 'hoekig' => 'Hoekig', 'afgerond' => 'Licht afgerond', 'rond' => 'Rond'];
+/* Bewegende achtergronden voor de bovenkant van de voorpagina. Kleuren voor de voorbeeldjes in de beheerpagina. */
+$BEWEGINGEN = [
+    'lava' => ['Lavalamp', '#100710', '#ff3d00', '#ffb000'], 'chroom' => ['Vloeibaar chroom', '#101522', '#768ca9', '#e8f4ff'],
+    'noorderlicht' => ['Noorderlicht', '#061b29', '#13e8a0', '#3a7bff'], 'sterrenhemel' => ['Sterrenhemel', '#090720', '#a53cff', '#276cff'],
+    'vuur' => ['Vuur en vonken', '#170b09', '#ff4800', '#ffb02e'], 'oceaan' => ['Oceaan', '#061c35', '#00aeea', '#33eadb'],
+    'neon' => ['Neon', '#0c0820', '#fc2da4', '#20e8ff'], 'goud' => ['Goud', '#17120b', '#d6a644', '#f9df9d'],
+    'bellen' => ['Zwevende bellen', '#102a40', '#a8efff', '#6d91ff'], 'verloop' => ['Kleurverloop', '#161b42', '#ff639c', '#32d3c6'],
+    'spotlight' => ['Spotlight', '#0b1320', '#8ba9ff', '#d5e2ff'], 'sterrenstof' => ['Sterrenstof', '#080f22', '#b1c9ff', '#d5aaff'],
+];
+$SNELHEDEN = ['rustig' => ['Rustig', '0.6'], 'normaal' => ['Normaal', '1'], 'snel' => ['Snel', '1.6']];
+function beweging() { global $BEWEGINGEN; $b = st('beweging'); return isset($BEWEGINGEN[$b]) ? $b : ''; }
+function beweging_snelheid() { global $SNELHEDEN; $s = st('beweging_snelheid'); return $SNELHEDEN[$s][1] ?? '1'; }
+function ffm_js() {
+    return <<<'FFMJS'
+/* FormForge bewegende achtergronden. Gebaseerd op FormForge Motion Styles 1.0 van Ben Wijnen. */
+(function () {
+  'use strict';
+  if (window.FFM) return;
+  var E = {
+    lava:      { bg: '#100710', c: ['#ff3d00', '#ffb000', '#a50040'] },
+    chroom:    { bg: '#101522', c: ['#e8f4ff', '#768ca9', '#cad5e2'] },
+    noorderlicht: { bg: '#061b29', c: ['#13e8a0', '#3a7bff', '#aa53ff'] },
+    sterrenhemel: { bg: '#090720', c: ['#a53cff', '#276cff', '#f25ca8'] },
+    vuur:      { bg: '#170b09', c: ['#ff4800', '#ffb02e', '#e92320'] },
+    oceaan:    { bg: '#061c35', c: ['#00aeea', '#1255bd', '#33eadb'] },
+    neon:      { bg: '#0c0820', c: ['#fc2da4', '#20e8ff', '#8651ff'] },
+    goud:      { bg: '#17120b', c: ['#d6a644', '#f9df9d', '#9c6624'] },
+    bellen:    { bg: '#102a40', c: ['#a8efff', '#6d91ff', '#e0c6ff'] },
+    verloop:   { bg: '#161b42', c: ['#ff639c', '#655aff', '#32d3c6'] },
+    spotlight: { bg: '#0b1320', c: ['#8ba9ff', '#d5e2ff', '#5684db'] },
+    sterrenstof: { bg: '#080f22', c: ['#b1c9ff', '#8cecff', '#d5aaff'] }
+  };
+  /* Hoeveel een effect licht geeft: lichte effecten krijgen een donkerdere laag, zodat witte tekst leesbaar blijft */
+  var DONKER = { chroom: .5, goud: .42, spotlight: .4, verloop: .34, noorderlicht: .32, oceaan: .3, neon: .3 };
+  var GLOED = ['lava', 'chroom', 'noorderlicht', 'sterrenhemel', 'oceaan', 'neon', 'goud', 'verloop', 'spotlight'];
+  var STIP = ['vuur', 'bellen', 'sterrenstof', 'sterrenhemel', 'neon'];
+  var css = '.ffm-host{position:relative;isolation:isolate}.ffm-canvas{position:absolute;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none;display:block}';
+  var st = document.createElement('style'); st.textContent = css; document.head.appendChild(st);
+  var stil = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
+  function rgba(hex, a) { var n = parseInt(hex.slice(1), 16); return 'rgba(' + (n >> 16) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')'; }
+
+  function maak(el, type, snelheid) {
+    var th = E[type]; if (!th) return null;
+    var sp = Math.max(.2, Math.min(3, +snelheid || 1));
+    var cv = document.createElement('canvas'); cv.className = 'ffm-canvas'; cv.setAttribute('aria-hidden', 'true');
+    var oudeKleur = el.style.backgroundColor;
+    el.classList.add('ffm-host'); el.style.backgroundColor = th.bg; el.insertBefore(cv, el.firstChild);
+    var ctx = cv.getContext('2d', { alpha: false }); if (!ctx) { cv.remove(); return null; }
+    var smal = window.innerWidth < 700;
+    var w = 1, h = 1, raf = 0, zicht = true, weg = false, laatst = 0, stap = smal ? 1000 / 30 : 0;
+    var stippen = []; for (var i = 0; i < (smal ? 30 : 45); i++) stippen.push({ x: Math.random(), y: Math.random(), r: 1 + Math.random() * 3, p: Math.random() * 6.28, v: .2 + Math.random() * .8 });
+    var t0 = Math.random() * 100;
+    function maat() {
+      var r = el.getBoundingClientRect(); w = Math.max(1, Math.round(r.width)); h = Math.max(1, Math.round(r.height));
+      var d = Math.min(window.devicePixelRatio || 1, smal ? 1.25 : 1.5);
+      cv.width = Math.round(w * d); cv.height = Math.round(h * d); ctx.setTransform(d, 0, 0, d, 0, 0); teken(performance.now() / 1000);
+    }
+    function gloed(x, y, r, kleur, a) {
+      var g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, rgba(kleur, .8 * a)); g.addColorStop(.45, rgba(kleur, .4 * a)); g.addColorStop(1, rgba(kleur, 0));
+      ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+    }
+    function teken(s) {
+      var t = (s + t0) * sp;
+      ctx.globalCompositeOperation = 'source-over'; ctx.fillStyle = th.bg; ctx.fillRect(0, 0, w, h);
+      ctx.globalCompositeOperation = 'screen';
+      if (GLOED.indexOf(type) >= 0) {
+        var n = type === 'lava' ? 5 : type === 'spotlight' ? 2 : 7;
+        for (var i = 0; i < n; i++) {
+          var f = i * 2.399, x = w * (.5 + .35 * Math.sin(t * (.12 + i * .012) + f)), y = h * (.5 + .3 * Math.cos(t * (.17 + i * .01) + f));
+          if (type === 'lava') { x = w * (.5 + .13 * Math.sin(t * .35 + f)); y = h * (.5 + .15 * Math.cos(t * .42 + f)); }
+          if (type === 'noorderlicht') { x = w * (i / (n - 1)); y = h * (.38 + .22 * Math.sin(t * .24 + i * .8)); }
+          if (type === 'spotlight') { x = w * (.35 + .3 * Math.sin(t * .3 + i * 2)); y = h * .15; }
+          var r = Math.max(w, h) * (type === 'lava' ? .25 : type === 'noorderlicht' ? .46 : .34) * .75;
+          gloed(x, y, r, th.c[i % 3], type === 'chroom' ? .65 : 1);
+        }
+      }
+      if (STIP.indexOf(type) >= 0) {
+        for (var j = 0; j < stippen.length; j++) {
+          var p = stippen[j], px = p.x * w + Math.sin(t * .3 + p.p) * 14, py = (((p.y - t * p.v * (type === 'vuur' ? .055 : .014)) % 1) + 1) % 1 * h, pr = p.r * (type === 'bellen' ? 4 : 1.2) * .75;
+          ctx.beginPath(); ctx.arc(px, py, pr, 0, 6.2832); ctx.fillStyle = rgba(th.c[j % 3], .35 + .4 * Math.pow(Math.sin(t + p.p), 2)); ctx.fill();
+          if (type === 'bellen') { ctx.strokeStyle = 'rgba(255,255,255,.3)'; ctx.lineWidth = 1; ctx.stroke(); }
+        }
+      }
+      ctx.globalCompositeOperation = 'source-over';
+      var dk = DONKER[type] || .22;
+      ctx.fillStyle = 'rgba(0,0,0,' + dk + ')'; ctx.fillRect(0, 0, w, h);
+      var sh = ctx.createLinearGradient(0, 0, 0, h); sh.addColorStop(0, 'rgba(0,0,0,.05)'); sh.addColorStop(1, 'rgba(0,0,0,.4)'); ctx.fillStyle = sh; ctx.fillRect(0, 0, w, h);
+    }
+    function tik(ms) {
+      if (weg) return;
+      if (zicht && !stil.matches && !document.hidden && (!stap || ms - laatst >= stap)) { laatst = ms; teken(ms / 1000); }
+      raf = requestAnimationFrame(tik);
+    }
+    var ro = window.ResizeObserver ? new ResizeObserver(maat) : null; if (ro) ro.observe(el); else window.addEventListener('resize', maat);
+    var io = window.IntersectionObserver ? new IntersectionObserver(function (e) { zicht = e[0] ? e[0].isIntersecting : true; }) : null; if (io) io.observe(el);
+    maat(); raf = requestAnimationFrame(tik);
+    return {
+      type: type,
+      snelheid: function (v) { sp = Math.max(.2, Math.min(3, +v || 1)); },
+      stop: function () { weg = true; cancelAnimationFrame(raf); if (ro) ro.disconnect(); else window.removeEventListener('resize', maat); if (io) io.disconnect(); cv.remove(); el.classList.remove('ffm-host'); el.style.backgroundColor = oudeKleur; }
+    };
+  }
+
+  /* Zet een effect op een element, of haal het weg met type '' */
+  function zet(el, type, snelheid) {
+    if (!el) return;
+    if (el._ffm && el._ffm.type === type) { el._ffm.snelheid(snelheid); return; }
+    if (el._ffm) { el._ffm.stop(); el._ffm = null; }
+    if (type && E[type]) el._ffm = maak(el, type, snelheid);
+  }
+  function start() {
+    var l = document.querySelectorAll('[data-ffm]');
+    for (var i = 0; i < l.length; i++) zet(l[i], l[i].getAttribute('data-ffm'), l[i].getAttribute('data-ffm-s'));
+  }
+  window.FFM = { effecten: E, zet: zet, start: start };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+})();
+FFMJS;
+}
 function opbouw($deel) {
     global $OPBOUW;
     $v = st('opbouw_' . $deel);
@@ -474,6 +594,16 @@ function maatwerk_css() {
             break;
     }
     $css .= <<<'CSS'
+/* bewegende achtergrond: tekst altijd licht, behalve op een witte kaart */
+.hero.ffm-aan::after{display:none;}
+.hero.ffm-aan{border-bottom:0 !important;}
+body:not(.l-hero-kaart) .hero.ffm-aan,body:not(.l-hero-kaart) .hero.ffm-aan h1{color:#fff !important;}
+body:not(.l-hero-kaart) .hero.ffm-aan h1::after{background:#fff !important;}
+body:not(.l-hero-kaart) .hero.ffm-aan .lead{color:rgba(255,255,255,.88) !important;}
+body:not(.l-hero-kaart) .hero.ffm-aan .eyebrow{color:rgba(255,255,255,.82) !important;}
+body:not(.l-hero-kaart) .hero.ffm-aan .eyebrow::before{background:rgba(255,255,255,.7) !important;}
+body:not(.l-hero-kaart) .hero.ffm-aan .btn.quiet{color:#fff !important;box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.6) !important;background:transparent !important;}
+.hero.ffm-aan .emblem img{filter:drop-shadow(0 18px 30px rgba(0,0,0,.45));}
 /* opbouw: bovenkant */
 .l-hero-rechts .hero .wrap{grid-template-columns:.75fr 1.25fr;}
 .l-hero-rechts .hero .emblem{order:-1;}
@@ -826,6 +956,11 @@ function stijl_pagina($html) {
     if ($pos !== false) { $html = substr($html, 0, $pos) . $css . substr($html, $pos); }
     $pos = strpos($html, '<body>');
     if ($pos !== false) { $html = substr($html, 0, $pos) . '<body class="' . body_klassen($s) . '">' . ($kiezer ? stijl_kiezer($s) : '') . substr($html, $pos + 6); }
+    /* Bewegende achtergrond: alleen op een pagina met de bovenkant, en alleen als hij aan staat of de stijlkiezer erop staat */
+    if (strpos($html, '<section class="hero') !== false && (beweging() !== '' || $kiezer)) {
+        $e = strrpos($html, '</body>');
+        if ($e !== false) { $html = substr($html, 0, $e) . '<script>' . ffm_js() . '</script>' . "\n" . substr($html, $e); }
+    }
     return $html;
 }
 /* Stijlkiezer voor de voorbeeldsite (alleen met data/demo-aan.txt).
@@ -837,7 +972,9 @@ function stijl_kiezer($huidig) {
         $data[$k] = ['naam' => $v['naam'], 'fonts' => $v['fonts'], 'css' => $v['css'], 'foto' => !empty($v['grote_foto'])];
     }
     $foto = hero_foto(load_pages());
-    $json = json_encode(['stijlen' => $data, 'standaard' => $huidig, 'foto' => $foto, 'vasteFoto' => opbouw('hero') === 'foto' || banner_achter(), 'banner' => banner_achter()], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    global $BEWEGINGEN;
+    $bew = []; foreach ($BEWEGINGEN as $bk => $bv) { $bew[] = [$bk, $bv[0]]; }
+    $json = json_encode(['bew' => $bew, 'bewNu' => beweging(), 'bewS' => beweging_snelheid(), 'stijlen' => $data, 'standaard' => $huidig, 'foto' => $foto, 'vasteFoto' => opbouw('hero') === 'foto' || banner_achter(), 'banner' => banner_achter()], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     return <<<HTML
 <style>
 .ffk{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9999;display:flex;align-items:center;gap:6px;width:max-content;max-width:calc(100vw - 24px);padding:7px;border-radius:999px;background:rgba(17,24,39,.94);color:#fff;font:600 14px/1 'Segoe UI',Arial,sans-serif;letter-spacing:0;box-shadow:0 14px 40px -12px rgba(0,0,0,.55);backdrop-filter:blur(8px);}
@@ -845,15 +982,15 @@ function stijl_kiezer($huidig) {
 .ffk button{all:unset;cursor:pointer;display:grid;place-items:center;width:40px;height:40px;border-radius:50%;color:#fff;font:700 20px/1 'Segoe UI',Arial,sans-serif;background:rgba(255,255,255,.1);flex:none;}
 .ffk button:hover{background:rgba(255,255,255,.22);}
 .ffk select{appearance:none;-webkit-appearance:none;border:0;margin:0;cursor:pointer;height:40px;padding:0 36px 0 16px;border-radius:999px;background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23111827' stroke-width='2'/%3E%3C/svg%3E") no-repeat right 14px center/12px 8px;color:#111827;font:700 15px/1 'Segoe UI',Arial,sans-serif;min-width:200px;max-width:30vw;}
-.ffk select.ffk-o{min-width:240px;}
+.ffk select.ffk-o{min-width:240px;}.ffk select.ffk-b{min-width:200px;}
 .ffk button:focus-visible,.ffk select:focus-visible{outline:2px solid #fff;outline-offset:2px;}
 body{padding-bottom:84px;}
 .ffk-flits .hero .wrap,.ffk-flits #diensten .wrap,.ffk-flits #featuredSection .wrap,.ffk-flits .top .wrap,.ffk-flits .band .wrap,.ffk-flits .foot .wrap,.ffk-flits .servicebar{opacity:.2;}
 .hero .wrap,#diensten .wrap,#featuredSection .wrap{transition:opacity .25s ease;}
 @media (max-width:1100px){.ffk span{display:none;}}
-@media (max-width:640px){.ffk{left:10px;right:10px;transform:none;width:auto;max-width:none;border-radius:20px;flex-wrap:wrap;justify-content:center;bottom:10px;padding:8px;}.ffk span{display:block;width:100%;text-align:center;padding:4px 0 2px;font-size:13px;}.ffk select{flex:1 1 40%;min-width:0;max-width:none;font-size:14px;padding:0 30px 0 12px;}.ffk select.ffk-o{order:5;flex-basis:100%;min-width:0;}body{padding-bottom:180px;}}
+@media (max-width:640px){.ffk{left:10px;right:10px;transform:none;width:auto;max-width:none;border-radius:20px;flex-wrap:wrap;justify-content:center;bottom:10px;padding:8px;}.ffk span{display:block;width:100%;text-align:center;padding:4px 0 2px;font-size:13px;}.ffk select{flex:1 1 40%;min-width:0;max-width:none;font-size:14px;padding:0 30px 0 12px;}.ffk select.ffk-o{order:5;flex-basis:100%;min-width:0;}.ffk select.ffk-b{order:6;flex-basis:100%;min-width:0;}body{padding-bottom:228px;}}
 </style>
-<div class="ffk" role="group" aria-label="Kies een stijl en indeling"><span>Bekijk deze website anders:</span><button type="button" class="ffk-v" aria-label="Vorige stijl">&lsaquo;</button><select class="ffk-s" aria-label="Stijl"></select><select class="ffk-o" aria-label="Indeling"></select><button type="button" class="ffk-n" aria-label="Volgende stijl">&rsaquo;</button></div>
+<div class="ffk" role="group" aria-label="Kies een stijl en indeling"><span>Bekijk deze website anders:</span><button type="button" class="ffk-v" aria-label="Vorige stijl">&lsaquo;</button><select class="ffk-s" aria-label="Stijl"></select><select class="ffk-o" aria-label="Indeling"></select><select class="ffk-b" aria-label="Beweging"></select><button type="button" class="ffk-n" aria-label="Volgende stijl">&rsaquo;</button></div>
 <script>
 (function(){
   var D = $json;
@@ -903,6 +1040,22 @@ body{padding-bottom:84px;}
     /* Een bannerfoto die de eigenaar achter de titel zette, blijft altijd staan, welke stijl een bezoeker ook uitprobeert */
     if ((s.foto || D.banner || OPB[opbNu][1][1] === 'foto') && D.foto) { hero.classList.add('has-photo'); hero.style.backgroundImage = "url('" + D.foto + "')"; }
     else { hero.classList.remove('has-photo'); hero.style.backgroundImage = ''; }
+    bewBijwerken();
+  }
+  /* Bewegende achtergrond: niet als er een grote foto bovenaan staat */
+  var kiesB = document.querySelector('.ffk .ffk-b'), sleutelB = 'ff-voorbeeld-beweging', bewNu = D.bewNu;
+  try { var gb = localStorage.getItem(sleutelB); if (gb !== null) bewNu = gb; } catch (e) {}
+  function bewBijwerken() {
+    var hero = document.querySelector('.hero'); if (!hero || !window.FFM) return;
+    var k = hero.classList.contains('has-photo') ? '' : bewNu;
+    window.FFM.zet(hero, k, D.bewS);
+    hero.classList.toggle('ffm-aan', k !== '');
+  }
+  if (kiesB) {
+    var ob = document.createElement('option'); ob.value = ''; ob.textContent = 'Beweging: geen'; kiesB.appendChild(ob);
+    D.bew.forEach(function (b) { var e = document.createElement('option'); e.value = b[0]; e.textContent = 'Beweging: ' + b[1]; kiesB.appendChild(e); });
+    kiesB.value = bewNu;
+    kiesB.onchange = function () { bewNu = kiesB.value; try { localStorage.setItem(sleutelB, bewNu); } catch (e) {} bewBijwerken(); };
   }
   function zetO(i, bewaar) {
     if (!OPB[i]) i = 0;
@@ -1034,7 +1187,7 @@ function versie_voor($soort, $nieuw) {
 }
 function versie_wat_settings($oud, $nieuw) {
     $groepen = ['Bedrijf' => '/^(naam|straat|postcode|plaats|provincie|tel2?|whatsapp.*|email|kvk|tijden|werkgebied)$/', 'Voorpagina' => '/^(slogan|banner.*|eyebrow|hero_.*|knop_.*|cta_.*|menulinks)$/',
-        'Diensten' => '/^diensten.*$/', 'Uiterlijk' => '/^(logo|stijl|kleur_.*|lettertype|vorm|feest_kleuren)$/', 'Opbouw' => '/^opbouw_.*$/',
+        'Diensten' => '/^diensten.*$/', 'Uiterlijk' => '/^(logo|stijl|kleur_.*|lettertype|vorm|feest_kleuren|beweging.*)$/', 'Opbouw' => '/^opbouw_.*$/',
         'Blokken' => '/^(blokken|voorna.*|werkwijze.*|cijfers.*|over_.*|vragen.*|beelden|woord_.*)$/', 'Extra' => '/^(seo_.*|site_url|chat_url)$/'];
     $wat = [];
     foreach (array_unique(array_merge(array_keys($oud), array_keys($nieuw))) as $k) {
@@ -1761,7 +1914,7 @@ CSS;
 
     $logo = logo_url();
     $foto = hero_met_foto() ? hero_foto($pages) : '';
-    $heroAttr = $foto !== '' ? ' class="hero has-photo" style="background-image:url(\'' . h($foto) . '\')"' : ' class="hero"';
+    $heroAttr = $foto !== '' ? ' class="hero has-photo" style="background-image:url(\'' . h($foto) . '\')"' : (beweging() !== '' ? ' class="hero ffm-aan" data-ffm="' . h(beweging()) . '" data-ffm-s="' . h(beweging_snelheid()) . '"' : ' class="hero"');
     $out .= '<main id="home" class="view">';
     if (banner_strook()) { $out .= '<div class="banner-strook"><img src="/uploads/site/' . h(rawurlencode(st('banner'))) . '" alt="' . h(st('naam')) . '" /></div>'; }
     $out .= '<section' . $heroAttr . '><span class="hero-rand" aria-hidden="true"></span><div class="wrap' . ($logo === '' ? ' solo' : '') . '"><div>';
@@ -9881,6 +10034,8 @@ function venturo_html() {
 <div class="vt-v"><h5>Hoe verander ik de opbouw van mijn pagina?</h5><p>In Instellingen, tabblad Opbouw en details. Per onderdeel heb je 10 keuzes: het menu, de bovenkant, de balk met diensten, je diensten, je projecten, het contactblok onderaan en de onderkant. Probeer gerust iets uit, je kunt altijd terug.</p></div>
 <div class="vt-v"><h5>Hoe kies ik een ander lettertype of rondere knoppen?</h5><p>In Instellingen, tabblad Opbouw en details, bij Lettertype en bij Vorm van knoppen en blokken: hoekig, licht afgerond of rond.</p></div>
 <div class="vt-v"><h5>Kan ik nog meer kleuren aanpassen?</h5><p>Ja. Bij Extra kleuren vink je een kleur aan, zoals de achtergrond, een vlak of de tekst, en kies je hem. Let erop dat de tekst goed leesbaar blijft.</p></div>
+<div class="vt-v"><h5>Hoe zet ik een bewegende achtergrond bovenaan?</h5><p>In Instellingen, tabblad Beweging. Kies een van de 12 achtergronden, zoals Noorderlicht of Oceaan, en een snelheid. Hierboven zie je hem alvast bewegen. Klik daarna op Opslaan en website bijwerken. Je titel en tekst bovenaan worden vanzelf wit, zodat ze leesbaar blijven. Met Geen beweging zet je hem weer uit.</p></div>
+<div class="vt-v"><h5>Ik zie de beweging niet op mijn website.</h5><p>Heb je bij Voorpagina een bannerfoto achter de titel gezet, of bij Opbouw de bovenkant op Grote foto? Dan blijft de foto staan en staat de beweging uit. Ook zien bezoekers die op hun telefoon of computer "bewegingen beperken" aan hebben staan een stilstaande achtergrond.</p></div>
 </div>
 <div class="vt-o"><h4>Blokken op je voorpagina</h4>
 <div class="vt-v"><h5>Wat zijn blokken?</h5><p>De onderdelen van je voorpagina, zoals je diensten, uitgelichte projecten, voor- en na-foto's, werkwijze in stappen, cijfers, over ons, veelgestelde vragen en eigen afbeeldingen. Je vindt ze in Instellingen, tabblad Blokken op je voorpagina.</p></div>
@@ -10108,7 +10263,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-10-24-stijlen');
+define('SITE_BOUW', '2026-10-25-beweging');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -10305,6 +10460,9 @@ if ($logged_in && isset($_POST['action'])) {
         }
         $new['lettertype'] = array_key_exists((string)($_POST['lettertype'] ?? ''), $LETTERS) ? (string)$_POST['lettertype'] : '';
         $new['vorm'] = array_key_exists((string)($_POST['vorm'] ?? ''), $VORMEN) ? (string)$_POST['vorm'] : '';
+        global $BEWEGINGEN, $SNELHEDEN;
+        $new['beweging'] = array_key_exists((string)($_POST['beweging'] ?? ''), $BEWEGINGEN) ? (string)$_POST['beweging'] : '';
+        $new['beweging_snelheid'] = array_key_exists((string)($_POST['beweging_snelheid'] ?? ''), $SNELHEDEN) ? (string)$_POST['beweging_snelheid'] : 'normaal';
         $new['feest_kleuren'] = !empty($_POST['feest_kleuren']) ? '1' : '0';
 
         // Blokken op de voorpagina: volgorde, aan/uit en inhoud
@@ -10955,6 +11113,48 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
             <div class="hint">Vink een kleur aan om hem te gebruiken. Uitgevinkt = de kleur van de stijl. Zorg dat de tekst goed leesbaar blijft op de achtergrond.</div>
           </div>
 
+          <?php global $BEWEGINGEN, $SNELHEDEN; $bwNu = beweging(); ?>
+          <div class="formcard" id="beweging">
+            <h2>Beweging</h2>
+            <p class="hint" style="margin:-4px 0 16px">Een bewegende achtergrond achter de bovenkant van je voorpagina. Je teksten blijven goed leesbaar: ze worden vanzelf wit. Heb je een grote foto bovenaan gekozen, dan blijft de foto staan en staat de beweging uit.</p>
+            <div class="bw-voorbeeld" id="bwVoorbeeld"<?= $bwNu !== '' ? ' data-ffm="' . h($bwNu) . '" data-ffm-s="' . h(beweging_snelheid()) . '"' : '' ?>><div class="bw-tekst"><small><?= h(st('eyebrow') !== '' ? st('eyebrow') : 'Voorbeeld') ?></small><strong><?= h(st('hero_titel') !== '' ? st('hero_titel') : 'Zo ziet je bovenkant eruit') ?></strong></div></div>
+            <div class="bw-lijst" role="radiogroup" aria-label="Bewegende achtergrond">
+              <label class="bw-k bw-geen"><input type="radio" name="beweging" value="" <?= $bwNu === '' ? 'checked' : '' ?> /><span class="bw-s"></span><span class="bw-n">Geen beweging</span></label>
+              <?php foreach ($BEWEGINGEN as $bk => $bv): ?>
+              <label class="bw-k"><input type="radio" name="beweging" value="<?= h($bk) ?>" <?= $bwNu === $bk ? 'checked' : '' ?> /><span class="bw-s" style="background:radial-gradient(circle at 30% 35%,<?= h($bv[2]) ?> 0,transparent 55%),radial-gradient(circle at 75% 70%,<?= h($bv[3]) ?> 0,transparent 50%),<?= h($bv[1]) ?>"></span><span class="bw-n"><?= h($bv[0]) ?></span></label>
+              <?php endforeach; ?>
+            </div>
+            <div class="field" style="margin-top:16px;max-width:320px"><label for="bwsnel">Snelheid</label>
+              <select id="bwsnel" name="beweging_snelheid">
+                <?php foreach ($SNELHEDEN as $sk => $sv): ?><option value="<?= h($sk) ?>" data-v="<?= h($sv[1]) ?>" <?= (st('beweging_snelheid') ?: 'normaal') === $sk ? 'selected' : '' ?>><?= h($sv[0]) ?></option><?php endforeach; ?>
+              </select>
+            </div>
+            <div class="hint">Bezoekers die op hun telefoon of computer "bewegingen beperken" aan hebben staan, zien een stilstaande achtergrond.</div>
+          </div>
+          <style>
+          .bw-voorbeeld{position:relative;height:190px;border-radius:14px;overflow:hidden;background:#1c2330;display:flex;align-items:flex-end;padding:20px 22px;margin-bottom:16px}
+          .bw-tekst{position:relative;z-index:1;color:#fff}
+          .bw-tekst small{display:block;font-size:12px;letter-spacing:.12em;text-transform:uppercase;opacity:.8;margin-bottom:6px}
+          .bw-tekst strong{display:block;font-size:22px;line-height:1.15;max-width:22ch}
+          .bw-lijst{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:10px}
+          .bw-k{display:flex !important;flex-direction:column;gap:6px;cursor:pointer;margin:0 !important;font-weight:600 !important;font-size:13.5px}
+          .bw-k input{position:absolute;opacity:0;pointer-events:none}
+          .bw-s{display:block;height:64px;border-radius:10px;border:2px solid var(--line);background:repeating-linear-gradient(45deg,#f4f6fa 0 8px,#e9edf3 8px 16px)}
+          .bw-k input:checked+.bw-s{border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.25)}
+          .bw-k input:focus-visible+.bw-s{outline:3px solid var(--blue);outline-offset:2px}
+          .bw-k:hover .bw-s{border-color:var(--blue)}
+          </style>
+          <script><?= ffm_js() ?></script>
+          <script>
+          (function(){
+            var v=document.getElementById('bwVoorbeeld'), s=document.getElementById('bwsnel');
+            function nu(){var r=document.querySelector('input[name="beweging"]:checked');return r?r.value:'';}
+            function zet(){var o=s.options[s.selectedIndex];window.FFM.zet(v,nu(),o?o.getAttribute('data-v'):1);}
+            document.querySelectorAll('input[name="beweging"]').forEach(function(r){r.addEventListener('change',zet);});
+            s.addEventListener('change',zet);
+          })();
+          </script>
+
           <?php global $BLOKKEN; $vlg = blokken_volgorde(); $ww = blok_lijst('werkwijze'); $cf = blok_lijst('cijfers'); $fq = blok_lijst('vragen'); $vn = blok_lijst('voorna'); ?>
           <div class="formcard" id="blokken">
             <h2>Blokken op je voorpagina</h2>
@@ -11302,6 +11502,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     "h2:Diensten": "Wat je aanbiedt. Elke dienst krijgt een eigen pagina op je website. Een dienst met een lege naam staat niet op de site.",
     "h2:Uiterlijk": "Hoe je website eruitziet: je logo, de stijl en je kleuren. Je teksten blijven altijd hetzelfde.",
     "h2:Opbouw en details": "Hiermee maak je je website echt eigen: hoe de blokken op de voorpagina eruitzien, welk lettertype je gebruikt en hoe rond de knoppen zijn. Probeer gerust iets uit, je kunt het altijd terugzetten.",
+    "h2:Beweging": "Een bewegende achtergrond achter de bovenkant van je voorpagina. Kies er een en klik onderaan op Opslaan en website bijwerken. Je ziet hem hierboven alvast bewegen. Met Geen beweging zet je hem weer uit.",
     "h2:Extra": "Extra instellingen. Die heb je meestal niet nodig, maar ze kunnen handig zijn.",
     "h3:Extra kleuren (optioneel)": "Wil je nog meer eigen kleuren? Vink een kleur aan en kies hem. Uitgevinkt gebruikt je website de kleur van de stijl. Let op dat tekst goed leesbaar blijft.",
     "f:abken": "Het kenteken van de auto. Met Gegevens ophalen zoeken we merk, model, bouwjaar en meer op bij de RDW.",
