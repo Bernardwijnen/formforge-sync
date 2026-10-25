@@ -9786,6 +9786,327 @@ if ($is_demo && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action
     header('Location: ' . $back); exit;
 }
 $logged_in = $config && (!empty($_SESSION['ff_admin']) || $is_demo);
+/* ---------- Venturo: vaste vragen en antwoorden in de beheerpagina ---------- */
+function venturo_html() {
+    return <<<'VTHTML'
+<style>.vt-knop{position:fixed;right:16px;bottom:16px;z-index:95;display:flex;align-items:center;gap:10px;background:#1b2a4a;color:#fff;border:2px solid #fff;border-radius:999px;padding:7px 18px 7px 7px;font:600 15px/1.2 'Plus Jakarta Sans','Inter','Segoe UI',Roboto,Arial,sans-serif;box-shadow:0 10px 28px rgba(27,42,74,.32);cursor:pointer}
+.vt-knop:hover{background:#26385e}
+.vt-knop .vt-av{width:34px;height:34px;flex:none}
+.vt-knop:focus-visible,.vt-paneel button:focus-visible,.vt-paneel a:focus-visible{outline:3px solid #ff7a59;outline-offset:2px}
+.vt-paneel{position:fixed;right:16px;bottom:16px;z-index:96;width:min(390px,calc(100vw - 24px));height:min(620px,calc(100vh - 32px));display:flex;flex-direction:column;background:#fff;color:#1b2a4a;border:1px solid #e3e6ee;border-radius:20px;box-shadow:0 24px 60px rgba(27,42,74,.3);overflow:hidden;font:400 15px/1.5 'Plus Jakarta Sans','Inter','Segoe UI',Roboto,Arial,sans-serif;text-align:left}
+.vt-paneel[hidden],.vt-knop[hidden],.vt-data{display:none!important}
+.vt-kop{display:flex;align-items:center;gap:12px;padding:14px 14px 14px 16px;background:linear-gradient(140deg,#1b2a4a,#26385e);color:#fff}
+.vt-kop .vt-av{width:40px;height:40px;flex:none}
+.vt-kop strong{display:block;font-size:16px;line-height:1.2}
+.vt-kop small{display:block;font-size:12.5px;color:rgba(255,255,255,.72)}
+.vt-kop .vt-naam{flex:1;min-width:0}
+.vt-dicht,.vt-top{all:unset;cursor:pointer;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;color:#fff;background:rgba(255,255,255,.12);font-size:20px;line-height:1;flex:none}
+.vt-dicht:hover,.vt-top:hover{background:rgba(255,255,255,.22)}
+.vt-top svg{width:16px;height:16px}
+.vt-log{flex:1;overflow-y:auto;padding:16px 14px 10px;background:#f6f8fb;display:flex;flex-direction:column;gap:10px;scroll-behavior:smooth}
+.vt-b{max-width:88%;padding:10px 14px;border-radius:16px;white-space:pre-line;word-wrap:break-word}
+.vt-b.bot{align-self:flex-start;background:#fff;border:1px solid #e3e6ee;border-bottom-left-radius:6px}
+.vt-b.ik{align-self:flex-end;background:#2f6fed;color:#fff;border-bottom-right-radius:6px;font-weight:600}
+.vt-b.bot .vt-wie{display:block;font-size:12px;font-weight:700;color:#2f6fed;margin-bottom:2px}
+.vt-links{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.vt-links a{display:inline-block;background:#2f6fed;color:#fff;text-decoration:none;font-weight:700;font-size:13.5px;padding:7px 13px;border-radius:999px}
+.vt-links a:hover{background:#1f5ad6}
+.vt-keuzes{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+.vt-keuzes button{all:unset;box-sizing:border-box;cursor:pointer;max-width:100%;background:#fff;color:#1b2a4a;border:1.5px solid #c9d6f5;border-radius:14px;padding:8px 13px;font-weight:600;font-size:14px;line-height:1.35;font-family:inherit;text-align:left}
+.vt-keuzes button:hover{border-color:#2f6fed;background:#eef3fd}
+.vt-keuzes button.zacht{border-style:dashed;color:#5a6680;font-weight:500}
+.vt-keuzes.klaar button{opacity:.45;pointer-events:none}
+.vt-keuzes .vt-kop2{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#5a6680;margin:6px 0 0 2px}
+.vt-typt{align-self:flex-start;background:#fff;border:1px solid #e3e6ee;border-radius:16px;padding:12px 14px;display:flex;gap:4px}
+.vt-typt i{width:6px;height:6px;border-radius:50%;background:#9aa6bd;animation:vtp 1s infinite}
+.vt-typt i:nth-child(2){animation-delay:.15s}.vt-typt i:nth-child(3){animation-delay:.3s}
+@keyframes vtp{0%,80%,100%{opacity:.3}40%{opacity:1}}
+.vt-voet{padding:8px 14px 10px;border-top:1px solid #e3e6ee;font-size:12px;color:#5a6680;background:#fff}
+@media (max-width:520px){.vt-knop{right:10px;bottom:10px;padding:6px 14px 6px 6px;font-size:14px}.vt-knop .vt-av{width:30px;height:30px}.vt-paneel{right:0;bottom:0;width:100vw;height:min(88vh,calc(100vh - 20px));border-radius:20px 20px 0 0}}
+@media (prefers-reduced-motion:reduce){.vt-log{scroll-behavior:auto}.vt-typt i{animation:none}}
+@media print{.vt-knop,.vt-paneel{display:none!important}}</style>
+<div class="vtw" id="vt">
+<button type="button" class="vt-knop" aria-expanded="false" aria-controls="vtPaneel"><svg class="vt-av" viewBox="0 0 40 40" aria-hidden="true"><rect width="40" height="40" rx="13" fill="#2f6fed"/><path d="M21.2 5.5 17.6 11h2.6l-.6 3.8 4-5.6h-2.6l.2-3.7Z" fill="#fff" fill-opacity=".85"/><rect x="12" y="17" width="5" height="8.5" rx="2.5" fill="#fff"/><rect x="23" y="17" width="5" height="8.5" rx="2.5" fill="#fff"/><path d="M14.6 29.2c3.2 2.6 7.6 2.6 10.8 0" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></svg><span>Vraag het Venturo</span></button>
+<div class="vt-paneel" id="vtPaneel" role="dialog" aria-label="Venturo" hidden>
+<div class="vt-kop"><svg class="vt-av" viewBox="0 0 40 40" aria-hidden="true"><rect width="40" height="40" rx="13" fill="#2f6fed"/><path d="M21.2 5.5 17.6 11h2.6l-.6 3.8 4-5.6h-2.6l.2-3.7Z" fill="#fff" fill-opacity=".85"/><rect x="12" y="17" width="5" height="8.5" rx="2.5" fill="#fff"/><rect x="23" y="17" width="5" height="8.5" rx="2.5" fill="#fff"/><path d="M14.6 29.2c3.2 2.6 7.6 2.6 10.8 0" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></svg><div class="vt-naam"><strong>Venturo</strong><small>AI-ontwikkelaar van FormForge</small></div><button type="button" class="vt-top" aria-label="Opnieuw beginnen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4"/></svg></button><button type="button" class="vt-dicht" aria-label="Sluiten">&times;</button></div>
+<div class="vt-log" aria-live="polite"></div>
+<div class="vt-voet">Vaste antwoorden, samengesteld door Ben en Venturo.</div>
+</div>
+<div class="vt-data" hidden>
+<p class="vt-groet">Hoi, ik ben Venturo, de AI-ontwikkelaar van FormForge. Ik heb de antwoorden op de meest gestelde vragen over je beheerpagina en je administratie voor je klaargezet.</p>
+<p class="vt-l-kies-deel">Waar gaat je vraag over?</p>
+<p class="vt-l-kies-onderwerp">Kies een onderwerp.</p>
+<p class="vt-l-kies-vraag">Kies je vraag.</p>
+<p class="vt-l-meer">Andere vraag over dit onderwerp</p>
+<p class="vt-l-terug">Terug naar de onderwerpen</p>
+<p class="vt-l-ander-deel">Iets anders: website of administratie</p>
+<p class="vt-l-mail">Staat je vraag er niet tussen?</p>
+<p class="vt-mailtekst">Mail je vraag naar vragen@formforge.nl. Ben reageert op werkdagen binnen 24 uur, tussen 07.00 en 19.00 uur.</p>
+<a class="vt-mailknop" href="mailto:vragen@formforge.nl">Mail je vraag</a>
+<div class="vt-g"><h3>Je website aanpassen</h3>
+<div class="vt-o"><h4>Inloggen en de weg vinden</h4>
+<div class="vt-v"><h5>Hoe kom ik in mijn beheerpagina?</h5><p>Typ je domeinnaam met /admin.php erachter, bijvoorbeeld bakkerijjansen.nl/admin.php. Of klik helemaal onderaan je website op Website beheren. Log in met je e-mailadres en wachtwoord.</p></div>
+<div class="vt-v"><h5>Ik ben mijn wachtwoord vergeten.</h5><p>Klik op het inlogscherm op Wachtwoord vergeten. Vul je e-mailadres in, dan krijg je een mail met een link om een nieuw wachtwoord te kiezen. De link werkt 1 uur. Kijk ook in je map met ongewenste mail.</p></div>
+<div class="vt-v"><h5>Hoe verander ik mijn wachtwoord of inlog-e-mailadres?</h5><p>Klik links in het menu op Inloggegevens. Vul je nieuwe e-mailadres of wachtwoord in (minimaal 10 tekens), vul ter controle je huidige wachtwoord in en klik op Opslaan.</p></div>
+<div class="vt-v"><h5>Wat staat er in het menu links?</h5><p>Je website: Instellingen, Projecten, Aanbod, Menukaart, Versies en Beoordelingen. Klanten en geld: Berichten, Afspraakplanner en Administratie. Account: Inloggegevens, Website bekijken en Uitloggen. Op je telefoon open je het menu met de knop linksboven.</p></div>
+<div class="vt-v"><h5>Wat zie ik op de startpagina?</h5><p>Een overzicht: wat je nog moet doen, nieuwe afspraken, nieuwe beoordelingen, te laat betaalde facturen, en knoppen voor + Factuur, + Offerte en + Nieuw project.</p></div>
+<div class="vt-v"><h5>Wat betekent "Nog te doen" op de startpagina?</h5><p>Dingen die nog ontbreken, bijvoorbeeld je bedrijfsnaam als die nog op de voorbeeldtekst staat, je e-mailadres, of je IBAN en btw-nummer voor je facturen. Klik erop, dan ga je meteen naar de goede plek.</p></div>
+<div class="vt-v"><h5>Wat betekenen de vraagtekens naast de velden?</h5><p>Klik op een vraagteken, dan zie je uitleg over dat veld. Klik nog een keer om het te sluiten.</p></div>
+<div class="vt-v"><h5>Hoe bekijk ik mijn website?</h5><p>Klik links in het menu op Website bekijken. Je website opent in een nieuw venster.</p></div>
+</div>
+<div class="vt-o"><h4>Instellingen: je bedrijf en je teksten</h4>
+<div class="vt-v"><h5>Hoe werken de Instellingen?</h5><p>Instellingen bestaat uit tabbladen: Bedrijf, Voorpagina, Diensten, Uiterlijk, Opbouw en details, Blokken op je voorpagina en Extra. Vul ze van boven naar beneden in en klik daarna op Opslaan en website bijwerken.</p></div>
+<div class="vt-v"><h5>Ik heb iets aangepast, maar ik zie het niet op mijn website.</h5><p>Klik altijd op Opslaan en website bijwerken. Zie je het daarna nog niet? Ververs je website: op een computer met Ctrl+F5, op je telefoon door de pagina opnieuw te laden.</p></div>
+<div class="vt-v"><h5>Er gebeurt niets als ik op Opslaan klik.</h5><p>Op de knop staat dan even "Bezig...". Wacht tot de pagina klaar is. Is er een veld niet goed ingevuld, dan springt de beheerpagina vanzelf naar het tabblad met dat veld, en staat het veld rood.</p></div>
+<div class="vt-v"><h5>Waar vul ik mijn bedrijfsgegevens in?</h5><p>In Instellingen, tabblad Bedrijf: bedrijfsnaam, adres, telefoon, e-mail, KvK-nummer, btw-nummer, IBAN, openingstijden en werkgebied.</p></div>
+<div class="vt-v"><h5>Moet ik mijn adres invullen?</h5><p>Nee. Werk je vanuit huis en wil je dat niet laten zien, laat het dan leeg. Een postcode en plaats helpen wel om in Google in de buurt gevonden te worden.</p></div>
+<div class="vt-v"><h5>Waar komen de berichten van mijn contactformulier binnen?</h5><p>Op het e-mailadres dat je in Instellingen bij Bedrijf invult, en in je beheerpagina onder Berichten.</p></div>
+<div class="vt-v"><h5>Hoe zet ik een WhatsApp-knop op mijn website?</h5><p>Vul in Instellingen bij Bedrijf je WhatsApp-nummer in. Een 06-nummer is goed. Er komt dan rechtsonder op elke pagina een groene WhatsApp-knop. Je kunt ook een eerste zin klaarzetten die de bezoeker meekrijgt.</p></div>
+<div class="vt-v"><h5>Hoe verander ik de grote titel bovenaan mijn website?</h5><p>In Instellingen, tabblad Voorpagina, bij Grote titel. Daaronder vul je de tekst onder de titel en de tekst op de hoofdknop in.</p></div>
+<div class="vt-v"><h5>Waar gaat de hoofdknop bovenaan naartoe?</h5><p>Standaard naar je contactpagina. Wil je hem ergens anders naartoe laten gaan, vul dan bij "Waar gaat de hoofdknop naartoe?" een pagina in, bijvoorbeeld /reserveren/. Begin altijd met een schuine streep en eindig met een schuine streep. Een andere website begint met https://.</p></div>
+<div class="vt-v"><h5>Hoe zet ik een balk met een actie of vakantiebericht bovenaan?</h5><p>Vul in Instellingen bij Voorpagina het veld Balk bovenaan in, bijvoorbeeld: Wij zijn met vakantie tot 18 augustus. Leeg laten betekent geen balk.</p></div>
+<div class="vt-v"><h5>Hoe zet ik een grote foto bovenaan mijn voorpagina?</h5><p>In Instellingen bij Voorpagina, bij Bannerfoto bovenaan. Kies een liggende foto, liefst minstens 1600 pixels breed. Daarna kies je of de foto achter je titel staat of als strook onder het menu.</p></div>
+<div class="vt-v"><h5>Kan ik extra knoppen in het menu zetten?</h5><p>Ja, maximaal 6, naar pagina's die al op je server staan of naar een andere website. Op een smal scherm, zoals een telefoon, vallen ze weg. Zet daarom ook een link op je voorpagina.</p></div>
+<div class="vt-v"><h5>Hoe verander ik de gekleurde balk onderaan mijn pagina's?</h5><p>In Instellingen bij Voorpagina: Titel van de balk onderaan en Tekst van de balk onderaan.</p></div>
+<div class="vt-v"><h5>Hoe vul ik mijn diensten in?</h5><p>In Instellingen, tabblad Diensten. Je kunt er tot 9 invullen. Per dienst: een naam, een korte omschrijving voor de voorpagina en een uitgebreide tekst voor de eigen pagina van die dienst.</p></div>
+<div class="vt-v"><h5>Hoe haal ik een dienst weg?</h5><p>Maak de naam van de dienst leeg en klik op Opslaan en website bijwerken. Een dienst zonder naam staat niet op je website.</p></div>
+<div class="vt-v"><h5>Kan ik een nieuwe pagina toevoegen?</h5><p>Elke dienst en elk project krijgt vanzelf een eigen pagina. Een helemaal losse pagina maken kan niet in de beheerpagina. Met een servicepakket of Titanium kunnen wij dat op offerte voor je doen.</p></div>
+</div>
+<div class="vt-o"><h4>Het uiterlijk van je website</h4>
+<div class="vt-v"><h5>Hoe zet ik mijn logo op mijn website?</h5><p>In Instellingen, tabblad Uiterlijk, bij Logo. Kies liefst een png met een doorzichtige achtergrond, in een lichte kleur, want het logo staat op de donkere kleur van je website. Maximaal 8 MB.</p></div>
+<div class="vt-v"><h5>Ik heb nog geen logo.</h5><p>Je kunt er een laten maken met AI, bijvoorbeeld ChatGPT. Vraag om een png met een transparante achtergrond. Zie je een grijs-wit geblokt patroon achter je logo, dan is de achtergrond niet echt doorzichtig. Vraag dan opnieuw.</p></div>
+<div class="vt-v"><h5>Hoe kies ik een andere stijl?</h5><p>In Instellingen, tabblad Uiterlijk, bij Stijl van de website. Klik op een stijl en daarna op Opslaan en website bijwerken. Je teksten, diensten en projecten blijven hetzelfde. Je kunt altijd terugwisselen.</p></div>
+<div class="vt-v"><h5>Hoe kies ik mijn eigen kleuren?</h5><p>In Instellingen bij Uiterlijk: een donkere hoofdkleur voor het menu, de bovenkant en de onderkant, en een accentkleur voor knoppen. Op beide staat witte tekst, dus kies geen hele lichte kleuren.</p></div>
+<div class="vt-v"><h5>Wat doet het vinkje bij de branche- en feeststijlen?</h5><p>Aangevinkt gebruiken stijlen zoals Kapper of Kerst hun eigen kleuren. Uitgevinkt houdt je website je eigen kleuren en krijg je alleen de versiering, zoals sneeuw of vleermuizen.</p></div>
+<div class="vt-v"><h5>Hoe verander ik de opbouw van mijn pagina?</h5><p>In Instellingen, tabblad Opbouw en details. Per onderdeel heb je 10 keuzes: het menu, de bovenkant, de balk met diensten, je diensten, je projecten, het contactblok onderaan en de onderkant. Probeer gerust iets uit, je kunt altijd terug.</p></div>
+<div class="vt-v"><h5>Hoe kies ik een ander lettertype of rondere knoppen?</h5><p>In Instellingen, tabblad Opbouw en details, bij Lettertype en bij Vorm van knoppen en blokken: hoekig, licht afgerond of rond.</p></div>
+<div class="vt-v"><h5>Kan ik nog meer kleuren aanpassen?</h5><p>Ja. Bij Extra kleuren vink je een kleur aan, zoals de achtergrond, een vlak of de tekst, en kies je hem. Let erop dat de tekst goed leesbaar blijft.</p></div>
+</div>
+<div class="vt-o"><h4>Blokken op je voorpagina</h4>
+<div class="vt-v"><h5>Wat zijn blokken?</h5><p>De onderdelen van je voorpagina, zoals je diensten, uitgelichte projecten, voor- en na-foto's, werkwijze in stappen, cijfers, over ons, veelgestelde vragen en eigen afbeeldingen. Je vindt ze in Instellingen, tabblad Blokken op je voorpagina.</p></div>
+<div class="vt-v"><h5>Hoe zet ik een blok aan of uit?</h5><p>Vink het blok aan of uit en klik op Opslaan en website bijwerken. Een blok zonder inhoud komt niet op je website.</p></div>
+<div class="vt-v"><h5>Hoe verander ik de volgorde van de blokken?</h5><p>Met de pijltjes omhoog en omlaag naast elk blok. De bovenkant en het contactblok onderaan blijven altijd op hun plek.</p></div>
+<div class="vt-v"><h5>Hoe maak ik een voor- en na-foto?</h5><p>Zet het blok Voor en na aan en kies twee foto's: een van voor en een van na. Neem ze vanaf dezelfde plek en dezelfde hoek, liefst liggend. Bezoekers schuiven op je website tussen de twee foto's.</p></div>
+<div class="vt-v"><h5>Hoe vul ik "Over ons" in?</h5><p>Zet het blok Over ons aan. Vertel wie je bent, hoe lang je dit al doet en waarom klanten voor jou kiezen. Je kunt er een foto bij zetten. Een lege regel begint een nieuwe alinea.</p></div>
+<div class="vt-v"><h5>Wat zet ik bij Cijfers?</h5><p>Alleen cijfers die kloppen, zoals jaren ervaring of het aantal afgeronde klussen.</p></div>
+<div class="vt-v"><h5>Hoe zet ik veelgestelde vragen op mijn website?</h5><p>Zet het blok Veelgestelde vragen aan en vul een vraag en antwoord in. Met + Nog een vraag voeg je er meer toe. Deze vragen helpen ook in Google.</p></div>
+<div class="vt-v"><h5>Hoe zet ik een eigen afbeelding of actie op mijn voorpagina?</h5><p>Zet een van de blokken Eigen afbeelding aan (je hebt er 6). Kies een foto of plaatje, en eventueel een titel, tekst en knop. Bij Hoe laten zien kies je naast elkaar, over de hele breedte of klein in het midden.</p></div>
+<div class="vt-v"><h5>Kan een afbeelding alleen in een bepaald seizoen te zien zijn?</h5><p>Ja. Vul bij een eigen afbeelding Van en Tot en met in, bijvoorbeeld van 1 november tot en met 1 maart. Buiten die periode verdwijnt het blok vanzelf, en het volgende jaar komt het vanzelf terug.</p></div>
+<div class="vt-v"><h5>Hoe verander ik het woord "Projecten" op mijn website?</h5><p>In het blok Uitgelichte projecten vul je bij Een en Meer je eigen woord in, bijvoorbeeld klus en klussen, of boek en boeken. Dit woord staat in het menu en boven je werk.</p></div>
+</div>
+<div class="vt-o"><h4>Projecten</h4>
+<div class="vt-v"><h5>Hoe voeg ik een project toe?</h5><p>Klik links op Projecten en daarna op + Nieuw project. Vul een titel, een korte omschrijving en de tekst in, voeg foto's toe en klik op Opslaan.</p></div>
+<div class="vt-v"><h5>Hoeveel foto's mag ik toevoegen?</h5><p>Er is geen maximum. Per foto mag het maximaal 8 MB zijn, en per keer kun je ongeveer 20 foto's tegelijk uploaden. Wil je meer, sla dan op en voeg daarna de volgende toe. Foto's worden vanzelf kleiner gemaakt.</p></div>
+<div class="vt-v"><h5>Welke foto wordt de grote foto van het project?</h5><p>De eerste foto.</p></div>
+<div class="vt-v"><h5>Hoe haal ik een foto weg?</h5><p>Open het project, vink bij de foto Verwijderen aan en klik op Opslaan.</p></div>
+<div class="vt-v"><h5>Wat betekenen Uitgelicht, Projecten en Verborgen?</h5><p>Uitgelicht: groot op de voorpagina en in het overzicht. De nieuwste twee uitgelichte projecten komen groot op de voorpagina. Projecten: alleen in het overzicht. Verborgen: niet zichtbaar op je website.</p></div>
+<div class="vt-v"><h5>Hoe koppel ik een project aan een dienst?</h5><p>Vink in het project aan bij welke dienst het hoort. Meerdere mag. Het project staat dan ook op de pagina van die dienst.</p></div>
+<div class="vt-v"><h5>Mijn projecttitel is te lang voor de voorpagina.</h5><p>Vul bij Naam op de voorpagina een kortere naam in. Het webadres van het project verandert daar niet door.</p></div>
+<div class="vt-v"><h5>Hoe verwijder ik een project?</h5><p>Klik links op Projecten. Klik bij het project op Verwijderen en bevestig. Het project gaat met alle foto's weg. Per ongeluk gedaan? Zet het terug via Versies.</p></div>
+</div>
+<div class="vt-o"><h4>Versies: terug naar gisteren</h4>
+<div class="vt-v"><h5>Ik heb per ongeluk iets veranderd of weggehaald.</h5><p>Klik links op Versies. Daar staat elke keer dat je Instellingen of een project hebt opgeslagen. Klik bij de versie die je terug wilt op Terugzetten. Je teksten, foto's, kleuren en projecten komen terug zoals ze toen waren.</p></div>
+<div class="vt-v"><h5>Kan ik het terugzetten weer ongedaan maken?</h5><p>Ja. Het terugzetten wordt zelf ook een versie. Zet je dus de verkeerde terug, dan kies je gewoon de versie van daarvoor.</p></div>
+<div class="vt-v"><h5>Hoeveel versies worden bewaard?</h5><p>De laatste 60. Een weggehaalde foto wordt 120 dagen bewaard, zodat hij bij het terugzetten terugkomt.</p></div>
+<div class="vt-v"><h5>Ik zie nog geen versies.</h5><p>De eerste versie verschijnt zodra je Instellingen of een project opslaat.</p></div>
+</div>
+<div class="vt-o"><h4>Berichten</h4>
+<div class="vt-v"><h5>Waar zie ik de berichten van mijn contactformulier?</h5><p>Links in het menu onder Berichten, met naam, telefoon en e-mail. Ze worden ook naar je e-mailadres gestuurd.</p></div>
+<div class="vt-v"><h5>Ik krijg geen berichten binnen.</h5><p>Kijk in Instellingen bij Bedrijf of je e-mailadres goed staat, en kijk in je map met ongewenste mail. Stuur jezelf een test via je contactpagina.</p></div>
+</div>
+<div class="vt-o"><h4>Afspraakplanner</h4>
+<div class="vt-v"><h5>Hoe zet ik de afspraakplanner aan?</h5><p>Klik links op Afspraakplanner. Kies of het om tafels gaat (restaurant) of om afspraken (kapper, barber, salon, praktijk), stel je dagen en tijden in, vink Afspraakplanner aan aan en klik op Opslaan en website bijwerken. Er komt dan een pagina /reserveren/ op je website.</p></div>
+<div class="vt-v"><h5>Hoe stel ik mijn behandelingen in?</h5><p>Kies Afspraken. Vul per behandeling een naam, hoe lang hij duurt en de prijs in. Met + Nog een behandeling voeg je er een toe. Laat de naam leeg om een behandeling weg te halen.</p></div>
+<div class="vt-v"><h5>Hoe stel ik in wanneer klanten kunnen boeken?</h5><p>Bij Wanneer kan er gereserveerd worden vul je per dag de eerste en de laatste begintijd in. Daaronder kies je om de hoeveel minuten er een tijd is, hoe lang een afspraak duurt, en hoeveel klanten je tegelijk kunt helpen.</p></div>
+<div class="vt-v"><h5>Ik werk alleen. Wat vul ik in bij Hoeveel klanten tegelijk?</h5><p>1. Met 3 stoelen en 3 kappers vul je 3 in.</p></div>
+<div class="vt-v"><h5>Hoe sluit ik dagen af, bijvoorbeeld voor vakantie?</h5><p>Zet de datums bij Gesloten dagen, een per regel. Die dagen kan niemand boeken.</p></div>
+<div class="vt-v"><h5>Kan ik elke afspraak eerst zelf bevestigen?</h5><p>Ja. Vink Ik wil elke reservering eerst zelf bevestigen aan. Nieuwe afspraken staan dan bovenaan met een knop Bevestigen.</p></div>
+<div class="vt-v"><h5>Krijgen klanten een herinnering?</h5><p>Ja. Bij Herinnering per mail aan de klant kies je: de dag ervoor 's ochtends (aanbevolen), op de dag zelf 's ochtends, of geen herinnering. In de mail staan de dag, de tijd, je adres en een link om af te zeggen. Dat werkt alleen als de klant een e-mailadres heeft ingevuld.</p></div>
+<div class="vt-v"><h5>Iemand belt voor een afspraak. Hoe zet ik die erin?</h5><p>Bij Zelf een afspraak invoeren. Vul de gegevens in en klik op toevoegen. De tijd verdwijnt dan van je website als hij vol is.</p></div>
+<div class="vt-v"><h5>Hoe reken ik een afspraak af?</h5><p>Klik bij de afspraak op Afrekenen, vul het bedrag in en kies hoe er betaald is: pin, contant of anders. Het komt als omzet in je administratie. De klant krijgt geen factuur.</p></div>
+<div class="vt-v"><h5>Hoe annuleer ik een afspraak?</h5><p>Klik bij de afspraak op Annuleren.</p></div>
+<div class="vt-v"><h5>Kan ik een opvallende knop "Afspraak maken" bovenaan mijn website zetten?</h5><p>Ja. Vink in de afspraakplanner aan dat er bovenaan een opvallende knop komt in plaats van Contact, en vul de tekst in, bijvoorbeeld Boek nu.</p></div>
+<div class="vt-v"><h5>Waar komen meldingen van nieuwe afspraken binnen?</h5><p>Op het adres bij Meldingen van nieuwe reserveringen naar. Laat je het leeg, dan gaan ze naar het e-mailadres van je bedrijf. De mails gaan via je gekoppelde mailbox (Administratie, tabblad E-mail).</p></div>
+</div>
+<div class="vt-o"><h4>Aanbod: occasions en producten</h4>
+<div class="vt-v"><h5>Hoe zet ik auto's of producten op mijn website?</h5><p>Klik links op Aanbod. Kies onderaan of het om auto's of producten gaat, vink Aanbod op mijn website aan en klik op Opslaan en website bijwerken.</p></div>
+<div class="vt-v"><h5>Hoe voeg ik een auto toe?</h5><p>Vul het kenteken in en klik op Gegevens ophalen. Merk, model, bouwjaar, kleur, brandstof en vermogen komen uit de gegevens van de RDW. Kilometerstand, prijs en transmissie vul je zelf in. Voeg foto's toe en klik op Opslaan.</p></div>
+<div class="vt-v"><h5>Wat als ik geen prijs invul?</h5><p>Dan staat er Prijs op aanvraag.</p></div>
+<div class="vt-v"><h5>Hoe laat ik een prijsverlaging zien?</h5><p>Vul de oude prijs in bij Oude prijs. Die staat dan doorgestreept naast de nieuwe.</p></div>
+<div class="vt-v"><h5>Hoe zet ik een auto op verkocht?</h5><p>Zet de Status op verkocht. Het label blijft nog een aantal dagen op je website staan en daarna verdwijnt de auto vanzelf. Hoeveel dagen, stel je in bij Verkocht nog zichtbaar.</p></div>
+<div class="vt-v"><h5>Kan ik veel auto's of producten tegelijk inladen?</h5><p>Ja, bij Veel tegelijk inladen, met een Excel- of CSV-bestand. Download eerst het voorbeeldbestand. Foto's voeg je daarna per stuk toe.</p></div>
+<div class="vt-v"><h5>Kunnen klanten een proefrit plannen?</h5><p>Ja, als je afspraakplanner aan staat en je Proefrit plannen aanzet bij Aanbod.</p></div>
+</div>
+<div class="vt-o"><h4>Menukaart</h4>
+<div class="vt-v"><h5>Hoe zet ik mijn menukaart op mijn website?</h5><p>Klik links op Menukaart. Maak een kaart, bijvoorbeeld Lunch of Diner, voeg rubrieken en gerechten toe, vink Menukaart op mijn website aan en klik op Opslaan en website bijwerken.</p></div>
+<div class="vt-v"><h5>Hoe voeg ik een gerecht toe?</h5><p>Klik bij een kaart op + Gerecht. Vul de naam, een korte omschrijving, de prijs inclusief btw en de rubriek in, en kies de kenmerken en allergenen. Met Opslaan en nog een toevoegen ga je snel door.</p></div>
+<div class="vt-v"><h5>Hoe vul ik de allergenen in?</h5><p>Kies bij elk gerecht welke van de 14 allergenen erin zitten. Vul ze zorgvuldig in, gasten met een allergie vertrouwen erop. Zolang het op Nog niet ingevuld staat, ziet de gast: vraag het ons.</p></div>
+<div class="vt-v"><h5>Een gerecht is op. Wat doe ik?</h5><p>Zet het op Tijdelijk uitverkocht. Dat kan met 1 tik in het overzicht. Het gerecht blijft zichtbaar, maar doorgestreept.</p></div>
+<div class="vt-v"><h5>Ik heb mijn kaart al in Excel.</h5><p>Gebruik Veel tegelijk inladen. Zet op de eerste regel de kopjes Kaart, Rubriek, Gerecht, Omschrijving, Prijs, Kenmerken en Allergenen. Download eerst het voorbeeldbestand.</p></div>
+<div class="vt-v"><h5>Kan ik mijn menukaart als pdf erbij zetten?</h5><p>Ja, bij Je eigen pdf erbij. Maximaal 15 MB. Bezoekers kunnen hem openen en printen.</p></div>
+</div>
+<div class="vt-o"><h4>Beoordelingen</h4>
+<div class="vt-v"><h5>Hoe zet ik beoordelingen aan?</h5><p>Klik links op Beoordelingen, vink Beoordelingen aan aan en klik op Opslaan. Daarna vraagt je website vanzelf je klanten om hun mening.</p></div>
+<div class="vt-v"><h5>Wanneer krijgen klanten de vraag?</h5><p>Na een afspraak uit de afspraakplanner of als een factuur betaald is, wat je aanzet. Bij Wanneer vragen kies je hoe lang daarna. De dag erna werkt meestal het best. Iedere klant krijgt hooguit eens per half jaar zo'n mail.</p></div>
+<div class="vt-v"><h5>Kan ik zelf iemand om een beoordeling vragen?</h5><p>Ja. Vul bij Zelf iemand om een beoordeling vragen het e-mailadres in en klik op Uitnodiging versturen.</p></div>
+<div class="vt-v"><h5>Hoe reageer ik op een beoordeling?</h5><p>Typ je reactie onder de beoordeling en klik op Reactie opslaan. Je reactie staat dan op je website.</p></div>
+<div class="vt-v"><h5>Kan ik een slechte beoordeling weghalen?</h5><p>Dat kan, maar het mag niet zomaar: dan is het overzicht niet eerlijk meer. Reageer liever netjes. Dat maakt vaak meer indruk dan alleen vijf sterren.</p></div>
+</div>
+<div class="vt-o"><h4>Extra</h4>
+<div class="vt-v"><h5>Hoe kom ik beter in Google?</h5><p>Vul je plaats, werkgebied en diensten goed in, met een eigen tekst per dienst. In Instellingen bij Extra kun je ook een eigen titel en omschrijving voor Google invullen. Leeg laten is prima, dan maken we die zelf. Een plek in Google kunnen we niet garanderen.</p></div>
+<div class="vt-v"><h5>Hoe zet ik een chatknop op mijn website?</h5><p>Zet de link van je chat in Instellingen bij Extra, bij Chatlink. Er komt dan rechtsonder een chatknop op elke pagina.</p></div>
+<div class="vt-v"><h5>Hoe zeg ik mijn website op?</h5><p>Mail ons via info@formforge.nl. Opzeggen kan altijd. Je website blijft werken tot het einde van de periode die je al hebt betaald.</p></div>
+</div>
+</div>
+<div class="vt-g" data-param="adm"><h3>Administratie</h3>
+<div class="vt-o"><h4>Beginnen met je administratie</h4>
+<div class="vt-v"><h5>Waar vind ik mijn administratie?</h5><p>Klik links in het menu op Administratie. Bovenaan staan de tabbladen Overzicht, Offertes, Facturen, Inkoop, Bank, Agenda, Klanten, E-mail en Mijn gegevens.</p></div>
+<div class="vt-v"><h5>Wat moet ik invullen voordat ik mijn eerste factuur maak?</h5><p>Je IBAN en je btw-nummer, bij het tabblad Mijn gegevens. Die moeten volgens de wet op elke factuur staan. Je naam, adres, KvK-nummer en logo komen uit je Instellingen.</p></div>
+<div class="vt-v"><h5>Waar vind ik mijn btw-nummer?</h5><p>In de brief van de Belastingdienst. Het begint met NL en eindigt met B en 2 cijfers, bijvoorbeeld NL001234567B01.</p></div>
+<div class="vt-v"><h5>Ik gebruik de kleineondernemersregeling (KOR).</h5><p>Vink bij Mijn gegevens aan dat je de KOR gebruikt. Dan komt er geen btw op je facturen. Vink dit alleen aan als je echt bij de Belastingdienst bent aangemeld.</p></div>
+<div class="vt-v"><h5>Waarom moet ik mijn e-mail koppelen?</h5><p>Dan gaan je offertes en facturen vanaf je eigen adres de deur uit en komen ze goed aan bij je klant. Zonder koppeling gaan ze via je website, en dan komen ze bij veel klanten niet aan of in de spam. Ook komen je inkoopfacturen dan vanzelf binnen.</p></div>
+<div class="vt-v"><h5>Hoe koppel ik mijn e-mail?</h5><p>Klik op het tabblad E-mail. Vul je e-mailadres en het wachtwoord van die mailbox in en klik op Opslaan. Meestal zoekt de admin de rest zelf uit. Klik daarna op Stuur mij een testmail.</p></div>
+<div class="vt-v"><h5>Het koppelen van mijn e-mail lukt niet.</h5><p>Controleer of je het wachtwoord van je mailbox gebruikt, niet dat van je beheerpagina. Gebruik je Gmail, maak dan een app-wachtwoord aan in je Google-account. Lukt het nog niet, vul dan bij Servers zelf invullen de servers van je mailprovider in. Mail bij WebReus: webreus.email, poort 993 en 465.</p></div>
+<div class="vt-v"><h5>Kan ik mijn oude factuurnummers doortellen?</h5><p>Ja. Zet bij Mijn gegevens, bij Volgend factuurnummer, het nummer waarmee je verder wilt. Doe dit alleen als je overstapt van een ander programma, want facturen moeten doorlopend genummerd zijn.</p></div>
+<div class="vt-v"><h5>Kan ik een vaste tekst onder al mijn facturen zetten?</h5><p>Ja. Bij Mijn gegevens vul je een extra tekst in onder elke factuur, bijvoorbeeld je betaalvoorwaarden, en een aparte tekst onder elke offerte.</p></div>
+</div>
+<div class="vt-o"><h4>Een offerte maken</h4>
+<div class="vt-v"><h5>Hoe maak ik een offerte?</h5><p>Klik op + Offerte. Kies een klant of + Nieuwe klant toevoegen, vul de regels in en klik op Offerte opslaan. Daarna kun je hem bekijken en versturen.</p></div>
+<div class="vt-v"><h5>Hoe vul ik de regels in?</h5><p>Per regel: wat je doet, het aantal, de eenheid (bijvoorbeeld uur of m2), de prijs per eenheid zonder btw, en het btw-tarief. Het bedrag rekent zichzelf uit. Met + Regel toevoegen maak je er meer.</p></div>
+<div class="vt-v"><h5>Hoe lang is mijn offerte geldig?</h5><p>Dat vul je in bij Geldig tot en met. De standaard stel je in bij Mijn gegevens, bij Offerte geldig.</p></div>
+<div class="vt-v"><h5>Hoe stuur ik een offerte naar mijn klant?</h5><p>Open de offerte en klik op Versturen per mail. Controleer het adres en de tekst en klik op Nu versturen. Je klant krijgt de pdf als bijlage en een link om hem online te bekijken.</p></div>
+<div class="vt-v"><h5>Kan mijn klant online akkoord geven?</h5><p>Ja. Via de link in de mail ziet je klant de offerte en kan hij op akkoord klikken. Jij krijgt dan een mail, en in je administratie staat al een conceptfactuur met dezelfde regels klaar.</p></div>
+<div class="vt-v"><h5>Mijn klant gaat telefonisch akkoord. Hoe maak ik er een factuur van?</h5><p>Open de offerte en klik op Akkoord: factuur klaarzetten. Er staat dan een conceptfactuur met dezelfde regels klaar. Controleer hem en maak hem definitief. Met het keuzevak ernaast zet je de status van de offerte op Akkoord.</p></div>
+<div class="vt-v"><h5>Ik werk in termijnen. Kan ik meer facturen bij een offerte maken?</h5><p>Ja. Staat er al een factuur bij de offerte, dan klik je op Nog een factuur maken, bijvoorbeeld voor een tweede termijn.</p></div>
+<div class="vt-v"><h5>Hoe zie ik welke offertes nog open staan?</h5><p>Op het Overzicht staat het blok Offertes uitstaand. Of klik op het tabblad Offertes.</p></div>
+</div>
+<div class="vt-o"><h4>Een factuur maken en opslaan</h4>
+<div class="vt-v"><h5>Hoe maak ik een factuur?</h5><p>Klik op + Factuur. Kies een klant of maak een nieuwe aan, vul de datum, de betaaltermijn en de regels in. Klik daarna op Opslaan als concept of op Opslaan en definitief maken.</p></div>
+<div class="vt-v"><h5>Ik heb een factuur klaargemaakt. Hoe sla ik hem op?</h5><p>Klik onderaan op Opslaan als concept als je hem later nog wilt aanpassen. Klik op Opslaan en definitief maken als alles klopt. Daarna kun je hem versturen. Een opgeslagen concept maak je later definitief door hem te openen en op Definitief maken te klikken.</p></div>
+<div class="vt-v"><h5>Wat is het verschil tussen een concept en definitief?</h5><p>Een concept kun je altijd nog wijzigen of verwijderen, en het telt nog niet mee in je omzet. Maak je hem definitief, dan krijgt hij een vast factuurnummer en kun je hem niet meer wijzigen. Dat is wettelijk zo geregeld.</p></div>
+<div class="vt-v"><h5>Ik heb een fout gemaakt in een definitieve factuur.</h5><p>Een definitieve factuur kun je niet meer wijzigen. Open de factuur en klik op Creditfactuur maken. Daarna maak je een nieuwe, goede factuur. Tip: met Kopie maken heb je de regels meteen klaar.</p></div>
+<div class="vt-v"><h5>Hoe verwijder ik een factuur?</h5><p>Alleen een concept kun je verwijderen: open het en klik op Verwijderen. Een definitieve factuur haal je niet weg, maar maak je ongedaan met een creditfactuur.</p></div>
+<div class="vt-v"><h5>Welk btw-tarief moet ik kiezen?</h5><p>Meestal 21%. Het lage tarief van 9% geldt alleen in bepaalde gevallen, zoals arbeid bij schilder- of stukadoorswerk aan een woning ouder dan 2 jaar. Twijfel je, vraag het je boekhouder.</p></div>
+<div class="vt-v"><h5>Hoe stuur ik de factuur naar mijn klant?</h5><p>Open de factuur en klik op Versturen per mail. De pdf gaat als bijlage mee, plus een link om hem online te bekijken. Kies Nu versturen, of Later versturen op een dag die je kiest. Hij gaat dan die ochtend vanzelf de deur uit.</p></div>
+<div class="vt-v"><h5>Ik heb de factuur zelf via WhatsApp of mijn eigen mail gestuurd.</h5><p>Klik bij het versturen op Zet hem op verstuurd. Dan klopt je overzicht weer.</p></div>
+<div class="vt-v"><h5>Hoe download of print ik een factuur?</h5><p>Open de factuur en klik op Pdf downloaden of Afdrukken.</p></div>
+<div class="vt-v"><h5>Kan ik zien of mijn klant de mail heeft geopend?</h5><p>Ja. Bij het tabblad E-mail, onder Verzonden mails, zie je per mail of hij verstuurd is, geopend door je klant, of niet aangekomen. Staat er na een paar dagen nog geen "geopend", bel je klant dan even.</p></div>
+<div class="vt-v"><h5>Mijn mail is niet aangekomen.</h5><p>Staat er Niet aangekomen, dan stuurde de mailserver van je klant hem terug. Controleer het e-mailadres van je klant. Een mail die in de spam belandt, kan niemand zien. Bel je klant dan even.</p></div>
+<div class="vt-v"><h5>Ik heb een factuur in een ander programma gemaakt.</h5><p>Klik bij Facturen op + Factuur van elders (pdf). Vul de klant, het nummer, de datum en het bedrag in en voeg eventueel de pdf toe. Dan telt hij mee in je omzet, je btw en je bank.</p></div>
+</div>
+<div class="vt-o"><h4>Betalingen en herinneringen</h4>
+<div class="vt-v"><h5>Hoe zet ik een factuur op betaald?</h5><p>Open de factuur en klik op Betaald op. Vandaag staat al ingevuld. Was het eerder, pas de datum dan aan. Upload je je bankbestand, dan gebeurt dit vaak vanzelf.</p></div>
+<div class="vt-v"><h5>Ik heb een factuur per ongeluk op betaald gezet.</h5><p>Open de factuur en klik op Toch nog niet betaald.</p></div>
+<div class="vt-v"><h5>Hoe zie ik welke facturen te laat zijn?</h5><p>Op het Overzicht staat het blok Te laat betaald. Klik erop, dan zie je ze allemaal.</p></div>
+<div class="vt-v"><h5>Hoe stuur ik een herinnering?</h5><p>Open de te late factuur en klik op Herinnering sturen. Ook vraagt de admin je elke ochtend per mail of er een herinnering uit mag bij een te late factuur. Kijk eerst even in je bank, en kies dan via de link in die mail.</p></div>
+<div class="vt-v"><h5>Wat is de klantlink?</h5><p>Een persoonlijke link waarmee je klant zijn offerte of factuur online bekijkt. Met Kopieer klantlink stuur je hem zelf door, bijvoorbeeld via WhatsApp. Met Bekijk als klant zie je wat je klant ziet.</p></div>
+</div>
+<div class="vt-o"><h4>Klanten</h4>
+<div class="vt-v"><h5>Hoe voeg ik een klant toe?</h5><p>Een klant komt vanzelf in je klantenbestand als je een offerte of factuur voor een nieuwe klant maakt. Je kunt ook bij het tabblad Klanten op + Nieuwe klant klikken.</p></div>
+<div class="vt-v"><h5>Hoe pas ik de gegevens van een klant aan?</h5><p>Klik bij Klanten op de klant, pas aan wat niet klopt en klik op Opslaan. De nieuwe gegevens komen op elke nieuwe offerte en factuur.</p></div>
+<div class="vt-v"><h5>Mijn klant is een bedrijf.</h5><p>Vul dan ook de contactpersoon, het KvK-nummer en het btw-nummer van je klant in. Die komen op de factuur.</p></div>
+<div class="vt-v"><h5>Hoe zoek ik een klant?</h5><p>Typ bij Klanten een naam, plaats of e-mailadres in het zoekvak en druk op Enter.</p></div>
+</div>
+<div class="vt-o"><h4>Inkoop</h4>
+<div class="vt-v"><h5>Wat is inkoop?</h5><p>De rekeningen die jij moet betalen, bijvoorbeeld van de bouwmarkt of je telefoonaanbieder. De btw daarop trek je af bij je btw-aangifte.</p></div>
+<div class="vt-v"><h5>Hoe voeg ik een inkoopfactuur toe?</h5><p>Klik bij Inkoop op + Inkoopfactuur. Kies de pdf. Laat je het bedrag leeg, dan leest de admin datum, bedrag en btw zelf uit de pdf. Controleer het daarna altijd en klik op Opslaan.</p></div>
+<div class="vt-v"><h5>Kunnen inkoopfacturen vanzelf binnenkomen?</h5><p>Ja. Koppel je e-mail en zet bij E-mail, onder Inkoopfacturen uit je mail, de e-mailadressen van je leveranciers. Komt er een mail met een pdf van zo'n adres, dan wordt die vanzelf een inkoopfactuur. Elke ochtend haalt de admin ze op. Met Mail ophalen kan het ook meteen.</p></div>
+<div class="vt-v"><h5>Er staat "Nog controleren" bij een inkoopfactuur.</h5><p>De gegevens zijn uit de pdf gelezen. Open hem, kijk na of de leverancier, de datum, het bedrag en de btw kloppen, en klik op Opslaan.</p></div>
+<div class="vt-v"><h5>Welke btw-soort kies ik bij een inkoopfactuur?</h5><p>Nederlandse btw: er staat gewoon btw op. Btw verlegd: een Nederlandse leverancier, zoals een onderaannemer, zet btw verlegd op de factuur. Ander EU-land: de leverancier zit bijvoorbeeld in Duitsland en rekent geen btw. Buiten de EU: een dienst van een bedrijf buiten Europa. Geen btw: er hoort geen btw op, zoals bij een verzekering. Dit bepaalt in welk vakje van je aangifte het komt.</p></div>
+<div class="vt-v"><h5>Wat is verlegde btw?</h5><p>Bij verlegde btw betaal je de btw zelf aan de Belastingdienst en trek je hem in dezelfde aangifte weer af. Per saldo betaal je dus niets. Vul het bedrag van de factuur in en kies het tarief, meestal 21%. De admin zet het in de goede vakjes.</p></div>
+<div class="vt-v"><h5>Hoe zet ik een inkoopfactuur op betaald?</h5><p>Open hem en klik op Betaald op. Upload je je bankbestand, dan gebeurt dit vaak vanzelf.</p></div>
+<div class="vt-v"><h5>Er komt een mail binnen die geen inkoopfactuur is.</h5><p>Open hem en klik op Negeren, of op Verwijderen.</p></div>
+</div>
+<div class="vt-o"><h4>Bank</h4>
+<div class="vt-v"><h5>Hoe werkt de bank in mijn administratie?</h5><p>Download eens per week het bestand met je afschriften uit je internetbankieren, in MT940, CSV of Excel. Zet het bij het tabblad Bank met Bankbestand kiezen en inladen. Betalingen van je klanten worden vanzelf aan je facturen gekoppeld.</p></div>
+<div class="vt-v"><h5>Waar vind ik dat bankbestand?</h5><p>In je internetbankieren, meestal bij afschriften of downloaden. Kies MT940, CSV of Excel.</p></div>
+<div class="vt-v"><h5>Ik heb hetzelfde bestand twee keer ingeladen.</h5><p>Dat kan geen kwaad. Er komt niets dubbel in.</p></div>
+<div class="vt-v"><h5>Hoe deel ik een betaling in?</h5><p>Kies bij elke betaling die nog niet gekoppeld is een indeling: Ontvangst van klant, Zakelijk met factuur, Zakelijk zonder factuur, Zakelijk zonder btw, of Priv&#233;.</p></div>
+<div class="vt-v"><h5>Moet ik elke keer dezelfde betaling opnieuw indelen?</h5><p>Nee. Vink Keuze onthouden aan. Dan worden betalingen van dezelfde naam voortaan vanzelf zo ingedeeld.</p></div>
+</div>
+<div class="vt-o"><h4>Btw en je boekhouder</h4>
+<div class="vt-v"><h5>Waar zie ik hoeveel btw ik moet betalen?</h5><p>Op het Overzicht, bij Omzet en btw per kwartaal. Per kwartaal zie je je omzet, de btw over je omzet, je voorbelasting en wat je moet betalen.</p></div>
+<div class="vt-v"><h5>Hoe doe ik mijn btw-aangifte?</h5><p>Klik onder het btw-overzicht op Hulp bij je btw-aangifte. Daar staan de bedragen per vakje van de aangifte, zoals 1a, 1b en 5b. De Belastingdienst wil hele euro's. De aangifte zelf doe je bij de Belastingdienst, of laat je doen door je boekhouder. De bedragen zijn een indicatie.</p></div>
+<div class="vt-v"><h5>Tellen concepten mee in mijn btw?</h5><p>Nee. Alleen definitieve verkoopfacturen en je inkoopfacturen tellen mee, op factuurdatum.</p></div>
+<div class="vt-v"><h5>Wat is voorbelasting?</h5><p>De btw die jij hebt betaald op je inkoop. Die trek je af van de btw over je omzet. In het overzicht staat het bij 5b.</p></div>
+<div class="vt-v"><h5>Hoe stuur ik alles naar mijn boekhouder?</h5><p>Op het Overzicht, bij Pakket voor je boekhouder. Kies het kwartaal en klik op de knop. Je krijgt een zip met het btw-overzicht, de lijsten voor Excel, alle facturen en het bankbestand. Je kunt hem ook meteen naar je boekhouder mailen.</p></div>
+<div class="vt-v"><h5>Heb ik nog een boekhouder nodig?</h5><p>Dat hangt van je bedrijf af. De administratie houdt alles bij en rekent je btw uit, maar je aangifte en je jaarcijfers doe je zelf of laat je doen.</p></div>
+<div class="vt-v"><h5>Kan ik een overzicht in Excel krijgen?</h5><p>Ja. Op het Overzicht klik je op Verkoop (Excel) of Inkoop (Excel).</p></div>
+</div>
+<div class="vt-o"><h4>Agenda</h4>
+<div class="vt-v"><h5>Wat staat er in de agenda?</h5><p>Je eigen afspraken, opnames en klussen, en vanzelf ook: ingeplande facturen, wanneer klanten moeten betalen, wanneer jij je inkoop moet betalen en de btw.</p></div>
+<div class="vt-v"><h5>Hoe zet ik een afspraak in de agenda?</h5><p>Klik bij Agenda op + Nieuwe afspraak. Vul in wat het is, de datum en de tijd, kies eventueel de klant, en klik op Opslaan.</p></div>
+<div class="vt-v"><h5>Kan ik de agenda op mijn telefoon zien?</h5><p>Ja. Klik bij Agenda, onder In de agenda van je telefoon, op Toevoegen aan iPhone- of Mac-agenda. Voor Google Agenda of Outlook kopieer je de link. Deel die link met niemand, want wie hem heeft, kan je agenda zien.</p></div>
+</div>
+<div class="vt-o"><h4>Je gegevens bewaren</h4>
+<div class="vt-v"><h5>Hoe maak ik een kopie van mijn hele administratie?</h5><p>Ga naar Mijn gegevens en klik op Alles downloaden (zip). Je krijgt al je facturen, offertes en inkoopfacturen als pdf, je bankbestanden, overzichten voor Excel en je klantenlijst. Bewaar hem op je computer of in de cloud.</p></div>
+<div class="vt-v"><h5>Waar staat mijn administratie?</h5><p>Op je eigen hosting bij WebReus, op jouw naam. Niet bij ons. Wij maken geen back-ups, dus maak zelf af en toe een kopie met Alles downloaden.</p></div>
+<div class="vt-v"><h5>Kan ik bij mijn administratie als ik stop?</h5><p>Ja. Je kunt nog inloggen, alles bekijken en met Alles downloaden je hele administratie binnenhalen.</p></div>
+<div class="vt-v"><h5>Komen afrekeningen uit de afspraakplanner in mijn administratie?</h5><p>Ja. Reken je een afspraak af met pin of contant, dan komt het als omzet in je administratie. De klant krijgt geen factuur.</p></div>
+</div>
+</div>
+</div></div>
+<script>(function(){
+  var w=document.getElementById('vt'); if(!w) return;
+  var knop=w.querySelector('.vt-knop'), pan=w.querySelector('.vt-paneel'), log=w.querySelector('.vt-log'), data=w.querySelector('.vt-data');
+  function L(c){var e=data.querySelector('.'+c);return e?e.innerHTML:'';}
+  var stil=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var groepen=[].slice.call(data.querySelectorAll('.vt-g'));
+  var gestart=false;
+  function scrollOnder(){log.scrollTop=log.scrollHeight;}
+  function bel(html,wie){var b=document.createElement('div');b.className='vt-b '+wie;b.innerHTML=(wie==='bot'?'<span class="vt-wie">Venturo</span>':'')+html;log.appendChild(b);scrollOnder();return b;}
+  function zeg(html,klaar){
+    if(stil){var b=bel(html,'bot');if(klaar)klaar(b);return;}
+    var t=document.createElement('div');t.className='vt-typt';t.innerHTML='<i></i><i></i><i></i>';log.appendChild(t);scrollOnder();
+    setTimeout(function(){t.remove();var b=bel(html,'bot');if(klaar)klaar(b);},420);
+  }
+  function keuzes(lijst){
+    var k=document.createElement('div');k.className='vt-keuzes';
+    lijst.forEach(function(x){
+      if(x.kop){var h=document.createElement('div');h.className='vt-kop2';h.innerHTML=x.kop;k.appendChild(h);return;}
+      var b=document.createElement('button');b.type='button';b.innerHTML=x.t;if(x.zacht)b.className='zacht';
+      b.addEventListener('click',function(){k.classList.add('klaar');if(!x.stil)bel(x.t,'ik');x.f();});
+      k.appendChild(b);
+    });
+    log.appendChild(k);scrollOnder();
+    var eerste=k.querySelector('button'); if(eerste&&!pan.hidden){try{eerste.focus({preventScroll:true});}catch(e){}}
+  }
+  function mail(){zeg(L('vt-mailtekst')+'<div class="vt-links">'+data.querySelector('.vt-mailknop').outerHTML.replace('vt-mailknop','')+'</div>',function(){keuzes([{t:L('vt-l-terug'),zacht:true,f:start}]);});}
+  function onderwerpen(g){
+    var lijst=[];
+    [].slice.call(g.querySelectorAll('.vt-o')).forEach(function(o){lijst.push({t:o.querySelector('h4').innerHTML,f:function(){vragen(o,g);}});});
+    if(groepen.length>1) lijst.push({t:L('vt-l-ander-deel'),zacht:true,f:start});
+    lijst.push({t:L('vt-l-mail'),zacht:true,f:mail});
+    return lijst;
+  }
+  function kiesOnderwerp(g){zeg(L('vt-l-kies-onderwerp'),function(){keuzes(onderwerpen(g));});}
+  function vragen(o,g){
+    var lijst=[].slice.call(o.querySelectorAll('.vt-v')).map(function(v){return {t:v.querySelector('h5').innerHTML,f:function(){antwoord(v,o,g);}};});
+    lijst.push({t:L('vt-l-terug'),zacht:true,f:function(){kiesOnderwerp(g);}});
+    zeg(L('vt-l-kies-vraag'),function(){keuzes(lijst);});
+  }
+  function antwoord(v,o,g){
+    var a=v.querySelector('p').innerHTML, ls=[].slice.call(v.querySelectorAll('a'));
+    var html=a+(ls.length?'<div class="vt-links">'+ls.map(function(x){return x.outerHTML;}).join('')+'</div>':'');
+    zeg(html,function(){keuzes([{t:L('vt-l-meer'),f:function(){vragen(o,g);}},{t:L('vt-l-terug'),zacht:true,f:function(){kiesOnderwerp(g);}},{t:L('vt-l-mail'),zacht:true,f:mail}]);});
+  }
+  function start(){
+    var g=null, q=location.search;
+    groepen.forEach(function(x){var p=x.getAttribute('data-param');if(p&&new RegExp('[?&]'+p+'(=|&|$)').test(q))g=x;});
+    if(groepen.length===1)g=groepen[0];
+    if(g){kiesOnderwerp(g);return;}
+    zeg(L('vt-l-kies-deel'),function(){keuzes(groepen.map(function(x){return {t:x.querySelector('h3').innerHTML,f:function(){kiesOnderwerp(x);}};}).concat([{t:L('vt-l-mail'),zacht:true,f:mail}]));});
+  }
+  function open(){pan.hidden=false;knop.hidden=true;knop.setAttribute('aria-expanded','true');
+    if(!gestart){gestart=true;bel(L('vt-groet'),'bot');start();}else{var b=pan.querySelector('.vt-keuzes:not(.klaar) button');if(b)b.focus();}}
+  function dicht(){pan.hidden=true;knop.hidden=false;knop.setAttribute('aria-expanded','false');knop.focus();}
+  knop.addEventListener('click',open);
+  w.querySelector('.vt-dicht').addEventListener('click',dicht);
+  w.querySelector('.vt-top').addEventListener('click',function(){log.innerHTML='';bel(L('vt-groet'),'bot');start();});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'&&!pan.hidden)dicht();});
+})();</script>
+VTHTML;
+}
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
 define('SITE_BOUW', '2026-10-24-stijlen');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
@@ -11274,5 +11595,6 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
   }
 })();
 </script>
+<?php if ($logged_in) { echo venturo_html(); } ?>
 </body>
 </html>
