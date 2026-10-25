@@ -26,6 +26,8 @@ define('LOGIN_LIMIT_FILE', DATA_DIR . '/login-limiet.json');
 define('SITE_FILE', ROOT . '/site.json');
 define('UPLOAD_DIR', ROOT . '/uploads');
 define('MAX_PHOTO_BYTES', 8 * 1024 * 1024);
+define('MAX_VIDEO_BYTES', 20 * 1024 * 1024);
+define('MAX_VIDEO_SEC', 10);
 define('MAX_DIENSTEN', 9);
 
 $RESERVED = ['admin', 'assets', 'data', 'index', 'uploads', 'site', 'favicon', 'error', 'stats', 'cgi-bin',
@@ -80,6 +82,9 @@ function default_settings() {
         'vorm'             => '',
         'beweging'         => '',
         'beweging_snelheid' => 'normaal',
+        'video'            => '',
+        'video_beeld'      => '',
+        'video_telefoon'   => '1',
         'feest_kleuren'    => '1',
         'blokken'          => [['k' => 'strook', 'aan' => 1], ['k' => 'diensten', 'aan' => 1], ['k' => 'projecten', 'aan' => 1], ['k' => 'voorna', 'aan' => 0], ['k' => 'werkwijze', 'aan' => 0], ['k' => 'cijfers', 'aan' => 0], ['k' => 'over', 'aan' => 0], ['k' => 'vragen', 'aan' => 0]],
         'voorna_titel'     => 'Voor en na',
@@ -457,6 +462,72 @@ $BEWEGINGEN = [
 ];
 $SNELHEDEN = ['rustig' => ['Rustig', '0.6'], 'normaal' => ['Normaal', '1'], 'snel' => ['Snel', '1.6']];
 function beweging() { global $BEWEGINGEN; $b = st('beweging'); return isset($BEWEGINGEN[$b]) ? $b : ''; }
+/* Eigen video bovenaan: een korte film (max 10 seconden) die steeds opnieuw speelt */
+function eigen_video() {
+    if (st('beweging') !== 'eigenvideo' || st('video') === '') return '';
+    $f = basename(st('video'));
+    return is_file(UPLOAD_DIR . '/site/' . $f) ? $f : '';
+}
+function ini_naar_bytes($v) {
+    $v = trim((string)$v); if ($v === '') return 0;
+    $n = (float)$v;
+    switch (strtolower(substr($v, -1))) { case 'g': $n *= 1024; case 'm': $n *= 1024; case 'k': $n *= 1024; }
+    return (int)$n;
+}
+/* Grootste video die hier past: onze grens, of kleiner als de server minder toestaat */
+function video_max_bytes() {
+    $m = MAX_VIDEO_BYTES;
+    $u = ini_naar_bytes(ini_get('upload_max_filesize')); if ($u > 0 && $u < $m) $m = $u;
+    $p = ini_naar_bytes(ini_get('post_max_size')); if ($p > 0 && $p - 2 * 1024 * 1024 < $m) $m = max(1024 * 1024, $p - 2 * 1024 * 1024);
+    return $m;
+}
+function mb_tekst($b) { return rtrim(rtrim(number_format($b / 1048576, 1, ',', ''), '0'), ',') . ' MB'; }
+/* Een mp4 of mov bekijken: is het echt een video, hoe lang duurt hij en kan elke browser hem afspelen?
+   Geeft ['ok' => bool, 'duur' => seconden (0 = onbekend), 'fout' => tekst]. */
+function mp4_info($pad) {
+    $f = @fopen($pad, 'rb');
+    if (!$f) return ['ok' => false, 'duur' => 0, 'fout' => 'Het bestand kon niet worden gelezen.'];
+    $eind = filesize($pad);
+    $zoek = function($start, $stop, $naam) use ($f) {
+        $q = $start;
+        while ($q + 8 <= $stop) {
+            fseek($f, $q); $kop = fread($f, 8);
+            if (strlen($kop) < 8) return null;
+            $u = unpack('Ngrootte/a4soort', $kop);
+            $gr = $u['grootte']; $kl = 8;
+            if ($gr === 1) { $x = unpack('Nhoog/Nlaag', fread($f, 8)); $gr = $x['hoog'] * 4294967296 + $x['laag']; $kl = 16; }
+            elseif ($gr === 0) { $gr = $stop - $q; }
+            if ($gr < $kl) return null;
+            if ($u['soort'] === $naam) return [$q + $kl, min($stop, $q + $gr)];
+            $q += $gr;
+        }
+        return null;
+    };
+    fseek($f, 4);
+    if (fread($f, 4) !== 'ftyp') { fclose($f); return ['ok' => false, 'duur' => 0, 'fout' => 'Dit is geen mp4-video.']; }
+    $moov = $zoek(0, $eind, 'moov');
+    if (!$moov) { fclose($f); return ['ok' => false, 'duur' => 0, 'fout' => 'Deze video is niet compleet of beschadigd.']; }
+    $duur = 0;
+    $mvhd = $zoek($moov[0], $moov[1], 'mvhd');
+    if ($mvhd) {
+        fseek($f, $mvhd[0]); $d = fread($f, 36);
+        if (strlen($d) >= 32) {
+            if (ord($d[0]) === 1) { $ts = unpack('N', substr($d, 20, 4))[1]; $x = unpack('Nhoog/Nlaag', substr($d, 24, 8)); $du = $x['hoog'] * 4294967296 + $x['laag']; }
+            else { $ts = unpack('N', substr($d, 12, 4))[1]; $du = unpack('N', substr($d, 16, 4))[1]; }
+            if ($ts > 0 && $du > 0 && $du < 4294967295) $duur = $du / $ts;
+        }
+    }
+    $lees = min(4 * 1024 * 1024, $moov[1] - $moov[0]);
+    fseek($f, $moov[0]); $inh = (string)fread($f, $lees);
+    fclose($f);
+    if (strpos($inh, 'hvc1') !== false || strpos($inh, 'hev1') !== false) {
+        return ['ok' => false, 'duur' => $duur, 'fout' => 'Deze video is opgeslagen als HEVC (zo filmt een iPhone standaard). Niet elke browser kan dat afspelen. Zet op je iPhone bij Instellingen, Camera, Formaten op Meest compatibel en film opnieuw, of kies de video op een computer met Chrome of Edge: dan maakt de beheerpagina hem zelf geschikt.'];
+    }
+    if (strpos($inh, 'avc1') === false && strpos($inh, 'avc3') === false) {
+        return ['ok' => false, 'duur' => $duur, 'fout' => 'Deze video is in een vorm opgeslagen die niet elke browser kan afspelen. Kies een gewone mp4 van je telefoon.'];
+    }
+    return ['ok' => true, 'duur' => $duur, 'fout' => ''];
+}
 function beweging_snelheid() { global $SNELHEDEN; $s = st('beweging_snelheid'); return $SNELHEDEN[$s][1] ?? '1'; }
 function ffm_js() {
     return <<<'FFMJS'
@@ -723,6 +794,11 @@ body:not(.l-hero-kaart) .hero.ffm-aan .eyebrow{color:rgba(255,255,255,.82) !impo
 body:not(.l-hero-kaart) .hero.ffm-aan .eyebrow::before{background:rgba(255,255,255,.7) !important;}
 body:not(.l-hero-kaart) .hero.ffm-aan .btn.quiet{color:#fff !important;box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.6) !important;background:transparent !important;}
 .hero.ffm-aan .emblem img{filter:drop-shadow(0 18px 30px rgba(0,0,0,.45));}
+/* eigen video bovenaan */
+.hero.heeft-video{position:relative;isolation:isolate;overflow:hidden;background-color:#15181d !important;background-image:none !important;}
+.hero.heeft-video .hero-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2;pointer-events:none;display:block;}
+.hero.heeft-video .hero-video-laag{position:absolute;inset:0;z-index:-1;pointer-events:none;background:linear-gradient(90deg,rgba(0,0,0,.6) 0,rgba(0,0,0,.32) 55%,rgba(0,0,0,.18) 100%),linear-gradient(0deg,rgba(0,0,0,.38) 0,rgba(0,0,0,0) 55%);}
+body.l-hero-kaart .hero.heeft-video .hero-video-laag{background:rgba(0,0,0,.18);}
 /* opbouw: bovenkant */
 .l-hero-rechts .hero .wrap{grid-template-columns:.75fr 1.25fr;}
 .l-hero-rechts .hero .emblem{order:-1;}
@@ -1345,7 +1421,7 @@ function foto_map_weg($rel) {
 /* Alle foto's die een versie gebruikt (pad binnen uploads/) */
 function versie_fotos($staat) {
     $s = $staat['settings']; $uit = [];
-    foreach (['banner', 'logo', 'over_foto'] as $k) { if (!empty($s[$k]) && is_string($s[$k])) $uit[] = 'site/' . basename($s[$k]); }
+    foreach (['banner', 'logo', 'over_foto', 'video', 'video_beeld'] as $k) { if (!empty($s[$k]) && is_string($s[$k])) $uit[] = 'site/' . basename($s[$k]); }
     foreach ((array)($s['beelden'] ?? []) as $b) { if (!empty($b['foto'])) $uit[] = 'site/' . basename($b['foto']); }
     foreach ((array)($s['voorna'] ?? []) as $v) { foreach (['voor', 'na'] as $kk) { if (!empty($v[$kk])) $uit[] = 'site/' . basename($v[$kk]); } }
     foreach ($staat['pages'] as $p) { foreach ((array)($p['photos'] ?? []) as $f) { $uit[] = ($p['slug'] ?? '') . '/' . basename((string)$f); } }
@@ -2034,9 +2110,22 @@ CSS;
     $logo = logo_url();
     $foto = hero_met_foto() ? hero_foto($pages) : '';
     $heroAttr = $foto !== '' ? ' class="hero has-photo" style="background-image:url(\'' . h($foto) . '\')"' : (beweging() !== '' ? ' class="hero ffm-aan" data-ffm="' . h(beweging()) . '" data-ffm-s="' . h(beweging_snelheid()) . '"' : ' class="hero"');
+    $heroVid = $foto === '' ? eigen_video() : '';
+    $heroVidHtml = '';
+    if ($heroVid !== '') {
+        $heroAttr = ' class="hero ffm-aan heeft-video"';
+        $vb = st('video_beeld') !== '' && is_file(UPLOAD_DIR . '/site/' . basename(st('video_beeld'))) ? '/uploads/site/' . rawurlencode(basename(st('video_beeld'))) : '';
+        $heroVidHtml = '<video class="hero-video" muted loop playsinline preload="none" disablepictureinpicture aria-hidden="true" tabindex="-1"' . ($vb !== '' ? ' poster="' . h($vb) . '"' : '') . ' data-src="/uploads/site/' . h(rawurlencode($heroVid)) . '" data-tel="' . (st('video_telefoon') === '0' ? '0' : '1') . '"></video><span class="hero-video-laag" aria-hidden="true"></span>'
+            . '<script>(function(){var v=document.querySelector(".hero-video");if(!v)return;var m=window.matchMedia;'
+            . 'if(m&&m("(prefers-reduced-motion: reduce)").matches)return;var c=navigator.connection;if(c&&c.saveData)return;'
+            . 'if(v.getAttribute("data-tel")==="0"&&m&&m("(max-width: 760px)").matches)return;'
+            . 'v.muted=true;v.src=v.getAttribute("data-src");v.preload="auto";function speel(){var p=v.play();if(p&&p.catch)p.catch(function(){});}'
+            . 'if("IntersectionObserver" in window){new IntersectionObserver(function(e){e[0].isIntersecting?speel():v.pause();}).observe(v);}else speel();'
+            . 'document.addEventListener("visibilitychange",function(){document.hidden?v.pause():speel();});})();</script>';
+    }
     $out .= '<main id="home" class="view">';
     if (banner_strook()) { $out .= '<div class="banner-strook"><img src="/uploads/site/' . h(rawurlencode(st('banner'))) . '" alt="' . h(st('naam')) . '" /></div>'; }
-    $out .= '<section' . $heroAttr . '><span class="hero-rand" aria-hidden="true"></span><div class="wrap' . ($logo === '' ? ' solo' : '') . '"><div>';
+    $out .= '<section' . $heroAttr . '>' . $heroVidHtml . '<span class="hero-rand" aria-hidden="true"></span><div class="wrap' . ($logo === '' ? ' solo' : '') . '"><div>';
     if (st('eyebrow') !== '') $out .= '<div class="eyebrow">' . h(st('eyebrow')) . '</div>';
     $out .= '<h1>' . h(st('hero_titel')) . '</h1>';
     if (st('hero_tekst') !== '') $out .= '<p class="lead">' . h(st('hero_tekst')) . '</p>';
@@ -10155,6 +10244,8 @@ function venturo_html() {
 <div class="vt-v"><h5>Kan ik nog meer kleuren aanpassen?</h5><p>Ja. Bij Extra kleuren vink je een kleur aan, zoals de achtergrond, een vlak of de tekst, en kies je hem. Let erop dat de tekst goed leesbaar blijft.</p></div>
 <div class="vt-v"><h5>Hoe zet ik een bewegende achtergrond bovenaan?</h5><p>In Instellingen, tabblad Beweging. Kies een van de 20 achtergronden: 12 bewegende kleuren, zoals Noorderlicht of Oceaan, 5 getekende werelden, zoals Neonstad, en 3 in echt 3D: de Zee, de Alpen en een Barbershop. Kies ook een snelheid. Hierboven zie je hem alvast bewegen. Klik daarna op Opslaan en website bijwerken. Je titel en tekst bovenaan worden vanzelf wit, zodat ze leesbaar blijven. Met Geen beweging zet je hem weer uit.</p></div>
 <div class="vt-v"><h5>Ik zie de beweging niet op mijn website.</h5><p>Heb je bij Voorpagina een bannerfoto achter de titel gezet, of bij Opbouw de bovenkant op Grote foto? Dan blijft de foto staan en staat de beweging uit. Ook zien bezoekers die op hun telefoon of computer "bewegingen beperken" aan hebben staan een stilstaande achtergrond. De achtergronden in echt 3D hebben een computer of telefoon nodig die 3D kan tonen. Lukt dat niet, dan zien bezoekers vanzelf een rustige, bewegende achtergrond.</p></div>
+<div class="vt-v"><h5>Kan ik een eigen video bovenaan zetten?</h5><p>Ja. In Instellingen, tabblad Beweging, onderaan bij Je eigen video. Kies een video van je zaak, bijvoorbeeld je werkplaats of jezelf aan het werk. Hij speelt zonder geluid en begint steeds opnieuw. Hij mag maximaal 10 seconden duren. Is hij langer, dan neemt de beheerpagina de eerste 10 seconden. Een grote video wordt vanzelf kleiner gemaakt. Dat duurt even zo lang als de video zelf: blijf op de pagina tot je ziet dat hij klaar is. Klik daarna op Opslaan en website bijwerken. Met het vinkje Ook afspelen op telefoons kies je of telefoons de video zien of alleen een stilstaand beeld eruit.</p></div>
+<div class="vt-v"><h5>Mijn video lukt niet.</h5><p>Kies de video het liefst op een computer met Chrome of Edge: die maken hem zelf klaar voor je website. Filmt je iPhone in HEVC, dan kunnen niet alle browsers de video afspelen. Zet dan op je iPhone bij Instellingen, Camera, Formaten op Meest compatibel en film opnieuw. Film liggend, met een rustig beeld. Heb je bovenaan een grote foto of een bannerfoto achter de titel, dan blijft de foto staan en zie je de video niet.</p></div>
 </div>
 <div class="vt-o"><h4>Blokken op je voorpagina</h4>
 <div class="vt-v"><h5>Wat zijn blokken?</h5><p>De onderdelen van je voorpagina, zoals je diensten, uitgelichte projecten, voor- en na-foto's, werkwijze in stappen, cijfers, over ons, veelgestelde vragen en eigen afbeeldingen. Je vindt ze in Instellingen, tabblad Blokken op je voorpagina.</p></div>
@@ -10382,7 +10473,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-10-25-barbier3d');
+define('SITE_BOUW', '2026-10-25-eigenvideo');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -10580,7 +10671,7 @@ if ($logged_in && isset($_POST['action'])) {
         $new['lettertype'] = array_key_exists((string)($_POST['lettertype'] ?? ''), $LETTERS) ? (string)$_POST['lettertype'] : '';
         $new['vorm'] = array_key_exists((string)($_POST['vorm'] ?? ''), $VORMEN) ? (string)$_POST['vorm'] : '';
         global $BEWEGINGEN, $SNELHEDEN;
-        $new['beweging'] = array_key_exists((string)($_POST['beweging'] ?? ''), $BEWEGINGEN) ? (string)$_POST['beweging'] : '';
+        $new['beweging'] = array_key_exists((string)($_POST['beweging'] ?? ''), $BEWEGINGEN) || ($_POST['beweging'] ?? '') === 'eigenvideo' ? (string)$_POST['beweging'] : '';
         $new['beweging_snelheid'] = array_key_exists((string)($_POST['beweging_snelheid'] ?? ''), $SNELHEDEN) ? (string)$_POST['beweging_snelheid'] : 'normaal';
         $new['feest_kleuren'] = !empty($_POST['feest_kleuren']) ? '1' : '0';
 
@@ -10687,6 +10778,42 @@ if ($logged_in && isset($_POST['action'])) {
             $nf = $foto('banner', null, 'banner-');
             if ($nf !== '') { $weg($new['banner'] ?? ''); $new['banner'] = $nf; }
             $new['banner_vorm'] = $_POST['banner_vorm'] === 'strook' ? 'strook' : 'achter';
+        }
+        if (isset($_POST['video_set'])) {
+            if (!empty($_POST['video_weg'])) { $weg($new['video'] ?? ''); $weg($new['video_beeld'] ?? ''); $new['video'] = ''; $new['video_beeld'] = ''; }
+            $vf = $_FILES['video'] ?? null;
+            $verr = $vf ? ($vf['error'] ?? UPLOAD_ERR_NO_FILE) : UPLOAD_ERR_NO_FILE;
+            if ($verr !== UPLOAD_ERR_NO_FILE) {
+                if ($verr !== UPLOAD_ERR_OK) { $upErrors[] = $verr === UPLOAD_ERR_INI_SIZE || $verr === UPLOAD_ERR_FORM_SIZE ? 'De video is te groot. Hier mag een video maximaal ' . mb_tekst(video_max_bytes()) . ' zijn.' : upload_error_text($verr, $vf['name']); }
+                elseif (!is_uploaded_file($vf['tmp_name'])) { $upErrors[] = 'De video kwam niet goed binnen. Probeer het opnieuw.'; }
+                elseif (filesize($vf['tmp_name']) > video_max_bytes()) { $upErrors[] = 'De video is ' . mb_tekst(filesize($vf['tmp_name'])) . '. Hier mag een video maximaal ' . mb_tekst(video_max_bytes()) . ' zijn.'; }
+                else {
+                    $vi = mp4_info($vf['tmp_name']);
+                    if (!$vi['ok']) { $upErrors[] = $vi['fout']; }
+                    elseif ($vi['duur'] > MAX_VIDEO_SEC + 0.6) { $upErrors[] = 'De video duurt ' . number_format($vi['duur'], 1, ',', '') . ' seconden. Hij mag maximaal ' . MAX_VIDEO_SEC . ' seconden duren. Kies de video op een computer: dan knipt de beheerpagina hem zelf op ' . MAX_VIDEO_SEC . ' seconden.'; }
+                    else {
+                        ensure_upload_dir();
+                        if (!is_dir(UPLOAD_DIR . '/site')) { mkdir(UPLOAD_DIR . '/site', 0755, true); }
+                        $vnaam = 'video-' . date('Ymd-His') . '-' . bin2hex(random_bytes(4)) . '.mp4';
+                        if (move_uploaded_file($vf['tmp_name'], UPLOAD_DIR . '/site/' . $vnaam)) {
+                            $weg($new['video'] ?? ''); $weg($new['video_beeld'] ?? '');
+                            $new['video'] = $vnaam; $new['video_beeld'] = '';
+                            $pb = (string)($_POST['video_beeld_data'] ?? '');
+                            if (strlen($pb) < 3000000 && preg_match('#^data:image/jpeg;base64,([A-Za-z0-9+/=]+)$#', $pb, $pm)) {
+                                $bin = base64_decode($pm[1], true);
+                                $bi = $bin !== false ? @getimagesizefromstring($bin) : false;
+                                if ($bi && $bi[2] === IMAGETYPE_JPEG) {
+                                    $bnaam = 'videobeeld-' . date('Ymd-His') . '-' . bin2hex(random_bytes(4)) . '.jpg';
+                                    if (@file_put_contents(UPLOAD_DIR . '/site/' . $bnaam, $bin) !== false) { $new['video_beeld'] = $bnaam; }
+                                }
+                            }
+                            $new['beweging'] = 'eigenvideo';
+                        } else { $upErrors[] = 'Opslaan van de video lukte niet. Probeer het opnieuw.'; }
+                    }
+                }
+            }
+            $new['video_telefoon'] = !empty($_POST['video_telefoon']) ? '1' : '0';
+            if ($new['beweging'] === 'eigenvideo' && ($new['video'] ?? '') === '') { $new['beweging'] = ''; }
         }
         if (isset($_POST['bd_set'])) {
             global $BEELD_VORMEN;
@@ -11236,7 +11363,8 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
           <div class="formcard" id="beweging">
             <h2>Beweging</h2>
             <p class="hint" style="margin:-4px 0 16px">Een bewegende achtergrond achter de bovenkant van je voorpagina. Je teksten blijven goed leesbaar: ze worden vanzelf wit. Heb je een grote foto bovenaan gekozen, dan blijft de foto staan en staat de beweging uit.</p>
-            <div class="bw-voorbeeld" id="bwVoorbeeld"<?= $bwNu !== '' ? ' data-ffm="' . h($bwNu) . '" data-ffm-s="' . h(beweging_snelheid()) . '"' : '' ?>><div class="bw-tekst"><small><?= h(st('eyebrow') !== '' ? st('eyebrow') : 'Voorbeeld') ?></small><strong><?= h(st('hero_titel') !== '' ? st('hero_titel') : 'Zo ziet je bovenkant eruit') ?></strong></div></div>
+            <?php $bwVid = st('video') !== '' && is_file(UPLOAD_DIR . '/site/' . basename(st('video'))) ? '/uploads/site/' . rawurlencode(basename(st('video'))) : ''; if (st('beweging') === 'eigenvideo') { $bwNu = 'eigenvideo'; } ?>
+            <div class="bw-voorbeeld" id="bwVoorbeeld"<?= $bwNu !== '' && $bwNu !== 'eigenvideo' ? ' data-ffm="' . h($bwNu) . '" data-ffm-s="' . h(beweging_snelheid()) . '"' : '' ?>><video class="bw-vid" id="bwVid" muted loop playsinline<?= $bwVid !== '' ? ' src="' . h($bwVid) . '"' : '' ?><?= st('video_beeld') !== '' ? ' poster="/uploads/site/' . h(rawurlencode(basename(st('video_beeld')))) . '"' : '' ?><?= $bwNu === 'eigenvideo' ? ' autoplay' : ' hidden' ?>></video><span class="bw-vid-laag" id="bwVidLaag"<?= $bwNu === 'eigenvideo' ? '' : ' hidden' ?>></span><div class="bw-tekst"><small><?= h(st('eyebrow') !== '' ? st('eyebrow') : 'Voorbeeld') ?></small><strong><?= h(st('hero_titel') !== '' ? st('hero_titel') : 'Zo ziet je bovenkant eruit') ?></strong></div></div>
             <div class="bw-lijst" role="radiogroup" aria-label="Bewegende achtergrond">
               <label class="bw-k bw-geen"><input type="radio" name="beweging" value="" <?= $bwNu === '' ? 'checked' : '' ?> /><span class="bw-s"></span><span class="bw-n">Geen beweging</span></label>
               <?php $bwKop = false; foreach ($BEWEGINGEN as $bk => $bv): ?>
@@ -11244,6 +11372,8 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
               <?php if (($bv[4] ?? 0) === 2 && empty($bw3d)): $bw3d = true; ?><div class="bw-kop">Echt 3D <span style="text-transform:none;letter-spacing:0;font-weight:600">(zwaarder om te laden, mooi op een computer)</span></div><?php endif; ?>
               <label class="bw-k"><input type="radio" name="beweging" value="<?= h($bk) ?>" <?= $bwNu === $bk ? 'checked' : '' ?> /><span class="bw-s" style="background:radial-gradient(circle at 30% 35%,<?= h($bv[2]) ?> 0,transparent 55%),radial-gradient(circle at 75% 70%,<?= h($bv[3]) ?> 0,transparent 50%),<?= h($bv[1]) ?>"></span><span class="bw-n"><?= h($bv[0]) ?></span></label>
               <?php endforeach; ?>
+              <div class="bw-kop">Je eigen video</div>
+              <label class="bw-k"><input type="radio" name="beweging" value="eigenvideo" id="bwEigen" <?= $bwNu === 'eigenvideo' ? 'checked' : '' ?> /><span class="bw-s bw-s-video"><?php if (st('video_beeld') !== ''): ?><img src="/uploads/site/<?= h(rawurlencode(basename(st('video_beeld')))) ?>" alt="" /><?php endif; ?><span class="bw-play" aria-hidden="true">&#9654;</span></span><span class="bw-n">Eigen video</span></label>
             </div>
             <div class="field" style="margin-top:16px;max-width:320px"><label for="bwsnel">Snelheid</label>
               <select id="bwsnel" name="beweging_snelheid">
@@ -11251,8 +11381,35 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
               </select>
             </div>
             <div class="hint">Bezoekers die op hun telefoon of computer "bewegingen beperken" aan hebben staan, zien een stilstaande achtergrond.</div>
+            <?php $vMax = video_max_bytes(); ?>
+            <div class="bw-video" id="bwVideoVak">
+              <h3 style="margin:0 0 6px;font-size:16px">Je eigen video</h3>
+              <p class="hint" style="margin:0 0 12px">Een korte film van je zaak, bijvoorbeeld je werkplaats, je keuken of jezelf aan het werk. Hij speelt zonder geluid achter de bovenkant van je voorpagina en begint steeds opnieuw. Maximaal <?= MAX_VIDEO_SEC ?> seconden. Is je video langer, dan neemt de beheerpagina de eerste <?= MAX_VIDEO_SEC ?> seconden. Een grote video wordt vanzelf kleiner gemaakt, zodat je website snel blijft.</p>
+              <input type="hidden" name="video_set" value="1" />
+              <input type="hidden" name="video_beeld_data" id="bwBeeldData" value="" />
+              <?php if ($bwVid !== ''): ?><label class="check"><input type="checkbox" name="video_weg" value="1" /> <span>Video weghalen</span></label><?php endif; ?>
+              <div class="field" style="margin:8px 0 0"><label for="bwFile"><?= $bwVid !== '' ? 'Andere video kiezen' : 'Video kiezen' ?></label><input type="file" id="bwFile" name="video" accept="video/mp4,video/quicktime,video/*" data-max="<?= (int)$vMax ?>" data-sec="<?= (int)MAX_VIDEO_SEC ?>" /></div>
+              <div class="bw-status" id="bwStatus" role="status" aria-live="polite" hidden><span class="bw-balk"><i id="bwBalk"></i></span><span id="bwStatusTekst"></span></div>
+              <label class="check" style="margin-top:12px"><input type="checkbox" name="video_telefoon" value="1" <?= st('video_telefoon') !== '0' ? 'checked' : '' ?> /> <span>Ook afspelen op telefoons. Uitgevinkt zien telefoons alleen een stilstaand beeld uit je video. Dat spaart mobiele data van je bezoekers.</span></label>
+              <div class="hint">Mp4 van je telefoon of camera, tot <?= h(mb_tekst($vMax)) ?>. Film liggend. Het beste resultaat krijg je met een rustig beeld zonder snelle bewegingen. Klik daarna onderaan op Opslaan en website bijwerken.</div>
+            </div>
           </div>
           <style>
+          .bw-vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0}
+          .bw-vid-laag{position:absolute;inset:0;z-index:0;background:linear-gradient(90deg,rgba(0,0,0,.6),rgba(0,0,0,.2))}
+          .bw-vid[hidden],.bw-vid-laag[hidden]{display:none}
+          .bw-s-video{position:relative;overflow:hidden;background:#1c2330 !important;display:flex !important;align-items:center;justify-content:center}
+          .bw-s-video img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+          .bw-play{position:relative;width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,.92);color:#1c2330;font-size:12px;display:flex;align-items:center;justify-content:center;padding-left:2px}
+          .bw-video{margin-top:20px;padding:16px 18px;border:1px solid var(--line);border-radius:12px;background:#fafbfd}
+          .bw-video[hidden]{display:none}
+          .bw-status{display:flex;align-items:center;gap:10px;margin-top:10px;font-size:14px}
+          .bw-status[hidden]{display:none}
+          .bw-status.fout{color:#b42318;font-weight:600}
+          .bw-status.goed{color:#067647;font-weight:600}
+          .bw-balk{flex:0 0 120px;height:8px;border-radius:99px;background:#e4e8ef;overflow:hidden}
+          .bw-balk i{display:block;height:100%;width:0;background:var(--blue);transition:width .2s}
+          .bw-status.fout .bw-balk,.bw-status.goed .bw-balk{display:none}
           .bw-voorbeeld{position:relative;height:190px;border-radius:14px;overflow:hidden;background:#1c2330;display:flex;align-items:flex-end;padding:20px 22px;margin-bottom:16px}
           .bw-tekst{position:relative;z-index:1;color:#fff}
           .bw-tekst small{display:block;font-size:12px;letter-spacing:.12em;text-transform:uppercase;opacity:.8;margin-bottom:6px}
@@ -11270,10 +11427,96 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
           <script>
           (function(){
             var v=document.getElementById('bwVoorbeeld'), s=document.getElementById('bwsnel');
+            var vid=document.getElementById('bwVid'), laag=document.getElementById('bwVidLaag');
             function nu(){var r=document.querySelector('input[name="beweging"]:checked');return r?r.value:'';}
-            function zet(){var o=s.options[s.selectedIndex];window.FFM.zet(v,nu(),o?o.getAttribute('data-v'):1);}
+            function zet(){var o=s.options[s.selectedIndex],k=nu(),ev=k==='eigenvideo';window.FFM.zet(v,ev?'':k,o?o.getAttribute('data-v'):1);
+              vid.hidden=!ev;laag.hidden=!ev;if(ev&&vid.getAttribute('src')){var p=vid.play();if(p&&p.catch)p.catch(function(){});}else{vid.pause();}}
+            window.bwZet=zet;
             document.querySelectorAll('input[name="beweging"]').forEach(function(r){r.addEventListener('change',zet);});
             s.addEventListener('change',zet);
+          })();
+          </script>
+          <script>
+          /* Eigen video: controleren, zo nodig inkorten tot 10 seconden en kleiner maken, en een stilstaand beeld maken. Alles gebeurt in de browser. */
+          (function(){
+            var inp=document.getElementById('bwFile'); if(!inp) return;
+            var MAX=+inp.getAttribute('data-max'), SEC=+inp.getAttribute('data-sec');
+            var st=document.getElementById('bwStatus'), stT=document.getElementById('bwStatusTekst'), balk=document.getElementById('bwBalk');
+            var beeld=document.getElementById('bwBeeldData'), vid=document.getElementById('bwVid'), eigen=document.getElementById('bwEigen');
+            var form=inp.form, bezig=false, klaar=true;
+            function mb(b){return (Math.round(b/104857.6)/10).toString().replace('.',',')+' MB';}
+            function meld(t,soort,pct){st.hidden=false;st.className='bw-status'+(soort?' '+soort:'');stT.textContent=t;balk.style.width=(pct||0)+'%';}
+            function leeg(){try{inp.value='';}catch(e){} beeld.value='';}
+            function zetBestand(blob,naam){
+              try{var dt=new DataTransfer();dt.items.add(new File([blob],naam,{type:'video/mp4'}));inp.files=dt.files;return true;}catch(e){return false;}
+            }
+            function mp4Rec(){
+              if(!window.MediaRecorder||!MediaRecorder.isTypeSupported) return '';
+              var l=['video/mp4;codecs=avc1.42E01F','video/mp4;codecs=avc1.4D401F','video/mp4;codecs=avc1.640028','video/mp4;codecs=avc1'];
+              for(var i=0;i<l.length;i++){if(MediaRecorder.isTypeSupported(l[i])) return l[i];}
+              return '';
+            }
+            function maakBeeld(v,w,h){
+              var c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(v,0,0,w,h);
+              try{return c.toDataURL('image/jpeg',.82);}catch(e){return '';}
+            }
+            function maten(v){var w=v.videoWidth||1280,h=v.videoHeight||720,f=Math.min(1,1280/Math.max(w,h));return [Math.round(w*f/2)*2,Math.round(h*f/2)*2];}
+            function voorbeeld(url){vid.src=url;eigen.checked=true;if(window.bwZet)window.bwZet();}
+            function verwerk(file){
+              var url=URL.createObjectURL(file), v=document.createElement('video');
+              v.muted=true;v.playsInline=true;v.preload='auto';v.src=url;
+              var gaf=false;
+              v.onerror=function(){if(gaf)return;gaf=true;bezig=false;klaar=false;leeg();
+                meld('Deze video kan je browser niet openen. Filmt je iPhone in HEVC? Zet dan bij Instellingen, Camera, Formaten op Meest compatibel en film opnieuw. Of kies de video op een computer met Chrome of Edge.','fout');};
+              v.onloadedmetadata=function(){
+                var duur=v.duration, m=maten(v), w=m[0], h=m[1];
+                var lang=!isFinite(duur)||duur>SEC+0.4, groot=file.size>MAX||file.size>8*1048576||Math.max(v.videoWidth,v.videoHeight)>1920;
+                var rec=mp4Rec();
+                function pakBeeld(cb){v.currentTime=Math.min(0.4,(duur||1)/3);v.onseeked=function(){v.onseeked=null;beeld.value=maakBeeld(v,w,h);cb();};}
+                /* Kan deze browser opnieuw opnemen als mp4, dan doen we dat altijd: zo speelt de video in elke browser en blijft hij klein */
+                if(!rec){
+                  if(!lang&&file.size<=MAX){pakBeeld(function(){bezig=false;klaar=true;voorbeeld(url);meld('Video klaar ('+mb(file.size)+'). Klik onderaan op Opslaan en website bijwerken.','goed');});return;}
+                  bezig=false;klaar=false;leeg();
+                  meld((lang?'Deze video duurt langer dan '+SEC+' seconden':'Deze video is '+mb(file.size)+', dat is te groot')+'. Deze browser kan hem niet zelf inkorten of verkleinen. Kies de video op een computer met Chrome of Edge, of kort hem eerst in op je telefoon (bij Wijzig of Bewerk).','fout');
+                  return;
+                }
+                /* opnieuw opnemen: max 1280 pixels breed, max SEC seconden, zonder geluid */
+                var tot=Math.min(isFinite(duur)?duur:SEC,SEC);
+                var c=document.createElement('canvas');c.width=w;c.height=h;var cx=c.getContext('2d');
+                var str=c.captureStream(30), stukken=[], r;
+                try{r=new MediaRecorder(str,{mimeType:rec,videoBitsPerSecond:3000000});}catch(e){r=null;}
+                if(!r){bezig=false;klaar=false;leeg();meld('Het verkleinen lukte niet in deze browser. Probeer Chrome of Edge op een computer.','fout');return;}
+                r.ondataavailable=function(e){if(e.data&&e.data.size)stukken.push(e.data);};
+                var raf, eerste='';
+                function teken(){cx.drawImage(v,0,0,w,h);if(!eerste&&v.currentTime>0.3)eerste=c.toDataURL('image/jpeg',.82);
+                  meld('Video wordt klaargemaakt: '+Math.min(SEC,Math.floor(v.currentTime))+' van '+Math.round(tot)+' seconden. Even geduld en blijf op deze pagina.','',Math.min(100,v.currentTime/tot*100));
+                  if(v.currentTime>=tot||v.ended){stop();return;}raf=requestAnimationFrame(teken);}
+                var gestopt=false;
+                function stop(){if(gestopt)return;gestopt=true;cancelAnimationFrame(raf);v.pause();try{r.stop();}catch(e){}}
+                r.onstop=function(){
+                  var blob=new Blob(stukken,{type:'video/mp4'});
+                  bezig=false;
+                  if(!blob.size){klaar=false;leeg();meld('Het klaarmaken van de video lukte niet. Probeer het opnieuw, of kies een kortere video.','fout');return;}
+                  if(blob.size>MAX){klaar=false;leeg();meld('Ook na verkleinen is de video '+mb(blob.size)+'. Kies een video met een rustiger beeld.','fout');return;}
+                  if(!zetBestand(blob,'video.mp4')){klaar=false;leeg();meld('Deze browser kan de klaargemaakte video niet meesturen. Probeer Chrome of Edge.','fout');return;}
+                  beeld.value=eerste||maakBeeld(c,w,h);klaar=true;
+                  voorbeeld(URL.createObjectURL(blob));
+                  meld('Video klaar: '+Math.round(tot)+' seconden, '+mb(blob.size)+'. Klik onderaan op Opslaan en website bijwerken.','goed');
+                };
+                v.currentTime=0;
+                v.onseeked=function(){v.onseeked=null;r.start(500);var p=v.play();if(p&&p.catch)p.catch(function(){stop();});raf=requestAnimationFrame(teken);};
+                v.onended=stop;
+              };
+            }
+            inp.addEventListener('change',function(){
+              var f=inp.files&&inp.files[0]; if(!f){st.hidden=true;klaar=true;return;}
+              if(f.name==='video.mp4'&&f.lastModified&&Date.now()-f.lastModified<5000) return;
+              bezig=true;klaar=false;beeld.value='';meld('Video wordt bekeken...','',2);verwerk(f);
+            });
+            if(form) form.addEventListener('submit',function(e){
+              if(bezig){e.preventDefault();meld('De video wordt nog klaargemaakt. Wacht tot hij klaar is en klik dan opnieuw op Opslaan.','fout');st.scrollIntoView({block:'center'});return;}
+              if(!klaar&&inp.files&&inp.files.length){e.preventDefault();st.scrollIntoView({block:'center'});}
+            });
           })();
           </script>
 
@@ -11624,7 +11867,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     "h2:Diensten": "Wat je aanbiedt. Elke dienst krijgt een eigen pagina op je website. Een dienst met een lege naam staat niet op de site.",
     "h2:Uiterlijk": "Hoe je website eruitziet: je logo, de stijl en je kleuren. Je teksten blijven altijd hetzelfde.",
     "h2:Opbouw en details": "Hiermee maak je je website echt eigen: hoe de blokken op de voorpagina eruitzien, welk lettertype je gebruikt en hoe rond de knoppen zijn. Probeer gerust iets uit, je kunt het altijd terugzetten.",
-    "h2:Beweging": "Een bewegende achtergrond achter de bovenkant van je voorpagina. Kies er een en klik onderaan op Opslaan en website bijwerken. Je ziet hem hierboven alvast bewegen. Met Geen beweging zet je hem weer uit.",
+    "h2:Beweging": "Een bewegende achtergrond achter de bovenkant van je voorpagina. Kies er een en klik onderaan op Opslaan en website bijwerken. Je ziet hem hierboven alvast bewegen. Met Geen beweging zet je hem weer uit. Je kunt ook een eigen video van je zaak plaatsen: maximaal 10 seconden, hij speelt zonder geluid en begint steeds opnieuw.",
     "h2:Extra": "Extra instellingen. Die heb je meestal niet nodig, maar ze kunnen handig zijn.",
     "h3:Extra kleuren (optioneel)": "Wil je nog meer eigen kleuren? Vink een kleur aan en kies hem. Uitgevinkt gebruikt je website de kleur van de stijl. Let op dat tekst goed leesbaar blijft.",
     "f:abken": "Het kenteken van de auto. Met Gegevens ophalen zoeken we merk, model, bouwjaar en meer op bij de RDW.",
