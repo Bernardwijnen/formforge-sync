@@ -5,7 +5,9 @@
    alles wat per klant verschilt staat in Instellingen.
 
    - Eerste bezoek: e-mailadres en wachtwoord instellen (data/config.json)
-   - Insa: /uploads/{slug}/, logo: /uploads/site/
+   - Instellingen (bedrijfsgegevens, teksten, diensten, kleuren, logo): data/settings.json
+   - Projecten: data/pages.json, elk project een eigen map /{slug}/index.html
+   - Foto's: /uploads/{slug}/, logo: /uploads/site/
    - De admin maakt zelf: index.html, dienstpagina's, /contact/, /bedankt/,
      site.json, sitemap.xml en robots.txt
    - Wachtwoord kwijt: verwijder data/config.json, dan verschijnt het
@@ -444,6 +446,10 @@ $BEWEGINGEN = [
     'neon' => ['Neon', '#0c0820', '#fc2da4', '#20e8ff'], 'goud' => ['Goud', '#17120b', '#d6a644', '#f9df9d'],
     'bellen' => ['Zwevende bellen', '#102a40', '#a8efff', '#6d91ff'], 'verloop' => ['Kleurverloop', '#161b42', '#ff639c', '#32d3c6'],
     'spotlight' => ['Spotlight', '#0b1320', '#8ba9ff', '#d5e2ff'], 'sterrenstof' => ['Sterrenstof', '#080f22', '#b1c9ff', '#d5aaff'],
+    /* Getekende werelden (scenes) */
+    'zee' => ['Zee bij zonsondergang', '#0d3b66', '#ffb17b', '#1a7394', 1], 'eiland' => ['Tropisch eiland', '#2a7f98', '#ffcf9e', '#38845a', 1],
+    'ruimte' => ['Ruimtereis', '#04051a', '#8c85d5', '#20215c', 1], 'neonstad' => ['Neonstad', '#100c2e', '#fa4cc8', '#36d9ff', 1],
+    'vulkaan' => ['Vulkaan', '#170a20', '#ff6d22', '#9c2e22', 1],
 ];
 $SNELHEDEN = ['rustig' => ['Rustig', '0.6'], 'normaal' => ['Normaal', '1'], 'snel' => ['Snel', '1.6']];
 function beweging() { global $BEWEGINGEN; $b = st('beweging'); return isset($BEWEGINGEN[$b]) ? $b : ''; }
@@ -466,7 +472,13 @@ function ffm_js() {
     bellen:    { bg: '#102a40', c: ['#a8efff', '#6d91ff', '#e0c6ff'] },
     verloop:   { bg: '#161b42', c: ['#ff639c', '#655aff', '#32d3c6'] },
     spotlight: { bg: '#0b1320', c: ['#8ba9ff', '#d5e2ff', '#5684db'] },
-    sterrenstof: { bg: '#080f22', c: ['#b1c9ff', '#8cecff', '#d5aaff'] }
+    sterrenstof: { bg: '#080f22', c: ['#b1c9ff', '#8cecff', '#d5aaff'] },
+    /* Scenes: getekende, bewegende werelden. Gebaseerd op FormForge Cinematic Motion van Ben Wijnen. */
+    zee:       { bg: '#091e40', scene: 1 },
+    eiland:    { bg: '#2a7f98', scene: 1 },
+    ruimte:    { bg: '#04051a', scene: 1 },
+    neonstad:  { bg: '#100c2e', scene: 1 },
+    vulkaan:   { bg: '#170a20', scene: 1 }
   };
   /* Hoeveel een effect licht geeft: lichte effecten krijgen een donkerdere laag, zodat witte tekst leesbaar blijft */
   var DONKER = { chroom: .5, goud: .42, spotlight: .4, verloop: .34, noorderlicht: .32, oceaan: .3, neon: .3 };
@@ -498,8 +510,79 @@ function ffm_js() {
       g.addColorStop(0, rgba(kleur, .8 * a)); g.addColorStop(.45, rgba(kleur, .4 * a)); g.addColorStop(1, rgba(kleur, 0));
       ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2);
     }
+    function rnd(i) { var x = Math.sin(i * 127.1 + 45.2) * 43758.5453; return x - Math.floor(x); }
+    function lucht(a, b) { var g = ctx.createLinearGradient(0, 0, 0, h); g.addColorStop(0, a); g.addColorStop(1, b); ctx.fillStyle = g; ctx.fillRect(0, 0, w, h); }
+    function rondje(x, y, r, k) { ctx.fillStyle = k; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.2832); ctx.fill(); }
+    function golf(y, a, k, f) { ctx.beginPath(); ctx.moveTo(0, h); for (var x = 0; x <= w + 12; x += 12) ctx.lineTo(x, y + Math.sin(x * .012 + f) * a + Math.sin(x * .025 - f * .7) * a * .25); ctx.lineTo(w, h); ctx.closePath(); ctx.fillStyle = k; ctx.fill(); }
+    /* Op een breed scherm staat het onderwerp rechts, naast de tekst. Op een telefoon in het midden, achter de tekst. */
+    function mx(v) { return smal ? w * (.5 + (v - .7) * .6) : w * v; }
+    var sc = Math.min(w / 900, 1.2);
+    function boot(x, y, s) {
+      ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+      ctx.fillStyle = '#13283c'; ctx.beginPath(); ctx.moveTo(-110, 0); ctx.lineTo(120, 0); ctx.lineTo(78, 34); ctx.lineTo(-80, 34); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#e6ecf2'; ctx.fillRect(-50, -50, 110, 50); ctx.fillStyle = '#d7e8ee'; ctx.fillRect(-20, -85, 48, 35);
+      ctx.fillStyle = '#79b8dc'; for (var i = 0; i < 5; i++) ctx.fillRect(-40 + i * 21, -38, 12, 14);
+      ctx.strokeStyle = '#e3efff'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(15, -85); ctx.lineTo(15, -132); ctx.stroke(); ctx.restore();
+    }
+    function palm(x, y, s, t) {
+      ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+      ctx.strokeStyle = '#4e3025'; ctx.lineWidth = 12; ctx.beginPath(); ctx.moveTo(0, 0); ctx.quadraticCurveTo(15, -75, -12, -160); ctx.stroke();
+      for (var i = 0; i < 8; i++) { ctx.save(); ctx.translate(-12, -160); ctx.rotate(i * .7854 + Math.sin(t * .6) * .06); ctx.fillStyle = i % 2 ? '#245e43' : '#318354'; ctx.beginPath(); ctx.ellipse(37, 0, 48, 9, 0, 0, 6.2832); ctx.fill(); ctx.restore(); }
+      ctx.restore();
+    }
+    var SC = {
+      zee: function (t) {
+        lucht('#091e40', '#ffb17b'); rondje(mx(.8), h * .34, 42 * sc + 10, '#ffda9b');
+        golf(h * .58, 13, '#1a7394', t * .65); golf(h * .68, 16, '#0d5379', t);
+        boot(mx(.66) + Math.sin(t * .18) * w * (smal ? .05 : .1), h * .59 + Math.sin(t * 1.8) * 6, sc * (smal ? .8 : 1));
+        golf(h * .79, 19, '#073b62', t * 1.2);
+        for (var i = 0; i < 16; i++) { ctx.fillStyle = 'rgba(196,239,255,.4)'; ctx.fillRect(rnd(i) * w, h * .81 + Math.sin(t + i) * 12, rnd(i + 12) * 65 + 15, 2); }
+      },
+      eiland: function (t) {
+        lucht('#4fa9c9', '#ffcf9e'); rondje(mx(.84), h * .22, 40 * sc + 10, '#ffeab0');
+        golf(h * .67, 8, '#1f9fb0', t * .5);
+        ctx.fillStyle = '#d9c38b'; ctx.beginPath(); ctx.ellipse(mx(.7), h * .72, w * (smal ? .45 : .26), h * .12, 0, Math.PI, 0); ctx.fill();
+        ctx.fillStyle = '#38845a'; ctx.beginPath(); ctx.ellipse(mx(.7), h * .67, w * (smal ? .34 : .2), h * .09, 0, Math.PI, 0); ctx.fill();
+        palm(mx(.6), h * .69, sc, t); palm(mx(.82), h * .7, sc * .65, t + 1);
+        golf(h * .85, 7, '#0c8ea9', t);
+      },
+      ruimte: function (t) {
+        lucht('#04051a', '#20215c');
+        for (var i = 0; i < (smal ? 90 : 160); i++) rondje(rnd(i) * w, rnd(i + 200) * h, rnd(i + 400) * 1.6 + .3, 'rgba(255,255,255,' + (.35 + .6 * Math.abs(Math.sin(t * .5 + i))).toFixed(2) + ')');
+        var m = Math.min(w, h); rondje(mx(.78), h * .42, m * .19, '#5a5db8'); rondje(mx(.78) - m * .03, h * .42 - m * .04, m * .15, '#8c85d5');
+        ctx.save(); ctx.translate(mx(.62) + Math.sin(t * .18) * w * .08, h * (.55 + Math.cos(t * .2) * .1)); ctx.rotate(-.2); ctx.scale(sc, sc);
+        ctx.fillStyle = '#d7eaff'; ctx.beginPath(); ctx.moveTo(90, 0); ctx.lineTo(-50, -24); ctx.lineTo(-25, 0); ctx.lineTo(-50, 24); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#47d7ff'; ctx.fillRect(-66, -8, 30, 16); ctx.restore();
+      },
+      neonstad: function (t) {
+        lucht('#100c2e', '#572d70');
+        var n = smal ? 12 : 22;
+        for (var i = 0; i < n; i++) {
+          var x = i * w / (n - 1), bh = h * .2 + rnd(i) * h * .45; ctx.fillStyle = '#241b43'; ctx.fillRect(x, h * .82 - bh, w / n + 2, bh);
+          for (var j = 0; j < 8; j++) for (var k = 0; k < 3; k++) if (rnd(i * 100 + j * 5 + k) > .45) { ctx.fillStyle = (i + j + Math.floor(t * .4 + rnd(i + j))) % 5 === 0 ? 'rgba(255,255,255,.15)' : ((i + j) % 2 ? '#fa4cc8' : '#36d9ff'); ctx.fillRect(x + 5 + k * 10, h * .84 - bh + j * 18, 5, 8); }
+        }
+        ctx.fillStyle = '#101029'; ctx.fillRect(0, h * .82, w, h * .18);
+        for (var q = 0; q < 12; q++) { ctx.fillStyle = q % 2 ? '#4deaff' : '#ff61dc'; ctx.fillRect((rnd(q) * w + t * (40 + q * 6)) % (w + 40) - 40, h * .84 + rnd(q + 40) * h * .14, 30, 3); }
+      },
+      vulkaan: function (t) {
+        lucht('#170a20', '#9c2e22'); rondje(mx(.86), h * .22, 34 * sc + 14, '#f97438');
+        var c = mx(.7);
+        ctx.fillStyle = '#201b29'; ctx.beginPath(); ctx.moveTo(c - w * .45, h); ctx.lineTo(c - w * .14, h * .5); ctx.lineTo(c - w * .05, h * .4); ctx.lineTo(c + w * .05, h * .4); ctx.lineTo(c + w * .45, h); ctx.fill();
+        ctx.strokeStyle = '#ff6d22'; ctx.lineWidth = 10; ctx.beginPath(); ctx.moveTo(c, h * .41); ctx.bezierCurveTo(c - w * .02, h * .65, c + w * .1, h * .7, c + w * .13, h); ctx.stroke();
+        for (var i = 0; i < 45; i++) { var y = h * .4 - ((t * (15 + rnd(i) * 35) + rnd(i + 100) * h * .8) % (h * .45)); rondje(c + (rnd(i) - .5) * w * .16 + Math.sin(t + i) * 14, y, rnd(i + 400) * 3 + 1, '#ff9c43'); }
+      }
+    };
     function teken(s) {
       var t = (s + t0) * sp;
+      if (th.scene) {
+        sc = Math.min(w / 900, 1.2); ctx.globalCompositeOperation = 'source-over'; SC[type](t);
+        /* Donkere laag aan de kant van de tekst, zodat witte tekst altijd leesbaar is */
+        var g = ctx.createLinearGradient(0, 0, w, 0);
+        if (smal) { g.addColorStop(0, 'rgba(5,10,25,.62)'); g.addColorStop(1, 'rgba(5,10,25,.62)'); }
+        else { g.addColorStop(0, 'rgba(5,10,25,.72)'); g.addColorStop(.5, 'rgba(5,10,25,.45)'); g.addColorStop(1, 'rgba(5,10,25,.08)'); }
+        ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+        return;
+      }
       ctx.globalCompositeOperation = 'source-over'; ctx.fillStyle = th.bg; ctx.fillRect(0, 0, w, h);
       ctx.globalCompositeOperation = 'screen';
       if (GLOED.indexOf(type) >= 0) {
@@ -10034,7 +10117,7 @@ function venturo_html() {
 <div class="vt-v"><h5>Hoe verander ik de opbouw van mijn pagina?</h5><p>In Instellingen, tabblad Opbouw en details. Per onderdeel heb je 10 keuzes: het menu, de bovenkant, de balk met diensten, je diensten, je projecten, het contactblok onderaan en de onderkant. Probeer gerust iets uit, je kunt altijd terug.</p></div>
 <div class="vt-v"><h5>Hoe kies ik een ander lettertype of rondere knoppen?</h5><p>In Instellingen, tabblad Opbouw en details, bij Lettertype en bij Vorm van knoppen en blokken: hoekig, licht afgerond of rond.</p></div>
 <div class="vt-v"><h5>Kan ik nog meer kleuren aanpassen?</h5><p>Ja. Bij Extra kleuren vink je een kleur aan, zoals de achtergrond, een vlak of de tekst, en kies je hem. Let erop dat de tekst goed leesbaar blijft.</p></div>
-<div class="vt-v"><h5>Hoe zet ik een bewegende achtergrond bovenaan?</h5><p>In Instellingen, tabblad Beweging. Kies een van de 12 achtergronden, zoals Noorderlicht of Oceaan, en een snelheid. Hierboven zie je hem alvast bewegen. Klik daarna op Opslaan en website bijwerken. Je titel en tekst bovenaan worden vanzelf wit, zodat ze leesbaar blijven. Met Geen beweging zet je hem weer uit.</p></div>
+<div class="vt-v"><h5>Hoe zet ik een bewegende achtergrond bovenaan?</h5><p>In Instellingen, tabblad Beweging. Kies een van de 17 achtergronden: 12 bewegende kleuren, zoals Noorderlicht of Oceaan, en 5 getekende werelden, zoals Zee bij zonsondergang of Neonstad. Kies ook een snelheid. Hierboven zie je hem alvast bewegen. Klik daarna op Opslaan en website bijwerken. Je titel en tekst bovenaan worden vanzelf wit, zodat ze leesbaar blijven. Met Geen beweging zet je hem weer uit.</p></div>
 <div class="vt-v"><h5>Ik zie de beweging niet op mijn website.</h5><p>Heb je bij Voorpagina een bannerfoto achter de titel gezet, of bij Opbouw de bovenkant op Grote foto? Dan blijft de foto staan en staat de beweging uit. Ook zien bezoekers die op hun telefoon of computer "bewegingen beperken" aan hebben staan een stilstaande achtergrond.</p></div>
 </div>
 <div class="vt-o"><h4>Blokken op je voorpagina</h4>
@@ -10263,7 +10346,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-10-25-beweging');
+define('SITE_BOUW', '2026-10-25-werelden');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -11120,7 +11203,8 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
             <div class="bw-voorbeeld" id="bwVoorbeeld"<?= $bwNu !== '' ? ' data-ffm="' . h($bwNu) . '" data-ffm-s="' . h(beweging_snelheid()) . '"' : '' ?>><div class="bw-tekst"><small><?= h(st('eyebrow') !== '' ? st('eyebrow') : 'Voorbeeld') ?></small><strong><?= h(st('hero_titel') !== '' ? st('hero_titel') : 'Zo ziet je bovenkant eruit') ?></strong></div></div>
             <div class="bw-lijst" role="radiogroup" aria-label="Bewegende achtergrond">
               <label class="bw-k bw-geen"><input type="radio" name="beweging" value="" <?= $bwNu === '' ? 'checked' : '' ?> /><span class="bw-s"></span><span class="bw-n">Geen beweging</span></label>
-              <?php foreach ($BEWEGINGEN as $bk => $bv): ?>
+              <?php $bwKop = false; foreach ($BEWEGINGEN as $bk => $bv): ?>
+              <?php if (!empty($bv[4]) && !$bwKop): $bwKop = true; ?><div class="bw-kop">Getekende werelden</div><?php endif; ?>
               <label class="bw-k"><input type="radio" name="beweging" value="<?= h($bk) ?>" <?= $bwNu === $bk ? 'checked' : '' ?> /><span class="bw-s" style="background:radial-gradient(circle at 30% 35%,<?= h($bv[2]) ?> 0,transparent 55%),radial-gradient(circle at 75% 70%,<?= h($bv[3]) ?> 0,transparent 50%),<?= h($bv[1]) ?>"></span><span class="bw-n"><?= h($bv[0]) ?></span></label>
               <?php endforeach; ?>
             </div>
@@ -11137,6 +11221,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
           .bw-tekst small{display:block;font-size:12px;letter-spacing:.12em;text-transform:uppercase;opacity:.8;margin-bottom:6px}
           .bw-tekst strong{display:block;font-size:22px;line-height:1.15;max-width:22ch}
           .bw-lijst{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:10px}
+          .bw-kop{grid-column:1/-1;margin:10px 0 0;font-size:12.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
           .bw-k{display:flex !important;flex-direction:column;gap:6px;cursor:pointer;margin:0 !important;font-weight:600 !important;font-size:13.5px}
           .bw-k input{position:absolute;opacity:0;pointer-events:none}
           .bw-s{display:block;height:64px;border-radius:10px;border:2px solid var(--line);background:repeating-linear-gradient(45deg,#f4f6fa 0 8px,#e9edf3 8px 16px)}
