@@ -450,6 +450,8 @@ $BEWEGINGEN = [
     'zee' => ['Zee bij zonsondergang', '#0d3b66', '#ffb17b', '#1a7394', 1], 'eiland' => ['Tropisch eiland', '#2a7f98', '#ffcf9e', '#38845a', 1],
     'ruimte' => ['Ruimtereis', '#04051a', '#8c85d5', '#20215c', 1], 'neonstad' => ['Neonstad', '#100c2e', '#fa4cc8', '#36d9ff', 1],
     'vulkaan' => ['Vulkaan', '#170a20', '#ff6d22', '#9c2e22', 1],
+    /* Echt 3D */
+    'zee3d' => ['Zee in 3D', '#2c3442', '#f0b27a', '#4d6a86', 2],
 ];
 $SNELHEDEN = ['rustig' => ['Rustig', '0.6'], 'normaal' => ['Normaal', '1'], 'snel' => ['Snel', '1.6']];
 function beweging() { global $BEWEGINGEN; $b = st('beweging'); return isset($BEWEGINGEN[$b]) ? $b : ''; }
@@ -478,8 +480,38 @@ function ffm_js() {
     eiland:    { bg: '#2a7f98', scene: 1 },
     ruimte:    { bg: '#04051a', scene: 1 },
     neonstad:  { bg: '#100c2e', scene: 1 },
-    vulkaan:   { bg: '#170a20', scene: 1 }
+    vulkaan:   { bg: '#170a20', scene: 1 },
+    /* Echt 3D: wordt pas geladen als hij in beeld komt. Tot dan, of als 3D niet kan, staat de getekende zee er. */
+    zee3d:     { bg: '#3a3f4a', d3: 'zee' }
   };
+  var URL3D = window.FFM3D_URL || 'https://formforge.nl/ffm3d.js', laden3d = null;
+  function laad3d(klaar) {
+    if (window.FFM3D) { klaar(); return; }
+    if (!laden3d) {
+      laden3d = [];
+      var sc = document.createElement('script'); sc.src = URL3D; sc.async = true;
+      sc.onload = function () { var l = laden3d; laden3d = []; l.forEach(function (f) { f(); }); };
+      sc.onerror = function () { laden3d = []; };
+      document.head.appendChild(sc);
+    }
+    laden3d.push(klaar);
+  }
+  function maak3d(el, type, snelheid) {
+    var plat = maak(el, E[type].d3, snelheid), echt = null, weg = false, io = null;
+    function start() {
+      laad3d(function () {
+        if (weg || !window.FFM3D) return;
+        var e = window.FFM3D.mount(el, { snelheid: snelheid });
+        if (e) { echt = e; if (plat) { plat.stop(); plat = null; } el.classList.add('ffm-host'); el.style.backgroundColor = E[type].bg; }
+      });
+    }
+    if (window.IntersectionObserver) { io = new IntersectionObserver(function (x) { if (x[0] && x[0].isIntersecting) { io.disconnect(); io = null; start(); } }, { rootMargin: '200px' }); io.observe(el); } else start();
+    return {
+      type: type,
+      snelheid: function (v) { if (echt) echt.snelheid(v); if (plat) plat.snelheid(v); },
+      stop: function () { weg = true; if (io) io.disconnect(); if (echt) echt.stop(); if (plat) plat.stop(); }
+    };
+  }
   /* Hoeveel een effect licht geeft: lichte effecten krijgen een donkerdere laag, zodat witte tekst leesbaar blijft */
   var DONKER = { chroom: .5, goud: .42, spotlight: .4, verloop: .34, noorderlicht: .32, oceaan: .3, neon: .3 };
   var GLOED = ['lava', 'chroom', 'noorderlicht', 'sterrenhemel', 'oceaan', 'neon', 'goud', 'verloop', 'spotlight'];
@@ -628,7 +660,7 @@ function ffm_js() {
     if (!el) return;
     if (el._ffm && el._ffm.type === type) { el._ffm.snelheid(snelheid); return; }
     if (el._ffm) { el._ffm.stop(); el._ffm = null; }
-    if (type && E[type]) el._ffm = maak(el, type, snelheid);
+    if (type && E[type]) el._ffm = E[type].d3 ? maak3d(el, type, snelheid) : maak(el, type, snelheid);
   }
   function start() {
     var l = document.querySelectorAll('[data-ffm]');
@@ -10117,8 +10149,8 @@ function venturo_html() {
 <div class="vt-v"><h5>Hoe verander ik de opbouw van mijn pagina?</h5><p>In Instellingen, tabblad Opbouw en details. Per onderdeel heb je 10 keuzes: het menu, de bovenkant, de balk met diensten, je diensten, je projecten, het contactblok onderaan en de onderkant. Probeer gerust iets uit, je kunt altijd terug.</p></div>
 <div class="vt-v"><h5>Hoe kies ik een ander lettertype of rondere knoppen?</h5><p>In Instellingen, tabblad Opbouw en details, bij Lettertype en bij Vorm van knoppen en blokken: hoekig, licht afgerond of rond.</p></div>
 <div class="vt-v"><h5>Kan ik nog meer kleuren aanpassen?</h5><p>Ja. Bij Extra kleuren vink je een kleur aan, zoals de achtergrond, een vlak of de tekst, en kies je hem. Let erop dat de tekst goed leesbaar blijft.</p></div>
-<div class="vt-v"><h5>Hoe zet ik een bewegende achtergrond bovenaan?</h5><p>In Instellingen, tabblad Beweging. Kies een van de 17 achtergronden: 12 bewegende kleuren, zoals Noorderlicht of Oceaan, en 5 getekende werelden, zoals Zee bij zonsondergang of Neonstad. Kies ook een snelheid. Hierboven zie je hem alvast bewegen. Klik daarna op Opslaan en website bijwerken. Je titel en tekst bovenaan worden vanzelf wit, zodat ze leesbaar blijven. Met Geen beweging zet je hem weer uit.</p></div>
-<div class="vt-v"><h5>Ik zie de beweging niet op mijn website.</h5><p>Heb je bij Voorpagina een bannerfoto achter de titel gezet, of bij Opbouw de bovenkant op Grote foto? Dan blijft de foto staan en staat de beweging uit. Ook zien bezoekers die op hun telefoon of computer "bewegingen beperken" aan hebben staan een stilstaande achtergrond.</p></div>
+<div class="vt-v"><h5>Hoe zet ik een bewegende achtergrond bovenaan?</h5><p>In Instellingen, tabblad Beweging. Kies een van de 18 achtergronden: 12 bewegende kleuren, zoals Noorderlicht of Oceaan, 5 getekende werelden, zoals Neonstad, en de Zee in 3D. Kies ook een snelheid. Hierboven zie je hem alvast bewegen. Klik daarna op Opslaan en website bijwerken. Je titel en tekst bovenaan worden vanzelf wit, zodat ze leesbaar blijven. Met Geen beweging zet je hem weer uit.</p></div>
+<div class="vt-v"><h5>Ik zie de beweging niet op mijn website.</h5><p>Heb je bij Voorpagina een bannerfoto achter de titel gezet, of bij Opbouw de bovenkant op Grote foto? Dan blijft de foto staan en staat de beweging uit. Ook zien bezoekers die op hun telefoon of computer "bewegingen beperken" aan hebben staan een stilstaande achtergrond. De Zee in 3D heeft een computer of telefoon nodig die 3D kan tonen. Lukt dat niet, dan zien bezoekers vanzelf de getekende zee.</p></div>
 </div>
 <div class="vt-o"><h4>Blokken op je voorpagina</h4>
 <div class="vt-v"><h5>Wat zijn blokken?</h5><p>De onderdelen van je voorpagina, zoals je diensten, uitgelichte projecten, voor- en na-foto's, werkwijze in stappen, cijfers, over ons, veelgestelde vragen en eigen afbeeldingen. Je vindt ze in Instellingen, tabblad Blokken op je voorpagina.</p></div>
@@ -10346,7 +10378,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-10-25-werelden');
+define('SITE_BOUW', '2026-10-25-zee3d');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -11204,7 +11236,8 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
             <div class="bw-lijst" role="radiogroup" aria-label="Bewegende achtergrond">
               <label class="bw-k bw-geen"><input type="radio" name="beweging" value="" <?= $bwNu === '' ? 'checked' : '' ?> /><span class="bw-s"></span><span class="bw-n">Geen beweging</span></label>
               <?php $bwKop = false; foreach ($BEWEGINGEN as $bk => $bv): ?>
-              <?php if (!empty($bv[4]) && !$bwKop): $bwKop = true; ?><div class="bw-kop">Getekende werelden</div><?php endif; ?>
+              <?php if (($bv[4] ?? 0) === 1 && !$bwKop): $bwKop = true; ?><div class="bw-kop">Getekende werelden</div><?php endif; ?>
+              <?php if (($bv[4] ?? 0) === 2 && empty($bw3d)): $bw3d = true; ?><div class="bw-kop">Echt 3D <span style="text-transform:none;letter-spacing:0;font-weight:600">(zwaarder om te laden, mooi op een computer)</span></div><?php endif; ?>
               <label class="bw-k"><input type="radio" name="beweging" value="<?= h($bk) ?>" <?= $bwNu === $bk ? 'checked' : '' ?> /><span class="bw-s" style="background:radial-gradient(circle at 30% 35%,<?= h($bv[2]) ?> 0,transparent 55%),radial-gradient(circle at 75% 70%,<?= h($bv[3]) ?> 0,transparent 50%),<?= h($bv[1]) ?>"></span><span class="bw-n"><?= h($bv[0]) ?></span></label>
               <?php endforeach; ?>
             </div>
