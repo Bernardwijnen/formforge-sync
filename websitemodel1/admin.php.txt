@@ -453,6 +453,7 @@ $BEWEGINGEN = [
     /* Echt 3D */
     'zee3d' => ['Zee in 3D', '#2c3442', '#f0b27a', '#4d6a86', 2],
     'alpen3d' => ['Alpen in 3D', '#3d5266', '#eef3f7', '#3f6b45', 2],
+    'barbier3d' => ['Barbershop in 3D', '#1a1410', '#c9925a', '#6a4a31', 2],
 ];
 $SNELHEDEN = ['rustig' => ['Rustig', '0.6'], 'normaal' => ['Normaal', '1'], 'snel' => ['Snel', '1.6']];
 function beweging() { global $BEWEGINGEN; $b = st('beweging'); return isset($BEWEGINGEN[$b]) ? $b : ''; }
@@ -484,7 +485,8 @@ function ffm_js() {
     vulkaan:   { bg: '#170a20', scene: 1 },
     /* Echt 3D: wordt pas geladen als hij in beeld komt. Tot dan, of als 3D niet kan, staat de getekende zee er. */
     zee3d:     { bg: '#3a3f4a', d3: 'zee', s3: 'zee' },
-    alpen3d:   { bg: '#55657a', d3: 'chroom', s3: 'alpen' }
+    alpen3d:   { bg: '#55657a', d3: 'chroom', s3: 'alpen' },
+    barbier3d: { bg: '#1a1410', d3: 'goud', s3: 'barbier' }
   };
   var URL3D = window.FFM3D_URL || 'https://formforge.nl/ffm3d.js', laden3d = null;
   function laad3d(klaar) {
@@ -10151,7 +10153,7 @@ function venturo_html() {
 <div class="vt-v"><h5>Hoe verander ik de opbouw van mijn pagina?</h5><p>In Instellingen, tabblad Opbouw en details. Per onderdeel heb je 10 keuzes: het menu, de bovenkant, de balk met diensten, je diensten, je projecten, het contactblok onderaan en de onderkant. Probeer gerust iets uit, je kunt altijd terug.</p></div>
 <div class="vt-v"><h5>Hoe kies ik een ander lettertype of rondere knoppen?</h5><p>In Instellingen, tabblad Opbouw en details, bij Lettertype en bij Vorm van knoppen en blokken: hoekig, licht afgerond of rond.</p></div>
 <div class="vt-v"><h5>Kan ik nog meer kleuren aanpassen?</h5><p>Ja. Bij Extra kleuren vink je een kleur aan, zoals de achtergrond, een vlak of de tekst, en kies je hem. Let erop dat de tekst goed leesbaar blijft.</p></div>
-<div class="vt-v"><h5>Hoe zet ik een bewegende achtergrond bovenaan?</h5><p>In Instellingen, tabblad Beweging. Kies een van de 19 achtergronden: 12 bewegende kleuren, zoals Noorderlicht of Oceaan, 5 getekende werelden, zoals Neonstad, en 2 in echt 3D: de Zee en de Alpen. Kies ook een snelheid. Hierboven zie je hem alvast bewegen. Klik daarna op Opslaan en website bijwerken. Je titel en tekst bovenaan worden vanzelf wit, zodat ze leesbaar blijven. Met Geen beweging zet je hem weer uit.</p></div>
+<div class="vt-v"><h5>Hoe zet ik een bewegende achtergrond bovenaan?</h5><p>In Instellingen, tabblad Beweging. Kies een van de 20 achtergronden: 12 bewegende kleuren, zoals Noorderlicht of Oceaan, 5 getekende werelden, zoals Neonstad, en 3 in echt 3D: de Zee, de Alpen en een Barbershop. Kies ook een snelheid. Hierboven zie je hem alvast bewegen. Klik daarna op Opslaan en website bijwerken. Je titel en tekst bovenaan worden vanzelf wit, zodat ze leesbaar blijven. Met Geen beweging zet je hem weer uit.</p></div>
 <div class="vt-v"><h5>Ik zie de beweging niet op mijn website.</h5><p>Heb je bij Voorpagina een bannerfoto achter de titel gezet, of bij Opbouw de bovenkant op Grote foto? Dan blijft de foto staan en staat de beweging uit. Ook zien bezoekers die op hun telefoon of computer "bewegingen beperken" aan hebben staan een stilstaande achtergrond. De achtergronden in echt 3D hebben een computer of telefoon nodig die 3D kan tonen. Lukt dat niet, dan zien bezoekers vanzelf een rustige, bewegende achtergrond.</p></div>
 </div>
 <div class="vt-o"><h4>Blokken op je voorpagina</h4>
@@ -10380,7 +10382,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-10-25-alpen3d');
+define('SITE_BOUW', '2026-10-25-barbier3d');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
