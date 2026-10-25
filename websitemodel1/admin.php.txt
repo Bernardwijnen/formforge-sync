@@ -111,6 +111,7 @@ function default_settings() {
         'beelden'          => [],
         'banner'           => '',
         'banner_vorm'      => 'achter',
+        'banner_dia'       => [],
         'knop_link'        => '',
         'menulinks'        => [],
         'diensten'         => [
@@ -459,6 +460,7 @@ $BEWEGINGEN = [
     'zee3d' => ['Zee in 3D', '#2c3442', '#f0b27a', '#4d6a86', 2],
     'alpen3d' => ['Alpen in 3D', '#3d5266', '#eef3f7', '#3f6b45', 2],
     'barbier3d' => ['Barbershop in 3D', '#1a1410', '#c9925a', '#6a4a31', 2],
+    'restaurant3d' => ['Restaurant in 3D', '#1a120c', '#e0a060', '#6e1a26', 2],
 ];
 $SNELHEDEN = ['rustig' => ['Rustig', '0.6'], 'normaal' => ['Normaal', '1'], 'snel' => ['Snel', '1.6']];
 function beweging() { global $BEWEGINGEN; $b = st('beweging'); return isset($BEWEGINGEN[$b]) ? $b : ''; }
@@ -557,7 +559,8 @@ function ffm_js() {
     /* Echt 3D: wordt pas geladen als hij in beeld komt. Tot dan, of als 3D niet kan, staat de getekende zee er. */
     zee3d:     { bg: '#3a3f4a', d3: 'zee', s3: 'zee' },
     alpen3d:   { bg: '#55657a', d3: 'chroom', s3: 'alpen' },
-    barbier3d: { bg: '#1a1410', d3: 'goud', s3: 'barbier' }
+    barbier3d: { bg: '#1a1410', d3: 'goud', s3: 'barbier' },
+    restaurant3d: { bg: '#1a120c', d3: 'goud', s3: 'restaurant' }
   };
   var URL3D = window.FFM3D_URL || 'https://formforge.nl/ffm3d.js', laden3d = null;
   function laad3d(klaar) {
@@ -794,6 +797,13 @@ body:not(.l-hero-kaart) .hero.ffm-aan .eyebrow{color:rgba(255,255,255,.82) !impo
 body:not(.l-hero-kaart) .hero.ffm-aan .eyebrow::before{background:rgba(255,255,255,.7) !important;}
 body:not(.l-hero-kaart) .hero.ffm-aan .btn.quiet{color:#fff !important;box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.6) !important;background:transparent !important;}
 .hero.ffm-aan .emblem img{filter:drop-shadow(0 18px 30px rgba(0,0,0,.45));}
+/* wisselende bannerfoto's */
+.hero.heeft-dia{isolation:isolate;}
+.hero-dia{position:absolute;inset:0;z-index:-1;overflow:hidden;pointer-events:none;}
+.hero-dia span{position:absolute;inset:0;background-size:cover;background-position:center;opacity:0;will-change:opacity,transform;}
+.banner-strook.heeft-dia{position:relative;overflow:hidden;}
+.banner-strook .hero-dia{z-index:1;}
+@media (prefers-reduced-motion:reduce){.hero-dia{display:none;}}
 /* eigen video bovenaan */
 .hero.heeft-video{position:relative;isolation:isolate;overflow:hidden;background-color:#15181d !important;background-image:none !important;}
 .hero.heeft-video .hero-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2;pointer-events:none;display:block;}
@@ -1131,6 +1141,24 @@ CSS;
 /* Grote foto bovenaan: bij de stijl Etalage, of als de klant dat kiest */
 function banner_achter() { return st('banner') !== '' && st('banner_vorm') !== 'strook'; }
 function banner_strook() { return st('banner') !== '' && st('banner_vorm') === 'strook'; }
+/* Extra bannerfoto's (max 4) die met de eerste in een lus wisselen */
+function banner_dia() {
+    global $ST; $uit = [];
+    foreach ((array)($ST['banner_dia'] ?? []) as $f) { if (is_string($f) && $f !== '' && is_file(UPLOAD_DIR . '/site/' . basename($f))) $uit[] = basename($f); }
+    return array_slice($uit, 0, 4);
+}
+/* Wisselende foto's: rustig in- en uitfaden met een lichte zoom, 6 seconden per foto, zonder JavaScript */
+function dia_html() {
+    $extra = banner_dia();
+    if (!$extra || st('banner') === '') return '';
+    $fotos = array_merge([basename(st('banner'))], $extra);
+    $n = count($fotos); $T = 6 * $n;
+    $p1 = round(1.5 / $T * 100, 2); $p2 = round(6 / $T * 100, 2); $p3 = round(7.5 / $T * 100, 2);
+    $o = '<style>@keyframes dia' . $n . '{0%{opacity:0;transform:scale(1)}' . $p1 . '%{opacity:1}' . $p2 . '%{opacity:1}' . $p3 . '%{opacity:0;transform:scale(1.07)}100%{opacity:0;transform:scale(1.07)}}'
+        . '.hero-dia span{animation:dia' . $n . ' ' . $T . 's linear infinite}</style><div class="hero-dia" aria-hidden="true">';
+    foreach ($fotos as $i => $f) { $o .= '<span style="background-image:url(\'/uploads/site/' . h(rawurlencode($f)) . '\');animation-delay:' . ($i * 6) . 's"></span>'; }
+    return $o . '</div>';
+}
 function hero_met_foto() {
     return banner_achter() || stijl_grote_foto() || opbouw('hero') === 'foto';
 }
@@ -1422,6 +1450,7 @@ function foto_map_weg($rel) {
 function versie_fotos($staat) {
     $s = $staat['settings']; $uit = [];
     foreach (['banner', 'logo', 'over_foto', 'video', 'video_beeld'] as $k) { if (!empty($s[$k]) && is_string($s[$k])) $uit[] = 'site/' . basename($s[$k]); }
+    foreach ((array)($s['banner_dia'] ?? []) as $f) { if (is_string($f) && $f !== '') $uit[] = 'site/' . basename($f); }
     foreach ((array)($s['beelden'] ?? []) as $b) { if (!empty($b['foto'])) $uit[] = 'site/' . basename($b['foto']); }
     foreach ((array)($s['voorna'] ?? []) as $v) { foreach (['voor', 'na'] as $kk) { if (!empty($v[$kk])) $uit[] = 'site/' . basename($v[$kk]); } }
     foreach ($staat['pages'] as $p) { foreach ((array)($p['photos'] ?? []) as $f) { $uit[] = ($p['slug'] ?? '') . '/' . basename((string)$f); } }
@@ -2110,6 +2139,8 @@ CSS;
     $logo = logo_url();
     $foto = hero_met_foto() ? hero_foto($pages) : '';
     $heroAttr = $foto !== '' ? ' class="hero has-photo" style="background-image:url(\'' . h($foto) . '\')"' : (beweging() !== '' ? ' class="hero ffm-aan" data-ffm="' . h(beweging()) . '" data-ffm-s="' . h(beweging_snelheid()) . '"' : ' class="hero"');
+    $heroDia = banner_achter() && $foto !== '' ? dia_html() : '';
+    if ($heroDia !== '') { $heroAttr = str_replace('class="hero has-photo"', 'class="hero has-photo heeft-dia"', $heroAttr); }
     $heroVid = $foto === '' ? eigen_video() : '';
     $heroVidHtml = '';
     if ($heroVid !== '') {
@@ -2124,8 +2155,8 @@ CSS;
             . 'document.addEventListener("visibilitychange",function(){document.hidden?v.pause():speel();});})();</script>';
     }
     $out .= '<main id="home" class="view">';
-    if (banner_strook()) { $out .= '<div class="banner-strook"><img src="/uploads/site/' . h(rawurlencode(st('banner'))) . '" alt="' . h(st('naam')) . '" /></div>'; }
-    $out .= '<section' . $heroAttr . '>' . $heroVidHtml . '<span class="hero-rand" aria-hidden="true"></span><div class="wrap' . ($logo === '' ? ' solo' : '') . '"><div>';
+    if (banner_strook()) { $sd = dia_html(); $out .= '<div class="banner-strook' . ($sd !== '' ? ' heeft-dia' : '') . '"><img src="/uploads/site/' . h(rawurlencode(st('banner'))) . '" alt="' . h(st('naam')) . '" />' . $sd . '</div>'; }
+    $out .= '<section' . $heroAttr . '>' . $heroDia . $heroVidHtml . '<span class="hero-rand" aria-hidden="true"></span><div class="wrap' . ($logo === '' ? ' solo' : '') . '"><div>';
     if (st('eyebrow') !== '') $out .= '<div class="eyebrow">' . h(st('eyebrow')) . '</div>';
     $out .= '<h1>' . h(st('hero_titel')) . '</h1>';
     if (st('hero_tekst') !== '') $out .= '<p class="lead">' . h(st('hero_tekst')) . '</p>';
@@ -10227,6 +10258,7 @@ function venturo_html() {
 <div class="vt-v"><h5>Waar gaat de hoofdknop bovenaan naartoe?</h5><p>Standaard naar je contactpagina. Wil je hem ergens anders naartoe laten gaan, vul dan bij "Waar gaat de hoofdknop naartoe?" een pagina in, bijvoorbeeld /reserveren/. Begin altijd met een schuine streep en eindig met een schuine streep. Een andere website begint met https://.</p></div>
 <div class="vt-v"><h5>Hoe zet ik een balk met een actie of vakantiebericht bovenaan?</h5><p>Vul in Instellingen bij Voorpagina het veld Balk bovenaan in, bijvoorbeeld: Wij zijn met vakantie tot 18 augustus. Leeg laten betekent geen balk.</p></div>
 <div class="vt-v"><h5>Hoe zet ik een grote foto bovenaan mijn voorpagina?</h5><p>In Instellingen bij Voorpagina, bij Bannerfoto bovenaan. Kies een liggende foto, liefst minstens 1600 pixels breed. Daarna kies je of de foto achter je titel staat of als strook onder het menu.</p></div>
+<div class="vt-v"><h5>Kan ik meerdere bannerfoto's laten wisselen?</h5><p>Ja, tot 5 foto's. In Instellingen bij Voorpagina staat onder Bannerfoto bovenaan het vak Meer bannerfoto's die elkaar afwisselen. Zet daar maximaal 4 extra foto's bij en klik op Opslaan en website bijwerken. De foto's wisselen elkaar dan rustig af, elke 6 seconden, steeds opnieuw. Dat werkt achter je titel en als strook. Gebruik foto's die even breed en hoog zijn. Met Weghalen haal je een foto weer weg.</p></div>
 <div class="vt-v"><h5>Kan ik extra knoppen in het menu zetten?</h5><p>Ja, maximaal 6, naar pagina's die al op je server staan of naar een andere website. Op een smal scherm, zoals een telefoon, vallen ze weg. Zet daarom ook een link op je voorpagina.</p></div>
 <div class="vt-v"><h5>Hoe verander ik de gekleurde balk onderaan mijn pagina's?</h5><p>In Instellingen bij Voorpagina: Titel van de balk onderaan en Tekst van de balk onderaan.</p></div>
 <div class="vt-v"><h5>Hoe vul ik mijn diensten in?</h5><p>In Instellingen, tabblad Diensten. Je kunt er tot 9 invullen. Per dienst: een naam, een korte omschrijving voor de voorpagina en een uitgebreide tekst voor de eigen pagina van die dienst.</p></div>
@@ -10242,7 +10274,7 @@ function venturo_html() {
 <div class="vt-v"><h5>Hoe verander ik de opbouw van mijn pagina?</h5><p>In Instellingen, tabblad Opbouw en details. Per onderdeel heb je 10 keuzes: het menu, de bovenkant, de balk met diensten, je diensten, je projecten, het contactblok onderaan en de onderkant. Probeer gerust iets uit, je kunt altijd terug.</p></div>
 <div class="vt-v"><h5>Hoe kies ik een ander lettertype of rondere knoppen?</h5><p>In Instellingen, tabblad Opbouw en details, bij Lettertype en bij Vorm van knoppen en blokken: hoekig, licht afgerond of rond.</p></div>
 <div class="vt-v"><h5>Kan ik nog meer kleuren aanpassen?</h5><p>Ja. Bij Extra kleuren vink je een kleur aan, zoals de achtergrond, een vlak of de tekst, en kies je hem. Let erop dat de tekst goed leesbaar blijft.</p></div>
-<div class="vt-v"><h5>Hoe zet ik een bewegende achtergrond bovenaan?</h5><p>In Instellingen, tabblad Beweging. Kies een van de 20 achtergronden: 12 bewegende kleuren, zoals Noorderlicht of Oceaan, 5 getekende werelden, zoals Neonstad, en 3 in echt 3D: de Zee, de Alpen en een Barbershop. Kies ook een snelheid. Hierboven zie je hem alvast bewegen. Klik daarna op Opslaan en website bijwerken. Je titel en tekst bovenaan worden vanzelf wit, zodat ze leesbaar blijven. Met Geen beweging zet je hem weer uit.</p></div>
+<div class="vt-v"><h5>Hoe zet ik een bewegende achtergrond bovenaan?</h5><p>In Instellingen, tabblad Beweging. Kies een van de 21 achtergronden: 12 bewegende kleuren, zoals Noorderlicht of Oceaan, 5 getekende werelden, zoals Neonstad, en 4 in echt 3D: de Zee, de Alpen, een Barbershop en een Restaurant. Kies ook een snelheid. Hierboven zie je hem alvast bewegen. Klik daarna op Opslaan en website bijwerken. Je titel en tekst bovenaan worden vanzelf wit, zodat ze leesbaar blijven. Met Geen beweging zet je hem weer uit.</p></div>
 <div class="vt-v"><h5>Ik zie de beweging niet op mijn website.</h5><p>Heb je bij Voorpagina een bannerfoto achter de titel gezet, of bij Opbouw de bovenkant op Grote foto? Dan blijft de foto staan en staat de beweging uit. Ook zien bezoekers die op hun telefoon of computer "bewegingen beperken" aan hebben staan een stilstaande achtergrond. De achtergronden in echt 3D hebben een computer of telefoon nodig die 3D kan tonen. Lukt dat niet, dan zien bezoekers vanzelf een rustige, bewegende achtergrond.</p></div>
 <div class="vt-v"><h5>Kan ik een eigen video bovenaan zetten?</h5><p>Ja. In Instellingen, tabblad Beweging, onderaan bij Je eigen video. Kies een video van je zaak, bijvoorbeeld je werkplaats of jezelf aan het werk. Hij speelt zonder geluid en begint steeds opnieuw. Hij mag maximaal 10 seconden duren. Is hij langer, dan neemt de beheerpagina de eerste 10 seconden. Een grote video wordt vanzelf kleiner gemaakt. Dat duurt even zo lang als de video zelf: blijf op de pagina tot je ziet dat hij klaar is. Klik daarna op Opslaan en website bijwerken. Met het vinkje Ook afspelen op telefoons kies je of telefoons de video zien of alleen een stilstaand beeld eruit.</p></div>
 <div class="vt-v"><h5>Mijn video lukt niet.</h5><p>Kies de video het liefst op een computer met Chrome of Edge: die maken hem zelf klaar voor je website. Filmt je iPhone in HEVC, dan kunnen niet alle browsers de video afspelen. Zet dan op je iPhone bij Instellingen, Camera, Formaten op Meest compatibel en film opnieuw. Film liggend, met een rustig beeld. Heb je bovenaan een grote foto of een bannerfoto achter de titel, dan blijft de foto staan en zie je de video niet.</p></div>
@@ -10473,7 +10505,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-10-25-eigenvideo');
+define('SITE_BOUW', '2026-10-25-bannerdia');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -10778,6 +10810,18 @@ if ($logged_in && isset($_POST['action'])) {
             $nf = $foto('banner', null, 'banner-');
             if ($nf !== '') { $weg($new['banner'] ?? ''); $new['banner'] = $nf; }
             $new['banner_vorm'] = $_POST['banner_vorm'] === 'strook' ? 'strook' : 'achter';
+            /* extra bannerfoto's voor de wisselende banner */
+            $oudD = array_values(array_filter((array)($new['banner_dia'] ?? []), function($x) { return is_string($x) && $x !== ''; }));
+            $dia = [];
+            for ($n = 0; $n < 4; $n++) {
+                $o = $oudD[$n] ?? '';
+                if ($o !== '' && !empty($_POST['banner_dia_weg'][$n])) { $weg($o); $o = ''; }
+                $nf = $foto('banner_dia', $n, 'banner-');
+                if ($nf !== '') { if ($o !== '') $weg($o); $o = $nf; }
+                if ($o !== '') $dia[] = $o;
+            }
+            if (($new['banner'] ?? '') === '' && $dia) { $new['banner'] = array_shift($dia); }
+            $new['banner_dia'] = $dia;
         }
         if (isset($_POST['video_set'])) {
             if (!empty($_POST['video_weg'])) { $weg($new['video'] ?? ''); $weg($new['video_beeld'] ?? ''); $new['video'] = ''; $new['video_beeld'] = ''; }
@@ -11253,6 +11297,16 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
             <p class="sub">De teksten bovenaan de website.</p>
             <div class="field"><label for="slogan">Balk bovenaan (optioneel)</label><input type="text" id="slogan" name="slogan" maxlength="140" value="<?= h(st('slogan')) ?>" /><div class="hint">Een korte slogan in een gekleurde balk boven het menu. Leeg = geen balk.</div></div>
             <div class="field"><label for="banner">Bannerfoto bovenaan (mag leeg)</label><?php if (st('banner') !== ''): ?><img class="blk-mini" src="/uploads/site/<?= h(rawurlencode(st('banner'))) ?>" alt="" style="width:100%;max-width:420px;height:auto;aspect-ratio:3/1;object-fit:cover" /><label class="check"><input type="checkbox" name="banner_weg" value="1" /> <span>Bannerfoto weghalen</span></label><?php endif; ?><input type="file" id="banner" name="banner" accept="image/jpeg,image/png,image/webp" /><div class="hint">Een grote, liggende foto voor bovenaan je voorpagina, bijvoorbeeld van een mooi project of je team. Liefst breed, minstens 1600 pixels.</div></div>
+            <?php $bdNu = banner_dia(); ?>
+            <div class="field"><label>Meer bannerfoto's die elkaar afwisselen (mag leeg)</label>
+              <div class="dia-lijst">
+                <?php for ($n = 0; $n < 4; $n++): $bf = $bdNu[$n] ?? ''; ?>
+                <div class="dia-vak"><span class="dia-nr">Foto <?= $n + 2 ?></span><?php if ($bf !== ''): ?><img class="blk-mini" src="/uploads/site/<?= h(rawurlencode($bf)) ?>" alt="" style="width:100%;height:auto;aspect-ratio:3/1;object-fit:cover" /><label class="check"><input type="checkbox" name="banner_dia_weg[<?= $n ?>]" value="1" /> <span>Weghalen</span></label><?php endif; ?><input type="file" name="banner_dia[<?= $n ?>]" accept="image/jpeg,image/png,image/webp" /></div>
+                <?php endfor; ?>
+              </div>
+              <div class="hint">Zet je hier foto's bij, dan wisselen je bannerfoto's elkaar rustig af, elke 6 seconden, steeds opnieuw. Zo heb je er maximaal 5. Gebruik foto's die even breed en hoog zijn. Bezoekers die "bewegingen beperken" aan hebben staan, zien alleen de eerste foto.</div>
+              <style>.dia-lijst{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}.dia-vak{border:1px solid var(--line);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:6px}.dia-nr{font-size:12.5px;font-weight:700;color:var(--mut)}.dia-vak input[type=file]{max-width:100%;font-size:13px}</style>
+            </div>
             <div class="field"><label for="banner_vorm">Hoe staat de bannerfoto erop?</label><select id="banner_vorm" name="banner_vorm"><option value="achter"<?= st('banner_vorm') !== 'strook' ? ' selected' : '' ?>>Achter de titel en de knop</option><option value="strook"<?= st('banner_vorm') === 'strook' ? ' selected' : '' ?>>Als brede strook boven de titel</option></select></div>
             <div class="field"><label for="eyebrow">Kleine regel boven de titel</label><input type="text" id="eyebrow" name="eyebrow" maxlength="80" placeholder="bv. Installatiebedrijf in Sittard" value="<?= h(st('eyebrow')) ?>" /></div>
             <div class="field"><label for="hero_titel">Grote titel</label><input type="text" id="hero_titel" name="hero_titel" maxlength="90" value="<?= h(st('hero_titel')) ?>" /></div>
