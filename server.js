@@ -5623,8 +5623,17 @@ function requireChatTegoed(req){
   if(!status || !status.premium){
     return { ok:false, status:403, error:"Geen actief account gevonden. Controleer je e-mailadres en pincode." };
   }
-  const plan = normalizeAiPlan(status.plan || "");
+  /* Een e-mailadres kan twee potjes hebben: "formforge:adres" (account van de
+     pincode) en het kale adres (daar komen gekochte credits en Unlimited via
+     Stripe terecht). De pincode is hierboven gecontroleerd; nu nemen we het
+     potje met het meeste tegoed, zodat gekochte credits ook echt gebruikt worden. */
+  for(const k of ["formforge:" + kaal, kaal]){
+    if(!k || k === gebruikt || !getPremiumAccount(k)) continue;
+    const a = wcSaldo(k), b = wcSaldo(gebruikt);
+    if(b !== -1 && (a === -1 || a > b)) gebruikt = k;
+  }
   const saldo = wcSaldo(gebruikt);
+  const plan = saldo === -1 ? "pro" : normalizeAiPlan(status.plan || "");
   if(plan !== "pro" && saldo <= 0){
     return { ok:false, status:402, error:"Je credits zijn op. Koop nieuwe credits om te blijven vertalen.", creditsOp:true };
   }
@@ -5885,7 +5894,7 @@ Object.assign(WC_UI, {
  "n_bewaar7": "7 days",
  "n_bewaar30": "30 days",
  "n_bewaarAltijd": "Always (Unlimited only)",
- "n_vrijNoot": "In a free room only the last message stays on screen, and the room closes after 24 hours.",
+ "n_vrijNoot": "In a free room messages stay for 24 hours. You can have 3 free rooms open at the same time.",
  "n_maak": "Open room",
  "n_loginUit": "For translation you need an account: your e-mail address and a pin code that we send you by e-mail.",
  "n_mail": "Your e-mail",
@@ -5901,7 +5910,7 @@ Object.assign(WC_UI, {
  "n_kopenUit": "One credit is one translated message. Credits never expire. One-off payment, no subscription.",
  "n_aboKnop": "Unlimited subscription",
  "n_aboUit": "Unlimited translation in all your rooms, for everyone you invite. Cancel monthly.",
- "n_betaald": "Payment received. Your pin code is %s. We also sent it to you by e-mail.",
+ "n_betaald": "Payment received. Your pin code is %s. Keep it safe.",
  "n_creditsNodig": "You have no credits yet. Choose a package to open a room with translation.",
  "n_terug": "Back",
  "n_uitnKop": "%s wants to chat with you in your language",
@@ -5925,7 +5934,7 @@ Object.assign(WC_UI, {
  "n_menuMelding": "Notifications on this phone",
  "n_menuMeld": "Report this room",
  "n_menuVerlaat": "Leave room",
- "n_vrijBalk": "Free room: no translation. Only the last message stays on screen.",
+ "n_vrijBalk": "Free room: no translation. Messages stay for 24 hours.",
  "n_creditsOp": "The credits of the host are used up. Messages arrive untranslated.",
  "n_bezet": "The line is busy right now. Please try again in a few minutes.",
  "n_ongeldig": "This invitation no longer works. Ask for a new link.",
@@ -5951,14 +5960,18 @@ Object.assign(WC_UI, {
  "n_bezig": "One moment...",
  "n_perDuizend": "per 1,000",
  "n_versturen": "Send",
- "n_persoon": "1 person"
+ "n_persoon": "1 person",
+ "n_perMaandBtw": "per month incl. VAT",
+ "n_hoe": "How does Worldchat work?"
 });
+
+
 
 
 /* De vertaalde interface per taal. Eigen bestand op de schijf, los van de
    gidscache, zodat een fout hier nooit de stadsgids raakt. */
 const WC_UI_FILE = path.join(DATA_DIR, "worldchat_ui.json");
-const WC_UI_VERSIE = 18;      /* ophogen dwingt alle talen opnieuw te vertalen */
+const WC_UI_VERSIE = 19;      /* ophogen dwingt alle talen opnieuw te vertalen */
 const wcUiKlaar = new Map();
 
 function wcUiLaad(){
