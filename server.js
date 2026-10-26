@@ -5852,10 +5852,113 @@ const WC_UI = {
   drukte: "Too many requests. Wait a moment."
 };
 
+/* Teksten van de nieuwe weergave (worldchat-united/index.html, sleutels met n_). */
+Object.assign(WC_UI, {
+ "n_tag": "Everyone in their own language",
+ "n_kop1": "Chat with anyone,",
+ "n_kop2": "each in their own language.",
+ "n_intro": "Worldchat is a chat where everyone writes and reads in their own language. You type in your language, your friend reads it in theirs, and the other way round.",
+ "n_k1t": "Chat rooms",
+ "n_k1": "You open a room and invite people with a link. Ten people from ten countries can sit in one room, and everyone speaks their own language.",
+ "n_k2t": "Same language: free",
+ "n_k2": "Does everyone in the room chat in the same language, for example Dutch with Dutch? Then it costs nothing.",
+ "n_k3t": "Translation: only the host pays",
+ "n_k3": "If messages need translating, the person who opens the room needs credits or a subscription. Guests in the room never pay.",
+ "n_start": "Open a room",
+ "n_mijn": "My rooms",
+ "n_jijHost": "you opened it",
+ "n_gast": "invited",
+ "n_verwijder": "Delete",
+ "n_weggaan": "Leave",
+ "n_soortVrij": "Same language",
+ "n_soortVrijUit": "Free. No translation, everyone types the same language.",
+ "n_soortVert": "With translation",
+ "n_soortVertUit": "Everyone writes and reads in their own language. Needs credits or a subscription.",
+ "n_naam": "Your name",
+ "n_naamPh": "e.g. Ben",
+ "n_taal": "Your language",
+ "n_kamerNaam": "Name of the room (optional)",
+ "n_kamerNaamPh": "e.g. Family, Work",
+ "n_bewaar": "Keep messages for",
+ "n_bewaar1u": "1 hour",
+ "n_bewaar24": "24 hours",
+ "n_bewaar7": "7 days",
+ "n_bewaar30": "30 days",
+ "n_bewaarAltijd": "Always (Unlimited only)",
+ "n_vrijNoot": "In a free room only the last message stays on screen, and the room closes after 24 hours.",
+ "n_maak": "Open room",
+ "n_loginUit": "For translation you need an account: your e-mail address and a pin code that we send you by e-mail.",
+ "n_mail": "Your e-mail",
+ "n_pinVraag": "Send me a pin code",
+ "n_pin": "Pin code from the e-mail",
+ "n_login": "Log in",
+ "n_pinGestuurd": "Check your mail. Your pin code is on its way. Also look in your spam folder.",
+ "n_ingelogd": "Logged in as %s",
+ "n_uitloggen": "Log out",
+ "n_saldo": "%s credits",
+ "n_unlimited": "Unlimited",
+ "n_kopen": "Buy credits",
+ "n_kopenUit": "One credit is one translated message. Credits never expire. One-off payment, no subscription.",
+ "n_aboKnop": "Unlimited subscription",
+ "n_aboUit": "Unlimited translation in all your rooms, for everyone you invite. Cancel monthly.",
+ "n_betaald": "Payment received. Your pin code is %s. We also sent it to you by e-mail.",
+ "n_creditsNodig": "You have no credits yet. Choose a package to open a room with translation.",
+ "n_terug": "Back",
+ "n_uitnKop": "%s wants to chat with you in your language",
+ "n_uitnKopAnon": "You are invited to a chat in your language",
+ "n_uitnUit": "You write and read in your own language. The other person reads it in theirs. Free for you: no app, no account.",
+ "n_uitnKnop": "Start the chat",
+ "n_delenKop": "Invite someone",
+ "n_delenUit": "Send this link via WhatsApp or any other app. Everyone who opens it joins this room.",
+ "n_kopieer": "Copy link",
+ "n_gekopieerd": "Link copied",
+ "n_delen": "Share",
+ "n_deelTekst": "%s wants to chat with you in your language. Open the link:",
+ "n_klaar": "Done",
+ "n_typ": "Type in your language...",
+ "n_vertaald": "translated",
+ "n_origineel": "show original",
+ "n_vertaling": "show translation",
+ "n_leeg": "No messages yet. Invite someone and say hello.",
+ "n_mensen": "%s people",
+ "n_menuTaal": "Change my language",
+ "n_menuMelding": "Notifications on this phone",
+ "n_menuMeld": "Report this room",
+ "n_menuVerlaat": "Leave room",
+ "n_vrijBalk": "Free room: no translation. Only the last message stays on screen.",
+ "n_creditsOp": "The credits of the host are used up. Messages arrive untranslated.",
+ "n_bezet": "The line is busy right now. Please try again in a few minutes.",
+ "n_ongeldig": "This invitation no longer works. Ask for a new link.",
+ "n_weg": "You are no longer in this room.",
+ "n_naamNodig": "Fill in your name.",
+ "n_mailNodig": "Fill in your e-mail address.",
+ "n_pinNodig": "Fill in the pin code from the e-mail.",
+ "n_fout": "Something went wrong. Please try again.",
+ "n_meldUit": "What is wrong? We do not keep messages, so add a screenshot if you can.",
+ "n_meldVerstuur": "Send report",
+ "n_meldDank": "Thank you. We will look at it.",
+ "n_meldingenAan": "Notifications are on for this room.",
+ "n_meldingenNee": "Notifications do not work in this browser. On an iPhone, add Worldchat to your home screen first and open it from there.",
+ "n_verwijderVraag": "Delete room %s? It closes for everyone and the messages are gone. This cannot be undone.",
+ "n_verlaatVraag": "Leave room %s? It disappears from your list.",
+ "n_reclame": "Advertisement",
+ "n_bijlage": "Add photo or file",
+ "n_teGroot": "This file is too large (max 25 MB).",
+ "n_kamer": "Room %s",
+ "n_host": "host",
+ "n_jij": "you",
+ "n_annuleer": "Cancel",
+ "n_bezig": "One moment...",
+ "n_perDuizend": "per 1,000",
+ "n_versturen": "Send",
+ "n_persoon": "1 person"
+});
+
+
 /* De vertaalde interface per taal. Eigen bestand op de schijf, los van de
    gidscache, zodat een fout hier nooit de stadsgids raakt. */
 const WC_UI_FILE = path.join(DATA_DIR, "worldchat_ui.json");
-const WC_UI_VERSIE = 17;      /* ophogen dwingt alle talen opnieuw te vertalen */
+const WC_UI_VERSIE = 18;      /* ophogen dwingt alle talen opnieuw te vertalen */
 const wcUiKlaar = new Map();
 
 function wcUiLaad(){
@@ -14652,6 +14755,11 @@ async function sitechatDomein(site, req){
     if(host && typeof f === "function") await f(site.rec, host);
   }catch(e){}
 }
+/* Naam waarmee de bezoeker wordt begroet: "Schadevaststelling wil met je chatten in jouw taal". */
+function sitechatVan(c){
+  const room = c && c.code ? rooms.get(c.code) : null;
+  return String((room && (room.naam || room.hostName)) || (c && c.domein) || "").slice(0, 40);
+}
 function sitechatPakketten(){
   return ["wc1000", "wc5000", "wc15000"].filter((k) => CREDIT_PACKAGES[k] && CREDIT_PACKAGES[k].priceId).map((k) => ({ pakket: k, credits: CREDIT_PACKAGES[k].credits, prijs: CREDIT_PACKAGES[k].prijs || "" }));
 }
@@ -14680,7 +14788,7 @@ app.post("/api/sitechat/status", async (req, res) => {
   if(actief){ c = sitechatKamer(site.id, site.rec, pot, req.body && req.body.naam); }
   res.json({
     ok: true, actief, saldo: pot.saldo, email,
-    gastLink: c && c.code && c.uitnodiging ? SITECHAT_URL + "?room=" + c.code + "&key=" + c.uitnodiging : "",
+    gastLink: c && c.code && c.uitnodiging ? SITECHAT_URL + "?room=" + c.code + "&key=" + c.uitnodiging + "&van=" + encodeURIComponent(sitechatVan(c)) : "",
     eigenaarLink: c && c.eigenaar ? SITECHAT_URL + "?host=" + c.eigenaar : "",
     pakketten: sitechatPakketten()
   });
