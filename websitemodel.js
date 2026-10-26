@@ -431,11 +431,48 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
     return { actief: false, reden: "betaling", sinds: offlineOp.toISOString() };
   }
 
+  /* Bestaat een domeinnaam op internet? (A-record of nameservers) */
+  const dnsP = require("dns").promises;
+  async function domeinBestaat(d){
+    for(const f of [() => dnsP.resolve4(d), () => dnsP.resolveNs(d), () => dnsP.resolve6(d)]){
+      try{ const r = await f(); if(r && r.length) return true; }catch(e){}
+    }
+    return false;
+  }
+  /* Op de bestelpagina: waarschuwen bij een tikfout in de domeinnaam, voordat er betaald wordt */
+  app.get("/api/website/domeincheck", async (req, res) => {
+    const d = cleanDomain(req.query.d);
+    if(!d) return res.status(400).json({ error: "Ongeldige domeinnaam." });
+    try{ res.json({ domein: d, bestaat: await domeinBestaat(d) }); }
+    catch(e){ res.json({ domein: d, bestaat: true }); }
+  });
+  /* De website geeft bij de licentiecontrole zijn eigen domeinnaam door. Bestaat de domeinnaam
+     van de bestelling niet (tikfout bij bestellen) en die van de website wel, dan nemen we de
+     echte over. Zo komen mails, links en de dagelijkse taak weer op het goede adres. */
+  async function domeinBijwerken(rec, host){
+    const echt = cleanDomain(host);
+    if(!echt || echt === rec.domein || /^[0-9.]+$/.test(echt) || /(^|\.)onrender\.com$/.test(echt)) return;
+    if(rec.domeinGecheckt === echt) return;
+    rec.domeinGecheckt = echt;
+    if(rec.domein && await domeinBestaat(rec.domein)) { save(); return; }
+    if(!(await domeinBestaat(echt))) { save(); return; }
+    const oud = rec.domein;
+    rec.domeinBijBestelling = rec.domeinBijBestelling || oud;
+    rec.domein = echt;
+    save();
+    console.log("Websitemodel: domeinnaam gecorrigeerd van " + oud + " naar " + echt);
+    try{
+      await sendResendEmail({ to: NOTIFY_EMAIL, subject: "Domeinnaam gecorrigeerd: " + echt,
+        text: "Bij de bestelling stond: " + oud + "\r\nDie bestaat niet. De website meldt zich op: " + echt + "\r\nDe bestelling is aangepast.\r\nKlant: " + (rec.email || "onbekend") + "\r\n" });
+    }catch(e){}
+  }
+
   app.get("/api/website/licentie", async (req, res) => {
     const key = cleanKey(req.query.key);
     if(!key) return res.status(400).json({ error: "Onbekende sleutel." });
     const rec = findByKey(key);
     if(!rec) return res.status(404).json({ error: "Onbekende sleutel." });
+    if(req.query.host) { try{ await domeinBijwerken(rec, String(req.query.host).split(":")[0]); }catch(e){} }
     await vernieuwStatus(rec, String(req.query.vers || "") === "1");
     rec.laatstGezien = new Date().toISOString();
     res.json(licentieAntwoord(rec));
