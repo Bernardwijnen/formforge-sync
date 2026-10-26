@@ -6,8 +6,8 @@
    1. De klant vult op formforge.nl zijn e-mail en domeinnaam in.
       POST /api/website/bestellen maakt een Stripe-betaling (jaarabonnement).
    2. Na betalen komt de klant terug op de pagina met ?sessie=...
-      GET /api/website/status controleert bij Stripe of er echt betaald is.
-   3. De klant vult de FTP-gegevens uit zijn WebReus-mail in.
+      GET /api/webss controleert bij Stripe of er echt betaald is.
+   3. De klant vult de FTP-gegeveite/statuns uit zijn WebReus-mail in.
       POST /api/website/installeren zet de bestanden via FTP op zijn hosting.
       Het FTP-wachtwoord wordt alleen voor deze ene upload gebruikt en
       NOOIT opgeslagen.
@@ -309,6 +309,9 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
     }
     return null;
   }
+  /* Voor de website-chat in server.js: een website herkennen aan zijn licentiesleutel. */
+  app.locals.wmFindByKey = findByKey;
+
   const GOED = ["active", "trialing"];
   async function vernieuwStatus(rec, forceer){
     const nu = Date.now();
