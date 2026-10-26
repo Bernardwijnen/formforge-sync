@@ -5442,6 +5442,8 @@ function wc_post($pad, $data) {
     $key = licentie_key();
     if ($key === '') return null;
     $data['key'] = $key;
+    $hst = preg_replace('/:\d+$/', '', preg_replace('/^www\./', '', strtolower((string)($_SERVER['HTTP_HOST'] ?? ''))));
+    if (preg_match('/^[a-z0-9.\-]+\.[a-z]{2,}$/', $hst)) { $data['host'] = $hst; }
     $url = licentie_server() . $pad;
     $body = json_encode($data);
     if (function_exists('curl_init')) {
