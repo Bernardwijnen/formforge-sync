@@ -5374,7 +5374,8 @@ if (!function_exists('ff_licentie_status')) {
         if (!$vers && isset($c['actief']) && $nu - (int)($c['checked'] ?? 0) < 6 * 3600) return $c;
         if (!$vers && isset($c['actief']) && $nu - (int)($c['tried'] ?? 0) < 900) return $c;
         $server = (isset($lic['server']) && preg_match('#^https://[a-z0-9.\-]+$#i', $lic['server'])) ? $lic['server'] : 'https://formforge-sync-1.onrender.com';
-        $body = ff_http_get($server . '/api/website/licentie?key=' . rawurlencode($lic['key']) . ($vers ? '&vers=1' : ''), 6);
+        $hst = strtolower(preg_replace('/:\d+$/', '', (string)($_SERVER['HTTP_HOST'] ?? '')));
+        $body = ff_http_get($server . '/api/website/licentie?key=' . rawurlencode($lic['key']) . ($vers ? '&vers=1' : '') . (preg_match('/^[a-z0-9.\-]+$/', $hst) ? '&host=' . rawurlencode($hst) : ''), 6);
         $d = $body !== null ? json_decode($body, true) : null;
         if (is_array($d) && isset($d['actief'])) {
             $c = ['actief' => (bool)$d['actief'], 'waarschuwing' => !empty($d['waarschuwing']), 'offlineOp' => (string)($d['offlineOp'] ?? ''), 'reden' => (string)($d['reden'] ?? ''), 'checked' => $nu];
@@ -10519,7 +10520,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-10-25-vers');
+define('SITE_BOUW', '2026-10-26-domein');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
