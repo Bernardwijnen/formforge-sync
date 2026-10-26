@@ -219,9 +219,14 @@ function whatsapp_fab() {
     return '<a class="wafab' . (chat_url() !== '' ? ' hoog' : '') . '" href="' . h($u) . '" target="_blank" rel="noopener" aria-label="Stuur ons een WhatsApp-bericht"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3a9 9 0 0 0-7.8 13.5L3 21l4.6-1.2A9 9 0 1 0 12 3Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 8.5c.3 2.6 2.1 4.9 5 6l1.4-1.3-1.8-1.2-.9.7c-1-.5-1.8-1.3-2.3-2.3l.7-.9-1.2-1.8L9 8.5Z" fill="currentColor"/></svg><span>WhatsApp</span></a>'
          . '<style>.wafab{position:fixed;right:calc(16px + env(safe-area-inset-right,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:51;display:inline-flex;align-items:center;gap:8px;background:#25d366;color:#fff;text-decoration:none;font-weight:700;font-size:15px;line-height:1;padding:12px 18px 12px 14px;border-radius:999px;box-shadow:0 14px 30px -12px rgba(0,0,0,.45);font-family:inherit;} .wafab:hover{filter:brightness(1.06);} .wafab svg{width:24px;height:24px;flex:none;} .chatfab{bottom:calc(76px + env(safe-area-inset-bottom,0px)) !important;} @media (max-width:520px){.wafab span{display:none;} .wafab{padding:14px;} .foot .wrap{padding-bottom:96px;}} @media print{.wafab{display:none;}}</style>';
 }
-function chat_url() {
+function chat_url_eigen() {
     $c = st('chat_url');
     return preg_match('#^https://#i', $c) ? $c : '';
+}
+/* Staat Worldchat aan (betaald), dan gaat de chatknop naar Worldchat. */
+function chat_url() {
+    $w = function_exists('wc_gastlink') ? wc_gastlink() : '';
+    return $w !== '' ? $w : chat_url_eigen();
 }
 /* ===========================================================
    Stijlen (uitstraling van de hele website)
@@ -1837,7 +1842,7 @@ function nap_block() {
 function chat_fab() {
     $c = chat_url();
     if ($c === '') return '';
-    return '<a class="chatfab" href="' . h($c) . '" aria-label="Chat met ' . h(st('naam')) . '"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 4v-4h0A1.5 1.5 0 0 1 4 14.5z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8 8.5h8M8 11.5h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span>Chat met ons</span></a>' . "\n";
+    return '<a class="chatfab" href="' . h($c) . '" aria-label="Chat met ' . h(st('naam')) . '"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 4v-4h0A1.5 1.5 0 0 1 4 14.5z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8 8.5h8M8 11.5h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span>' . (wc_gastlink() !== '' ? 'Chat in uw eigen taal' : 'Chat met ons') . '</span></a>' . "\n";
 }
 function site_footer() {
     $y = date('Y');
@@ -5417,6 +5422,135 @@ function licentie_server() {
 function betaal_link() {
     return licentie_server() . '/api/website/betalen?key=' . rawurlencode(licentie_key());
 }
+/* ===========================================================
+   Worldchat op de website (extra, betaald met creditpakketten)
+   De knop staat vast in het menu. Pas na betaling gaat de chat aan:
+   dan komt er op de website een knop "Chat in uw eigen taal".
+   Zijn de credits op, dan verdwijnt de knop weer (bij de dagelijkse
+   controle of als de eigenaar deze pagina opent).
+   =========================================================== */
+define('WC_FILE', DATA_DIR . '/worldchat.json');
+function wc_info() {
+    $d = read_json(WC_FILE, []);
+    return array_merge(['actief' => false, 'gast' => '', 'eigenaar' => '', 'saldo' => 0, 'pakketten' => [], 'gecontroleerd' => '', 'fout' => ''], is_array($d) ? $d : []);
+}
+function wc_gastlink() {
+    $w = wc_info();
+    return (!empty($w['actief']) && preg_match('#^https://\S+$#i', (string)$w['gast'])) ? (string)$w['gast'] : '';
+}
+function wc_post($pad, $data) {
+    $key = licentie_key();
+    if ($key === '') return null;
+    $data['key'] = $key;
+    $url = licentie_server() . $pad;
+    $body = json_encode($data);
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 20, CURLOPT_POST => true,
+            CURLOPT_HTTPHEADER => ['Content-Type: application/json'], CURLOPT_POSTFIELDS => $body]);
+        $r = curl_exec($ch); curl_close($ch);
+    } else {
+        $r = @file_get_contents($url, false, stream_context_create(['http' => ['method' => 'POST', 'timeout' => 20, 'ignore_errors' => true, 'header' => "Content-Type: application/json\r\n", 'content' => $body]]));
+    }
+    $j = is_string($r) ? json_decode($r, true) : null;
+    return is_array($j) ? $j : null;
+}
+/* Vraag de stand op bij FormForge en zet de knop op de website aan of uit. */
+function wc_status($sessie = '') {
+    $oud = wc_info();
+    $j = wc_post('/api/sitechat/status', ['sessie' => (string)$sessie, 'naam' => st('naam')]);
+    if (!$j || empty($j['ok'])) {
+        $oud['fout'] = $j && !empty($j['error']) ? (string)$j['error'] : 'Geen verbinding met FormForge.';
+        write_json(WC_FILE, $oud);
+        return $oud;
+    }
+    $nieuw = [
+        'actief' => !empty($j['actief']),
+        'gast' => (string)($j['gastLink'] ?? ''),
+        'eigenaar' => (string)($j['eigenaarLink'] ?? ''),
+        'saldo' => (int)($j['saldo'] ?? 0),
+        'pakketten' => is_array($j['pakketten'] ?? null) ? $j['pakketten'] : [],
+        'gecontroleerd' => date('Y-m-d H:i'),
+        'fout' => '',
+    ];
+    write_json(WC_FILE, $nieuw);
+    if ($nieuw['actief'] !== !empty($oud['actief']) || $nieuw['gast'] !== (string)$oud['gast']) {
+        rebuild_site(load_pages());
+    }
+    return $nieuw;
+}
+function wc_acties($action) {
+    $terug = function($t) { $_SESSION['ff_notice'] = $t; header('Location: admin.php?worldchat=1'); exit; };
+    if ($action === 'wc_kopen') {
+        $pk = (string)($_POST['pakket'] ?? '');
+        if (!in_array($pk, ['wc1000', 'wc5000', 'wc15000'], true)) $terug('Kies een pakket.');
+        $j = wc_post('/api/sitechat/kopen', ['pakket' => $pk]);
+        if ($j && !empty($j['ok']) && preg_match('#^https://checkout\.stripe\.com/#', (string)($j['url'] ?? ''))) {
+            header('Location: ' . $j['url']); exit;
+        }
+        $terug('Betalen starten lukte niet' . ($j && !empty($j['error']) ? ': ' . $j['error'] : '. Probeer het later opnieuw.'));
+    }
+    if ($action === 'wc_vernieuw') {
+        $w = wc_status();
+        $terug($w['fout'] !== '' ? 'Controleren lukte niet: ' . $w['fout'] : 'Bijgewerkt.');
+    }
+}
+function wc_beheer_view() {
+    $demo = !empty($GLOBALS['is_demo']);
+    if (isset($_GET['geannuleerd'])) { echo '<div class="ok">De betaling is afgebroken. Er is niets afgeschreven.</div>'; }
+    $w = $demo ? ['actief' => false, 'gast' => '', 'eigenaar' => '', 'saldo' => 0, 'pakketten' => [], 'gecontroleerd' => '', 'fout' => ''] : wc_status();
+    $pak = $w['pakketten'] ?: [['pakket' => 'wc1000', 'credits' => 1000, 'prijs' => '9,95'], ['pakket' => 'wc5000', 'credits' => 5000, 'prijs' => '14,95'], ['pakket' => 'wc15000', 'credits' => 15000, 'prijs' => '34,95']];
+    ?>
+    <style>
+      .wcst{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#f7f9fc;border:1px solid #dfe4ec;border-radius:14px;padding:14px 16px;margin:0 0 18px;}
+      .wcst .lab{font-size:13px;font-weight:700;padding:3px 10px;border-radius:999px;}
+      .wcst .lab.aan{background:#e7f6ec;color:#157347;} .wcst .lab.uit{background:#eef1f6;color:#5b6577;}
+      .wcpak{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:12px 0 6px;}
+      .wcpak form{margin:0;} .wcpak button{width:100%;text-align:left;background:#fff;border:1px solid #dfe4ec;border-radius:14px;padding:16px;cursor:pointer;font:inherit;color:inherit;}
+      .wcpak button:hover{border-color:#1d4ed8;} .wcpak b{display:block;font-size:20px;} .wcpak span{color:#5b6577;font-size:14px;}
+      .wcuitleg li{margin:4px 0;}
+    </style>
+    <h1>Worldchat</h1>
+    <p class="sub">Een chat op je website waarin je bezoeker in zijn eigen taal schrijft en jij alles in het Nederlands leest. Jij antwoordt in het Nederlands, de bezoeker leest het in zijn taal. Dertig talen.</p>
+    <?php if ($demo): ?><div class="ok">In de demo staat Worldchat uit. Met je eigen website zet je het hier aan met een creditpakket.</div><?php endif; ?>
+    <div class="wcst">
+      <?php if (!empty($w['actief'])): ?>
+        <span class="lab aan">Aan</span>
+        <span><?= (int)$w['saldo'] === -1 ? 'Onbeperkt vertalen' : 'Nog <strong>' . number_format((int)$w['saldo'], 0, ',', '.') . '</strong> credits' ?></span>
+      <?php else: ?>
+        <span class="lab uit">Uit</span><span>Er staat geen chatknop op je website. Kies hieronder een pakket om Worldchat aan te zetten.</span>
+      <?php endif; ?>
+    </div>
+    <?php if ($w['fout'] !== ''): ?><div class="err">Controleren lukte niet: <?= h($w['fout']) ?></div><?php endif; ?>
+    <?php if (!empty($w['actief']) && $w['eigenaar'] !== ''): ?>
+      <p><a class="btn" href="<?= h($w['eigenaar']) ?>" target="_blank" rel="noopener">Open je chat</a></p>
+      <p class="hint">Bewaar deze knop als bladwijzer of zet hem op het beginscherm van je telefoon. Schrijft een bezoeker iets, dan krijg je ook een mail (hoogstens eens per kwartier).</p>
+    <?php endif; ?>
+    <h2><?= !empty($w['actief']) ? 'Credits bijkopen' : 'Worldchat aanzetten' ?></h2>
+    <p>Een credit is een vertaald bericht. Credits verlopen niet. Eenmalig betalen, geen abonnement.</p>
+    <div class="wcpak">
+      <?php foreach ($pak as $p): ?>
+        <form method="post" action="admin.php"><input type="hidden" name="action" value="wc_kopen" /><input type="hidden" name="pakket" value="<?= h($p['pakket']) ?>" />
+          <button type="submit"<?= $demo ? ' disabled' : '' ?>><b><?= number_format((int)$p['credits'], 0, ',', '.') ?> credits</b><span>&euro; <?= h($p['prijs']) ?> eenmalig</span></button>
+        </form>
+      <?php endforeach; ?>
+    </div>
+    <h2>Zo werkt het</h2>
+    <ul class="wcuitleg">
+      <li>Na betaling staat er rechtsonder op elke pagina van je website een knop <strong>Chat in uw eigen taal</strong>.</li>
+      <li>De bezoeker kiest zijn taal, vult zijn naam in en typt. Geen app, geen account.</li>
+      <li>Jij antwoordt via <strong>Open je chat</strong>, op je telefoon of computer.</li>
+      <li>Schrijven jij en de bezoeker dezelfde taal, dan gaat er geen credit af.</li>
+      <li>Er chat een bezoeker tegelijk. Is de lijn bezet, dan ziet de volgende bezoeker dat en probeert hij het na een paar minuten opnieuw.</li>
+      <li>Elke nieuwe bezoeker begint met een leeg gesprek en ziet niets van de vorige. Het eerste bericht krijg je ook per mail, zodat je niets mist.</li>
+      <li>Zijn je credits op, dan verdwijnt de knop van je website tot je bijkoopt. Je hoeft niets op te zeggen.</li>
+      <?php if (chat_url_eigen() !== ''): ?><li>Zolang Worldchat aan staat, gebruikt de chatknop Worldchat in plaats van de chatlink uit Instellingen.</li><?php endif; ?>
+    </ul>
+    <?php if (!$demo): ?>
+    <form method="post" action="admin.php" style="margin-top:14px"><input type="hidden" name="action" value="wc_vernieuw" /><button class="btn ghost sm" type="submit">Stand opnieuw controleren</button><?php if ($w['gecontroleerd'] !== ''): ?> <span class="hint">Laatst gecontroleerd: <?= h($w['gecontroleerd']) ?></span><?php endif; ?></form>
+    <?php endif; ?>
+    <?php
+}
 function nl_datum($iso) {
     $t = strtotime((string)$iso);
     if (!$t) return '';
@@ -8788,7 +8922,9 @@ function adm_taak_draai($bron = '') {
     $m = adm_mailinst();
     if ($m['host'] !== '' && $m['pass'] !== '' && $m['afzenders']) { $melding = ''; adm_mail_ophalen($melding, 25); $log[] = 'Mail: ' . $melding; }
     if ($m['host'] !== '' && $m['pass'] !== '') { $log[] = 'Teruggekomen mail: ' . adm_ml_controleer(); }
-    /* 4. oude pakketten opruimen */
+    /* 4. Worldchat: knop op de website aan of uit naar gelang de credits */
+    if (licentie_key() !== '') { $wc = wc_status(); $log[] = 'Worldchat: ' . ($wc['fout'] !== '' ? $wc['fout'] : (!empty($wc['actief']) ? 'aan' : 'uit')); }
+    /* 5. oude pakketten opruimen */
     $ts = adm_taak_staat();
     foreach ($ts['pakketten'] as $tok => $pk) { if (($pk['verloopt'] ?? '') < date('Y-m-d H:i')) { @unlink(ADM_PAKKET_DIR . '/' . $tok . '.zip'); unset($ts['pakketten'][$tok]); } }
     $ts['laatst'] = date('Y-m-d H:i');
@@ -10254,7 +10390,7 @@ function venturo_html() {
 <div class="vt-v"><h5>Hoe kom ik in mijn beheerpagina?</h5><p>Typ je domeinnaam met /admin.php erachter, bijvoorbeeld bakkerijjansen.nl/admin.php. Of klik helemaal onderaan je website op Website beheren. Log in met je e-mailadres en wachtwoord.</p></div>
 <div class="vt-v"><h5>Ik ben mijn wachtwoord vergeten.</h5><p>Klik op het inlogscherm op Wachtwoord vergeten. Vul je e-mailadres in, dan krijg je een mail met een link om een nieuw wachtwoord te kiezen. De link werkt 1 uur. Kijk ook in je map met ongewenste mail.</p></div>
 <div class="vt-v"><h5>Hoe verander ik mijn wachtwoord of inlog-e-mailadres?</h5><p>Klik links in het menu op Inloggegevens. Vul je nieuwe e-mailadres of wachtwoord in (minimaal 10 tekens), vul ter controle je huidige wachtwoord in en klik op Opslaan.</p></div>
-<div class="vt-v"><h5>Wat staat er in het menu links?</h5><p>Je website: Instellingen, Projecten, Aanbod, Menukaart, Versies en Beoordelingen. Klanten en geld: Berichten, Afspraakplanner en Administratie. Account: Inloggegevens, Website bekijken en Uitloggen. Op je telefoon open je het menu met de knop linksboven.</p></div>
+<div class="vt-v"><h5>Wat staat er in het menu links?</h5><p>Je website: Instellingen, Projecten, Aanbod, Menukaart, Versies en Beoordelingen. Klanten en geld: Berichten, Afspraakplanner, Worldchat en Administratie. Account: Inloggegevens, Website bekijken en Uitloggen. Op je telefoon open je het menu met de knop linksboven.</p></div>
 <div class="vt-v"><h5>Wat zie ik op de startpagina?</h5><p>Een overzicht: wat je nog moet doen, nieuwe afspraken, nieuwe beoordelingen, te laat betaalde facturen, en knoppen voor + Factuur, + Offerte en + Nieuw project.</p></div>
 <div class="vt-v"><h5>Wat betekent "Nog te doen" op de startpagina?</h5><p>Dingen die nog ontbreken, bijvoorbeeld je bedrijfsnaam als die nog op de voorbeeldtekst staat, je e-mailadres, of je IBAN en btw-nummer voor je facturen. Klik erop, dan ga je meteen naar de goede plek.</p></div>
 <div class="vt-v"><h5>Wat betekenen de vraagtekens naast de velden?</h5><p>Klik op een vraagteken, dan zie je uitleg over dat veld. Klik nog een keer om het te sluiten.</p></div>
@@ -10366,8 +10502,16 @@ function venturo_html() {
 </div>
 <div class="vt-o"><h4>Extra</h4>
 <div class="vt-v"><h5>Hoe kom ik beter in Google?</h5><p>Vul je plaats, werkgebied en diensten goed in, met een eigen tekst per dienst. In Instellingen bij Extra kun je ook een eigen titel en omschrijving voor Google invullen. Leeg laten is prima, dan maken we die zelf. Een plek in Google kunnen we niet garanderen.</p></div>
-<div class="vt-v"><h5>Hoe zet ik een chatknop op mijn website?</h5><p>Zet de link van je chat in Instellingen bij Extra, bij Chatlink. Er komt dan rechtsonder een chatknop op elke pagina.</p></div>
+<div class="vt-v"><h5>Hoe zet ik een chatknop op mijn website?</h5><p>Zet de link van je chat in Instellingen bij Extra, bij Chatlink. Er komt dan rechtsonder een chatknop op elke pagina. Wil je een chat waarin je bezoeker in zijn eigen taal schrijft? Kijk dan links bij Worldchat.</p></div>
 <div class="vt-v"><h5>Hoe zeg ik mijn website op?</h5><p>Mail ons via info@formforge.nl. Opzeggen kan altijd. Je website blijft werken tot het einde van de periode die je al hebt betaald.</p></div>
+</div>
+<div class="vt-o"><h4>Worldchat</h4>
+<div class="vt-v"><h5>Wat is Worldchat?</h5><p>Een chat op je website in dertig talen. Je bezoeker schrijft in zijn eigen taal en jij leest alles in het Nederlands. Jij antwoordt in het Nederlands en de bezoeker leest het in zijn taal.</p></div>
+<div class="vt-v"><h5>Hoe zet ik Worldchat aan?</h5><p>Klik links op Worldchat en kies een pakket. Je betaalt bij Stripe en komt daarna vanzelf terug in je beheerpagina. Worldchat staat dan aan en rechtsonder op elke pagina van je website staat de knop Chat in uw eigen taal.</p></div>
+<div class="vt-v"><h5>Wat kost Worldchat?</h5><p>Je betaalt eenmalig voor credits: 1.000 credits voor 9,95 euro, 5.000 voor 14,95 euro of 15.000 voor 34,95 euro, inclusief btw. Een credit is een vertaald bericht. Schrijven jij en je bezoeker dezelfde taal, dan gaat er niets af. Credits verlopen niet en er is geen abonnement.</p></div>
+<div class="vt-v"><h5>Hoe antwoord ik een bezoeker?</h5><p>Klik bij Worldchat op Open je chat. Bewaar die pagina als bladwijzer of zet hem op het beginscherm van je telefoon. Schrijft een bezoeker iets, dan krijg je ook een mail met een link naar je chat.</p></div>
+<div class="vt-v"><h5>Een bezoeker ziet dat de lijn bezet is. Hoe kan dat?</h5><p>Er chat een bezoeker tegelijk. Zolang die in gesprek is, en nog een paar minuten daarna, ziet de volgende bezoeker dat de lijn bezet is. Hij kan het daarna opnieuw proberen. Elke nieuwe bezoeker begint met een leeg gesprek en ziet niets van de vorige.</p></div>
+<div class="vt-v"><h5>Wat gebeurt er als mijn credits op zijn?</h5><p>Dan verdwijnt de chatknop van je website. Je hoeft niets op te zeggen. Koop je bij, dan staat de knop er weer. Bij Worldchat zie je altijd hoeveel credits je nog hebt.</p></div>
 </div>
 </div>
 <div class="vt-g" data-param="adm"><h3>Administratie</h3>
@@ -10520,7 +10664,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-10-26-domein');
+define('SITE_BOUW', '2026-10-26-worldchat');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -10579,6 +10723,7 @@ if ($logged_in && isset($_POST['action'])) {
     if (strpos($action, 'ab_') === 0) { ab_acties($action); }
     if (strpos($action, 'mk_') === 0) { mk_acties($action); }
     if (strpos($action, 'bd_') === 0) { bd_acties($action); }
+    if (strpos($action, 'wc_') === 0) { wc_acties($action); }
 
     if ($action === 'save') {
         $title = trim($_POST['title'] ?? '');
@@ -10955,7 +11100,14 @@ $showMk = $logged_in && isset($_GET['menukaart']);
 $showProj = $logged_in && isset($_GET['projecten']);
 $showBer = $logged_in && isset($_GET['berichten']);
 $showVer = $logged_in && isset($_GET['versies']);
-$showStart = $logged_in && !$showForm && !$showAccount && !$showSettings && !$showAdm && !$showRes && !$showAb && !$showBd && !$showMk && !$showProj && !$showBer && !$showVer;
+$showWc = $logged_in && isset($_GET['worldchat']);
+/* Terug van de betaalpagina: betaling direct bijboeken en de chatknop aanzetten. */
+if ($showWc && empty($is_demo) && isset($_GET['sessie']) && preg_match('/^cs_[A-Za-z0-9_]+$/', (string)$_GET['sessie'])) {
+    $wcNa = wc_status((string)$_GET['sessie']);
+    $_SESSION['ff_notice'] = !empty($wcNa['actief']) ? 'Betaling ontvangen. Worldchat staat aan op je website.' : 'Je betaling is nog niet verwerkt. Ververs deze pagina over een minuut.';
+    header('Location: admin.php?worldchat=1'); exit;
+}
+$showStart = $logged_in && !$showForm && !$showAccount && !$showSettings && !$showAdm && !$showRes && !$showAb && !$showBd && !$showMk && !$showProj && !$showBer && !$showVer && !$showWc;
 $uploadLimit = ini_get('upload_max_filesize');
 $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (string)($_SERVER['HTTP_HOST'] ?? '')));
 ?>
@@ -11223,6 +11375,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
       <div class="sg">Klanten en geld</div>
       <?= $mi('admin.php?berichten=1', 'Berichten', $showBer, '<path d="M4 6h16v10H8l-4 3z"/>') ?>
       <?= $mi('admin.php?reserveren=1', 'Afspraakplanner', $showRes, '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>', $nRes) ?>
+      <?= $mi('admin.php?worldchat=1', 'Worldchat', $showWc, '<circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c2.5 2.2 3.5 5 3.5 8s-1 5.8-3.5 8c-2.5-2.2-3.5-5-3.5-8s1-5.8 3.5-8z"/>') ?>
       <?= $mi('admin.php?adm', 'Administratie', $showAdm, '<path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4M10 12h5M10 16h5"/>') ?>
       <div class="sg">Account</div>
       <?= $mi('admin.php?account=1', 'Inloggegevens', $showAccount, '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>') ?>
@@ -11262,6 +11415,9 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
 
       <?php elseif ($showBd): ?>
         <?php bd_beheer_view(); ?>
+
+      <?php elseif ($showWc): ?>
+        <?php wc_beheer_view(); ?>
 
       <?php elseif ($showMk): ?>
         <?php mk_beheer_view(); ?>
