@@ -6,8 +6,8 @@
    1. De klant vult op formforge.nl zijn e-mail en domeinnaam in.
       POST /api/website/bestellen maakt een Stripe-betaling (jaarabonnement).
    2. Na betalen komt de klant terug op de pagina met ?sessie=...
-      GET /api/webss controleert bij Stripe of er echt betaald is.
-   3. De klant vult de FTP-gegeveite/statuns uit zijn WebReus-mail in.
+      GET /api/website/status controleert bij Stripe of er echt betaald is.
+   3. De klant vult de FTP-gegevens uit zijn WebReus-mail in.
       POST /api/website/installeren zet de bestanden via FTP op zijn hosting.
       Het FTP-wachtwoord wordt alleen voor deze ene upload gebruikt en
       NOOIT opgeslagen.
@@ -311,6 +311,7 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
   }
   /* Voor de website-chat in server.js: een website herkennen aan zijn licentiesleutel. */
   app.locals.wmFindByKey = findByKey;
+  app.locals.wmDomeinBijwerken = (rec, host) => domeinBijwerken(rec, host);
 
   const GOED = ["active", "trialing"];
   async function vernieuwStatus(rec, forceer){
@@ -455,8 +456,11 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
   async function domeinBijwerken(rec, host){
     const echt = cleanDomain(host);
     if(!echt || echt === rec.domein || /^[0-9.]+$/.test(echt) || /(^|\.)onrender\.com$/.test(echt)) return;
-    if(rec.domeinGecheckt === echt) return;
+    /* Hoogstens eens per uur opnieuw proberen (een nieuw domein kan nog niet
+       overal bekend zijn op het moment van de eerste controle). */
+    if(rec.domeinGecheckt === echt && Date.now() - (rec.domeinGecheckOp || 0) < 60 * 60 * 1000) return;
     rec.domeinGecheckt = echt;
+    rec.domeinGecheckOp = Date.now();
     if(rec.domein && await domeinBestaat(rec.domein)) { save(); return; }
     if(!(await domeinBestaat(echt))) { save(); return; }
     const oud = rec.domein;
