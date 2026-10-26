@@ -5510,7 +5510,8 @@ function wc_beheer_view() {
       .wcpak{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:12px 0 6px;}
       .wcpak form{margin:0;} .wcpak button{width:100%;text-align:left;background:#fff;border:1px solid #dfe4ec;border-radius:14px;padding:16px;cursor:pointer;font:inherit;color:inherit;}
       .wcpak button:hover{border-color:#1d4ed8;} .wcpak b{display:block;font-size:20px;} .wcpak span{color:#5b6577;font-size:14px;}
-      .wcuitleg li{margin:4px 0;}
+      .wcuitleg li{margin:6px 0;}
+      .wcstap{padding-left:22px;margin:8px 0 18px;} .wcstap li{margin:0 0 10px;}
     </style>
     <h1>Worldchat</h1>
     <p class="sub">Een chat op je website waarin je bezoeker in zijn eigen taal schrijft en jij alles in het Nederlands leest. Jij antwoordt in het Nederlands, de bezoeker leest het in zijn taal. Dertig talen.</p>
@@ -5537,17 +5538,29 @@ function wc_beheer_view() {
         </form>
       <?php endforeach; ?>
     </div>
-    <h2>Zo werkt het</h2>
+    <h2>Zo werkt Worldchat op je website</h2>
+    <ol class="wcstap">
+      <li><b>Je bezoeker klikt op de knop.</b> Rechtsonder op elke pagina van je website staat <strong>Chat in uw eigen taal</strong>. Je bezoeker ziet dan &quot;<?= h(st('naam') !== '' ? st('naam') : 'Je bedrijf') ?> wil met je chatten in jouw taal&quot;, vult zijn naam in en kiest zijn taal. Zijn telefoon stelt die taal meestal al goed in. Geen app, geen account, gratis voor hem.</li>
+      <li><b>Jij krijgt een mail.</b> Zodra de bezoeker iets schrijft, krijg je een mail met zijn bericht en een knop om te antwoorden. Hoogstens eens per kwartier, zodat je niet wordt overspoeld.</li>
+      <li><b>Jij antwoordt in het Nederlands.</b> Klik op <strong>Open je chat</strong> (hierboven of in de mail). Je leest alles in het Nederlands en typt in het Nederlands. Je bezoeker leest het in zijn eigen taal.</li>
+    </ol>
+    <h3>Tips</h3>
     <ul class="wcuitleg">
-      <li>Na betaling staat er rechtsonder op elke pagina van je website een knop <strong>Chat in uw eigen taal</strong>.</li>
-      <li>De bezoeker kiest zijn taal, vult zijn naam in en typt. Geen app, geen account.</li>
-      <li>Jij antwoordt via <strong>Open je chat</strong>, op je telefoon of computer.</li>
-      <li>Schrijven jij en de bezoeker dezelfde taal, dan gaat er geen credit af.</li>
-      <li>Er chat een bezoeker tegelijk. Is de lijn bezet, dan ziet de volgende bezoeker dat en probeert hij het na een paar minuten opnieuw.</li>
-      <li>Elke nieuwe bezoeker begint met een leeg gesprek en ziet niets van de vorige. Het eerste bericht krijg je ook per mail, zodat je niets mist.</li>
-      <li>Zijn je credits op, dan verdwijnt de knop van je website tot je bijkoopt. Je hoeft niets op te zeggen.</li>
+      <li><b>Zet je chat op je telefoon.</b> Open <strong>Open je chat</strong> op je telefoon en zet de pagina op je beginscherm (iPhone: deelknop, Zet op beginscherm. Android: drie puntjes, Toevoegen aan startscherm). Dan heb je hem altijd bij de hand.</li>
+      <li><b>Meldingen aanzetten.</b> Open je chat vanaf je beginscherm, tik rechtsboven op de drie puntjes en kies <strong>Meldingen op deze telefoon</strong>. Dan krijg je een melding als er een bericht binnenkomt, ook als de chat dicht is.</li>
+      <li><b>Wil je een bericht in de oorspronkelijke taal zien?</b> Tik onder het bericht op <strong>origineel tonen</strong>.</li>
+    </ul>
+    <h3>Goed om te weten</h3>
+    <ul class="wcuitleg">
+      <li><b>Een bezoeker tegelijk.</b> Is iemand in gesprek, dan ziet de volgende bezoeker dat de lijn bezet is. Hij kan het na een paar minuten opnieuw proberen.</li>
+      <li><b>Elke bezoeker begint met een leeg gesprek.</b> Hij ziet niets van de vorige bezoeker. Het eerste bericht staat ook in je mail, zodat je niets kwijtraakt.</li>
+      <li><b>Credits.</b> Een credit is een vertaald bericht. Schrijven jij en je bezoeker dezelfde taal, dan gaat er niets af. Credits verlopen niet.</li>
+      <li><b>Credits op?</b> Dan verdwijnt de knop van je website tot je bijkoopt. Je hoeft niets op te zeggen.</li>
+      <li><b>Gebruik je Worldchat zelf al</b> met hetzelfde e-mailadres als je website? Dan gebruikt de website-chat dat saldo, of je Unlimited-abonnement.</li>
+      <li><b>Berichten bewaren wij niet op schijf.</b> Ze staan alleen in het geheugen van de server en kunnen bij onderhoud verdwijnen.</li>
       <?php if (chat_url_eigen() !== ''): ?><li>Zolang Worldchat aan staat, gebruikt de chatknop Worldchat in plaats van de chatlink uit Instellingen.</li><?php endif; ?>
     </ul>
+    <p class="hint">Alles over Worldchat lees je op <a href="https://formforge.nl/worldchat-united/uitleg/" target="_blank" rel="noopener">formforge.nl/worldchat-united/uitleg</a>.</p>
     <?php if (!$demo): ?>
     <form method="post" action="admin.php" style="margin-top:14px"><input type="hidden" name="action" value="wc_vernieuw" /><button class="btn ghost sm" type="submit">Stand opnieuw controleren</button><?php if ($w['gecontroleerd'] !== ''): ?> <span class="hint">Laatst gecontroleerd: <?= h($w['gecontroleerd']) ?></span><?php endif; ?></form>
     <?php endif; ?>
