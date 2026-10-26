@@ -14642,6 +14642,16 @@ function sitechatKamer(id, rec, pot, naam){
   sitechatBewaar();
   return c;
 }
+/* De beheerpagina geeft zijn eigen domeinnaam mee. Was die bij de bestelling
+   verkeerd getypt, dan corrigeert websitemodel.js de bestelling (zelfde controle
+   als bij de licentie), zodat mails en de terugkeer na betalen kloppen. */
+async function sitechatDomein(site, req){
+  try{
+    const host = String((req.body && req.body.host) || "").trim().toLowerCase();
+    const f = app.locals && app.locals.wmDomeinBijwerken;
+    if(host && typeof f === "function") await f(site.rec, host);
+  }catch(e){}
+}
 function sitechatPakketten(){
   return ["wc1000", "wc5000", "wc15000"].filter((k) => CREDIT_PACKAGES[k] && CREDIT_PACKAGES[k].priceId).map((k) => ({ pakket: k, credits: CREDIT_PACKAGES[k].credits, prijs: CREDIT_PACKAGES[k].prijs || "" }));
 }
@@ -14652,6 +14662,7 @@ app.post("/api/sitechat/status", async (req, res) => {
   res.set("Cache-Control", "no-store");
   const site = sitechatSite(req.body && req.body.key);
   if(!site) return jsonError(res, 404, "Onbekende website.");
+  await sitechatDomein(site, req);
   const email = normalizePremiumKey(site.rec.email);
   const sessie = String((req.body && req.body.sessie) || "").trim();
   if(/^cs_[A-Za-z0-9_]+$/.test(sessie)){
@@ -14682,6 +14693,7 @@ app.post("/api/sitechat/kopen", async (req, res) => {
     if(!STRIPE_SECRET_KEY) return jsonError(res, 500, "Stripe is niet ingesteld op de server.");
     const site = sitechatSite(req.body && req.body.key);
     if(!site) return jsonError(res, 404, "Onbekende website.");
+    await sitechatDomein(site, req);
     const pk = String((req.body && req.body.pakket) || "");
     const pkg = ["wc1000", "wc5000", "wc15000"].indexOf(pk) >= 0 ? CREDIT_PACKAGES[pk] : null;
     if(!pkg || !pkg.priceId) return jsonError(res, 400, "Kies een pakket.");
