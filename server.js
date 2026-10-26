@@ -7091,7 +7091,9 @@ const DIRECTE_LIJN_ACTIEF_MS = 60 * 1000;
 const DIRECTE_LIJN_WACHT_MS = 5 * 60 * 1000;
 const DIRECTE_LIJN_BEZET = "De lijn is op dit moment bezet. Probeer het over een paar minuten opnieuw. / The line is busy right now. Please try again in a few minutes.";
 
-function isDirecteLijn(code){ return DIRECTE_LIJN_CODES.has(String(code || "").trim()); }
+/* Kamers van de website-chat (FormForge-websites) zijn ook een directe lijn. */
+const SITECHAT_CODES = new Set();
+function isDirecteLijn(code){ const c = String(code || "").trim(); return DIRECTE_LIJN_CODES.has(c) || SITECHAT_CODES.has(c); }
 
 /* Haalt gasten die al een tijd niets meer van zich lieten horen uit de kamer
    en geeft terug hoeveel gasten er nog echt aanwezig zijn. */
@@ -11400,6 +11402,7 @@ app.post("/api/room/send", (req, res) => {
   };
   room.messages.push(msg);
   if(room.freeMode) pruneRoom(room);   /* gratis: alleen de laatste regel blijft */
+  sitechatMeld(room, member, text);
 
   // Stuur een pushmelding naar alle ANDERE leden van de kamer
   notifyRoom(code, member.id, {
@@ -14575,6 +14578,149 @@ try{
   console.log("Tolk geladen uit tolk.js.");
 }catch(err){
   console.error("Tolk laden mislukt (tolk.js):", (err && err.message) || err);
+}
+
+/* ==========================================================================
+   WEBSITE-CHAT: Worldchat op een FormForge-website
+   --------------------------------------------------------------------------
+   De eigenaar van een website voor 1 euro per maand zet in zijn beheerpagina
+   Worldchat aan door een creditpakket te kopen (dezelfde pakketten als
+   Worldchat: wc1000, wc5000, wc15000). Zolang er credits zijn, heeft zijn
+   website een eigen directe lijn (een gast tegelijk). Elk vertaald bericht
+   kost 1 credit, net als in Worldchat zelf.
+   De website herkent zich met zijn licentiesleutel (data/licentie.json).
+   Instelling (optioneel): SITECHAT_URL = adres van de Worldchat-pagina.
+   ========================================================================== */
+const SITECHAT_URL = String(process.env.SITECHAT_URL || "https://formforge.nl/worldchat-united/").trim().replace(/\/?$/, "/");
+const SITECHAT_FILE = path.join(DATA_DIR, "sitechat.json");
+let sitechats = {};
+try{ if(fs.existsSync(SITECHAT_FILE)) sitechats = JSON.parse(fs.readFileSync(SITECHAT_FILE, "utf8")) || {}; }catch(e){ console.error("Website-chat lezen mislukt:", e.message || e); sitechats = {}; }
+Object.values(sitechats).forEach((c) => { if(c && c.code) SITECHAT_CODES.add(String(c.code)); });
+function sitechatBewaar(){ try{ safeWriteFileSync(SITECHAT_FILE, JSON.stringify(sitechats, null, 2)); }catch(e){ console.error("Website-chat opslaan mislukt:", e.message || e); } }
+function sitechatSite(key){
+  const k = String(key || "").trim();
+  if(!/^[a-f0-9]{48}$/.test(k)) return null;
+  const f = app.locals && app.locals.wmFindByKey;
+  const rec = typeof f === "function" ? f(k) : null;
+  if(!rec || !rec.email) return null;
+  return { rec, id: crypto.createHash("sha256").update(k + "|sitechat").digest("hex").slice(0, 32) };
+}
+/* Welke creditpot hoort bij dit e-mailadres (gewoon of eigenaar-account)? */
+function sitechatPot(email){
+  const e = normalizePremiumKey(email);
+  const a = wcSaldo(e), b = wcSaldo("formforge:" + e);
+  if(a === -1 || b === -1) return { key: a === -1 ? e : "formforge:" + e, saldo: -1 };
+  return a >= b ? { key: e, saldo: a } : { key: "formforge:" + e, saldo: b };
+}
+/* Zorg dat de website een eigen kamer, gastlink en eigenaarslink heeft. */
+function sitechatKamer(id, rec, pot, naam){
+  let c = sitechats[id];
+  let room = c && c.code ? rooms.get(c.code) : null;
+  const domein = String(rec.domein || "");
+  const zaak = String(naam || domein || "Website").trim().slice(0, 40) || "Website";
+  if(!room){
+    const code = makeRoomCode();
+    room = { naam: zaak, code, createdAt: Date.now(), lastActive: Date.now(), members: new Map(), messages: [], translationsToday: 0, translationDay: roomToday(), hostName: zaak, hostLang: "nl", hostKey: pot.key, hostEmail: normalizePremiumKey(rec.email), banned: new Set(), banAt: new Map(), persistent: true, freeMode: false, roomLang: "", msgTtlMs: 30 * 24 * 60 * 60 * 1000, makerIp: "" };
+    rooms.set(code, room); saveRooms();
+    c = { code, domein, email: normalizePremiumKey(rec.email), aangemaakt: new Date().toISOString() };
+    sitechats[id] = c; SITECHAT_CODES.add(code);
+  }
+  /* creditpot en naam bijhouden */
+  if(room.hostKey !== pot.key){ room.hostKey = pot.key; saveRooms(); }
+  if(zaak && room.hostName !== zaak){ room.hostName = zaak; room.naam = zaak; saveRooms(); }
+  const inv = c.uitnodiging ? roomInvites.get(c.uitnodiging) : null;
+  if(!inv || inv.code !== c.code || inv.expiresAt <= Date.now()){
+    const token = makeInviteToken();
+    roomInvites.set(token, { code: c.code, maxUses: INVITE_MAX_USES_CAP, uses: 0, expiresAt: Date.now() + INVITE_MAX_TTL_MS, kind: "company" });
+    saveInvites(); c.uitnodiging = token;
+  }
+  const rc = c.eigenaar ? reconnectTokens.get(c.eigenaar) : null;
+  if(!rc || rc.code !== c.code || rc.expiresAt <= Date.now() + 30 * 24 * 60 * 60 * 1000){
+    c.eigenaar = issueReconnectToken(c.code, zaak, "nl", true);
+  }
+  c.domein = domein;
+  sitechatBewaar();
+  return c;
+}
+function sitechatPakketten(){
+  return ["wc1000", "wc5000", "wc15000"].filter((k) => CREDIT_PACKAGES[k] && CREDIT_PACKAGES[k].priceId).map((k) => ({ pakket: k, credits: CREDIT_PACKAGES[k].credits, prijs: CREDIT_PACKAGES[k].prijs || "" }));
+}
+
+/* Status voor de beheerpagina. Na een betaling geeft de beheerpagina de
+   Stripe-sessie mee; die boeken we dan direct bij (dubbel kan niet). */
+app.post("/api/sitechat/status", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const site = sitechatSite(req.body && req.body.key);
+  if(!site) return jsonError(res, 404, "Onbekende website.");
+  const email = normalizePremiumKey(site.rec.email);
+  const sessie = String((req.body && req.body.sessie) || "").trim();
+  if(/^cs_[A-Za-z0-9_]+$/.test(sessie)){
+    try{
+      const s = await callStripeGet("/checkout/sessions/" + encodeURIComponent(sessie));
+      const md = (s && s.metadata) || {};
+      if(md.bron === "sitechat" && md.siteId === site.id && (s.payment_status === "paid" || s.status === "complete")){
+        addCreditsToAccount(email, Number(md.credits || 0), "sitechat.confirm", s.id);
+      }
+    }catch(e){ console.warn("Website-chat: betaling controleren mislukt:", e.message || e); }
+  }
+  const pot = sitechatPot(email);
+  const actief = pot.saldo === -1 || pot.saldo > 0;
+  let c = sitechats[site.id] || null;
+  if(actief){ c = sitechatKamer(site.id, site.rec, pot, req.body && req.body.naam); }
+  res.json({
+    ok: true, actief, saldo: pot.saldo, email,
+    gastLink: c && c.code && c.uitnodiging ? SITECHAT_URL + "?room=" + c.code + "&key=" + c.uitnodiging : "",
+    eigenaarLink: c && c.eigenaar ? SITECHAT_URL + "?host=" + c.eigenaar : "",
+    pakketten: sitechatPakketten()
+  });
+});
+
+/* Credits kopen vanuit de beheerpagina. */
+app.post("/api/sitechat/kopen", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try{
+    if(!STRIPE_SECRET_KEY) return jsonError(res, 500, "Stripe is niet ingesteld op de server.");
+    const site = sitechatSite(req.body && req.body.key);
+    if(!site) return jsonError(res, 404, "Onbekende website.");
+    const pk = String((req.body && req.body.pakket) || "");
+    const pkg = ["wc1000", "wc5000", "wc15000"].indexOf(pk) >= 0 ? CREDIT_PACKAGES[pk] : null;
+    if(!pkg || !pkg.priceId) return jsonError(res, 400, "Kies een pakket.");
+    if(rateLimited("sitechatkoop", clientIp(req), 20, 60 * 60 * 1000)) return jsonError(res, 429, "Te veel pogingen. Probeer het later opnieuw.");
+    const email = normalizePremiumKey(site.rec.email);
+    const terug = "https://" + String(site.rec.domein || "") + "/admin.php?worldchat=1";
+    const session = await callStripe("/checkout/sessions", {
+      mode: "payment",
+      line_items: [{ price: pkg.priceId, quantity: 1 }],
+      success_url: terug + "&sessie={CHECKOUT_SESSION_ID}",
+      cancel_url: terug + "&geannuleerd=1",
+      allow_promotion_codes: true,
+      billing_address_collection: "auto",
+      customer_email: email,
+      client_reference_id: email,
+      metadata: { product: pkg.label, source: "formforge-website", bron: "sitechat", siteId: site.id, packageType: "credits", packageKey: pk, credits: String(pkg.credits), email }
+    });
+    res.json({ ok: true, url: session.url });
+  }catch(err){
+    jsonError(res, 500, "Betalen starten is niet gelukt. Probeer het later opnieuw.", err.message || String(err));
+  }
+});
+
+/* Mail naar de eigenaar bij een nieuw bericht van een bezoeker, hoogstens eens per 15 minuten. */
+function sitechatMeld(room, member, text){
+  try{
+    if(!room || !member || member.isHost || !SITECHAT_CODES.has(String(room.code))) return;
+    const c = Object.values(sitechats).find((x) => x && String(x.code) === String(room.code));
+    if(!c || !c.email) return;
+    if(Date.now() - (c.gemeld || 0) < 15 * 60 * 1000) return;
+    c.gemeld = Date.now(); sitechatBewaar();
+    const link = c.eigenaar ? SITECHAT_URL + "?host=" + c.eigenaar : SITECHAT_URL;
+    sendResendEmail({
+      to: c.email,
+      subject: "Nieuw chatbericht via " + (c.domein || "je website"),
+      text: member.name + " stuurt je een bericht via de chat op je website:\r\n\r\n" + String(text).slice(0, 500) + "\r\n\r\nOpen je chat om te antwoorden:\r\n" + link + "\r\n\r\nFormForge",
+      html: "<p><strong>" + escapeHtml(member.name) + "</strong> stuurt je een bericht via de chat op je website:</p><blockquote>" + escapeHtml(String(text).slice(0, 500)) + "</blockquote><p><a href=\"" + link + "\">Open je chat om te antwoorden</a></p><p>FormForge</p>"
+    }).catch(() => {});
+  }catch(e){}
 }
 
 /* ---------- Website voor 1 euro per maand (verkoop + installatie) ----------
