@@ -14868,7 +14868,26 @@ app.post("/api/sitechat/kopen", async (req, res) => {
 /* Mail naar de eigenaar bij een nieuw bericht van een bezoeker, hoogstens eens per 15 minuten. */
 function sitechatMeld(room, member, text){
   try{
-    if(!room || !member || member.isHost || !SITECHAT_CODES.has(String(room.code))) return;
+    if(!room || !member || member.isHost) return;
+    /* Vaste lijn van een eigen website (zoals generaalprojecten.nl): mail naar het
+       account dat de kamer opende, met een link waarmee hij meteen als host binnenkomt. */
+    if(!SITECHAT_CODES.has(String(room.code)) && DIRECTE_LIJN_CODES.has(String(room.code))){
+      const naar = normalizePremiumKey(room.hostEmail || "");
+      if(!naar || naar.indexOf("@") < 0) return;
+      if(Date.now() - (room.dlGemeld || 0) < 15 * 60 * 1000) return;
+      room.dlGemeld = Date.now();
+      const vast = wcVasteKamersVan(naar).find((k) => k.code === String(room.code));
+      const link = vast ? SITECHAT_URL + "?host=" + vast.reconnect : SITECHAT_URL;
+      const zaak = room.naam || room.hostName || "je website";
+      sendResendEmail({
+        to: naar,
+        subject: "Nieuw chatbericht via " + zaak,
+        text: member.name + " stuurt je een bericht via de chat:\r\n\r\n" + String(text).slice(0, 500) + "\r\n\r\nOpen je chat om te antwoorden:\r\n" + link + "\r\n\r\nFormForge",
+        html: "<p><strong>" + escapeHtml(member.name) + "</strong> stuurt je een bericht via de chat:</p><blockquote>" + escapeHtml(String(text).slice(0, 500)) + "</blockquote><p><a href=\"" + link + "\">Open je chat om te antwoorden</a></p><p>FormForge</p>"
+      }).catch(() => {});
+      return;
+    }
+    if(!SITECHAT_CODES.has(String(room.code))) return;
     const c = Object.values(sitechats).find((x) => x && String(x.code) === String(room.code));
     if(!c || !c.email) return;
     if(Date.now() - (c.gemeld || 0) < 15 * 60 * 1000) return;
