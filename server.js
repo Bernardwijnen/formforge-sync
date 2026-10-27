@@ -5962,8 +5962,11 @@ Object.assign(WC_UI, {
  "n_versturen": "Send",
  "n_persoon": "1 person",
  "n_perMaandBtw": "per month incl. VAT",
- "n_hoe": "How does Worldchat work?"
+ "n_hoe": "How does Worldchat work?",
+ "n_saldo1": "1 credit",
+ "n_vast": "fixed line"
 });
+
 
 
 
@@ -5971,7 +5974,7 @@ Object.assign(WC_UI, {
 /* De vertaalde interface per taal. Eigen bestand op de schijf, los van de
    gidscache, zodat een fout hier nooit de stadsgids raakt. */
 const WC_UI_FILE = path.join(DATA_DIR, "worldchat_ui.json");
-const WC_UI_VERSIE = 19;      /* ophogen dwingt alle talen opnieuw te vertalen */
+const WC_UI_VERSIE = 20;      /* ophogen dwingt alle talen opnieuw te vertalen */
 const wcUiKlaar = new Map();
 
 function wcUiLaad(){
@@ -6157,6 +6160,29 @@ function wcInlogOk(req){
 }
 
 /* Kamers die niet meer bestaan vallen er vanzelf uit. */
+/* Vaste lijnen (directe lijn van een website) horen altijd bij het account dat
+   ze opende. Ze staan dus altijd in Mijn kamers, met een geldige host-sleutel,
+   ook als de lijst op een toestel ze kwijt is. Verwijderen kan niet. */
+function wcVasteKamersVan(email){
+  const e = normalizePremiumKey(email);
+  const uit = [];
+  if(!e) return uit;
+  for(const [code, room] of rooms.entries()){
+    if(!room || !isDirecteLijn(code)) continue;
+    const eigen = normalizePremiumKey(room.hostEmail) === e || room.hostKey === e || room.hostKey === "formforge:" + e;
+    if(!eigen) continue;
+    let token = "";
+    const grens = Date.now() + 30 * 24 * 60 * 60 * 1000;
+    for(const [t, r] of reconnectTokens.entries()){
+      if(r && r.code === code && r.isHost && r.expiresAt > grens){ token = t; break; }
+    }
+    if(!token) token = issueReconnectToken(code, room.hostName || "Host", room.hostLang || "nl", true);
+    let laatsteBericht = 0;
+    if(room.messages && room.messages.length) laatsteBericht = Number(room.messages[room.messages.length - 1].ts || 0);
+    uit.push({ code: code, reconnect: token, kamerNaam: room.naam || "", isHost: true, vast: true, laatsteBericht: laatsteBericht, ts: 0 });
+  }
+  return uit;
+}
 function wcKamersVan(email){
   const lijst = wcKamers.get(email) || [];
   const schoon = lijst.filter((k) => k && k.code && rooms.has(k.code));
@@ -6198,7 +6224,7 @@ app.post("/api/worldchat/kamers", (req, res) => {
      -1 betekent Unlimited, dus onbeperkt vertalen. */
   res.json({
     ok: true,
-    kamers: wcKamersVan(email),
+    kamers: wcVasteKamersVan(email).concat(wcKamersVan(email).filter((k) => !isDirecteLijn(k.code))),
     credits: wcSaldoVan(email),
     unlimitedPrijs: WORLDCHAT_UNLIMITED_PRIJS,
     meedoeners: wcMeedoeners(),
@@ -11823,6 +11849,7 @@ app.post("/api/room/close", (req, res) => {
   if(!r) return jsonError(res, 403, "Sessie verlopen. Open de kamer eerst opnieuw.");
   if(!r.isHost) return jsonError(res, 403, "Alleen de host kan een kamer verwijderen.");
   const code = String(r.code || "").trim();
+  if(isDirecteLijn(code)) return jsonError(res, 403, "Dit is een vaste lijn van een website. Die kan niet worden verwijderd.");
   const room = rooms.get(code);
   if(!room) return res.json({ ok: true, alWeg: true });
 
