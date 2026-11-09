@@ -1891,7 +1891,7 @@ function site_lists($pages) {
 /* ===========================================================
    Blokken op de voorpagina: volgorde en aan/uit, plus de nieuwe blokken
    =========================================================== */
-$BLOKKEN = ['strook' => 'Balk met diensten', 'diensten' => 'Diensten', 'projecten' => 'Uitgelichte projecten', 'voorna' => 'Voor en na (foto\'s)', 'werkwijze' => 'Werkwijze in stappen', 'cijfers' => 'Cijfers', 'over' => 'Over ons', 'vragen' => 'Veelgestelde vragen', 'reserveren' => 'Afspraakplanner (kalender)', 'aanbod' => 'Aanbod: occasions of producten', 'beoordelingen' => 'Beoordelingen (sterren)', 'menukaart' => 'Menukaart (horeca)', 'beeld1' => 'Eigen afbeelding 1', 'beeld2' => 'Eigen afbeelding 2', 'beeld3' => 'Eigen afbeelding 3', 'beeld4' => 'Eigen afbeelding 4', 'beeld5' => 'Eigen afbeelding 5', 'beeld6' => 'Eigen afbeelding 6'];
+$BLOKKEN = ['strook' => 'Balk met diensten', 'diensten' => 'Diensten', 'projecten' => 'Uitgelichte projecten', 'voorna' => 'Voor en na (foto\'s)', 'werkwijze' => 'Werkwijze in stappen', 'cijfers' => 'Cijfers', 'over' => 'Over ons', 'vragen' => 'Veelgestelde vragen', 'reserveren' => 'Afspraakplanner (kalender)', 'aanbod' => 'Aanbod: occasions of producten', 'webshop' => 'Webshop: je producten', 'beoordelingen' => 'Beoordelingen (sterren)', 'menukaart' => 'Menukaart (horeca)', 'beeld1' => 'Eigen afbeelding 1', 'beeld2' => 'Eigen afbeelding 2', 'beeld3' => 'Eigen afbeelding 3', 'beeld4' => 'Eigen afbeelding 4', 'beeld5' => 'Eigen afbeelding 5', 'beeld6' => 'Eigen afbeelding 6'];
 $BEELD_VORMEN = ['links' => 'Foto links, tekst rechts', 'rechts' => 'Foto rechts, tekst links', 'breed' => 'Grote foto over de hele breedte', 'klein' => 'Kleine foto in het midden (bijvoorbeeld een logo of keurmerk)'];
 function beeld_item($n) {
     global $ST, $BEELD_VORMEN;
@@ -1919,6 +1919,11 @@ function blokken_volgorde() {
         if (!isset($BLOKKEN[$k]) || isset($gezien[$k])) continue;
         $gezien[$k] = 1; $uit[] = ['k' => $k, 'aan' => !empty($b['aan'])];
     }
+    /* De webshop is later bijgekomen: staat hij nog niet in de opgeslagen volgorde, dan komt hij aan, na de projecten (of de diensten). Zonder webshop toont het blok niets. */
+    if (!isset($gezien['webshop']) && isset($BLOKKEN['webshop'])) {
+        $na = -1; foreach ($uit as $i => $b) { if (in_array($b['k'], ['diensten', 'projecten'], true)) $na = $i; }
+        array_splice($uit, $na + 1, 0, [['k' => 'webshop', 'aan' => true]]); $gezien['webshop'] = 1;
+    }
     foreach (array_keys($BLOKKEN) as $k) { if (!isset($gezien[$k])) { $uit[] = ['k' => $k, 'aan' => in_array($k, ['strook', 'diensten', 'projecten'], true)]; } }
     return $uit;
 }
@@ -1933,6 +1938,7 @@ function blok_inhoud($k) {
     if ($k === 'reserveren') { return !empty(res_inst()['aan']) ? [1] : []; }
     if ($k === 'beoordelingen') { return bd_inst()['aan'] && bd_zichtbaar() ? [1] : []; }
     if ($k === 'menukaart') { return mk_inst()['aan'] && mk_aantal(mk_data(), true) ? [1] : []; }
+    if ($k === 'webshop') { return !empty(ws_inst()['aan']) && array_filter(ws_lijst(), 'ws_zichtbaar') ? [1] : []; }
     if ($k === 'aanbod') { return !empty(ab_inst()['aan']) && array_filter(ab_lijst(), function($x) { return ($x['status'] ?? '') !== 'verkocht'; }) ? [1] : []; }
     return [];
 }
@@ -1977,6 +1983,8 @@ function blok_html($k, $sky) {
         $o .= bd_blok_html($sky);
     } elseif ($k === 'aanbod') {
         $o .= ab_blok_html($sky);
+    } elseif ($k === 'webshop') {
+        $o .= ws_blok_html($sky);
     } elseif ($k === 'menukaart') {
         $o .= mk_blok_html($sky);
     } elseif ($k === 'reserveren') {
@@ -3907,7 +3915,7 @@ function ws_bevestig($o) {
         foreach ($l as $k => $p) { if (isset($min[$p['id']]) && ($p['voorraad'] ?? '') !== '' && $p['voorraad'] !== null) { $l[$k]['voorraad'] = max(0, (int)$p['voorraad'] - $min[$p['id']]); $veranderd = true; } }
         if ($veranderd) ws_bewaar($l);
     });
-    if ($veranderd) { write_webshop_pages(); }
+    if ($veranderd) { rebuild_everything(load_pages()); }
     ws_klant_koppel($o);
     ws_mail_koper($o);
     ws_mail_eigenaar($o);
@@ -4074,6 +4082,7 @@ function ws_openbaar() {
         if (!ws_ip_ok('upload', 80)) ws_json(['fout' => "Er zijn vanaf dit adres al veel bestanden ge\u{fc}pload. Probeer het over een uur nog eens."]);
         $id = (string)($_POST['id'] ?? '');
         $bewerkt = $id !== '';
+        if ($bewerkt && is_file(DATA_DIR . '/demo-aan.txt')) ws_json(['ok' => 1, 'id' => $id]);
         if ($bewerkt) {
             if (!preg_match('/^[a-f0-9]{24}$/', $id) || !is_dir(WS_TMP . '/' . $id)) ws_json(['fout' => 'Onbekende upload.']);
             $info = @getimagesize($f['tmp_name']);
@@ -4085,6 +4094,7 @@ function ws_openbaar() {
         $naam = basename(str_replace('\\', '/', (string)$f['name']));
         $ext = strtolower(pathinfo($naam, PATHINFO_EXTENSION));
         if (!in_array($ext, $WS_ONTW_EXT, true)) ws_json(['fout' => 'Dit soort bestand kunnen wij niet gebruiken. Gebruik een PNG, JPG, PDF, SVG, AI of EPS.']);
+        if (is_file(DATA_DIR . '/demo-aan.txt')) ws_json(['ok' => 1, 'id' => bin2hex(random_bytes(12)), 'demo' => 1]); /* voorbeeldsite: niets bewaren */
         ensure_data_dir(); if (!is_dir(WS_TMP)) mkdir(WS_TMP, 0755, true);
         ws_tmp_opruimen();
         $id = bin2hex(random_bytes(12)); mkdir(WS_TMP . '/' . $id, 0755, true);
@@ -4123,7 +4133,7 @@ function ws_openbaar() {
             foreach (array_slice((array)($it['plekken'] ?? []), 0, 8) as $pl) {
                 $pn = cut((string)($pl['n'] ?? ''), 40); $tid = (string)($pl['id'] ?? ''); $tekst = cut(trim((string)($pl['tekst'] ?? '')), 300); $permail = !empty($pl['mail']);
                 if ($tid !== '' && !preg_match('/^[a-f0-9]{24}$/', $tid)) $tid = '';
-                if ($tid !== '' && !is_file(WS_TMP . '/' . $tid . '/meta.json')) ws_json(['fout' => 'Een ontwerp bij ' . $p['naam'] . ' is verlopen. Upload het opnieuw.']);
+                if ($tid !== '' && !is_file(DATA_DIR . '/demo-aan.txt') && !is_file(WS_TMP . '/' . $tid . '/meta.json')) ws_json(['fout' => 'Een ontwerp bij ' . $p['naam'] . ' is verlopen. Upload het opnieuw.']);
                 if ($tid === '' && $tekst === '' && !$permail) ws_json(['fout' => 'Bij ' . $p['naam'] . ' mist het ontwerp voor ' . $pn . '.']);
                 $gek[] = $pn; $ontw[] = ['plek' => $pn, 'tmp' => $tid, 'tekst' => $tekst, 'mail' => $permail, 'mailnaam' => cut((string)($pl['naam'] ?? ''), 120), 'gebruik' => ($pl['gebruik'] ?? '') === 'bewerkt' ? 'bewerkt' : 'origineel'];
                 if ($tid !== '') $tmpIds[] = $tid;
@@ -4393,6 +4403,17 @@ function render_ws_voorwaarden($in) {
     $out .= '<main><section class="abwrap"><div class="wrap" style="max-width:820px"><div class="ws-blok"><h1 style="margin:0 0 14px;font-size:clamp(26px,4vw,36px)">Voorwaarden</h1><div class="ws-voorw">' . h($in['voorwaarden']) . '</div></div></div></section></main>' . site_footer();
     return $out . "\n</body>\n</html>\n";
 }
+function ws_blok_html($sky) {
+    $in = ws_inst();
+    $items = array_values(array_filter(ws_lijst(), function($p) { return ws_zichtbaar($p) && ws_te_koop($p); }));
+    usort($items, function($a, $b) { return [(int)($a['volg'] ?? 0), (string)($a['cat'] ?? ''), (string)$a['naam']] <=> [(int)($b['volg'] ?? 0), (string)($b['cat'] ?? ''), (string)$b['naam']]; });
+    $alle = count($items); $items = array_slice($items, 0, 3);
+    if (!$items) return '';
+    $o = '<section class="section blok-webshop' . ($sky ? ' sky' : '') . '" id="webshop"><div class="wrap">' . blok_kop($in['titel'], $in['intro']) . ws_css() . '<div class="ab-grid">';
+    foreach ($items as $p) { $o .= ws_kaart($p); }
+    $o .= '</div><p style="margin-top:26px"><a class="btn primary" href="/webshop/">' . ($alle > 3 ? 'Bekijk alle ' . $alle . ' producten' : 'Naar de webshop') . '</a></p></div></section>' . "\n";
+    return $o;
+}
 function write_webshop_pages() {
     $in = ws_inst(); $dir = ROOT . '/webshop';
     if (empty($in['aan'])) { if (is_dir($dir) && is_file($dir . '/.ff-webshop')) ab_rm_map($dir); return; }
@@ -4400,7 +4421,7 @@ function write_webshop_pages() {
     @file_put_contents($dir . '/.ff-webshop', '1');
     file_put_contents($dir . '/ws.js', ws_js(), LOCK_EX);
     $items = array_values(array_filter(ws_lijst(), 'ws_zichtbaar'));
-    usort($items, function($a, $b) { return [(string)($a['cat'] ?? ''), (int)($a['volg'] ?? 0), (string)$a['naam']] <=> [(string)($b['cat'] ?? ''), (int)($b['volg'] ?? 0), (string)$b['naam']]; });
+    usort($items, function($a, $b) { return [(int)($a['volg'] ?? 0), (string)($a['cat'] ?? ''), (string)$a['naam']] <=> [(int)($b['volg'] ?? 0), (string)($b['cat'] ?? ''), (string)$b['naam']]; });
     schrijf_pagina($dir, stijl_pagina(render_ws_lijst($in, $items)));
     $kop = function($diepte) { return '<?php $ffp = dirname(__DIR__, ' . $diepte . ') . ' . "'/licentie.php'; if (is_file(\$ffp)) { require \$ffp; } ?>"; };
     $houd = ['winkelwagen' => 1, 'bedankt' => 1, 'voorwaarden' => 1];
@@ -4662,7 +4683,7 @@ function ws_js() {
         schrijf(l);
         knop.disabled = false;
         var groot = item.plekken.some(function (p) { return p.mail; });
-        meld('<div class="ws-klaar"><div><b>Toegevoegd aan uw winkelwagen.</b>' + (selects.length && P.plekken.length ? ' Wilt u hetzelfde ontwerp ook in een andere maat? Kies de maat en het aantal en klik nog een keer op In winkelwagen.' : '') + (groot ? ' Stuur het grote bestand na het bestellen per mail.' : '') + '</div><div class="rij"><a class="btn primary" href="/webshop/winkelwagen/">Naar de winkelwagen</a><a class="btn quiet" href="/webshop/">Verder winkelen</a></div></div>');
+        meld('<div class="ws-klaar"><div><b>Toegevoegd aan uw winkelwagen.</b>' + (selects.length && P.plekken.length ? ' Wilt u hetzelfde ontwerp ook in een andere ' + selects[0].getAttribute('data-groep').toLowerCase() + '? Kies opnieuw, vul het aantal in en klik nog een keer op In winkelwagen.' : '') + (groot ? ' Stuur het grote bestand na het bestellen per mail.' : '') + '</div><div class="rij"><a class="btn primary" href="/webshop/winkelwagen/">Naar de winkelwagen</a><a class="btn quiet" href="/webshop/">Verder winkelen</a></div></div>');
       }).catch(function (err) { knop.disabled = false; meld(esc(err && err.message ? err.message : 'Het uploaden is niet gelukt. Controleer uw internet en probeer het nog eens.'), true); });
     });
   }
@@ -4877,19 +4898,19 @@ function ws_acties($action) {
         $x['slug'] = ws_uniek_slug($x['naam'], $x['id'], $lijst);
         $x['gewijzigd'] = date('Y-m-d H:i:s');
         if ($i !== null) { $lijst[$i] = $x; } else { $lijst[] = $x; }
-        ws_bewaar($lijst); write_webshop_pages();
+        ws_bewaar($lijst); rebuild_everything(load_pages());
         ws_terug('admin.php?webshop=1&t=producten&id=' . rawurlencode($x['id']), 'Opgeslagen: ' . $x['naam'] . '.' . ($fouten ? ' ' . implode(' ', $fouten) : ''));
     }
     if ($action === 'ws_del') {
         $lijst = ws_lijst(); $id = (string)($_POST['id'] ?? ''); $naam = '';
         foreach ($lijst as $k => $x) { if ($x['id'] === $id) { $naam = $x['naam']; ab_rm_map(UPLOAD_DIR . '/webshop/' . basename($x['id'])); unset($lijst[$k]); } }
-        ws_bewaar($lijst); write_webshop_pages();
+        ws_bewaar($lijst); rebuild_everything(load_pages());
         ws_terug('admin.php?webshop=1&t=producten', $naam !== '' ? $naam . ' is verwijderd.' : 'Niet gevonden.');
     }
     if ($action === 'ws_pstatus') {
         $lijst = ws_lijst(); $id = (string)($_POST['id'] ?? ''); $st = (string)($_POST['status'] ?? '');
         foreach ($lijst as $k => $x) { if ($x['id'] === $id && in_array($st, ['actief', 'uit', 'verborgen'], true)) $lijst[$k]['status'] = $st; }
-        ws_bewaar($lijst); write_webshop_pages();
+        ws_bewaar($lijst); rebuild_everything(load_pages());
         ws_terug('admin.php?webshop=1&t=producten', 'Bijgewerkt.');
     }
     if ($action === 'ws_import') {
@@ -4914,7 +4935,7 @@ function ws_acties($action) {
             $x['slug'] = ws_uniek_slug($x['naam'], $x['id'], $lijst);
             $lijst[] = $x; $n++;
         }
-        ws_bewaar($lijst); write_webshop_pages();
+        ws_bewaar($lijst); rebuild_everything(load_pages());
         ws_terug('admin.php?webshop=1&t=producten', $n . ' ' . ($n === 1 ? 'product' : 'producten') . " ingeladen. Voeg nu per product de foto's toe.");
     }
     /* Bestellingen */
@@ -12239,14 +12260,15 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-11-09-webshop2');
+define('SITE_BOUW', '2026-11-10-webshop3');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
     if (($_GET['adm'] ?? '') === 'mailbg') { header('Content-Type: application/json'); echo json_encode(['nieuw' => 0]); exit; }
     if (!isset($_GET['adm']) && !isset($_GET['logout'])) { header('Location: admin.php?adm'); exit; }
 }
-if ($logged_in && !$is_demo && !$ADM_ALLEEN_LEZEN && ($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
+/* Ook op een voorbeeldsite (demo): dan bouwt de eerste bezoeker van de beheerpagina de site een keer opnieuw op. */
+if ($logged_in && !$ADM_ALLEEN_LEZEN && ($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
     $bouw = read_json(DATA_DIR . '/bouw.json', []);
     if (($bouw['v'] ?? '') !== SITE_BOUW) {
         @set_time_limit(120);
@@ -12448,7 +12470,7 @@ if ($logged_in && isset($_POST['action'])) {
         global $BLOKKEN;
         $bl = []; $gz = [];
         foreach ((array)($_POST['blok_volgorde'] ?? []) as $bk) { $bk = (string)$bk; if (isset($BLOKKEN[$bk]) && !isset($gz[$bk])) { $gz[$bk] = 1; $bl[] = ['k' => $bk, 'aan' => !empty($_POST['blok_aan'][$bk]) ? 1 : 0]; } }
-        foreach (array_keys($BLOKKEN) as $bk) { if (!isset($gz[$bk])) { $bl[] = ['k' => $bk, 'aan' => in_array($bk, ['strook', 'diensten', 'projecten'], true) ? 1 : 0]; } }
+        foreach (array_keys($BLOKKEN) as $bk) { if (!isset($gz[$bk])) { $bl[] = ['k' => $bk, 'aan' => in_array($bk, ['strook', 'diensten', 'projecten', 'webshop'], true) ? 1 : 0]; } }
         $new['blokken'] = $bl;
         $kort = function($v, $max) { return cut(trim(preg_replace('/\s+/', ' ', (string)$v)), $max); };
         $lang = function($v, $max) { return cut(trim(str_replace("\r\n", "\n", (string)$v)), $max); };
@@ -13350,6 +13372,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
                       <div class="hint">Bijvoorbeeld boek en boeken, fragment en fragmenten, of klus en klussen. Dit woord staat in het menu en boven je werk op de website.</div>
                     </details><?php endif; ?>
                   <?php if ($k === 'beoordelingen'): ?><div class="hint" style="margin:4px 0 0 28px">Sterren en teksten van je klanten. Instellen doe je bovenaan bij <a href="admin.php?beoordelingen=1" style="color:#1d4ed8">Beoordelingen</a>.</div><?php endif; ?>
+                  <?php if ($k === 'webshop'): ?><div class="hint" style="margin:4px 0 0 28px">Een paar producten uit je webshop, met een knop naar de hele webshop. Producten zet je bij <a href="admin.php?webshop=1&amp;t=producten" style="color:#1d4ed8">Webshop</a>.</div><?php endif; ?>
                   <?php if ($k === 'aanbod'): ?><div class="hint" style="margin:4px 0 0 28px">Je nieuwste 6 auto's of producten. Toevoegen doe je bovenaan bij <a href="admin.php?aanbod=1" style="color:#1d4ed8">Aanbod</a>.</div><?php endif; ?>
                   <?php if ($k === 'menukaart'): ?><div class="hint" style="margin:4px 0 0 28px">Een paar gerechten van je kaart, met een knop naar de hele menukaart. Specialiteiten en nieuwe gerechten gaan voor. Invullen doe je bovenaan bij <a href="admin.php?menukaart=1" style="color:#1d4ed8">Menukaart</a>.</div><?php endif; ?>
                   <?php if ($k === 'reserveren'): ?><div class="hint" style="margin:4px 0 0 28px">De kalender om online te reserveren. Instellen doe je bovenaan bij <a href="admin.php?reserveren=1" style="color:#1d4ed8">Afspraakplanner</a>.</div><?php endif; ?>
