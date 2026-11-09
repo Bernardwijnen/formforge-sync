@@ -3784,14 +3784,25 @@ function ws_opties($raw) {
         $naam = $p === false ? 'Keuze' : trim(substr($r, 0, $p));
         $rest = $p === false ? $r : substr($r, $p + 1);
         $w = [];
+        $rest = ws_reeks($rest);
         foreach (preg_split('/,(?=\s|$)|,(?=[^\d\s])/u', $rest) as $v) {
             $v = trim($v); if ($v === '') continue; $pr = 0;
             if (preg_match('/^(.*?)\s*\+\s*(?:\x{20AC}\s*)?([0-9][0-9.,]*)\s*$/u', $v, $m)) { $v = trim($m[1]); $pr = ab_prijs_in($m[2]); }
             if ($v !== '') $w[] = ['n' => cut($v, 40), 'p' => $pr];
         }
+        if ($naam !== '') $naam = mb_strtoupper(mb_substr($naam, 0, 1, 'UTF-8'), 'UTF-8') . mb_substr($naam, 1, null, 'UTF-8');
         if ($w && $naam !== '') $uit[] = ['n' => cut($naam, 30), 'w' => array_slice($w, 0, 40)];
     }
     return array_slice($uit, 0, 6);
+}
+/* "S - XL" of "S t/m XL" wordt "S, M, L, XL". */
+function ws_reeks($rest) {
+    $maten = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL', '4XL', '5XL'];
+    return preg_replace_callback('/\b(XXS|XS|S|M|L|XL|XXL|2XL|3XL|4XL|5XL)\s*(?:-|t\/m|tm|tot en met|tot)\s*(XXS|XS|S|M|L|XL|XXL|2XL|3XL|4XL|5XL)\b/iu', function($m) use ($maten) {
+        $a = array_search(strtoupper(str_replace('2XL', 'XXL', strtoupper($m[1]))), $maten, true); $b = array_search(strtoupper(str_replace('2XL', 'XXL', strtoupper($m[2]))), $maten, true);
+        if ($a === false || $b === false || $a >= $b) return $m[0];
+        return implode(', ', array_slice($maten, $a, $b - $a + 1));
+    }, (string)$rest);
 }
 /* Opdrukplaatsen, per regel 1: "Voorkant: 25 x 30 cm" of "Rug: 30 x 40 cm +5,00". De maat is de grootste opdruk in centimeters. */
 function ws_plekken($raw) {
@@ -4973,6 +4984,7 @@ function ws_beheer_view() {
       .ws-uitleg{background:#f7f9fc;border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:14px;line-height:1.55;}
       .ws-uitleg code{background:#fff;border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-size:13px;}
       .ws-mini{font-size:13px;color:var(--mut);}
+      .ws-snel{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;} .ws-snel span{font-size:13px;color:var(--mut);margin-right:2px;}
     </style>
     <h1>Webshop</h1>
     <p class="sub">Verkoop je producten online. Je klanten betalen met iDEAL of een andere betaalmethode, via je eigen Mollie-account. Het geld komt rechtstreeks bij jou binnen.</p>
@@ -5052,14 +5064,27 @@ function ws_view_producten($in) {
           <div class="field"><label for="wps">Status</label><select id="wps" name="status"><?php foreach (['actief' => 'Te koop', 'uit' => 'Uitverkocht (wel zichtbaar)', 'verborgen' => 'Verborgen (niet op de website)'] as $s => $l): ?><option value="<?= $s ?>" <?= ($x['status'] ?? 'actief') === $s ? 'selected' : '' ?>><?= $l ?></option><?php endforeach; ?></select></div>
           <div class="field"><label for="wpt">Omschrijving (mag leeg)</label><textarea id="wpt" name="tekst" class="short" rows="5"><?= $v('tekst') ?></textarea></div>
           <div class="field"><label for="wpo">Keuzes zoals maat en kleur (mag leeg)</label><textarea id="wpo" name="opties" class="short" rows="3" placeholder="Maat: S, M, L, XL, XXL +2,00&#10;Kleur: Wit, Zwart, Navy"><?= $v('opties') ?></textarea>
-            <div class="hint">Per regel 1 keuze: eerst de naam, dan een dubbele punt, dan de mogelijkheden met komma's. Kost een mogelijkheid meer, zet er dan <strong>+</strong> en het bedrag achter, zoals <strong>XXL +2,00</strong>.</div></div>
+            <div class="ws-snel" data-veld="wpo"><span>Snel toevoegen:</span><button type="button" class="btn ghost sm" data-r="Maat: S, M, L, XL, XXL">Maten S tot en met XXL</button><button type="button" class="btn ghost sm" data-r="Maat: XS, S, M, L, XL, XXL, 3XL">Maten XS tot en met 3XL</button><button type="button" class="btn ghost sm" data-r="Maat: 98/104, 110/116, 122/128, 134/140, 146/152">Kindermaten</button><button type="button" class="btn ghost sm" data-r="Kleur: Wit, Zwart, Navy, Grijs, Rood">Kleuren</button></div>
+            <div class="hint">Per regel 1 keuze: eerst de naam, dan een dubbele punt, dan de mogelijkheden met komma's. De koper kiest uit een keuzemenu. Kost een mogelijkheid meer, zet er dan <strong>+</strong> en het bedrag achter, zoals <strong>XXL +2,00</strong>.</div></div>
           <div class="field"><label for="wpd">Opdruk met eigen ontwerp (mag leeg)</label><textarea id="wpd" name="opdruk" class="short" rows="3" placeholder="Voorkant: 25 x 30 cm&#10;Rug: 30 x 40 cm +5,00"><?= $v('opdruk') ?></textarea>
+            <div class="ws-snel" data-veld="wpd"><span>Snel toevoegen:</span><button type="button" class="btn ghost sm" data-r="Voorkant: 25 x 30 cm">Voorkant shirt</button><button type="button" class="btn ghost sm" data-r="Rug: 30 x 40 cm +5,00">Rug shirt</button><button type="button" class="btn ghost sm" data-r="Borst links: 10 x 10 cm">Borst links</button><button type="button" class="btn ghost sm" data-r="Voorkant: 10 x 6 cm">Pet</button><button type="button" class="btn ghost sm" data-r="Rondom: 20 x 8 cm">Mok</button></div>
             <div class="hint">Per regel 1 plek waar een opdruk kan komen, met de grootste maat in centimeters. Kost een plek extra, zet er dan <strong>+</strong> en het bedrag achter. De klant kiest de plek en uploadt zijn logo of ontwerp. De webshop rekent uit of het scherp genoeg is voor die maat en waarschuwt de klant als het te klein is. Jij krijgt altijd het originele bestand.</div></div>
           <div class="field"><label>Foto's</label>
             <?php if (!empty($x['fotos'])): ?><div class="photos" style="margin-bottom:10px"><?php foreach ($x['fotos'] as $i => $f): ?><div><img src="<?= h(ws_foto_url($x, $f)) ?>" alt="" /><label><input type="radio" name="foto_hoofd" value="<?= h($f) ?>" <?= $i === 0 ? 'checked' : '' ?> /> Hoofdfoto</label><label><input type="checkbox" name="foto_weg[]" value="<?= h($f) ?>" /> Weghalen</label></div><?php endforeach; ?></div><?php endif; ?>
             <input type="file" name="fotos[]" accept="image/*" multiple /><div class="hint">Je kunt meerdere foto's tegelijk kiezen (hoogstens <?= WS_MAX_FOTO ?>).</div></div>
           <div class="ws-acties"><button class="btn" type="submit">Opslaan en website bijwerken</button></div>
         </form>
+        <script>
+        document.querySelectorAll('.ws-snel button').forEach(function (b) {
+          b.addEventListener('click', function () {
+            var ta = document.getElementById(b.parentNode.getAttribute('data-veld')), r = b.getAttribute('data-r'), naam = r.split(':')[0].toLowerCase();
+            var regels = ta.value.split(/\r?\n/).filter(function (x) { return x.trim() !== ''; }), vervangen = false;
+            regels = regels.map(function (x) { if (x.split(':')[0].trim().toLowerCase() === naam) { vervangen = true; return r; } return x; });
+            if (!vervangen) regels.push(r);
+            ta.value = regels.join('\n'); ta.focus();
+          });
+        });
+        </script>
         <?php if ($x['id'] !== ''): ?>
         <form method="post" onsubmit="return confirm('<?= h(addslashes($x['naam'])) ?> verwijderen? Dit kan niet ongedaan worden gemaakt.')" style="margin-top:-6px"><input type="hidden" name="action" value="ws_del" /><input type="hidden" name="id" value="<?= h($x['id']) ?>" /><button class="btn ghost sm" type="submit">Product verwijderen</button></form>
         <?php endif;
@@ -12151,7 +12176,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-11-09-webshop');
+define('SITE_BOUW', '2026-11-09-webshop2');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
