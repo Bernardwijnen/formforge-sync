@@ -31,7 +31,7 @@ define('MAX_VIDEO_SEC', 10);
 define('MAX_DIENSTEN', 9);
 
 $RESERVED = ['admin', 'assets', 'data', 'index', 'uploads', 'site', 'favicon', 'error', 'stats', 'cgi-bin',
-             'sitemap', 'robots', 'contact', 'bedankt', 'projecten', 'diensten', 'reserveren', 'occasions', 'aanbod', 'beoordelingen', 'menukaart'];
+             'sitemap', 'robots', 'contact', 'bedankt', 'projecten', 'diensten', 'reserveren', 'occasions', 'aanbod', 'beoordelingen', 'menukaart', 'webshop'];
 
 /* ===========================================================
    Instellingen
@@ -1804,7 +1804,7 @@ function site_header($backUrl = '', $backLabel = '') {
     $out = slogan_bar() . '<header class="top"><div class="wrap">' . brand_html() . '<nav class="menu" aria-label="Menu">';
     if ($backUrl === '') {
         if (!empty(services())) { $out .= '<a class="nav" href="/#diensten">Diensten</a>'; }
-        $out .= (load_pages() ? '<a class="nav" href="/#projecten">' . h(werk_hoofd(werk_woord()[1])) . '</a>' : '') . ab_menu_link() . mk_menu_link();
+        $out .= (load_pages() ? '<a class="nav" href="/#projecten">' . h(werk_hoofd(werk_woord()[1])) . '</a>' : '') . ab_menu_link() . ws_menu_link() . mk_menu_link();
         foreach (menu_links() as $ml) { $out .= '<a class="nav ml" href="' . h($ml['link']) . '">' . h($ml['tekst']) . '</a>'; }
     } else {
         $out .= '<a class="back" href="' . h($backUrl) . '" onclick="try{var r=document.referrer;if(r&&r.indexOf(location.origin+\'/\')===0&&history.length>1){history.back();return false;}}catch(e){}return true;"><svg viewBox="0 0 24 24" fill="none" width="16" height="16" aria-hidden="true"><path d="M19 12H5M11 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="long">' . h($backLabel) . '</span><span class="short">Terug</span></a>';
@@ -2707,6 +2707,7 @@ function write_contact_pages() {
     }
     write_reserveren_page();
     write_aanbod_pages();
+    write_webshop_pages();
     write_beoordelingen_page();
     write_menukaart_page();
 }
@@ -2723,6 +2724,10 @@ function write_seo_files($pages) {
     if (!empty($abi['aan'])) {
         $urls[] = ['loc' => $u . '/' . $abi['slug'] . '/', 'lastmod' => $today];
         foreach (ab_lijst() as $x) { if (ab_zichtbaar($abi, $x)) { $urls[] = ['loc' => $u . '/' . $abi['slug'] . '/' . rawurlencode($x['slug']) . '/', 'lastmod' => substr((string)($x['gewijzigd'] ?? $x['aangemaakt'] ?? $today), 0, 10) ?: $today]; } }
+    }
+    if (!empty(ws_inst()['aan'])) {
+        $urls[] = ['loc' => $u . '/webshop/', 'lastmod' => $today];
+        foreach (ws_lijst() as $x) { if (ws_zichtbaar($x)) { $urls[] = ['loc' => $u . '/webshop/' . rawurlencode($x['slug']) . '/', 'lastmod' => substr((string)($x['gewijzigd'] ?? $x['aangemaakt'] ?? $today), 0, 10) ?: $today]; } }
     }
     foreach ($pages as $p) {
         if (page_folder($p) === '') continue;
@@ -3710,6 +3715,1469 @@ function res_beheer_view() {
     rsSoort();
     </script>
     <?php
+}
+
+/* ===========================================================
+   Webshop: producten online verkopen, met opties (maat, kleur),
+   opdruk met eigen ontwerp (upload met controle op scherpte en achtergrond),
+   winkelwagen en afrekenen via het eigen Mollie-account van de ondernemer.
+   Het geld gaat rechtstreeks naar de ondernemer, niet via FormForge.
+   Bestellingen komen in de beheerpagina en betaalde bestellingen
+   meteen als betaalde factuur in de administratie.
+   =========================================================== */
+define('WS_INST', DATA_DIR . '/ws_inst.json');
+define('WS_PROD', DATA_DIR . '/ws_producten.json');
+define('WS_BEST', DATA_DIR . '/ws_bestellingen.json');
+define('WS_TMP', DATA_DIR . '/ws_tmp');
+define('WS_ONTW', DATA_DIR . '/ws_ontwerp');
+define('WS_MAX_FOTO', 12);
+$WS_STATUS = ['wacht' => 'Wacht op betaling', 'nieuw' => 'Nieuw', 'klaar' => 'Klaar om op te halen', 'verzonden' => 'Verzonden', 'afgerond' => 'Afgerond', 'geannuleerd' => 'Geannuleerd', 'mislukt' => 'Betaling mislukt'];
+$WS_ONTW_EXT = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg', 'pdf', 'ai', 'eps', 'psd', 'tif', 'tiff', 'heic', 'heif', 'cdr'];
+
+function ws_inst() {
+    $x = read_json(WS_INST, []);
+    $t = function($k, $max, $std) use ($x) { $v = trim((string)($x[$k] ?? '')); return $v !== '' ? cut($v, $max) : $std; };
+    return [
+        'aan' => !empty($x['aan']),
+        'naam' => $t('naam', 30, 'Webshop'),
+        'titel' => $t('titel', 90, 'Onze webshop'),
+        'intro' => $t('intro', 300, 'Bestel online. Betalen gaat veilig met iDEAL en andere betaalmethodes.'),
+        'mollie' => trim((string)($x['mollie'] ?? '')),
+        'melding' => trim((string)($x['melding'] ?? '')),
+        'verzenden' => isset($x['verzenden']) ? !empty($x['verzenden']) : true,
+        'verzendkosten' => max(0, (int)($x['verzendkosten'] ?? 695)),
+        'gratis_vanaf' => max(0, (int)($x['gratis_vanaf'] ?? 0)),
+        'ophalen' => isset($x['ophalen']) ? !empty($x['ophalen']) : true,
+        'ophaal_tekst' => cut(trim((string)($x['ophaal_tekst'] ?? '')), 200),
+        'winkel_betalen' => !empty($x['winkel_betalen']),
+        'voorwaarden' => cut(trim(str_replace("\r\n", "\n", (string)($x['voorwaarden'] ?? ''))), 30000),
+    ];
+}
+function ws_mollie_ok($k) { return (bool)preg_match('/^(live|test)_[A-Za-z0-9]{20,}$/', (string)$k); }
+function ws_slot($fn) {
+    ensure_data_dir();
+    $fh = @fopen(DATA_DIR . '/ws.lock', 'c');
+    if ($fh) { flock($fh, LOCK_EX); }
+    try { return $fn(); } finally { if ($fh) { flock($fh, LOCK_UN); fclose($fh); } }
+}
+function ws_lijst() { $l = read_json(WS_PROD, []); return is_array($l) ? array_values(array_filter($l, 'is_array')) : []; }
+function ws_bewaar($l) { write_json(WS_PROD, array_values($l)); }
+function ws_bestellingen() { $l = read_json(WS_BEST, []); return is_array($l) ? array_values(array_filter($l, 'is_array')) : []; }
+function ws_best_bewaar($l) { write_json(WS_BEST, array_values($l)); }
+function ws_vind_prod($id) { foreach (ws_lijst() as $p) { if (($p['id'] ?? '') === $id) return $p; } return null; }
+function ws_foto_url($p, $f) { return '/uploads/webshop/' . rawurlencode($p['id']) . '/' . rawurlencode($f); }
+function ws_te_koop($p) { return ($p['status'] ?? 'actief') === 'actief' && !ws_op($p); }
+function ws_op($p) { return ($p['voorraad'] ?? '') !== '' && $p['voorraad'] !== null && (int)$p['voorraad'] <= 0; }
+function ws_zichtbaar($p) { return ($p['status'] ?? 'actief') !== 'verborgen'; }
+function ws_nieuw_aantal() { $n = 0; foreach (ws_bestellingen() as $o) { if (!empty($o['nieuw']) && ($o['status'] ?? '') !== 'wacht' && ($o['status'] ?? '') !== 'mislukt') $n++; } return $n; }
+function ws_max_upload() {
+    $b = function($v) { $v = trim((string)$v); if ($v === '' || $v === '-1' || $v === '0') return PHP_INT_MAX; $n = (float)$v; $u = strtolower(substr($v, -1)); if ($u === 'g') $n *= 1073741824; elseif ($u === 'm') $n *= 1048576; elseif ($u === 'k') $n *= 1024; return (int)$n; };
+    return max(1048576, min($b(ini_get('upload_max_filesize')), $b(ini_get('post_max_size'))) - 65536);
+}
+
+/* Keuzes, per regel 1 groep: "Maat: S, M, L, XL +2,00". Een bedrag met + is de meerprijs van die keuze. */
+function ws_opties($raw) {
+    $uit = [];
+    foreach (preg_split("/\r?\n/", (string)$raw) as $r) {
+        $r = trim($r); if ($r === '') continue;
+        $p = strpos($r, ':');
+        $naam = $p === false ? 'Keuze' : trim(substr($r, 0, $p));
+        $rest = $p === false ? $r : substr($r, $p + 1);
+        $w = [];
+        foreach (preg_split('/,(?=\s|$)|,(?=[^\d\s])/u', $rest) as $v) {
+            $v = trim($v); if ($v === '') continue; $pr = 0;
+            if (preg_match('/^(.*?)\s*\+\s*(?:\x{20AC}\s*)?([0-9][0-9.,]*)\s*$/u', $v, $m)) { $v = trim($m[1]); $pr = ab_prijs_in($m[2]); }
+            if ($v !== '') $w[] = ['n' => cut($v, 40), 'p' => $pr];
+        }
+        if ($w && $naam !== '') $uit[] = ['n' => cut($naam, 30), 'w' => array_slice($w, 0, 40)];
+    }
+    return array_slice($uit, 0, 6);
+}
+/* Opdrukplaatsen, per regel 1: "Voorkant: 25 x 30 cm" of "Rug: 30 x 40 cm +5,00". De maat is de grootste opdruk in centimeters. */
+function ws_plekken($raw) {
+    $uit = [];
+    foreach (preg_split("/\r?\n/", (string)$raw) as $r) {
+        $r = trim($r); if ($r === '') continue;
+        $pr = 0; $b = 0; $hh = 0;
+        if (preg_match('/\+\s*(?:\x{20AC}\s*)?([0-9][0-9.,]*)\s*$/u', $r, $m)) { $pr = ab_prijs_in($m[1]); $r = trim(substr($r, 0, -strlen($m[0]))); }
+        if (preg_match('/(\d+(?:[.,]\d+)?)\s*[x\x{00D7}]\s*(\d+(?:[.,]\d+)?)\s*(cm)?/iu', $r, $m)) { $b = (float)str_replace(',', '.', $m[1]); $hh = (float)str_replace(',', '.', $m[2]); $r = trim(str_replace($m[0], '', $r)); }
+        $naam = trim(rtrim(trim($r), ':'));
+        if ($naam === '') $naam = 'Opdruk';
+        $uit[] = ['n' => cut($naam, 40), 'b' => $b, 'h' => $hh, 'p' => $pr];
+    }
+    return array_slice($uit, 0, 8);
+}
+function ws_plek_tekst($pl) { return $pl['n'] . ($pl['b'] > 0 ? ' (' . str_replace('.', ',', (string)$pl['b']) . ' x ' . str_replace('.', ',', (string)$pl['h']) . ' cm)' : ''); }
+/* Prijs per stuk met de gekozen opties en opdrukplaatsen. null = ongeldige keuze. */
+function ws_stukprijs($p, $keuzes, $plekken) {
+    $stuk = (int)($p['prijs'] ?? 0);
+    foreach (ws_opties($p['opties'] ?? '') as $g) {
+        $v = (string)($keuzes[$g['n']] ?? ''); $ok = false;
+        foreach ($g['w'] as $w) { if ($w['n'] === $v) { $stuk += $w['p']; $ok = true; break; } }
+        if (!$ok) return null;
+    }
+    $alle = ws_plekken($p['opdruk'] ?? '');
+    foreach ($plekken as $naam) {
+        $ok = false;
+        foreach ($alle as $pl) { if ($pl['n'] === $naam) { $stuk += $pl['p']; $ok = true; break; } }
+        if (!$ok) return null;
+    }
+    return $stuk;
+}
+
+/* ---------- Mollie (het eigen account van de ondernemer) ---------- */
+function ws_mollie($key, $methode, $pad, $body = null) {
+    $basis = getenv('FF_MOLLIE_URL') ?: 'https://api.mollie.com/v2';
+    if (!function_exists('curl_init')) return [0, null];
+    $ch = curl_init($basis . $pad);
+    $h = ['Authorization: Bearer ' . $key, 'Accept: application/json'];
+    $opt = [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 20, CURLOPT_CONNECTTIMEOUT => 8, CURLOPT_CUSTOMREQUEST => $methode];
+    if ($body !== null) { $h[] = 'Content-Type: application/json'; $opt[CURLOPT_POSTFIELDS] = json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); }
+    $opt[CURLOPT_HTTPHEADER] = $h;
+    curl_setopt_array($ch, $opt);
+    $r = curl_exec($ch); $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE); curl_close($ch);
+    $j = is_string($r) ? json_decode($r, true) : null;
+    return [$code, is_array($j) ? $j : null];
+}
+function ws_bedrag($c) { return number_format($c / 100, 2, '.', ''); }
+function ws_lokaal() { $u = site_url(); return (bool)preg_match('#^https?://(localhost|127\.|\[::1\]|[^/]*\.test)#i', $u); }
+/* Betaalstatus bij Mollie nakijken en de bestelling bijwerken. Geeft de bijgewerkte bestelling terug. */
+function ws_mollie_check($o) {
+    $in = ws_inst();
+    if (($o['mollie_id'] ?? '') === '' || !ws_mollie_ok($in['mollie'])) return $o;
+    list($code, $j) = ws_mollie($in['mollie'], 'GET', '/payments/' . rawurlencode($o['mollie_id']));
+    if ($code !== 200 || !$j) return $o;
+    $st = (string)($j['status'] ?? '');
+    if ($st === 'paid') { ws_betaald($o['id'], (string)($j['method'] ?? '')); }
+    elseif (in_array($st, ['canceled', 'expired', 'failed'], true)) {
+        ws_slot(function() use ($o) { $l = ws_bestellingen(); foreach ($l as $k => $x) { if ($x['id'] === $o['id'] && $x['status'] === 'wacht') { $l[$k]['status'] = 'mislukt'; } } ws_best_bewaar($l); });
+    }
+    foreach (ws_bestellingen() as $x) { if ($x['id'] === $o['id']) return $x; }
+    return $o;
+}
+function ws_methode_tekst($m) {
+    return ['ideal' => 'iDEAL', 'creditcard' => 'creditcard', 'bancontact' => 'Bancontact', 'paypal' => 'PayPal', 'applepay' => 'Apple Pay', 'banktransfer' => 'overboeking', 'klarnapaylater' => 'Klarna', 'klarna' => 'Klarna', 'riverty' => 'Riverty', 'belfius' => 'Belfius', 'kbc' => 'KBC', 'giftcard' => 'cadeaukaart', 'winkel' => 'betalen bij ophalen', 'handmatig' => 'handmatig geboekt'][(string)$m] ?? ((string)$m !== '' ? (string)$m : 'online');
+}
+/* Betaald: 1 keer vastleggen, daarna voorraad, mails en factuur. */
+function ws_betaald($id, $methode) {
+    $o = ws_slot(function() use ($id, $methode) {
+        $l = ws_bestellingen(); $uit = null;
+        foreach ($l as $k => $x) {
+            if ($x['id'] !== $id || ($x['betaald_op'] ?? '') !== '') continue;
+            $l[$k]['betaald_op'] = date('Y-m-d H:i'); $l[$k]['methode'] = $methode;
+            if (in_array($x['status'], ['wacht', 'mislukt'], true)) { $l[$k]['status'] = 'nieuw'; $l[$k]['nieuw'] = 1; }
+            $uit = $l[$k];
+        }
+        if ($uit) ws_best_bewaar($l);
+        return $uit;
+    });
+    if (!$o) return;
+    if (empty($o['bevestigd'])) { ws_bevestig($o); }
+    if (($o['factuur_id'] ?? '') === '') { ws_maak_factuur($o['id']); }
+    else { /* al een open factuur: op betaald zetten */
+        $docs = adm_docs(); $i = adm_vind($docs, $o['factuur_id']);
+        if ($i !== null && ($docs[$i]['status'] ?? '') !== 'betaald') { $docs[$i]['status'] = 'betaald'; $docs[$i]['betaald_op'] = date('Y-m-d'); adm_save_docs($docs); }
+    }
+}
+/* Bestelling is binnen (betaald, of betalen bij ophalen): voorraad bijwerken en mails sturen. */
+function ws_bevestig($o) {
+    $o = ws_slot(function() use ($o) {
+        $l = ws_bestellingen(); $uit = null;
+        foreach ($l as $k => $x) { if ($x['id'] === $o['id'] && empty($x['bevestigd'])) { $l[$k]['bevestigd'] = date('Y-m-d H:i'); $uit = $l[$k]; } }
+        if ($uit) ws_best_bewaar($l);
+        return $uit;
+    });
+    if (!$o) return;
+    $min = [];
+    foreach ($o['regels'] as $r) { $min[$r['pid']] = ($min[$r['pid']] ?? 0) + (int)$r['aantal']; }
+    $veranderd = false;
+    ws_slot(function() use ($min, &$veranderd) {
+        $l = ws_lijst();
+        foreach ($l as $k => $p) { if (isset($min[$p['id']]) && ($p['voorraad'] ?? '') !== '' && $p['voorraad'] !== null) { $l[$k]['voorraad'] = max(0, (int)$p['voorraad'] - $min[$p['id']]); $veranderd = true; } }
+        if ($veranderd) ws_bewaar($l);
+    });
+    if ($veranderd) { write_webshop_pages(); }
+    ws_klant_koppel($o);
+    ws_mail_koper($o);
+    ws_mail_eigenaar($o);
+}
+function ws_klant_koppel($o) {
+    if (adm_voorbeeld() || !filter_var($o['klant']['mail'] ?? '', FILTER_VALIDATE_EMAIL)) return '';
+    $kl = adm_klanten(); $kk = $o['klant'];
+    foreach ($kl as $i => $k) {
+        if (strcasecmp((string)($k['email'] ?? ''), $kk['mail']) === 0) {
+            foreach (['tel' => 'tel', 'straat' => 'straat', 'postcode' => 'postcode', 'plaats' => 'plaats'] as $a => $b) { if (($k[$a] ?? '') === '' && ($kk[$b] ?? '') !== '') $kl[$i][$a] = $kk[$b]; }
+            adm_save_klanten($kl);
+            return (string)$k['id'];
+        }
+    }
+    $bedrijf = trim((string)($kk['bedrijf'] ?? ''));
+    $k = ['id' => adm_id('k'), 'naam' => $bedrijf !== '' ? $bedrijf : $kk['naam'], 'contact' => $bedrijf !== '' ? $kk['naam'] : '', 'email' => $kk['mail'], 'tel' => (string)($kk['tel'] ?? ''),
+          'straat' => (string)($kk['straat'] ?? ''), 'postcode' => (string)($kk['postcode'] ?? ''), 'plaats' => (string)($kk['plaats'] ?? ''), 'kvk' => '', 'btw' => '', 'notitie' => 'Via de webshop op ' . date('d-m-Y') . '.'];
+    $kl[] = $k; adm_save_klanten($kl);
+    return $k['id'];
+}
+/* Factuur in de administratie. Betaald = meteen als betaald geboekt. Bedragen kloppen tot op de cent met wat de klant betaalde. */
+function ws_maak_factuur($oid) {
+    $o = null; foreach (ws_bestellingen() as $x) { if ($x['id'] === $oid) $o = $x; }
+    if (!$o || adm_voorbeeld()) return '';
+    if (($o['factuur_id'] ?? '') !== '' && adm_vind(adm_docs(), $o['factuur_id']) !== null) return $o['factuur_id'];
+    $ainst = adm_inst(); $kor = !empty($ainst['kor']);
+    $excl = function($incl, $pct) { if ($pct <= 0) return $incl; $e = (int)round($incl * 100 / (100 + $pct)); $e += $incl - ($e + (int)round($e * $pct / 100)); return $e; };
+    $lijnen = [];
+    foreach ($o['regels'] as $r) {
+        $oms = $r['naam'] . ($r['keuze_tekst'] !== '' ? ' (' . $r['keuze_tekst'] . ')' : '');
+        $lijnen[] = ['oms' => $oms, 'aantal' => (int)$r['aantal'], 'incl' => (int)$r['stuk'] * (int)$r['aantal'], 'btw' => $kor ? 0 : (int)$r['btw']];
+    }
+    if ((int)$o['verzend'] > 0) $lijnen[] = ['oms' => 'Verzendkosten', 'aantal' => 1, 'incl' => (int)$o['verzend'], 'btw' => $kor ? 0 : 21];
+    /* per btw-groep het totaal exclusief zo bepalen dat het totaal inclusief precies klopt, en dan over de regels verdelen */
+    $groep = [];
+    foreach ($lijnen as $i => $l) { $groep[$l['btw']][] = $i; }
+    $regels = [];
+    foreach ($groep as $pct => $idx) {
+        $gIncl = 0; foreach ($idx as $i) $gIncl += $lijnen[$i]['incl'];
+        $gExcl = $excl($gIncl, $pct); $rest = $gExcl;
+        foreach ($idx as $n => $i) {
+            $l = $lijnen[$i];
+            $e = $n === count($idx) - 1 ? $rest : (int)round($gIncl > 0 ? $l['incl'] * $gExcl / $gIncl : 0);
+            $rest -= $e;
+            $a = max(1, (int)$l['aantal']);
+            $regels[$i] = $e % $a === 0 ? ['oms' => $l['oms'], 'aantal' => $a, 'eenheid' => 'stuk', 'prijs' => intdiv($e, $a), 'btw' => $pct]
+                                        : ['oms' => $a . ' x ' . $l['oms'], 'aantal' => 1, 'eenheid' => 'post', 'prijs' => $e, 'btw' => $pct];
+        }
+    }
+    ksort($regels); $regels = array_values($regels);
+    /* Soms kan een bedrag inclusief btw niet precies uit hele centen exclusief btw komen. Dan een afrondingsregel, zodat de factuur gelijk is aan wat de klant betaalde. */
+    $verschil = (int)$o['totaal'] - adm_tot(['regels' => $regels, 'kor' => $kor])['incl'];
+    if ($verschil !== 0) $regels[] = ['oms' => 'Afronding', 'aantal' => 1, 'eenheid' => 'post', 'prijs' => $verschil, 'btw' => 0];
+    $kid = ws_klant_koppel($o);
+    $kl = adm_klanten(); $ki = adm_vind($kl, $kid);
+    $kk = $o['klant']; $bedrijf = trim((string)($kk['bedrijf'] ?? ''));
+    $snap = $ki !== null ? adm_snap($kl[$ki]) : ['naam' => $bedrijf !== '' ? $bedrijf : $kk['naam'], 'contact' => $bedrijf !== '' ? $kk['naam'] : '', 'email' => $kk['mail'], 'straat' => $kk['straat'] ?? '', 'postcode' => $kk['postcode'] ?? '', 'plaats' => $kk['plaats'] ?? '', 'kvk' => '', 'btw' => ''];
+    $betaald = ($o['betaald_op'] ?? '') !== '';
+    $nr = adm_volgnummer($ainst, 'factuur'); write_json(ADM_INST, $ainst);
+    $d = ['id' => adm_id('d'), 'soort' => 'factuur', 'nummer' => $nr, 'status' => $betaald ? 'betaald' : 'open', 'credit' => false, 'van' => '', 'token' => bin2hex(random_bytes(12)),
+          'betaald_op' => $betaald ? substr($o['betaald_op'], 0, 10) : '', 'verstuurd_op' => '', 'akkoord_op' => '', 'aangemaakt' => date('Y-m-d H:i'), 'klant_id' => $kid, 'klant' => $snap,
+          'datum' => date('Y-m-d'), 'leverdatum' => '', 'termijn' => $betaald ? 0 : 14, 'geldig_tot' => '', 'onderwerp' => 'Webshop, bestelling ' . $o['nr'],
+          'opmerking' => $betaald ? 'Betaald via de webshop met ' . ws_methode_tekst($o['methode'] ?? '') . '.' : '', 'kor' => $kor, 'pdf' => '', 'regels' => $regels, 'webshop' => $o['id']];
+    $docs = adm_docs(); array_unshift($docs, $d); adm_save_docs($docs);
+    ws_slot(function() use ($oid, $d) { $l = ws_bestellingen(); foreach ($l as $k => $x) { if ($x['id'] === $oid) $l[$k]['factuur_id'] = $d['id']; } ws_best_bewaar($l); });
+    return $d['id'];
+}
+function ws_regels_tekst($o) {
+    $t = '';
+    foreach ($o['regels'] as $r) {
+        $t .= (int)$r['aantal'] . ' x ' . $r['naam'] . ($r['keuze_tekst'] !== '' ? ' (' . $r['keuze_tekst'] . ')' : '') . '   ' . adm_eur((int)$r['stuk'] * (int)$r['aantal']) . "\n";
+        foreach ($r['ontwerpen'] as $on) { $t .= '   Opdruk ' . $on['plek'] . ': ' . ($on['bestand'] !== '' ? $on['bestand'] : '') . ($on['tekst'] !== '' ? ($on['bestand'] !== '' ? ', ' : '') . 'tekst "' . $on['tekst'] . '"' : '') . (!empty($on['mail']) ? ' (stuurt het bestand per mail)' : '') . "\n"; }
+    }
+    if ((int)$o['verzend'] > 0) $t .= 'Verzendkosten   ' . adm_eur((int)$o['verzend']) . "\n";
+    $t .= 'Totaal   ' . adm_eur((int)$o['totaal']) . " (inclusief btw)\n";
+    return $t;
+}
+function ws_levering_tekst($o, $in) {
+    if ($o['levering'] === 'ophalen') return 'Ophalen' . ($in['ophaal_tekst'] !== '' ? ': ' . $in['ophaal_tekst'] : (st('straat') !== '' ? ' bij ' . st('straat') . ', ' . trim(st('postcode') . ' ' . st('plaats')) : ''));
+    $k = $o['klant'];
+    return 'Verzenden naar ' . trim(($k['bedrijf'] !== '' ? $k['bedrijf'] . ', ' : '') . $k['naam'] . ', ' . $k['straat'] . ', ' . $k['postcode'] . ' ' . $k['plaats']);
+}
+function ws_mail_koper($o) {
+    $in = ws_inst(); $zaak = st('naam'); $k = $o['klant'];
+    if (!filter_var($k['mail'] ?? '', FILTER_VALIDATE_EMAIL)) return false;
+    $betaald = ($o['betaald_op'] ?? '') !== '';
+    $txt = "Beste " . $k['naam'] . ",\n\nBedankt voor uw bestelling bij " . $zaak . ".\n\nBestelnummer: " . $o['nr'] . "\n\n" . ws_regels_tekst($o) . "\n" . ws_levering_tekst($o, $in) . "\n";
+    $txt .= $betaald ? "Betaling: ontvangen (" . ws_methode_tekst($o['methode'] ?? '') . ").\n" : ($o['betaalwijze'] === 'winkel' ? "Betaling: u betaalt bij het ophalen.\n" : "Betaling: wij nemen contact met u op over de betaling.\n");
+    $heeftOntwerp = false; $mailNodig = false;
+    foreach ($o['regels'] as $r) { foreach ($r['ontwerpen'] as $on) { $heeftOntwerp = true; if (!empty($on['mail'])) $mailNodig = true; } }
+    if ($heeftOntwerp) $txt .= "\nWij bekijken uw ontwerp voordat we gaan drukken. Is er iets niet goed, dan nemen wij contact met u op.";
+    if ($mailNodig) $txt .= "\nU gaf aan een bestand per mail te sturen. Beantwoord deze mail met het bestand als bijlage en vermeld bestelnummer " . $o['nr'] . '.';
+    if ($heeftOntwerp) $txt .= "\nProducten met uw eigen opdruk maken wij speciaal voor u. Die kunnen daarom niet worden teruggestuurd.";
+    $txt .= "\n" . (st('tel') !== '' ? "\nVragen? Bel ons: " . st('tel') : '') . "\n\nMet vriendelijke groet,\n" . $zaak;
+    return adm_mail_stuur($k['mail'], 'Uw bestelling ' . $o['nr'] . ' bij ' . $zaak, $txt, [], [], ['soort' => 'webshop', 'ref' => $o['id']]);
+}
+function ws_mail_eigenaar($o) {
+    $in = ws_inst();
+    $naar = filter_var($in['melding'], FILTER_VALIDATE_EMAIL) ? $in['melding'] : st('email');
+    if (!filter_var($naar, FILTER_VALIDATE_EMAIL)) return false;
+    $k = $o['klant']; $betaald = ($o['betaald_op'] ?? '') !== '';
+    $waarsch = [];
+    foreach ($o['regels'] as $r) { foreach ($r['ontwerpen'] as $on) { if (($on['oordeel'] ?? '') === 'slecht') $waarsch[] = $r['naam'] . ', ' . $on['plek'] . ': de afbeelding is te klein en kan wazig worden (' . (int)$on['dpi'] . ' dpi).'; if (!empty($on['mail'])) $waarsch[] = $r['naam'] . ', ' . $on['plek'] . ': de klant stuurt het bestand per mail.'; } }
+    $txt = "Nieuwe bestelling " . $o['nr'] . ($betaald ? ' (betaald met ' . ws_methode_tekst($o['methode'] ?? '') . ')' : ($o['betaalwijze'] === 'winkel' ? ' (betaalt bij ophalen)' : ' (nog niet betaald)')) . "\n\n"
+         . ws_regels_tekst($o) . "\n" . ws_levering_tekst($o, $in) . "\n\nKlant: " . $k['naam'] . ($k['bedrijf'] !== '' ? ', ' . $k['bedrijf'] : '') . "\nTelefoon: " . $k['tel'] . "\nE-mail: " . $k['mail'] . "\n"
+         . (($o['opm'] ?? '') !== '' ? "Opmerking: " . $o['opm'] . "\n" : '')
+         . ($waarsch ? "\nLet op:\n- " . implode("\n- ", $waarsch) . "\n" : '')
+         . "\nBestelling en ontwerpen bekijken: " . adm_basis() . '?webshop=1&b=' . rawurlencode($o['id']);
+    return adm_mail_stuur($naar, 'Nieuwe bestelling ' . $o['nr'] . ': ' . adm_eur((int)$o['totaal']) . ' (' . $k['naam'] . ')', $txt, [], [], ['soort' => 'webshop', 'ref' => $o['id']]);
+}
+function ws_mail_status($o, $st) {
+    $in = ws_inst(); $zaak = st('naam'); $k = $o['klant'];
+    if (!filter_var($k['mail'] ?? '', FILTER_VALIDATE_EMAIL)) return false;
+    if ($st === 'verzonden') { $ond = 'Uw bestelling ' . $o['nr'] . ' is verzonden'; $kern = "Uw bestelling " . $o['nr'] . " is verzonden. U ontvangt hem binnenkort." . (($o['track'] ?? '') !== '' ? "\n\nVolg uw pakket: " . $o['track'] : ''); }
+    elseif ($st === 'klaar') { $ond = 'Uw bestelling ' . $o['nr'] . ' ligt klaar'; $kern = "Uw bestelling " . $o['nr'] . " ligt voor u klaar." . ($in['ophaal_tekst'] !== '' ? "\n\n" . $in['ophaal_tekst'] : (st('straat') !== '' ? "\n\nU kunt hem ophalen bij " . st('straat') . ', ' . trim(st('postcode') . ' ' . st('plaats')) . '.' : '')) . (($o['betaald_op'] ?? '') === '' && $o['betaalwijze'] === 'winkel' ? "\n\nU betaalt bij het ophalen: " . adm_eur((int)$o['totaal']) . '.' : ''); }
+    elseif ($st === 'geannuleerd') { $ond = 'Uw bestelling ' . $o['nr'] . ' is geannuleerd'; $kern = "Uw bestelling " . $o['nr'] . " is geannuleerd." . (($o['betaald_op'] ?? '') !== '' ? "\n\nHeeft u al betaald, dan storten wij het bedrag terug." : ''); }
+    else return false;
+    $txt = "Beste " . $k['naam'] . ",\n\n" . $kern . (st('tel') !== '' ? "\n\nVragen? Bel ons: " . st('tel') : '') . "\n\nMet vriendelijke groet,\n" . $zaak;
+    return adm_mail_stuur($k['mail'], $ond, $txt, [], [], ['soort' => 'webshop', 'ref' => $o['id']]);
+}
+
+/* ---------- Openbaar: upload, bestellen, betaalstatus, webhook ---------- */
+function ws_json($d) { header('Content-Type: application/json; charset=UTF-8'); header('Cache-Control: no-store'); header('X-Robots-Tag: noindex'); echo json_encode($d, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); exit; }
+function ws_ip_ok($soort, $max) {
+    $ip = hash('sha256', (string)($_SERVER['REMOTE_ADDR'] ?? '') . $soort);
+    $f = DATA_DIR . '/ws_ip.json'; $nu = time();
+    return ws_slot(function() use ($f, $ip, $nu, $max) {
+        $d = read_json($f, []); $d = array_filter(array_map(function($l) use ($nu) { return array_values(array_filter((array)$l, function($t) use ($nu) { return $t > $nu - 3600; })); }, $d));
+        $l = $d[$ip] ?? [];
+        if (count($l) >= $max) { write_json($f, $d); return false; }
+        $l[] = $nu; $d[$ip] = $l; write_json($f, $d); return true;
+    });
+}
+function ws_tmp_opruimen() {
+    if (!is_dir(WS_TMP)) return;
+    foreach (scandir(WS_TMP) as $f) { if ($f[0] === '.') continue; $p = WS_TMP . '/' . $f; if (is_dir($p) && filemtime($p) < time() - 3 * 86400) ab_rm_map($p); }
+}
+function ws_openbaar() {
+    global $WS_ONTW_EXT;
+    $in = ws_inst(); $w = (string)($_GET['shop'] ?? '');
+    if ($w === 'webhook') {
+        $mid = (string)($_POST['id'] ?? '');
+        if (preg_match('/^tr_[A-Za-z0-9]+$/', $mid)) { foreach (ws_bestellingen() as $o) { if (($o['mollie_id'] ?? '') === $mid) { ws_mollie_check($o); break; } } }
+        http_response_code(200); exit('ok');
+    }
+    if ($w === 'status') {
+        $t = (string)($_GET['b'] ?? ''); $o = null;
+        if (preg_match('/^[a-f0-9]{32}$/', $t)) { foreach (ws_bestellingen() as $x) { if (hash_equals((string)($x['token'] ?? ''), $t)) { $o = $x; break; } } }
+        if (!$o) ws_json(['fout' => 'Deze bestelling kennen wij niet.']);
+        if ($o['status'] === 'wacht' || $o['status'] === 'mislukt') { $o = ws_mollie_check($o); }
+        $betaald = ($o['betaald_op'] ?? '') !== '';
+        $st = $o['status'] === 'wacht' ? 'wacht' : ($o['status'] === 'mislukt' ? 'mislukt' : 'ok');
+        $tekst = $st === 'wacht' ? 'We wachten nog op de bevestiging van uw betaling. Dit duurt meestal een paar seconden.'
+               : ($st === 'mislukt' ? 'De betaling is niet gelukt of afgebroken. Uw winkelwagen staat nog klaar, u kunt het opnieuw proberen.'
+               : ($betaald ? 'Uw betaling is ontvangen. U krijgt een bevestiging op ' . $o['klant']['mail'] . '.' : ($o['betaalwijze'] === 'winkel' ? 'Uw bestelling is ontvangen. U betaalt bij het ophalen. U krijgt een bevestiging op ' . $o['klant']['mail'] . '.' : 'Uw bestelling is ontvangen. Wij nemen contact met u op over de betaling.')));
+        ws_json(['status' => $st, 'nr' => $o['nr'], 'tekst' => $tekst, 'totaal' => adm_eur((int)$o['totaal'])]);
+    }
+    if (empty($in['aan'])) ws_json(['fout' => 'De webshop staat op dit moment uit.']);
+    if ($w === 'upload' && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+        if (empty($_FILES['bestand'])) ws_json(['fout' => 'Dit bestand is te groot om te uploaden.', 'groot' => 1]);
+        $f = $_FILES['bestand'];
+        if ($f['error'] === UPLOAD_ERR_INI_SIZE || $f['error'] === UPLOAD_ERR_FORM_SIZE) ws_json(['fout' => 'Dit bestand is te groot om te uploaden.', 'groot' => 1]);
+        if ($f['error'] !== UPLOAD_ERR_OK || !is_uploaded_file($f['tmp_name'])) ws_json(['fout' => 'Het uploaden is niet gelukt. Probeer het nog eens.']);
+        if (!ws_ip_ok('upload', 80)) ws_json(['fout' => "Er zijn vanaf dit adres al veel bestanden ge\u{fc}pload. Probeer het over een uur nog eens."]);
+        $id = (string)($_POST['id'] ?? '');
+        $bewerkt = $id !== '';
+        if ($bewerkt) {
+            if (!preg_match('/^[a-f0-9]{24}$/', $id) || !is_dir(WS_TMP . '/' . $id)) ws_json(['fout' => 'Onbekende upload.']);
+            $info = @getimagesize($f['tmp_name']);
+            if (!$info || $info[2] !== IMAGETYPE_PNG) ws_json(['fout' => 'Geen PNG.']);
+            move_uploaded_file($f['tmp_name'], WS_TMP . '/' . $id . '/bewerkt.png');
+            $m = read_json(WS_TMP . '/' . $id . '/meta.json', []); $m['bewerkt'] = 'bewerkt.png'; $m['soort_bewerkt'] = cut((string)($_POST['soort'] ?? ''), 20); write_json(WS_TMP . '/' . $id . '/meta.json', $m);
+            ws_json(['ok' => 1, 'id' => $id]);
+        }
+        $naam = basename(str_replace('\\', '/', (string)$f['name']));
+        $ext = strtolower(pathinfo($naam, PATHINFO_EXTENSION));
+        if (!in_array($ext, $WS_ONTW_EXT, true)) ws_json(['fout' => 'Dit soort bestand kunnen wij niet gebruiken. Gebruik een PNG, JPG, PDF, SVG, AI of EPS.']);
+        ensure_data_dir(); if (!is_dir(WS_TMP)) mkdir(WS_TMP, 0755, true);
+        ws_tmp_opruimen();
+        $id = bin2hex(random_bytes(12)); mkdir(WS_TMP . '/' . $id, 0755, true);
+        $schoon = preg_replace('/[^A-Za-z0-9._-]+/', '-', pathinfo($naam, PATHINFO_FILENAME)); $schoon = trim(substr($schoon, 0, 60), '-.') ?: 'ontwerp';
+        move_uploaded_file($f['tmp_name'], WS_TMP . '/' . $id . '/origineel-' . $schoon . '.' . $ext);
+        $m = ['naam' => cut($naam, 120), 'bestand' => 'origineel-' . $schoon . '.' . $ext, 'w' => (int)($_POST['w'] ?? 0), 'h' => (int)($_POST['h'] ?? 0), 'dpi' => (int)($_POST['dpi'] ?? 0),
+              'oordeel' => in_array($_POST['oordeel'] ?? '', ['goed', 'matig', 'slecht', 'vector', 'onbekend'], true) ? $_POST['oordeel'] : 'onbekend', 'op' => date('Y-m-d H:i')];
+        write_json(WS_TMP . '/' . $id . '/meta.json', $m);
+        ws_json(['ok' => 1, 'id' => $id]);
+    }
+    if ($w === 'bestel' && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+        $d = json_decode((string)($_POST['data'] ?? ''), true);
+        if (!is_array($d)) ws_json(['fout' => 'Er ging iets mis. Probeer het nog eens.']);
+        if (trim((string)($d['website'] ?? '')) !== '') ws_json(['fout' => 'Er ging iets mis.']);
+        $kort = function($v, $n) { return cut(trim(preg_replace('/\s+/', ' ', (string)$v)), $n); };
+        $k = ['naam' => $kort($d['naam'] ?? '', 80), 'bedrijf' => $kort($d['bedrijf'] ?? '', 80), 'mail' => trim((string)($d['mail'] ?? '')), 'tel' => $kort($d['tel'] ?? '', 25),
+              'straat' => $kort($d['straat'] ?? '', 100), 'postcode' => strtoupper($kort($d['postcode'] ?? '', 10)), 'plaats' => $kort($d['plaats'] ?? '', 60)];
+        $lev = ($d['levering'] ?? '') === 'ophalen' ? 'ophalen' : 'verzenden';
+        if ($lev === 'ophalen' && !$in['ophalen']) $lev = 'verzenden';
+        if ($lev === 'verzenden' && !$in['verzenden']) $lev = 'ophalen';
+        if (mb_strlen($k['naam']) < 2) ws_json(['fout' => 'Vul uw naam in.', 'veld' => 'naam']);
+        if (!filter_var($k['mail'], FILTER_VALIDATE_EMAIL)) ws_json(['fout' => 'Vul een geldig e-mailadres in. Daar sturen wij de bevestiging naartoe.', 'veld' => 'mail']);
+        if (!preg_match('/^[0-9+() .\-]{6,25}$/', $k['tel'])) ws_json(['fout' => 'Vul een geldig telefoonnummer in.', 'veld' => 'tel']);
+        if ($lev === 'verzenden' && ($k['straat'] === '' || $k['postcode'] === '' || $k['plaats'] === '')) ws_json(['fout' => 'Vul het adres in waar wij de bestelling naartoe sturen.', 'veld' => 'straat']);
+        if ($in['voorwaarden'] !== '' && empty($d['akkoord'])) ws_json(['fout' => 'Ga akkoord met de voorwaarden.', 'veld' => 'akkoord']);
+        $items = is_array($d['items'] ?? null) ? array_slice($d['items'], 0, 50) : [];
+        if (!$items) ws_json(['fout' => 'Uw winkelwagen is leeg.']);
+        $regels = []; $nodig = []; $sub = 0; $tmpIds = [];
+        foreach ($items as $it) {
+            $p = ws_vind_prod((string)($it['pid'] ?? ''));
+            if (!$p || !ws_zichtbaar($p)) ws_json(['fout' => 'Een product in uw winkelwagen is niet meer te koop. Haal het eruit en probeer het opnieuw.']);
+            if (!ws_te_koop($p)) ws_json(['fout' => $p['naam'] . ' is uitverkocht. Haal het uit uw winkelwagen.']);
+            $aantal = max(1, min(999, (int)($it['aantal'] ?? 1)));
+            $keuzes = []; foreach ((array)($it['keuzes'] ?? []) as $kk => $vv) { $keuzes[cut((string)$kk, 30)] = cut((string)$vv, 40); }
+            $gek = []; $ontw = [];
+            foreach (array_slice((array)($it['plekken'] ?? []), 0, 8) as $pl) {
+                $pn = cut((string)($pl['n'] ?? ''), 40); $tid = (string)($pl['id'] ?? ''); $tekst = cut(trim((string)($pl['tekst'] ?? '')), 300); $permail = !empty($pl['mail']);
+                if ($tid !== '' && !preg_match('/^[a-f0-9]{24}$/', $tid)) $tid = '';
+                if ($tid !== '' && !is_file(WS_TMP . '/' . $tid . '/meta.json')) ws_json(['fout' => 'Een ontwerp bij ' . $p['naam'] . ' is verlopen. Upload het opnieuw.']);
+                if ($tid === '' && $tekst === '' && !$permail) ws_json(['fout' => 'Bij ' . $p['naam'] . ' mist het ontwerp voor ' . $pn . '.']);
+                $gek[] = $pn; $ontw[] = ['plek' => $pn, 'tmp' => $tid, 'tekst' => $tekst, 'mail' => $permail, 'mailnaam' => cut((string)($pl['naam'] ?? ''), 120), 'gebruik' => ($pl['gebruik'] ?? '') === 'bewerkt' ? 'bewerkt' : 'origineel'];
+                if ($tid !== '') $tmpIds[] = $tid;
+            }
+            if (ws_plekken($p['opdruk'] ?? '') && !$gek) ws_json(['fout' => 'Kies bij ' . $p['naam'] . ' waar de opdruk moet komen.']);
+            $stuk = ws_stukprijs($p, $keuzes, $gek);
+            if ($stuk === null || $stuk <= 0) ws_json(['fout' => 'De keuze bij ' . $p['naam'] . ' klopt niet meer. Haal het uit uw winkelwagen en kies opnieuw.']);
+            $kt = []; foreach (ws_opties($p['opties'] ?? '') as $g) { $kt[] = $g['n'] . ' ' . $keuzes[$g['n']]; }
+            $regels[] = ['pid' => $p['id'], 'naam' => $p['naam'], 'keuzes' => $keuzes, 'keuze_tekst' => implode(', ', $kt), 'aantal' => $aantal, 'stuk' => $stuk, 'btw' => (int)($p['btw'] ?? 21), 'ontwerpen' => $ontw];
+            $nodig[$p['id']] = ($nodig[$p['id']] ?? 0) + $aantal;
+            $sub += $stuk * $aantal;
+        }
+        foreach ($nodig as $pid => $n) { $p = ws_vind_prod($pid); if (($p['voorraad'] ?? '') !== '' && $p['voorraad'] !== null && (int)$p['voorraad'] < $n) ws_json(['fout' => 'Van ' . $p['naam'] . ' hebben wij er nog ' . (int)$p['voorraad'] . '. Pas het aantal aan.']); }
+        $verzend = $lev === 'verzenden' && !($in['gratis_vanaf'] > 0 && $sub >= $in['gratis_vanaf']) ? $in['verzendkosten'] : 0;
+        $online = ws_mollie_ok($in['mollie']);
+        $bw = $online ? 'online' : 'later';
+        if ($lev === 'ophalen' && $in['winkel_betalen'] && (($d['betaal'] ?? '') === 'winkel' || !$online)) $bw = 'winkel';
+        if (is_file(DATA_DIR . '/demo-aan.txt')) ws_json(['ok' => 1, 'demo' => 1, 'tekst' => 'Dit is een voorbeeldwebsite van FormForge. Zo werkt bestellen. Er is geen echte bestelling gemaakt en er is niets betaald.']);
+        if (!ws_ip_ok('bestel', 15)) ws_json(['fout' => 'Er zijn vanaf dit adres al veel bestellingen gedaan. Bel ons gerust als het niet lukt.']);
+        $o = ws_slot(function() use ($k, $lev, $regels, $verzend, $sub, $bw, $d) {
+            $l = ws_bestellingen();
+            $j = date('Y'); $max = 0;
+            foreach ($l as $x) { if (preg_match('/^W' . $j . '-(\d+)$/', (string)$x['nr'], $m)) $max = max($max, (int)$m[1]); }
+            $id = bin2hex(random_bytes(6));
+            $o = ['id' => $id, 'nr' => 'W' . $j . '-' . str_pad((string)($max + 1), 4, '0', STR_PAD_LEFT), 'token' => bin2hex(random_bytes(16)), 'op' => date('Y-m-d H:i'),
+                  'status' => $bw === 'online' ? 'wacht' : 'nieuw', 'nieuw' => 1, 'klant' => $k, 'levering' => $lev, 'betaalwijze' => $bw, 'regels' => $regels, 'verzend' => $verzend,
+                  'totaal' => $sub + $verzend, 'opm' => cut(trim(str_replace("\r\n", "\n", (string)($d['opm'] ?? ''))), 1000), 'mollie_id' => '', 'betaald_op' => '', 'methode' => '', 'factuur_id' => '', 'track' => ''];
+            $l[] = $o; ws_best_bewaar($l);
+            return $o;
+        });
+        /* ontwerpen van de tijdelijke map naar de map van deze bestelling */
+        $n = 0; $verplaatst = [];
+        foreach ($o['regels'] as $ri => $r) {
+            foreach ($r['ontwerpen'] as $oi => $on) {
+                $n++;
+                $doel = WS_ONTW . '/' . $o['id'] . '/' . $n;
+                $nieuw = ['plek' => $on['plek'], 'tekst' => $on['tekst'], 'mail' => $on['mail'], 'map' => '', 'bestand' => $on['mail'] ? $on['mailnaam'] : '', 'origineel' => '', 'bewerkt' => '', 'gebruik' => $on['gebruik'], 'dpi' => 0, 'oordeel' => '', 'w' => 0, 'h' => 0];
+                if (!is_dir(dirname($doel))) mkdir(dirname($doel), 0755, true);
+                if ($on['tmp'] !== '' && isset($verplaatst[$on['tmp']])) {
+                    /* hetzelfde ontwerp bij een andere maat of kleur: kopie */
+                    @mkdir($doel, 0755, true);
+                    foreach (scandir($verplaatst[$on['tmp']]) as $bf) { if ($bf[0] !== '.') @copy($verplaatst[$on['tmp']] . '/' . $bf, $doel . '/' . $bf); }
+                }
+                if ($on['tmp'] !== '' && (isset($verplaatst[$on['tmp']]) || is_dir(WS_TMP . '/' . $on['tmp']))) {
+                    if (isset($verplaatst[$on['tmp']]) || @rename(WS_TMP . '/' . $on['tmp'], $doel)) {
+                        if (!isset($verplaatst[$on['tmp']])) $verplaatst[$on['tmp']] = $doel;
+                        $m = read_json($doel . '/meta.json', []);
+                        $nieuw = array_merge($nieuw, ['map' => $o['id'] . '/' . $n, 'bestand' => (string)($m['naam'] ?? ''), 'origineel' => (string)($m['bestand'] ?? ''), 'bewerkt' => (string)($m['bewerkt'] ?? ''), 'soort_bewerkt' => (string)($m['soort_bewerkt'] ?? ''), 'dpi' => (int)($m['dpi'] ?? 0), 'oordeel' => (string)($m['oordeel'] ?? ''), 'w' => (int)($m['w'] ?? 0), 'h' => (int)($m['h'] ?? 0)]);
+                    }
+                }
+                $o['regels'][$ri]['ontwerpen'][$oi] = $nieuw;
+            }
+        }
+        ws_slot(function() use ($o) { $l = ws_bestellingen(); foreach ($l as $kk => $x) { if ($x['id'] === $o['id']) $l[$kk] = $o; } ws_best_bewaar($l); });
+        $terug = rtrim(site_url(), '/') . '/webshop/bedankt/?b=' . $o['token'];
+        if ($bw === 'online') {
+            $body = ['amount' => ['currency' => 'EUR', 'value' => ws_bedrag((int)$o['totaal'])], 'description' => 'Bestelling ' . $o['nr'] . ' bij ' . cut(st('naam'), 80), 'redirectUrl' => $terug, 'metadata' => ['bestelling' => $o['nr']]];
+            if (!ws_lokaal()) $body['webhookUrl'] = adm_basis() . '?shop=webhook';
+            list($code, $j) = ws_mollie($in['mollie'], 'POST', '/payments', $body);
+            $url = (string)($j['_links']['checkout']['href'] ?? '');
+            if ($code !== 201 || $url === '' || empty($j['id'])) {
+                ws_slot(function() use ($o) { $l = ws_bestellingen(); foreach ($l as $kk => $x) { if ($x['id'] === $o['id']) { $l[$kk]['status'] = 'mislukt'; $l[$kk]['nieuw'] = 0; } } ws_best_bewaar($l); });
+                ws_json(['fout' => 'Online betalen lukt op dit moment niet.' . (st('tel') !== '' ? ' Bel ons gerust: ' . st('tel') . '.' : ' Probeer het later nog eens.')]);
+            }
+            ws_slot(function() use ($o, $j) { $l = ws_bestellingen(); foreach ($l as $kk => $x) { if ($x['id'] === $o['id']) $l[$kk]['mollie_id'] = (string)$j['id']; } ws_best_bewaar($l); });
+            ws_json(['ok' => 1, 'url' => $url]);
+        }
+        ws_bevestig($o);
+        ws_json(['ok' => 1, 'url' => $terug]);
+    }
+    ws_json(['fout' => 'Onbekend verzoek.']);
+}
+
+/* ---------- Webshop-pagina's op de website ---------- */
+function ws_eur($c) { return adm_eur((int)$c); }
+function ws_menu_link() { $in = ws_inst(); return !empty($in['aan']) ? '<a class="nav" href="/webshop/">' . h($in['naam']) . '</a>' : ''; }
+function ws_css() {
+    return ab_css() . <<<'CSS'
+<style>
+.ws-cats{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px;}
+.ws-cats button{font:inherit;font-size:14.5px;font-weight:600;padding:8px 14px;border-radius:999px;border:1.5px solid var(--line);background:#fff;color:var(--navy);cursor:pointer;}
+.ws-cats button.on{background:var(--navy);border-color:var(--navy);color:#fff;}
+.ws-kaart .ab-txt em small{font-weight:600;font-size:13px;color:var(--muted);margin-right:4px;}
+.ws-zij form{display:grid;gap:14px;margin-top:16px;}
+.ws-veld label,.ws-kop{display:block;font-weight:700;font-size:15px;margin-bottom:6px;color:var(--navy);}
+.ws-veld select,.ws-veld input[type=text],.ws-veld input[type=email],.ws-veld input[type=tel],.ws-veld textarea,.ws-tekstl input{width:100%;font:inherit;font-size:16px;color:var(--navy);background:#fff;border:1.5px solid var(--line);border-radius:10px;padding:11px 12px;box-sizing:border-box;}
+.ws-veld select:focus,.ws-veld input:focus,.ws-veld textarea:focus{outline:2px solid var(--blue);outline-offset:1px;}
+.ws-stuk{color:var(--muted);font-size:14.5px;margin-top:-2px;}
+.ws-plek{border:1.5px solid var(--line);border-radius:12px;padding:12px;background:#fff;margin-bottom:10px;}
+.ws-plek.aan{border-color:var(--blue);}
+.ws-check{display:flex;gap:10px;align-items:flex-start;cursor:pointer;font-size:15px;}
+.ws-check input{width:20px;height:20px;margin-top:2px;flex:none;accent-color:var(--blue);}
+.ws-check i{font-style:normal;color:var(--muted);}
+.ws-upl{margin-top:12px;display:grid;gap:10px;}
+.ws-drop{position:relative;border:2px dashed var(--line);border-radius:12px;padding:18px 14px;text-align:center;background:var(--sky);cursor:pointer;}
+.ws-drop.over{border-color:var(--blue);background:#fff;}
+.ws-drop input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;}
+.ws-drop b{display:block;font-size:15.5px;} .ws-drop small{display:block;color:var(--muted);font-size:13px;margin-top:4px;}
+.ws-res{display:grid;grid-template-columns:96px 1fr;gap:12px;align-items:start;}
+.ws-thumb{width:96px;height:96px;border-radius:10px;object-fit:contain;border:1px solid var(--line);background-color:#fff;background-image:linear-gradient(45deg,#e9edf3 25%,transparent 25%),linear-gradient(-45deg,#e9edf3 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#e9edf3 75%),linear-gradient(-45deg,transparent 75%,#e9edf3 75%);background-size:14px 14px;background-position:0 0,0 7px,7px -7px,-7px 0;}
+.ws-oordeel{border-radius:10px;padding:9px 11px;font-size:14px;line-height:1.45;}
+.ws-oordeel b{display:block;font-size:14.5px;margin-bottom:2px;}
+.ws-oordeel.goed,.ws-oordeel.vector{background:#e8f6ee;color:#14532d;} .ws-oordeel.matig{background:#fff6e0;color:#713f12;} .ws-oordeel.slecht{background:#fdecec;color:#7f1d1d;} .ws-oordeel.onbekend{background:var(--sky);color:var(--navy);}
+.ws-naam{font-size:13px;color:var(--muted);word-break:break-all;margin-top:6px;}
+.ws-klein{font-size:13.5px;}
+.ws-klein button,.ws-link{font:inherit;font-size:13.5px;background:none;border:0;padding:0;color:var(--blue);text-decoration:underline;cursor:pointer;}
+@media (max-width:520px){.ws-res{grid-template-columns:1fr;} .ws-thumb{width:120px;height:120px;}}
+.ws-bg{grid-column:1 / -1;background:var(--sky);border-radius:10px;padding:10px 12px;font-size:14px;}
+.ws-ok{grid-column:1 / -1;font-size:14px;}
+.ws-teller{display:inline-flex;align-items:center;border:1.5px solid var(--line);border-radius:10px;overflow:hidden;background:#fff;}
+.ws-teller button{width:44px;height:44px;border:0;background:#fff;font-size:20px;color:var(--navy);cursor:pointer;}
+.ws-teller input{width:64px;height:44px;border:0;text-align:center;font:inherit;font-size:16px;font-weight:700;color:var(--navy);-moz-appearance:textfield;}
+.ws-teller input::-webkit-outer-spin-button,.ws-teller input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
+.ws-knop{justify-content:center;width:100%;font-size:17px;padding:15px 18px;}
+.ws-knop[disabled]{opacity:.6;cursor:wait;}
+.ws-melding{font-size:15px;} .ws-melding.fout{color:#b91c1c;font-weight:600;}
+.ws-klaar{background:#e8f6ee;color:#14532d;border-radius:12px;padding:12px 14px;display:grid;gap:10px;}
+.ws-klaar .rij{display:flex;gap:8px;flex-wrap:wrap;}
+.ws-pil{position:fixed;right:16px;bottom:16px;z-index:60;display:inline-flex;align-items:center;gap:8px;background:var(--navy);color:#fff;text-decoration:none;font-weight:700;padding:12px 18px;border-radius:999px;box-shadow:0 14px 30px -12px rgba(0,0,0,.5);}
+.ws-pil b{background:#fff;color:var(--navy);border-radius:999px;min-width:24px;height:24px;display:inline-grid;place-items:center;font-size:13px;padding:0 6px;}
+.ws-pil svg{width:20px;height:20px;}
+.ws-mand{display:grid;grid-template-columns:1.3fr .9fr;gap:clamp(20px,4vw,36px);align-items:start;}
+@media (max-width:900px){.ws-mand{grid-template-columns:1fr;}}
+.ws-blok{background:#fff;border:1px solid var(--line);border-radius:16px;padding:clamp(16px,3vw,24px);}
+.ws-blok h2{font-size:22px;margin:0 0 14px;}
+.ws-item{display:grid;grid-template-columns:72px 1fr auto;gap:12px;padding:14px 0;border-bottom:1px solid var(--line);align-items:start;}
+.ws-item:first-of-type{padding-top:0;} .ws-item:last-of-type{border-bottom:0;}
+.ws-item img{width:72px;height:72px;object-fit:cover;border-radius:10px;background:var(--sky);display:block;}
+.ws-item b{display:block;font-size:16px;} .ws-item small{display:block;color:var(--muted);font-size:13.5px;margin-top:2px;}
+.ws-item .ws-mini{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;} .ws-item .ws-mini img{width:40px;height:40px;object-fit:contain;border:1px solid var(--line);border-radius:6px;background:#fff;}
+.ws-item .r{text-align:right;font-weight:800;white-space:nowrap;}
+.ws-item .ws-teller button{width:34px;height:34px;font-size:17px;} .ws-item .ws-teller input{width:44px;height:34px;font-size:15px;}
+.ws-item .acts{display:flex;gap:12px;align-items:center;margin-top:8px;flex-wrap:wrap;}
+.ws-som{width:100%;border-collapse:collapse;font-size:15.5px;margin-top:6px;}
+.ws-som td{padding:6px 0;} .ws-som td.r{text-align:right;} .ws-som tr.tot td{font-weight:800;font-size:19px;border-top:1px solid var(--line);padding-top:10px;}
+.ws-keus{display:grid;gap:8px;margin-bottom:12px;}
+.ws-keus label{display:flex;gap:10px;align-items:flex-start;border:1.5px solid var(--line);border-radius:12px;padding:11px 12px;cursor:pointer;background:#fff;font-size:15px;}
+.ws-keus label.on{border-color:var(--blue);} .ws-keus input{accent-color:var(--blue);width:18px;height:18px;margin-top:2px;}
+.ws-keus small{display:block;color:var(--muted);font-size:13.5px;}
+.ws-twee{display:grid;grid-template-columns:1fr 1fr;gap:10px;} @media (max-width:520px){.ws-twee{grid-template-columns:1fr;}}
+.ws-form{display:grid;gap:12px;}
+.ws-veld .hint{font-size:13px;color:var(--muted);margin-top:4px;}
+.ws-leeg{text-align:center;padding:30px 10px;}
+.ws-voorw{white-space:pre-wrap;line-height:1.6;}
+.ws-hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;}
+.ws-zij [hidden],.ws-pil[hidden],.ws-mand [hidden],#wsAdres[hidden],#wsBet[hidden]{display:none !important;}
+</style>
+CSS;
+}
+function ws_pil() { return '<a class="ws-pil" id="wsPil" href="/webshop/winkelwagen/" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 4h2l2.2 11h11l2-8H6.2"/><circle cx="9" cy="19.5" r="1.4"/><circle cx="17" cy="19.5" r="1.4"/></svg>Winkelwagen <b id="wsPilN">0</b></a>'; }
+function ws_js_tag() { $f = ROOT . '/webshop/ws.js'; return '<script src="/webshop/ws.js?v=' . (is_file($f) ? filemtime($f) : time()) . '"></script>'; }
+function ws_vanaf($p) {
+    $min = (int)$p['prijs']; $meer = false;
+    foreach (ws_opties($p['opties'] ?? '') as $g) { $m = min(array_map(function($w) { return $w['p']; }, $g['w'])); $min += $m; foreach ($g['w'] as $w) { if ($w['p'] !== $m) $meer = true; } }
+    $pl = ws_plekken($p['opdruk'] ?? '');
+    if ($pl) { $m = min(array_map(function($x) { return $x['p']; }, $pl)); $min += $m; foreach ($pl as $x) { if ($x['p'] !== $m) $meer = true; } if (count($pl) > 1) $meer = true; }
+    return [$min, $meer];
+}
+function ws_kaart($p) {
+    $f = $p['fotos'][0] ?? '';
+    list($pr, $vanaf) = ws_vanaf($p);
+    $lab = ws_op($p) || ($p['status'] ?? '') === 'uit' ? 'Uitverkocht' : '';
+    return '<a class="ab-kaart ws-kaart' . ($lab !== '' ? ' weg' : '') . '" href="/webshop/' . h($p['slug']) . '/" data-cat="' . h($p['cat'] ?? '') . '">'
+         . '<span class="ab-img">' . ($f !== '' ? '<img src="' . h(ws_foto_url($p, $f)) . '" alt="' . h($p['naam']) . '" loading="lazy" />' : '') . ($lab !== '' ? '<i class="ab-lab verkocht">' . $lab . '</i>' : '') . '</span>'
+         . '<span class="ab-txt"><b>' . h($p['naam']) . '</b>' . (($p['cat'] ?? '') !== '' ? '<small>' . h($p['cat']) . '</small>' : '')
+         . '<em>' . ($vanaf ? '<small>vanaf</small>' : '') . h(ws_eur($pr)) . '</em></span></a>';
+}
+function render_ws_lijst($in, $items) {
+    $cats = array_values(array_unique(array_filter(array_map(function($p) { return (string)($p['cat'] ?? ''); }, $items), 'strlen')));
+    sort($cats, SORT_NATURAL | SORT_FLAG_CASE);
+    $out = site_head($in['titel'] . ' | ' . st('naam'), cut($in['intro'] . ' ' . st('naam') . (st('plaats') !== '' ? ', ' . st('plaats') : '') . '.', 160), '/webshop/', business_jsonld(), true);
+    $out .= ws_css() . "\n</head>\n<body>\n" . site_header();
+    $out .= '<main><section class="abhero"><div class="wrap"><h1>' . h($in['titel']) . '</h1><p>' . h($in['intro']) . '</p></div></section><section class="abwrap"><div class="wrap">';
+    if (count($cats) > 1) {
+        $out .= '<div class="ws-cats" id="wsCats" role="group" aria-label="Categorie"><button type="button" class="on" data-c="">Alles</button>';
+        foreach ($cats as $c) { $out .= '<button type="button" data-c="' . h($c) . '">' . h($c) . '</button>'; }
+        $out .= '</div>';
+    }
+    $out .= '<div class="ab-grid" id="wsGrid">';
+    foreach ($items as $p) { $out .= ws_kaart($p); }
+    $out .= '</div>' . (!$items ? '<div class="ab-leeg">Hier komen binnenkort onze producten.</div>' : '') . '</div></section></main>' . site_footer() . ws_pil() . ws_js_tag();
+    return $out . "\n</body>\n</html>\n";
+}
+function ws_prod_json($p) {
+    return ['id' => $p['id'], 'naam' => $p['naam'], 'url' => '/webshop/' . $p['slug'] . '/', 'foto' => ($p['fotos'][0] ?? '') !== '' ? ws_foto_url($p, $p['fotos'][0]) : '',
+            'prijs' => (int)$p['prijs'], 'opties' => ws_opties($p['opties'] ?? ''), 'plekken' => ws_plekken($p['opdruk'] ?? ''), 'koop' => ws_te_koop($p),
+            'voorraad' => ($p['voorraad'] ?? '') === '' || $p['voorraad'] === null ? -1 : (int)$p['voorraad']];
+}
+function ws_json_html($d) { return json_encode($d, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); }
+function render_ws_item($in, $p) {
+    $fotos = array_values($p['fotos'] ?? []);
+    list($pr, $vanaf) = ws_vanaf($p);
+    $ld = ['@context' => 'https://schema.org', '@type' => 'Product', 'name' => $p['naam'], 'url' => site_url() . '/webshop/' . $p['slug'] . '/',
+           'offers' => ['@type' => 'Offer', 'price' => number_format($pr / 100, 2, '.', ''), 'priceCurrency' => 'EUR', 'availability' => ws_te_koop($p) ? 'https://schema.org/InStock' : 'https://schema.org/SoldOut']];
+    if ($fotos) $ld['image'] = array_map(function($f) use ($p) { return site_url() . ws_foto_url($p, $f); }, array_slice($fotos, 0, 5));
+    if (trim((string)($p['tekst'] ?? '')) !== '') $ld['description'] = cut(trim($p['tekst']), 300);
+    $extra = '<script type="application/ld+json">' . json_encode($ld, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG) . '</script>';
+    $out = site_head($p['naam'] . ' | ' . st('naam'), cut($p['naam'] . ' voor ' . ws_eur($pr) . '. ' . trim((string)($p['tekst'] ?? '')), 160), '/webshop/' . $p['slug'] . '/', $extra, true, $fotos ? site_url() . ws_foto_url($p, $fotos[0]) : '');
+    $out .= ws_css() . "\n</head>\n<body>\n" . site_header('/webshop/', 'Alle producten');
+    $out .= '<main><section class="abwrap"><div class="wrap"><a class="ab-terug" href="/webshop/">&larr; Alle producten</a><div class="ab-det"><div class="ab-gal">';
+    if ($fotos) {
+        $out .= '<div class="ab-groot"><img id="abFoto" src="' . h(ws_foto_url($p, $fotos[0])) . '" alt="' . h($p['naam']) . '" />';
+        if (count($fotos) > 1) $out .= '<button type="button" class="vo" aria-label="Vorige foto">&lsaquo;</button><button type="button" class="na" aria-label="Volgende foto">&rsaquo;</button><span class="tel" id="abTel">1 / ' . count($fotos) . '</span>';
+        $out .= '</div>';
+        if (count($fotos) > 1) { $out .= '<div class="ab-duims">'; foreach ($fotos as $i => $f) { $out .= '<button type="button"' . ($i === 0 ? ' class="on"' : '') . ' data-i="' . $i . '" aria-label="Foto ' . ($i + 1) . '"><img src="' . h(ws_foto_url($p, $f)) . '" alt="" loading="lazy" /></button>'; } $out .= '</div>'; }
+    } else { $out .= '<div class="ab-groot"></div>'; }
+    $out .= '</div><aside class="ab-zij ws-zij"><h1>' . h($p['naam']) . '</h1>';
+    $out .= '<div class="ab-prijs" id="wsPrijs">' . ($vanaf ? '<small style="font-size:16px;font-weight:600;color:var(--muted)">vanaf </small>' : '') . h(ws_eur($pr)) . '</div><div class="ws-stuk" id="wsStuk">Inclusief btw</div>';
+    if (!ws_te_koop($p)) {
+        $out .= '<div class="ab-verkocht">Uitverkocht</div>';
+        if (st('tel') !== '') $out .= '<div class="ab-acts"><a class="btn quiet" href="tel:' . h(tel_link(st('tel'))) . '">Vragen? Bel ' . h(st('tel')) . '</a></div>';
+    } else {
+        $out .= '<form id="wsForm" novalidate>';
+        foreach (ws_opties($p['opties'] ?? '') as $gi => $g) {
+            $out .= '<div class="ws-veld"><label for="wsg' . $gi . '">' . h($g['n']) . '</label><select id="wsg' . $gi . '" data-groep="' . h($g['n']) . '"' . (count($g['w']) > 1 ? '' : '') . '>';
+            if (count($g['w']) > 1) $out .= '<option value="">Kies ' . h(mb_strtolower($g['n'], 'UTF-8')) . '</option>';
+            foreach ($g['w'] as $w) { $out .= '<option value="' . h($w['n']) . '">' . h($w['n']) . ($w['p'] ? ' (+ ' . h(ws_eur($w['p'])) . ')' : '') . '</option>'; }
+            $out .= '</select></div>';
+        }
+        $pl = ws_plekken($p['opdruk'] ?? '');
+        if ($pl) {
+            $out .= '<div class="ws-plekken"><span class="ws-kop">Opdruk' . (count($pl) > 1 ? ': kies waar' : '') . '</span>';
+            foreach ($pl as $i => $x) {
+                $out .= '<div class="ws-plek" data-i="' . $i . '"><label class="ws-check"><input type="checkbox"' . (count($pl) === 1 ? ' checked' : '') . ' /><span><b>' . h($x['n']) . '</b>' . ($x['b'] > 0 ? ', ' . h(str_replace('.', ',', (string)$x['b']) . ' x ' . str_replace('.', ',', (string)$x['h'])) . ' cm' : '') . ($x['p'] ? ' <i>+ ' . h(ws_eur($x['p'])) . '</i>' : '') . '</span></label><div class="ws-upl" hidden></div></div>';
+            }
+            $out .= '</div>';
+        }
+        $out .= '<div class="ws-veld"><span class="ws-kop">Aantal</span><div class="ws-teller"><button type="button" data-d="-1" aria-label="Minder">&minus;</button><input type="number" id="wsAantal" value="1" min="1" max="999" inputmode="numeric" aria-label="Aantal" /><button type="button" data-d="1" aria-label="Meer">+</button></div></div>';
+        $out .= '<button class="btn primary ws-knop" type="submit" id="wsKnop">In winkelwagen</button><div class="ws-melding" id="wsMelding" role="status" aria-live="polite"></div></form>';
+    }
+    $out .= '</aside>';
+    if (trim((string)($p['tekst'] ?? '')) !== '') {
+        $out .= '<div class="ab-oms"><h2>Omschrijving</h2>';
+        foreach (preg_split("/\n\s*\n/", trim($p['tekst'])) as $al) { $out .= '<p>' . nl2br(h(trim($al))) . '</p>'; }
+        $out .= '</div>';
+    }
+    $out .= '</div></div></section></main>' . site_footer() . ws_pil();
+    $cfg = ['p' => ws_prod_json($p), 'max' => ws_max_upload(), 'mail' => st('email'), 'zaak' => st('naam')];
+    $out .= '<script>var WSP=' . ws_json_html($cfg) . ';</script>';
+    if (count($fotos) > 1) {
+        $urls = json_encode(array_map(function($f) use ($p) { return ws_foto_url($p, $f); }, $fotos), JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP);
+        $out .= '<script>var ABF=' . $urls . ';</script>';
+    }
+    $out .= ws_js_tag();
+    return $out . "\n</body>\n</html>\n";
+}
+function render_ws_mand($in, $items) {
+    $prods = []; foreach ($items as $p) { $prods[$p['id']] = ws_prod_json($p); }
+    $cfg = ['prods' => $prods, 'verzenden' => $in['verzenden'], 'ophalen' => $in['ophalen'], 'kosten' => $in['verzendkosten'], 'gratis' => $in['gratis_vanaf'],
+            'winkel' => $in['winkel_betalen'], 'online' => ws_mollie_ok($in['mollie']), 'ophaal' => $in['ophaal_tekst'] !== '' ? $in['ophaal_tekst'] : (st('straat') !== '' ? st('straat') . ', ' . trim(st('postcode') . ' ' . st('plaats')) : ''),
+            'voorw' => $in['voorwaarden'] !== '', 'tel' => st('tel')];
+    $out = site_head('Winkelwagen | ' . st('naam'), '', '/webshop/winkelwagen/', '<meta name="robots" content="noindex" />', true);
+    $out .= ws_css() . "\n</head>\n<body>\n" . site_header('/webshop/', 'Verder winkelen');
+    $out .= '<main><section class="abwrap"><div class="wrap"><h1 style="margin:0 0 18px;font-size:clamp(28px,4vw,40px)">Winkelwagen</h1><div id="wsMand"><div class="ws-blok ws-leeg">Even laden...</div></div></div></section></main>' . site_footer();
+    $out .= '<script>var WSC=' . ws_json_html($cfg) . ';</script>' . ws_js_tag();
+    return $out . "\n</body>\n</html>\n";
+}
+function render_ws_bedankt($in) {
+    $out = site_head('Bedankt voor uw bestelling | ' . st('naam'), '', '/webshop/bedankt/', '<meta name="robots" content="noindex" />', true);
+    $out .= ws_css() . "\n</head>\n<body>\n" . site_header('/webshop/', 'Naar de webshop');
+    $out .= '<main><section class="abwrap"><div class="wrap" style="max-width:720px"><div class="ws-blok" id="wsBedankt" data-tel="' . h(st('tel')) . '"><h1 style="margin:0 0 10px;font-size:clamp(26px,4vw,36px)">Bedankt voor uw bestelling</h1><p id="wsBedTekst">Even kijken of uw betaling binnen is...</p></div></div></section></main>' . site_footer();
+    return $out . ws_js_tag() . "\n</body>\n</html>\n";
+}
+function render_ws_voorwaarden($in) {
+    $out = site_head('Voorwaarden webshop | ' . st('naam'), '', '/webshop/voorwaarden/', '<meta name="robots" content="noindex" />', true);
+    $out .= ws_css() . "\n</head>\n<body>\n" . site_header('/webshop/winkelwagen/', 'Terug naar de winkelwagen');
+    $out .= '<main><section class="abwrap"><div class="wrap" style="max-width:820px"><div class="ws-blok"><h1 style="margin:0 0 14px;font-size:clamp(26px,4vw,36px)">Voorwaarden</h1><div class="ws-voorw">' . h($in['voorwaarden']) . '</div></div></div></section></main>' . site_footer();
+    return $out . "\n</body>\n</html>\n";
+}
+function write_webshop_pages() {
+    $in = ws_inst(); $dir = ROOT . '/webshop';
+    if (empty($in['aan'])) { if (is_dir($dir) && is_file($dir . '/.ff-webshop')) ab_rm_map($dir); return; }
+    if (!is_dir($dir)) mkdir($dir, 0755, true);
+    @file_put_contents($dir . '/.ff-webshop', '1');
+    file_put_contents($dir . '/ws.js', ws_js(), LOCK_EX);
+    $items = array_values(array_filter(ws_lijst(), 'ws_zichtbaar'));
+    usort($items, function($a, $b) { return [(string)($a['cat'] ?? ''), (int)($a['volg'] ?? 0), (string)$a['naam']] <=> [(string)($b['cat'] ?? ''), (int)($b['volg'] ?? 0), (string)$b['naam']]; });
+    schrijf_pagina($dir, stijl_pagina(render_ws_lijst($in, $items)));
+    $kop = function($diepte) { return '<?php $ffp = dirname(__DIR__, ' . $diepte . ') . ' . "'/licentie.php'; if (is_file(\$ffp)) { require \$ffp; } ?>"; };
+    $houd = ['winkelwagen' => 1, 'bedankt' => 1, 'voorwaarden' => 1];
+    foreach (['winkelwagen' => render_ws_mand($in, $items), 'bedankt' => render_ws_bedankt($in)] + ($in['voorwaarden'] !== '' ? ['voorwaarden' => render_ws_voorwaarden($in)] : []) as $sl => $html) {
+        if (!is_dir($dir . '/' . $sl)) mkdir($dir . '/' . $sl, 0755, true);
+        file_put_contents($dir . '/' . $sl . '/index.php', $kop(2) . stijl_pagina($html), LOCK_EX);
+    }
+    if ($in['voorwaarden'] === '' && is_dir($dir . '/voorwaarden')) ab_rm_map($dir . '/voorwaarden');
+    foreach ($items as $p) {
+        $d = $dir . '/' . $p['slug'];
+        if (!is_dir($d)) mkdir($d, 0755, true);
+        file_put_contents($d . '/index.php', $kop(2) . stijl_pagina(render_ws_item($in, $p)), LOCK_EX);
+        $houd[$p['slug']] = 1;
+    }
+    foreach (scandir($dir) as $f) { if ($f[0] !== '.' && is_dir($dir . '/' . $f) && !isset($houd[$f])) ab_rm_map($dir . '/' . $f); }
+}
+
+/* Het script van de webshop. Wordt als /webshop/ws.js op de website gezet. */
+function ws_js() {
+    return <<<'JS'
+(function () {
+  'use strict';
+  var SLEUTEL = 'ffws_mand', geheugen = [];
+  function lees() { try { var d = JSON.parse(localStorage.getItem(SLEUTEL) || '[]'); return Array.isArray(d) ? d : []; } catch (e) { return geheugen; } }
+  function schrijf(l) {
+    geheugen = l;
+    try { localStorage.setItem(SLEUTEL, JSON.stringify(l)); }
+    catch (e) { try { localStorage.setItem(SLEUTEL, JSON.stringify(l.map(function (x) { var y = JSON.parse(JSON.stringify(x)); (y.plekken || []).forEach(function (p) { p.thumb = ''; }); return y; }))); } catch (e2) {} }
+    pil();
+  }
+  function eur(c) { var s = (Math.abs(c) / 100).toFixed(2).split('.'); s[0] = s[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.'); return (c < 0 ? '- ' : '') + '\u20ac ' + s[0] + ',' + s[1]; }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function cm(n) { return String(n).replace('.', ','); }
+  function pil() { var p = document.getElementById('wsPil'); if (!p) return; var n = lees().reduce(function (a, x) { return a + (x.aantal || 0); }, 0); p.hidden = n === 0; document.getElementById('wsPilN').textContent = n; }
+  function stukprijs(P, keuzes, plekNamen) {
+    var s = P.prijs, ok = true;
+    P.opties.forEach(function (g) { var v = keuzes[g.n], f = null; g.w.forEach(function (w) { if (w.n === v) f = w; }); if (f) s += f.p; else ok = false; });
+    plekNamen.forEach(function (n) { P.plekken.forEach(function (pl) { if (pl.n === n) s += pl.p; }); });
+    return ok ? s : null;
+  }
+  pil();
+
+  /* ---------- Categorieen in het overzicht ---------- */
+  var cats = document.getElementById('wsCats');
+  if (cats) {
+    cats.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      cats.querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', x === b); });
+      var c = b.getAttribute('data-c');
+      document.querySelectorAll('#wsGrid .ws-kaart').forEach(function (k) { k.style.display = !c || k.getAttribute('data-cat') === c ? '' : 'none'; });
+    });
+  }
+
+  /* ---------- Foto's op de productpagina ---------- */
+  if (window.ABF && document.getElementById('abFoto')) {
+    var gi = 0, gimg = document.getElementById('abFoto'), gtel = document.getElementById('abTel'), duims = document.querySelectorAll('.ab-duims button');
+    var zet = function (n) { gi = (n + ABF.length) % ABF.length; gimg.src = ABF[gi]; gtel.textContent = (gi + 1) + ' / ' + ABF.length; duims.forEach(function (d, k) { d.classList.toggle('on', k === gi); }); };
+    document.querySelector('.ab-groot .vo').onclick = function () { zet(gi - 1); };
+    document.querySelector('.ab-groot .na').onclick = function () { zet(gi + 1); };
+    duims.forEach(function (d) { d.onclick = function () { zet(parseInt(d.getAttribute('data-i'), 10)); }; });
+    var x0 = null; gimg.addEventListener('touchstart', function (e) { x0 = e.touches[0].clientX; }, { passive: true });
+    gimg.addEventListener('touchend', function (e) { if (x0 === null) return; var dx = e.changedTouches[0].clientX - x0; if (Math.abs(dx) > 40) zet(gi + (dx < 0 ? 1 : -1)); x0 = null; });
+  }
+
+  /* ---------- Ontwerp bekijken: scherpte, achtergrond en bestandssoort ---------- */
+  var VECTOR = ['svg', 'pdf', 'ai', 'eps', 'cdr'];
+  var OMZETTEN = ['webp', 'gif', 'bmp', 'heic', 'heif', 'tif', 'tiff'];
+  function extVan(f) { var n = (f.name || '').toLowerCase(); var i = n.lastIndexOf('.'); return i >= 0 ? n.slice(i + 1) : ''; }
+  function laad(f) { return new Promise(function (ok) { var u = URL.createObjectURL(f); var im = new Image(); im.onload = function () { ok(im); }; im.onerror = function () { ok(null); }; im.src = u; }); }
+  function dpiVoor(w, h, b, hc) { if (!b || !hc || !w || !h) return 0; var r = w / h, ar = b / hc; return Math.round(r >= ar ? w / (b / 2.54) : h / (hc / 2.54)); }
+  function duimnagel(img) { var m = 192, sc = Math.min(1, m / Math.max(img.naturalWidth, img.naturalHeight)); var c = document.createElement('canvas'); c.width = Math.max(1, Math.round(img.naturalWidth * sc)); c.height = Math.max(1, Math.round(img.naturalHeight * sc)); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); try { return c.toDataURL('image/png'); } catch (e) { return ''; } }
+  function kijk(img, res) {
+    var sc = Math.min(1, 500 / Math.max(res.w, res.h)); var c = document.createElement('canvas'); c.width = Math.max(1, Math.round(res.w * sc)); c.height = Math.max(1, Math.round(res.h * sc));
+    var x = c.getContext('2d'); x.drawImage(img, 0, 0, c.width, c.height);
+    var d; try { d = x.getImageData(0, 0, c.width, c.height).data; } catch (e) { return; }
+    var n = c.width * c.height, doorz = 0;
+    for (var i = 0; i < n; i += 3) { if (d[i * 4 + 3] < 245) doorz++; }
+    if (doorz > n / 3 * 0.01) { res.transparant = true; return; }
+    var rand = [], W = c.width, H = c.height;
+    for (var a = 0; a < W; a++) { rand.push(a, a + (H - 1) * W); }
+    for (var b = 0; b < H; b++) { rand.push(b * W, b * W + W - 1); }
+    var som = [0, 0, 0]; rand.forEach(function (p) { som[0] += d[p * 4]; som[1] += d[p * 4 + 1]; som[2] += d[p * 4 + 2]; });
+    var k = som.map(function (s) { return Math.round(s / rand.length); }), gelijk = 0;
+    rand.forEach(function (p) { var dr = d[p * 4] - k[0], dg = d[p * 4 + 1] - k[1], db = d[p * 4 + 2] - k[2]; if (dr * dr + dg * dg + db * db < 900) gelijk++; });
+    if (gelijk / rand.length >= 0.85) { res.bgKleur = k; res.bgMogelijk = res.w * res.h <= 4096 * 4096; }
+  }
+  function haalAchtergrondWeg(img, k) {
+    var w = img.naturalWidth, h = img.naturalHeight, c = document.createElement('canvas'); c.width = w; c.height = h;
+    var x = c.getContext('2d'); x.drawImage(img, 0, 0); var id = x.getImageData(0, 0, w, h), p = id.data;
+    var T1 = 30, T2 = 75, gezien = new Uint8Array(w * h), st = new Int32Array(w * h), sp = 0;
+    function af(i) { var o = i * 4, dr = p[o] - k[0], dg = p[o + 1] - k[1], db = p[o + 2] - k[2]; return Math.sqrt(dr * dr + dg * dg + db * db); }
+    function duw(i) { if (!gezien[i] && af(i) < T2) { gezien[i] = 1; st[sp++] = i; } }
+    for (var a = 0; a < w; a++) { duw(a); duw(a + (h - 1) * w); }
+    for (var b = 0; b < h; b++) { duw(b * w); duw(b * w + w - 1); }
+    while (sp) {
+      var i = st[--sp], o = i * 4, af1 = af(i), al = af1 <= T1 ? 0 : Math.round((af1 - T1) / (T2 - T1) * 255);
+      if (al < p[o + 3]) p[o + 3] = al;
+      var xx = i % w, yy = (i - xx) / w;
+      if (xx > 0) duw(i - 1); if (xx < w - 1) duw(i + 1); if (yy > 0) duw(i - w); if (yy < h - 1) duw(i + w);
+    }
+    x.putImageData(id, 0, 0);
+    var m = 192, sc = Math.min(1, m / Math.max(w, h)), t = document.createElement('canvas'); t.width = Math.max(1, Math.round(w * sc)); t.height = Math.max(1, Math.round(h * sc)); t.getContext('2d').drawImage(c, 0, 0, t.width, t.height);
+    var dn = ''; try { dn = t.toDataURL('image/png'); } catch (e) {}
+    return new Promise(function (ok) { c.toBlob(function (bl) { ok({ blob: bl, thumb: dn }); }, 'image/png'); });
+  }
+  function alsPng(img) {
+    var c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight; c.getContext('2d').drawImage(img, 0, 0);
+    return new Promise(function (ok) { c.toBlob(function (bl) { ok(bl); }, 'image/png'); });
+  }
+  function bekijk(f, pl) {
+    var ext = extVan(f), res = { file: f, ext: ext, naam: f.name, w: 0, h: 0, dpi: 0, oordeel: 'onbekend', thumb: '', bewerkt: null, png: null, groot: f.size > WSP.max };
+    if (VECTOR.indexOf(ext) >= 0) {
+      res.oordeel = 'vector';
+      if (ext !== 'svg') return Promise.resolve(res);
+      return laad(f).then(function (img) { if (img) res.thumb = duimnagel(img); return res; });
+    }
+    return laad(f).then(function (img) {
+      if (!img || !img.naturalWidth) return res;
+      res.img = img; res.w = img.naturalWidth; res.h = img.naturalHeight;
+      res.dpi = dpiVoor(res.w, res.h, pl.b, pl.h);
+      res.oordeel = !pl.b ? 'onbekend' : res.dpi >= 200 ? 'goed' : res.dpi >= 120 ? 'matig' : 'slecht';
+      res.bekend = true;
+      res.thumb = duimnagel(img);
+      kijk(img, res);
+      if (OMZETTEN.indexOf(ext) >= 0) return alsPng(img).then(function (bl) { res.png = bl; return res; });
+      return res;
+    });
+  }
+  function oordeelHtml(res, pl) {
+    var zaak = esc(WSP.zaak || 'Wij'), maat = pl.b ? cm(pl.b) + ' x ' + cm(pl.h) + ' cm' : '', px = res.w + ' x ' + res.h + ' pixels';
+    if (res.groot) return ['slecht', 'Dit bestand is te groot om hier te uploaden', 'Het mag hier hoogstens ' + Math.floor(WSP.max / 1048576) + ' MB zijn. Bestel gewoon verder en stuur het bestand daarna per mail' + (WSP.mail ? ' naar ' + esc(WSP.mail) : '') + '. Vermeld dan uw bestelnummer.'];
+    if (res.oordeel === 'vector') return ['vector', 'Vectorbestand: altijd scherp', 'Dit bestand kan zonder kwaliteitsverlies worden vergroot. ' + zaak + ' bekijkt het voordat er gedrukt wordt.'];
+    if (!res.bekend) return ['onbekend', 'Bestand ontvangen', 'Dit bestand kunnen we hier niet laten zien, maar het wordt wel meegestuurd. ' + zaak + ' bekijkt het voordat er gedrukt wordt.'];
+    var extra = res.transparant ? ' De achtergrond is al doorzichtig, mooi.' : '';
+    if (res.oordeel === 'goed') return ['goed', 'Scherp genoeg', 'Uw afbeelding (' + px + ') is groot genoeg voor een opdruk van ' + maat + '.' + extra];
+    if (res.oordeel === 'matig') return ['matig', 'Kan iets minder scherp worden', 'Voor een opdruk van ' + maat + ' is deze afbeelding (' + px + ') aan de kleine kant. Van dichtbij kunt u dat zien. Heeft u een grotere versie, upload die dan.' + extra];
+    if (res.oordeel === 'slecht') {
+      var nw = Math.round(pl.b / 2.54 * 200), nh = Math.round(pl.h / 2.54 * 200);
+      return ['slecht', 'Te klein: de opdruk wordt wazig', 'Deze afbeelding is ' + px + '. Voor een scherpe opdruk van ' + maat + ' is ongeveer ' + nw + ' x ' + nh + ' pixels nodig. Heeft u uw logo als PDF, SVG of AI? Dat is altijd scherp. Gemaakt met ChatGPT of een andere AI? Vraag daar dan om een grotere versie.' + extra];
+    }
+    return ['onbekend', 'Afbeelding ontvangen', 'Uw afbeelding is ' + px + '. ' + zaak + ' bekijkt hem voordat er gedrukt wordt.' + extra];
+  }
+
+  /* ---------- Productpagina ---------- */
+  var form = document.getElementById('wsForm');
+  if (window.WSP && form) productpagina();
+  function productpagina() {
+    var P = WSP.p, aantal = document.getElementById('wsAantal'), melding = document.getElementById('wsMelding'), knop = document.getElementById('wsKnop');
+    var selects = Array.prototype.slice.call(form.querySelectorAll('select[data-groep]'));
+    var plekken = P.plekken.map(function (pl, i) { return { pl: pl, aan: P.plekken.length === 1, res: null, id: '', bewerktId: false, tekst: '', ok: false, zonderBg: false, bgBlob: null, bgThumb: '' }; });
+    function keuzes() { var k = {}; selects.forEach(function (s) { k[s.getAttribute('data-groep')] = s.value; }); return k; }
+    function nAantal() { var n = parseInt(aantal.value, 10); return isNaN(n) || n < 1 ? 1 : Math.min(999, n); }
+    function prijs() {
+      var s = P.prijs, vanaf = false, k = keuzes();
+      P.opties.forEach(function (g) { var v = k[g.n], f = null, m = Infinity; g.w.forEach(function (w) { if (w.n === v) f = w; m = Math.min(m, w.p); }); if (f) s += f.p; else { s += m; if (g.w.some(function (w) { return w.p !== m; })) vanaf = true; } });
+      plekken.forEach(function (x) { if (x.aan) s += x.pl.p; });
+      var n = nAantal();
+      document.getElementById('wsPrijs').innerHTML = (vanaf ? '<small style="font-size:16px;font-weight:600;color:var(--muted)">vanaf </small>' : '') + esc(eur(s));
+      document.getElementById('wsStuk').textContent = (n > 1 ? 'Per stuk. ' + n + ' stuks: ' + eur(s * n) + '. ' : '') + 'Inclusief btw';
+    }
+    selects.forEach(function (s) { s.addEventListener('change', prijs); });
+    form.querySelectorAll('.ws-teller button').forEach(function (b) { b.addEventListener('click', function () { aantal.value = Math.max(1, Math.min(999, nAantal() + parseInt(b.getAttribute('data-d'), 10))); prijs(); }); });
+    aantal.addEventListener('input', prijs);
+    form.querySelectorAll('.ws-plek').forEach(function (box) {
+      var i = parseInt(box.getAttribute('data-i'), 10), x = plekken[i], upl = box.querySelector('.ws-upl'), cb = box.querySelector('.ws-check input');
+      upl.innerHTML = '<div class="ws-drop"><input type="file" accept="image/*,.pdf,.svg,.ai,.eps,.psd,.tif,.tiff,.heic,.cdr" aria-label="Ontwerp uploaden voor ' + esc(x.pl.n) + '" /><b>Upload uw logo of ontwerp</b><small>Tik om te kiezen of sleep het hierheen. PNG, JPG, PDF, SVG, AI of EPS.</small></div>'
+        + '<div class="ws-res" hidden><img class="ws-thumb" alt="" /><div><div class="ws-oordeel"></div><div class="ws-naam"></div><div class="ws-klein"><button type="button" class="ws-weg">Ander bestand kiezen</button></div></div><div class="ws-bg" hidden></div><label class="ws-ok" hidden><input type="checkbox" /> Ik begrijp dat de opdruk minder scherp kan worden en wil toch bestellen.</label></div>'
+        + '<div class="ws-tekstl ws-veld"><label>Tekst op de opdruk (mag leeg)</label><input type="text" maxlength="300" placeholder="Bijvoorbeeld uw bedrijfsnaam" /></div>';
+      var drop = upl.querySelector('.ws-drop'), fin = drop.querySelector('input'), resBox = upl.querySelector('.ws-res'), thumb = resBox.querySelector('.ws-thumb'), oord = resBox.querySelector('.ws-oordeel'), naam = resBox.querySelector('.ws-naam'), bg = resBox.querySelector('.ws-bg'), ok = resBox.querySelector('.ws-ok');
+      function zetAan(a) { x.aan = a; cb.checked = a; upl.hidden = !a; box.classList.toggle('aan', a); prijs(); }
+      cb.addEventListener('change', function () { zetAan(cb.checked); });
+      zetAan(x.aan);
+      upl.querySelector('.ws-tekstl input').addEventListener('input', function (e) { x.tekst = e.target.value; });
+      ok.querySelector('input').addEventListener('change', function (e) { x.ok = e.target.checked; });
+      ['dragenter', 'dragover'].forEach(function (t) { drop.addEventListener(t, function (e) { e.preventDefault(); drop.classList.add('over'); }); });
+      ['dragleave', 'drop'].forEach(function (t) { drop.addEventListener(t, function () { drop.classList.remove('over'); }); });
+      drop.addEventListener('drop', function (e) { e.preventDefault(); if (e.dataTransfer.files[0]) kies(e.dataTransfer.files[0]); });
+      fin.addEventListener('change', function () { if (fin.files[0]) kies(fin.files[0]); });
+      resBox.querySelector('.ws-weg').addEventListener('click', function () { x.res = null; x.id = ''; x.bewerktId = false; x.ok = false; x.zonderBg = false; x.bgBlob = null; resBox.hidden = true; drop.hidden = false; fin.value = ''; fin.click(); });
+      function kies(f) {
+        drop.hidden = true; resBox.hidden = false; oord.className = 'ws-oordeel onbekend'; oord.innerHTML = '<b>Even kijken...</b>'; naam.textContent = f.name; thumb.removeAttribute('src');
+        x.id = ''; x.bewerktId = false; x.ok = false; x.zonderBg = false; x.bgBlob = null; ok.querySelector('input').checked = false;
+        bekijk(f, x.pl).then(function (res) {
+          x.res = res;
+          var o = oordeelHtml(res, x.pl);
+          oord.className = 'ws-oordeel ' + o[0]; oord.innerHTML = '<b>' + esc(o[1]) + '</b>' + o[2];
+          if (res.thumb) thumb.src = res.thumb; else thumb.removeAttribute('src');
+          ok.hidden = !(res.oordeel === 'slecht' && !res.groot);
+          bg.hidden = !res.bgMogelijk;
+          if (res.bgMogelijk) {
+            var wit = res.bgKleur[0] > 225 && res.bgKleur[1] > 225 && res.bgKleur[2] > 225;
+            bg.innerHTML = '<div>Uw afbeelding heeft een ' + (wit ? 'witte' : 'effen') + ' achtergrond. Die wordt dan ook gedrukt.</div><label style="display:flex;gap:8px;margin-top:6px;font-weight:600"><input type="checkbox" /> Achtergrond weghalen</label><div class="ws-bgmsg" style="font-size:13px;color:var(--muted);margin-top:4px"></div>';
+            var bcb = bg.querySelector('input'), bm = bg.querySelector('.ws-bgmsg');
+            bcb.addEventListener('change', function () {
+              x.zonderBg = bcb.checked; x.bewerktId = false;
+              if (!bcb.checked) { thumb.src = res.thumb; bm.textContent = ''; return; }
+              if (x.bgBlob) { thumb.src = x.bgThumb; bm.textContent = 'Bekijk het voorbeeld. Wij krijgen allebei de versies.'; return; }
+              bm.textContent = 'Bezig...';
+              setTimeout(function () {
+                haalAchtergrondWeg(res.img, res.bgKleur).then(function (r) {
+                  x.bgBlob = r.blob; x.bgThumb = r.thumb || URL.createObjectURL(r.blob); if (x.zonderBg) thumb.src = x.bgThumb;
+                  bm.textContent = 'Bekijk het voorbeeld. Ziet het er niet goed uit? Haal het vinkje weg. Wij krijgen allebei de versies.';
+                }).catch(function () { bm.textContent = 'Dat lukte niet bij deze afbeelding.'; bcb.checked = false; x.zonderBg = false; });
+              }, 30);
+            });
+          }
+        });
+      }
+    });
+    prijs();
+    function stuur(url, fd, voortgang) {
+      return new Promise(function (ok, nee) {
+        var r = new XMLHttpRequest(); r.open('POST', url);
+        r.upload.onprogress = function (e) { if (e.lengthComputable && voortgang) voortgang(e.loaded / e.total); };
+        r.onload = function () { var j = null; try { j = JSON.parse(r.responseText); } catch (e) {} if (r.status === 413) j = { fout: 'Dit bestand is te groot om te uploaden.', groot: 1 }; ok(j || { fout: 'Het uploaden is niet gelukt. Probeer het nog eens.' }); };
+        r.onerror = function () { nee(); }; r.send(fd);
+      });
+    }
+    function meld(t, fout) { melding.className = 'ws-melding' + (fout ? ' fout' : ''); melding.innerHTML = t; }
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var k = keuzes(), fout = '';
+      selects.forEach(function (s) { if (!fout && !s.value) { fout = 'Kies eerst ' + s.getAttribute('data-groep').toLowerCase() + '.'; s.focus(); } });
+      var aanP = plekken.filter(function (x) { return x.aan; });
+      if (!fout && P.plekken.length && !aanP.length) fout = 'Kies waar de opdruk moet komen.';
+      aanP.forEach(function (x) {
+        if (fout) return;
+        if (!x.res && !x.tekst.trim()) fout = 'Upload een ontwerp of typ een tekst voor ' + x.pl.n.toLowerCase() + '.';
+        else if (x.res && x.res.oordeel === 'slecht' && !x.res.groot && !x.ok) fout = 'Uw afbeelding voor ' + x.pl.n.toLowerCase() + ' is te klein. Upload een groter bestand, of zet het vinkje dat u toch wilt bestellen.';
+      });
+      if (fout) { meld(esc(fout), true); return; }
+      knop.disabled = true;
+      var wacht = aanP.filter(function (x) { return x.res && !x.res.groot; });
+      var stap = Promise.resolve();
+      wacht.forEach(function (x, n) {
+        stap = stap.then(function () {
+          if (x.id) return;
+          meld('Uw ontwerp wordt ge\u00fcpload... ');
+          var fd = new FormData(); fd.append('bestand', x.res.file); fd.append('w', x.res.w); fd.append('h', x.res.h); fd.append('dpi', x.res.dpi); fd.append('oordeel', x.res.oordeel);
+          return stuur('/admin.php?shop=upload', fd, function (q) { meld('Uw ontwerp wordt ge\u00fcpload... ' + Math.round(q * 100) + '%'); }).then(function (j) {
+            if (j.groot) { x.res.groot = true; return; }
+            if (!j.ok) throw new Error(j.fout || 'Het uploaden is niet gelukt.');
+            x.id = j.id;
+          });
+        }).then(function () {
+          var bl = x.zonderBg && x.bgBlob ? x.bgBlob : x.res.png;
+          if (!x.id || !bl || x.bewerktId === (x.zonderBg ? 'bg' : 'png') || bl.size > WSP.max) return;
+          var fd = new FormData(); fd.append('bestand', bl, 'bewerkt.png'); fd.append('id', x.id); fd.append('soort', x.zonderBg ? 'achtergrond' : 'png');
+          return stuur('/admin.php?shop=upload', fd).then(function (j) { if (j.ok) x.bewerktId = x.zonderBg ? 'bg' : 'png'; });
+        });
+      });
+      stap.then(function () {
+        var namen = aanP.map(function (x) { return x.pl.n; });
+        var item = { k: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), pid: P.id, aantal: nAantal(), keuzes: k, stuk: stukprijs(P, k, namen),
+          plekken: aanP.map(function (x) { return { n: x.pl.n, id: x.id, naam: x.res ? x.res.naam : '', tekst: x.tekst.trim(), oordeel: x.res ? x.res.oordeel : '', dpi: x.res ? x.res.dpi : 0, mail: !!(x.res && x.res.groot), gebruik: x.zonderBg && x.bgBlob ? 'bewerkt' : 'origineel', thumb: x.res ? (x.zonderBg && x.bgBlob ? x.bgThumb : x.res.thumb) : '' }; }) };
+        var l = lees(), samen = null;
+        if (!item.plekken.length) l.forEach(function (y) { if (y.pid === item.pid && !y.plekken.length && JSON.stringify(y.keuzes) === JSON.stringify(item.keuzes)) samen = y; });
+        if (samen) samen.aantal = Math.min(999, samen.aantal + item.aantal); else l.push(item);
+        schrijf(l);
+        knop.disabled = false;
+        var groot = item.plekken.some(function (p) { return p.mail; });
+        meld('<div class="ws-klaar"><div><b>Toegevoegd aan uw winkelwagen.</b>' + (selects.length && P.plekken.length ? ' Wilt u hetzelfde ontwerp ook in een andere maat? Kies de maat en het aantal en klik nog een keer op In winkelwagen.' : '') + (groot ? ' Stuur het grote bestand na het bestellen per mail.' : '') + '</div><div class="rij"><a class="btn primary" href="/webshop/winkelwagen/">Naar de winkelwagen</a><a class="btn quiet" href="/webshop/">Verder winkelen</a></div></div>');
+      }).catch(function (err) { knop.disabled = false; meld(esc(err && err.message ? err.message : 'Het uploaden is niet gelukt. Controleer uw internet en probeer het nog eens.'), true); });
+    });
+  }
+
+  /* ---------- Winkelwagen en afrekenen ---------- */
+  var mandBox = document.getElementById('wsMand');
+  if (window.WSC && mandBox) winkelwagen();
+  function winkelwagen() {
+    var C = WSC, klant = {};
+    try { klant = JSON.parse(localStorage.getItem('ffws_klant') || '{}') || {}; } catch (e) {}
+    var lev = C.verzenden ? 'verzenden' : 'ophalen'; if (klant.levering && C[klant.levering]) lev = klant.levering;
+    var betaal = 'online';
+    function regels() {
+      var l = lees(), sub = 0, h = '';
+      l.forEach(function (x) {
+        var P = C.prods[x.pid], st = P && P.koop ? stukprijs(P, x.keuzes || {}, (x.plekken || []).map(function (p) { return p.n; })) : null;
+        if (st !== null) sub += st * x.aantal;
+        var kt = P ? P.opties.map(function (g) { return g.n + ' ' + (x.keuzes || {})[g.n]; }).join(', ') : '';
+        var pt = (x.plekken || []).map(function (p) { return 'Opdruk ' + p.n.toLowerCase() + (p.naam ? ': ' + p.naam : '') + (p.tekst ? (p.naam ? ', ' : ': ') + 'tekst "' + p.tekst + '"' : '') + (p.mail ? ' (bestand stuurt u per mail)' : ''); });
+        h += '<div class="ws-item" data-k="' + esc(x.k) + '">' + (P && P.foto ? '<img src="' + esc(P.foto) + '" alt="" />' : '<span></span>')
+          + '<div><b>' + (P ? '<a href="' + esc(P.url) + '" style="color:inherit">' + esc(P.naam) + '</a>' : 'Product') + '</b>' + (kt ? '<small>' + esc(kt) + '</small>' : '')
+          + pt.map(function (t) { return '<small>' + esc(t) + '</small>'; }).join('')
+          + ((x.plekken || []).some(function (p) { return p.thumb; }) ? '<div class="ws-mini">' + x.plekken.filter(function (p) { return p.thumb; }).map(function (p) { return '<img src="' + esc(p.thumb) + '" alt="" />'; }).join('') + '</div>' : '')
+          + (st === null ? '<small style="color:#b91c1c;font-weight:600">Dit product is niet meer te koop. Haal het uit uw winkelwagen.</small>' : '')
+          + '<div class="acts"><div class="ws-teller"><button type="button" data-d="-1" aria-label="Minder">&minus;</button><input type="number" value="' + x.aantal + '" min="1" max="999" aria-label="Aantal" /><button type="button" data-d="1" aria-label="Meer">+</button></div><button type="button" class="ws-link ws-wis">Verwijderen</button></div></div>'
+          + '<div class="r">' + (st !== null ? esc(eur(st * x.aantal)) + (x.aantal > 1 ? '<small style="font-weight:500">' + esc(eur(st)) + ' per stuk</small>' : '') : '') + '</div></div>';
+      });
+      return { l: l, sub: sub, html: h };
+    }
+    if (!lees().length) { mandBox.innerHTML = '<div class="ws-blok ws-leeg"><p style="font-size:18px;margin:0 0 14px">Uw winkelwagen is leeg.</p><a class="btn primary" href="/webshop/">Naar de webshop</a></div>'; return; }
+    var v = function (n) { return esc(klant[n] || ''); };
+    mandBox.innerHTML = '<div class="ws-mand"><div class="ws-blok"><h2>Uw producten</h2><div id="wsRegels"></div></div><div class="ws-blok"><h2>Bestellen</h2>'
+      + '<form class="ws-form" id="wsAfreken" novalidate>'
+      + (C.verzenden && C.ophalen ? '<div class="ws-keus" id="wsLev"><label><input type="radio" name="lev" value="verzenden" /> <span><b>Verzenden</b><small id="wsVzTekst"></small></span></label><label><input type="radio" name="lev" value="ophalen" /> <span><b>Ophalen</b><small>' + esc(C.ophaal || 'Gratis') + '</small></span></label></div>' : (C.ophalen ? '<p style="margin:0">U haalt uw bestelling op' + (C.ophaal ? ': ' + esc(C.ophaal) : '') + '.</p>' : ''))
+      + (C.ophalen && C.winkel && C.online ? '<div class="ws-keus" id="wsBet"><label><input type="radio" name="bet" value="online" checked /> <span><b>Nu online betalen</b><small>iDEAL of een andere betaalmethode</small></span></label><label><input type="radio" name="bet" value="winkel" /> <span><b>Betalen bij ophalen</b></span></label></div>' : '')
+      + '<div class="ws-veld"><label for="wsNaam">Naam</label><input type="text" id="wsNaam" name="naam" autocomplete="name" value="' + v('naam') + '" /></div>'
+      + '<div class="ws-veld"><label for="wsBedrijf">Bedrijf (mag leeg)</label><input type="text" id="wsBedrijf" name="bedrijf" autocomplete="organization" value="' + v('bedrijf') + '" /></div>'
+      + '<div class="ws-twee"><div class="ws-veld"><label for="wsMail">E-mailadres</label><input type="email" id="wsMail" name="mail" autocomplete="email" value="' + v('mail') + '" /></div><div class="ws-veld"><label for="wsTel">Telefoon</label><input type="tel" id="wsTel" name="tel" autocomplete="tel" value="' + v('tel') + '" /></div></div>'
+      + '<div id="wsAdres"><div class="ws-veld"><label for="wsStraat">Straat en huisnummer</label><input type="text" id="wsStraat" name="straat" autocomplete="street-address" value="' + v('straat') + '" /></div>'
+      + '<div class="ws-twee" style="margin-top:12px"><div class="ws-veld"><label for="wsPc">Postcode</label><input type="text" id="wsPc" name="postcode" autocomplete="postal-code" value="' + v('postcode') + '" /></div><div class="ws-veld"><label for="wsPlaats">Plaats</label><input type="text" id="wsPlaats" name="plaats" autocomplete="address-level2" value="' + v('plaats') + '" /></div></div></div>'
+      + '<div class="ws-veld"><label for="wsOpm">Opmerking (mag leeg)</label><textarea id="wsOpm" name="opm" rows="3" maxlength="1000"></textarea></div>'
+      + '<div class="ws-hp" aria-hidden="true"><input type="text" name="website" tabindex="-1" autocomplete="off" /></div>'
+      + '<table class="ws-som" id="wsSom"></table>'
+      + (C.voorw ? '<label class="ws-check"><input type="checkbox" id="wsAkkoord" /> <span>Ik ga akkoord met de <a href="/webshop/voorwaarden/" target="_blank" rel="noopener">voorwaarden</a>.</span></label>' : '')
+      + '<button class="btn primary ws-knop" type="submit" id="wsBestel">Bestellen</button><div class="ws-melding" id="wsMeld" role="status" aria-live="polite"></div>'
+      + (C.online ? '<p style="margin:0;font-size:13.5px;color:var(--muted)">U betaalt veilig via Mollie, met iDEAL of een andere betaalmethode.</p>' : '')
+      + '</form></div></div>';
+    var f = document.getElementById('wsAfreken');
+    function teken() {
+      var r = regels();
+      if (!r.l.length) { mandBox.innerHTML = '<div class="ws-blok ws-leeg"><p style="font-size:18px;margin:0 0 14px">Uw winkelwagen is leeg.</p><a class="btn primary" href="/webshop/">Naar de webshop</a></div>'; return; }
+      document.getElementById('wsRegels').innerHTML = r.html;
+      var vz = lev === 'verzenden' && !(C.gratis > 0 && r.sub >= C.gratis) ? C.kosten : 0;
+      var vzt = document.getElementById('wsVzTekst'); if (vzt) vzt.textContent = C.kosten ? eur(C.kosten) + (C.gratis ? ', gratis vanaf ' + eur(C.gratis) : '') : 'Gratis';
+      document.getElementById('wsSom').innerHTML = '<tr><td>Producten</td><td class="r">' + esc(eur(r.sub)) + '</td></tr>' + (lev === 'verzenden' ? '<tr><td>Verzenden</td><td class="r">' + (vz ? esc(eur(vz)) : 'Gratis') + '</td></tr>' : '') + '<tr class="tot"><td>Totaal</td><td class="r">' + esc(eur(r.sub + vz)) + '</td></tr><tr><td colspan="2" style="font-size:13px;color:var(--muted);padding-top:0">Inclusief btw</td></tr>';
+      document.getElementById('wsAdres').hidden = lev !== 'verzenden';
+      document.querySelectorAll('#wsLev label').forEach(function (lb) { var i = lb.querySelector('input'); i.checked = i.value === lev; lb.classList.toggle('on', i.checked); });
+      document.querySelectorAll('#wsBet label').forEach(function (lb) { lb.classList.toggle('on', lb.querySelector('input').checked); });
+      var bet = document.getElementById('wsBet'); if (bet) bet.hidden = lev !== 'ophalen';
+      var wordtOnline = C.online && !(lev === 'ophalen' && betaal === 'winkel' && C.winkel);
+      document.getElementById('wsBestel').textContent = wordtOnline ? 'Bestellen en betalen' : 'Bestellen';
+    }
+    document.getElementById('wsRegels').addEventListener('click', function (e) {
+      var it = e.target.closest('.ws-item'); if (!it) return; var k = it.getAttribute('data-k'), l = lees();
+      if (e.target.closest('.ws-wis')) { schrijf(l.filter(function (x) { return x.k !== k; })); teken(); return; }
+      var b = e.target.closest('button[data-d]'); if (!b) return;
+      l.forEach(function (x) { if (x.k === k) x.aantal = Math.max(1, Math.min(999, x.aantal + parseInt(b.getAttribute('data-d'), 10))); }); schrijf(l); teken();
+    });
+    document.getElementById('wsRegels').addEventListener('change', function (e) {
+      if (e.target.type !== 'number') return; var k = e.target.closest('.ws-item').getAttribute('data-k'), l = lees(), n = parseInt(e.target.value, 10);
+      l.forEach(function (x) { if (x.k === k) x.aantal = isNaN(n) || n < 1 ? 1 : Math.min(999, n); }); schrijf(l); teken();
+    });
+    f.addEventListener('change', function (e) {
+      if (e.target.name === 'lev') { lev = e.target.value; teken(); }
+      if (e.target.name === 'bet') { betaal = e.target.value; teken(); }
+    });
+    f.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var m = document.getElementById('wsMeld'), k = document.getElementById('wsBestel');
+      var d = { levering: lev, betaal: betaal, website: f.website.value, akkoord: document.getElementById('wsAkkoord') ? document.getElementById('wsAkkoord').checked : true, opm: f.opm.value };
+      ['naam', 'bedrijf', 'mail', 'tel', 'straat', 'postcode', 'plaats'].forEach(function (n) { d[n] = f[n].value.trim(); });
+      var fout = '';
+      if (d.naam.length < 2) fout = ['naam', 'Vul uw naam in.'];
+      else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(d.mail)) fout = ['mail', 'Vul een geldig e-mailadres in.'];
+      else if (!/^[0-9+() .\-]{6,25}$/.test(d.tel)) fout = ['tel', 'Vul een geldig telefoonnummer in.'];
+      else if (lev === 'verzenden' && (!d.straat || !d.postcode || !d.plaats)) fout = ['straat', 'Vul het adres in waar wij de bestelling naartoe sturen.'];
+      else if (!d.akkoord) fout = ['akkoord', 'Ga akkoord met de voorwaarden.'];
+      if (fout) { m.className = 'ws-melding fout'; m.textContent = fout[1]; var veld = f[fout[0]] || document.getElementById('wsAkkoord'); if (veld && veld.focus) veld.focus(); return; }
+      try { var bew = {}; ['naam', 'bedrijf', 'mail', 'tel', 'straat', 'postcode', 'plaats'].forEach(function (n) { bew[n] = d[n]; }); bew.levering = lev; localStorage.setItem('ffws_klant', JSON.stringify(bew)); } catch (e2) {}
+      d.items = lees().map(function (x) { return { pid: x.pid, aantal: x.aantal, keuzes: x.keuzes, plekken: (x.plekken || []).map(function (p) { return { n: p.n, id: p.id, tekst: p.tekst, mail: p.mail, naam: p.naam, gebruik: p.gebruik }; }) }; });
+      k.disabled = true; m.className = 'ws-melding'; m.textContent = 'Even geduld...';
+      var fd = new FormData(); fd.append('data', JSON.stringify(d));
+      fetch('/admin.php?shop=bestel', { method: 'POST', body: fd, credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (j) {
+        if (j.demo) { k.disabled = false; m.className = 'ws-melding'; m.textContent = j.tekst; return; }
+        if (!j.ok) { k.disabled = false; m.className = 'ws-melding fout'; m.textContent = j.fout || 'Er ging iets mis. Probeer het nog eens.'; if (j.veld && f[j.veld] && f[j.veld].focus) f[j.veld].focus(); return; }
+        location.href = j.url;
+      }).catch(function () { k.disabled = false; m.className = 'ws-melding fout'; m.textContent = 'Er ging iets mis. Controleer uw internet en probeer het nog eens.'; });
+    });
+    teken();
+  }
+
+  /* ---------- Na het betalen ---------- */
+  var bed = document.getElementById('wsBedankt');
+  if (bed) {
+    var b = (location.search.match(/[?&]b=([a-f0-9]{32})/) || [])[1], keer = 0, t = document.getElementById('wsBedTekst');
+    var vraag = function () {
+      if (!b) { t.textContent = 'Wij kunnen uw bestelling hier niet vinden. Kijk in uw mail voor de bevestiging.'; return; }
+      fetch('/admin.php?shop=status&b=' + b, { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (j) {
+        if (j.fout) { t.textContent = j.fout; return; }
+        if (j.status === 'ok') { schrijf([]); bed.querySelector('h1').textContent = 'Bedankt voor uw bestelling'; t.innerHTML = 'Bestelnummer <b>' + esc(j.nr) + '</b>. ' + esc(j.tekst) + '<br /><br /><a class="btn primary" href="/webshop/">Verder winkelen</a>'; return; }
+        if (j.status === 'mislukt') { bed.querySelector('h1').textContent = 'Betaling niet gelukt'; t.innerHTML = esc(j.tekst) + '<br /><br /><a class="btn primary" href="/webshop/winkelwagen/">Terug naar de winkelwagen</a>'; return; }
+        t.textContent = j.tekst;
+        if (++keer < 30) setTimeout(vraag, 2500); else { var tel = bed.getAttribute('data-tel'); t.textContent = 'Wij hebben uw betaling nog niet binnen. Kijk straks in uw mail voor de bevestiging' + (tel ? ', of bel ons: ' + tel : '') + '.'; }
+      }).catch(function () { if (++keer < 30) setTimeout(vraag, 3000); });
+    };
+    vraag();
+  }
+})();
+JS;
+}
+
+/* ---------- Webshop: beheer ---------- */
+function ws_terug($url, $tekst) { $_SESSION['ff_notice'] = $tekst; header('Location: ' . $url); exit; }
+function ws_uniek_slug($naam, $id, $lijst) {
+    $base = substr(slugify($naam !== '' ? $naam : 'product') ?: 'product', 0, 60);
+    if (in_array($base, ['winkelwagen', 'bedankt', 'voorwaarden', 'ws'], true)) $base .= '-product';
+    $s = $base;
+    foreach ($lijst as $x) { if (($x['slug'] ?? '') === $s && $x['id'] !== $id) { $s = $base . '-' . substr($id, -4); break; } }
+    return $s;
+}
+function ws_bestand_sturen() {
+    $rel = (string)($_GET['ws_bestand'] ?? '');
+    if (!preg_match('#^[a-f0-9]{12}/\d{1,3}/[A-Za-z0-9._-]{1,120}$#', $rel)) { http_response_code(404); exit('Niet gevonden.'); }
+    $pad = WS_ONTW . '/' . $rel;
+    if (!is_file($pad) || basename($pad) === 'meta.json') { http_response_code(404); exit('Niet gevonden.'); }
+    $ext = strtolower(pathinfo($pad, PATHINFO_EXTENSION));
+    $typen = ['png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'webp' => 'image/webp', 'gif' => 'image/gif', 'svg' => 'image/svg+xml', 'pdf' => 'application/pdf'];
+    $zien = isset($_GET['zien']) && in_array($ext, ['png', 'jpg', 'jpeg', 'webp', 'gif'], true);
+    if (function_exists('adm_schoon_uitvoer')) adm_schoon_uitvoer();
+    header('Content-Type: ' . ($zien ? $typen[$ext] : ($typen[$ext] ?? 'application/octet-stream')));
+    header('Content-Length: ' . filesize($pad)); header('X-Content-Type-Options: nosniff'); header('Cache-Control: private, max-age=600');
+    header('Content-Disposition: ' . ($zien ? 'inline' : 'attachment') . '; filename="' . basename($pad) . '"');
+    readfile($pad); exit;
+}
+function ws_voorbeeld_csv() {
+    $r = [['Naam', 'Categorie', 'Prijs', 'Btw', 'Voorraad', 'Omschrijving', 'Opties', 'Opdruk'],
+          ['T-shirt met eigen opdruk', 'Kleding', '15', '21', '', 'Katoenen T-shirt, bedrukt met uw logo of tekst.', 'Maat: S, M, L, XL, XXL +2,00 | Kleur: Wit, Zwart, Navy', 'Voorkant: 25 x 30 cm | Rug: 30 x 40 cm +5,00'],
+          ['Pet met opdruk', 'Kleding', '15', '21', '', 'Pet met uw logo op de voorkant.', 'Kleur: Zwart, Navy, Wit', 'Voorkant: 10 x 6 cm'],
+          ['Inktcartridge zwart HP 305', 'Cartridges', '14,95', '21', '25', 'Origineel HP.', '', '']];
+    $o = "\xEF\xBB\xBF";
+    foreach ($r as $rij) { $o .= implode(';', array_map(function($c) { return '"' . str_replace('"', '""', $c) . '"'; }, $rij)) . "\r\n"; }
+    header('Content-Type: text/csv; charset=UTF-8'); header('Content-Disposition: attachment; filename="voorbeeld-webshop.csv"');
+    echo $o; exit;
+}
+function ws_acties($action) {
+    global $WS_STATUS;
+    $in = ws_inst();
+    if ($action === 'ws_inst') {
+        $c = function($n) { return ab_prijs_in($_POST[$n] ?? ''); };
+        $key = trim((string)($_POST['mollie'] ?? ''));
+        if ($key === '' && !empty($_POST['mollie_houd'])) $key = $in['mollie'];
+        $x = ['aan' => !empty($_POST['aan']), 'naam' => cut(trim((string)($_POST['naam'] ?? '')), 30), 'titel' => cut(trim((string)($_POST['titel'] ?? '')), 90), 'intro' => cut(trim((string)($_POST['intro'] ?? '')), 300),
+              'mollie' => $key, 'melding' => trim((string)($_POST['melding'] ?? '')), 'verzenden' => !empty($_POST['verzenden']), 'verzendkosten' => $c('verzendkosten'), 'gratis_vanaf' => $c('gratis_vanaf'),
+              'ophalen' => !empty($_POST['ophalen']), 'ophaal_tekst' => cut(trim((string)($_POST['ophaal_tekst'] ?? '')), 200), 'winkel_betalen' => !empty($_POST['winkel_betalen']),
+              'voorwaarden' => cut(trim(str_replace("\r\n", "\n", (string)($_POST['voorwaarden'] ?? ''))), 30000)];
+        if (!$x['verzenden'] && !$x['ophalen']) $x['ophalen'] = true;
+        if ($x['melding'] !== '' && !filter_var($x['melding'], FILTER_VALIDATE_EMAIL)) $x['melding'] = '';
+        $extra = '';
+        if ($key !== '' && !ws_mollie_ok($key)) { $x['mollie'] = $in['mollie']; $extra = ' Die Mollie-sleutel klopt niet. Een sleutel begint met live_ of test_.'; }
+        elseif ($key !== '' && $key !== $in['mollie']) {
+            list($code) = ws_mollie($key, 'GET', '/methods');
+            if ($code === 401) { $x['mollie'] = $in['mollie']; $extra = ' Mollie kent die sleutel niet. Kopieer hem nog eens uit je Mollie-dashboard.'; }
+            elseif ($code === 200) { $extra = strpos($key, 'test_') === 0 ? ' Mollie is gekoppeld in testmodus: er wordt nog niet echt betaald.' : ' Mollie is gekoppeld. Je klanten kunnen nu online betalen.'; }
+            else { $extra = ' Ik kon Mollie nu niet bereiken om de sleutel te controleren. Hij is wel bewaard.'; }
+        }
+        write_json(WS_INST, $x);
+        rebuild_everything(load_pages());
+        ws_terug('admin.php?webshop=1&t=instellen', 'Opgeslagen.' . ($x['aan'] ? ' Je webshop staat op je website.' : ' Je webshop staat niet op je website.') . $extra);
+    }
+    if ($action === 'ws_save') {
+        $lijst = ws_lijst(); $id = (string)($_POST['id'] ?? ''); $i = null;
+        foreach ($lijst as $k => $x) { if ($x['id'] === $id) { $i = $k; break; } }
+        $x = $i !== null ? $lijst[$i] : ['id' => bin2hex(random_bytes(5)), 'aangemaakt' => date('Y-m-d H:i:s'), 'fotos' => []];
+        $x['naam'] = cut(trim(preg_replace('/\s+/', ' ', (string)($_POST['naam'] ?? ''))), 120) ?: 'Product';
+        $x['cat'] = cut(trim((string)($_POST['cat'] ?? '')), 40);
+        $x['prijs'] = ab_prijs_in($_POST['prijs'] ?? '');
+        $x['btw'] = in_array((int)($_POST['btw'] ?? 21), [21, 9, 0], true) ? (int)$_POST['btw'] : 21;
+        $x['status'] = in_array($_POST['status'] ?? '', ['actief', 'uit', 'verborgen'], true) ? $_POST['status'] : 'actief';
+        $v = trim((string)($_POST['voorraad'] ?? ''));
+        $x['voorraad'] = $v === '' ? '' : max(0, (int)$v);
+        $x['tekst'] = cut(trim(str_replace("\r\n", "\n", (string)($_POST['tekst'] ?? ''))), 6000);
+        $x['opties'] = cut(trim(str_replace("\r\n", "\n", (string)($_POST['opties'] ?? ''))), 3000);
+        $x['opdruk'] = cut(trim(str_replace("\r\n", "\n", (string)($_POST['opdruk'] ?? ''))), 1500);
+        $fouten = [];
+        $map = UPLOAD_DIR . '/webshop/' . $x['id'];
+        $weg = (array)($_POST['foto_weg'] ?? []);
+        $x['fotos'] = array_values(array_filter((array)($x['fotos'] ?? []), function($f) use ($weg, $map) { if (in_array($f, $weg, true)) { @unlink($map . '/' . basename($f)); return false; } return true; }));
+        $hoofd = (string)($_POST['foto_hoofd'] ?? '');
+        if ($hoofd !== '' && in_array($hoofd, $x['fotos'], true)) { $x['fotos'] = array_values(array_merge([$hoofd], array_diff($x['fotos'], [$hoofd]))); }
+        if (!empty($_FILES['fotos']) && is_array($_FILES['fotos']['name'])) {
+            ensure_upload_dir();
+            for ($n = 0; $n < count($_FILES['fotos']['name']); $n++) {
+                $err = $_FILES['fotos']['error'][$n];
+                if ($err === UPLOAD_ERR_NO_FILE) continue;
+                if (count($x['fotos']) >= WS_MAX_FOTO) { $fouten[] = 'Er kunnen maximaal ' . WS_MAX_FOTO . " foto's bij."; break; }
+                if ($err !== UPLOAD_ERR_OK) { $fouten[] = upload_error_text($err, $_FILES['fotos']['name'][$n]); continue; }
+                $f = save_one_image($_FILES['fotos']['tmp_name'][$n], $_FILES['fotos']['name'][$n], $map, '', $fouten);
+                if ($f !== '') $x['fotos'][] = $f;
+            }
+        }
+        if ($x['prijs'] <= 0) $fouten[] = 'Let op: er staat nog geen prijs bij. Zonder prijs kan niemand het bestellen.';
+        $x['slug'] = ws_uniek_slug($x['naam'], $x['id'], $lijst);
+        $x['gewijzigd'] = date('Y-m-d H:i:s');
+        if ($i !== null) { $lijst[$i] = $x; } else { $lijst[] = $x; }
+        ws_bewaar($lijst); write_webshop_pages();
+        ws_terug('admin.php?webshop=1&t=producten&id=' . rawurlencode($x['id']), 'Opgeslagen: ' . $x['naam'] . '.' . ($fouten ? ' ' . implode(' ', $fouten) : ''));
+    }
+    if ($action === 'ws_del') {
+        $lijst = ws_lijst(); $id = (string)($_POST['id'] ?? ''); $naam = '';
+        foreach ($lijst as $k => $x) { if ($x['id'] === $id) { $naam = $x['naam']; ab_rm_map(UPLOAD_DIR . '/webshop/' . basename($x['id'])); unset($lijst[$k]); } }
+        ws_bewaar($lijst); write_webshop_pages();
+        ws_terug('admin.php?webshop=1&t=producten', $naam !== '' ? $naam . ' is verwijderd.' : 'Niet gevonden.');
+    }
+    if ($action === 'ws_pstatus') {
+        $lijst = ws_lijst(); $id = (string)($_POST['id'] ?? ''); $st = (string)($_POST['status'] ?? '');
+        foreach ($lijst as $k => $x) { if ($x['id'] === $id && in_array($st, ['actief', 'uit', 'verborgen'], true)) $lijst[$k]['status'] = $st; }
+        ws_bewaar($lijst); write_webshop_pages();
+        ws_terug('admin.php?webshop=1&t=producten', 'Bijgewerkt.');
+    }
+    if ($action === 'ws_import') {
+        $f = $_FILES['bestand'] ?? null;
+        if (!$f || $f['error'] !== UPLOAD_ERR_OK) ws_terug('admin.php?webshop=1&t=producten#inladen', 'Kies eerst een Excel- of CSV-bestand.');
+        $bin = (string)file_get_contents($f['tmp_name']);
+        $rijen = substr($bin, 0, 2) === 'PK' ? adm_xlsx_rijen($bin) : adm_csv_rijen(mb_check_encoding($bin, 'UTF-8') ? $bin : mb_convert_encoding($bin, 'UTF-8', 'Windows-1252'));
+        if (count($rijen) < 2) ws_terug('admin.php?webshop=1&t=producten#inladen', 'In dit bestand staan geen regels. De eerste regel moet de kopjes bevatten, daaronder elke regel 1 product.');
+        $kop = array_map(function($c) { return preg_replace('/[^a-z]/', '', mb_strtolower((string)$c, 'UTF-8')); }, $rijen[0]);
+        $alias = ['naam' => ['naam', 'product', 'titel', 'name', 'omschrijvingkort', 'artikel'], 'cat' => ['categorie', 'category', 'groep', 'soort'], 'prijs' => ['prijs', 'verkoopprijs', 'price', 'prijsincl', 'prijsinclbtw'],
+                  'btw' => ['btw', 'btwpercentage', 'vat'], 'voorraad' => ['voorraad', 'stock', 'aantal'], 'tekst' => ['omschrijving', 'tekst', 'beschrijving', 'description'], 'opties' => ['opties', 'keuzes', 'maten'], 'opdruk' => ['opdruk', 'opdrukplaatsen', 'bedrukking']];
+        $kolom = [];
+        foreach ($alias as $veld => $namen) { foreach ($kop as $i => $c) { if (in_array($c, $namen, true)) { $kolom[$veld] = $i; break; } } }
+        if (!isset($kolom['naam'])) ws_terug('admin.php?webshop=1&t=producten#inladen', 'Ik vind geen kolom Naam. Gebruik de kopjes uit het voorbeeldbestand.');
+        $lijst = ws_lijst(); $n = 0;
+        foreach (array_slice($rijen, 1, 2000) as $r) {
+            $w = function($v) use ($r, $kolom) { return isset($kolom[$v]) ? trim((string)($r[$kolom[$v]] ?? '')) : ''; };
+            if ($w('naam') === '') continue;
+            $x = ['id' => bin2hex(random_bytes(5)), 'aangemaakt' => date('Y-m-d H:i:s'), 'fotos' => [], 'status' => 'actief', 'naam' => cut($w('naam'), 120), 'cat' => cut($w('cat'), 40), 'prijs' => ab_prijs_in($w('prijs')),
+                  'btw' => in_array((int)$w('btw'), [21, 9, 0], true) && $w('btw') !== '' ? (int)$w('btw') : 21, 'voorraad' => $w('voorraad') === '' ? '' : max(0, (int)$w('voorraad')), 'tekst' => cut($w('tekst'), 6000),
+                  'opties' => cut(str_replace('|', "\n", $w('opties')), 3000), 'opdruk' => cut(str_replace('|', "\n", $w('opdruk')), 1500)];
+            $x['slug'] = ws_uniek_slug($x['naam'], $x['id'], $lijst);
+            $lijst[] = $x; $n++;
+        }
+        ws_bewaar($lijst); write_webshop_pages();
+        ws_terug('admin.php?webshop=1&t=producten', $n . ' ' . ($n === 1 ? 'product' : 'producten') . " ingeladen. Voeg nu per product de foto's toe.");
+    }
+    /* Bestellingen */
+    $oid = (string)($_POST['b'] ?? '');
+    $terug = 'admin.php?webshop=1&b=' . rawurlencode($oid);
+    if ($action === 'ws_ostatus') {
+        $st = (string)($_POST['status'] ?? '');
+        if (!isset($WS_STATUS[$st]) || in_array($st, ['wacht', 'mislukt'], true)) ws_terug($terug, 'Onbekende status.');
+        $o = ws_slot(function() use ($oid, $st) { $l = ws_bestellingen(); $u = null; foreach ($l as $k => $x) { if ($x['id'] === $oid) { $l[$k]['status'] = $st; $l[$k]['nieuw'] = 0; if ($st === 'verzonden') $l[$k]['track'] = cut(trim((string)($_POST['track'] ?? '')), 300); $u = $l[$k]; } } ws_best_bewaar($l); return $u; });
+        if (!$o) ws_terug('admin.php?webshop=1', 'Deze bestelling bestaat niet meer.');
+        $m = !empty($_POST['mail']) && in_array($st, ['verzonden', 'klaar', 'geannuleerd'], true) ? ws_mail_status($o, $st) : false;
+        ws_terug($terug, 'Status: ' . $WS_STATUS[$st] . '.' . ($m ? ' De klant heeft een mail gekregen.' : ''));
+    }
+    if ($action === 'ws_hand_betaald') {
+        $wijze = in_array($_POST['wijze'] ?? '', ['pin', 'contant', 'overboeking'], true) ? $_POST['wijze'] : 'pin';
+        ws_betaald($oid, $wijze);
+        ws_terug($terug, 'Geboekt als betaald (' . $wijze . '). Het staat als betaalde factuur in je administratie.');
+    }
+    if ($action === 'ws_factuur') {
+        $fid = ws_maak_factuur($oid);
+        if ($fid === '') ws_terug($terug, 'De factuur kon niet worden gemaakt.');
+        header('Location: admin.php?adm=doc&id=' . rawurlencode($fid)); exit;
+    }
+}
+function ws_tabs($t) {
+    $n = ws_nieuw_aantal();
+    echo '<div class="ws-tabs">';
+    foreach (['bestellingen' => 'Bestellingen' . ($n ? ' <b class="ws-tel">' . $n . '</b>' : ''), 'producten' => 'Producten', 'instellen' => 'Instellen'] as $k => $l) { echo '<a href="admin.php?webshop=1' . ($k !== 'bestellingen' ? '&t=' . $k : '') . '"' . ($t === $k ? ' class="on"' : '') . '>' . $l . '</a>'; }
+    echo '</div>';
+}
+function ws_beheer_view() {
+    global $WS_STATUS;
+    $in = ws_inst();
+    $t = in_array($_GET['t'] ?? '', ['producten', 'instellen'], true) ? $_GET['t'] : 'bestellingen';
+    if (isset($_GET['b'])) $t = 'bestellingen';
+    ?>
+    <style>
+      .ws-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 18px;border-bottom:1px solid var(--line);}
+      .ws-tabs a{padding:10px 14px;text-decoration:none;color:var(--mut);font-weight:600;border-bottom:3px solid transparent;margin-bottom:-1px;}
+      .ws-tabs a.on{color:var(--text);border-bottom-color:#2f6bff;}
+      .ws-tel{display:inline-grid;place-items:center;min-width:20px;height:20px;border-radius:999px;background:#2f6bff;color:#fff;font-size:12px;padding:0 6px;margin-left:4px;}
+      .ws-l{display:grid;gap:8px;max-width:980px;}
+      .ws-r{display:grid;grid-template-columns:auto 1fr auto auto;gap:14px;align-items:center;background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px;text-decoration:none;color:var(--text);}
+      .ws-r:hover{border-color:#2f6bff;}
+      .ws-r.nieuw{border-left:4px solid #2f6bff;}
+      .ws-r small{color:var(--mut);display:block;font-size:13px;}
+      .ws-r .bedrag{font-weight:800;white-space:nowrap;}
+      .ws-st{display:inline-block;font-size:12px;font-weight:700;border-radius:999px;padding:3px 10px;white-space:nowrap;background:#eef1f6;color:#334155;}
+      .ws-st.nieuw{background:#2f6bff;color:#fff;} .ws-st.klaar,.ws-st.verzonden{background:#fff3d6;color:#7a4b00;} .ws-st.afgerond{background:#e6f5ec;color:#166534;} .ws-st.geannuleerd,.ws-st.mislukt{background:#fdecec;color:#9b1c1c;} .ws-st.wacht{background:#f1f5f9;color:#64748b;}
+      .ws-bet{font-size:12.5px;font-weight:700;} .ws-bet.ja{color:#166534;} .ws-bet.nee{color:#9a3412;}
+      @media (max-width:640px){.ws-r{grid-template-columns:1fr auto;} .ws-r .ws-st{grid-column:1;justify-self:start;}}
+      .ws-p{display:grid;grid-template-columns:64px 1fr auto;gap:12px;align-items:center;background:#fff;border:1px solid var(--line);border-radius:12px;padding:8px 12px;}
+      .ws-p img,.ws-p .ph{width:64px;height:48px;object-fit:cover;border-radius:8px;background:#eef1f6;display:block;}
+      .ws-p small{color:var(--mut);display:block;} .ws-p .acts{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;}
+      .ws-p select{width:auto;padding:7px 9px;font-size:13.5px;}
+      @media (max-width:640px){.ws-p{grid-template-columns:56px 1fr;} .ws-p .acts{grid-column:1 / -1;justify-content:flex-start;}}
+      .ws-det{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:980px;} @media (max-width:800px){.ws-det{grid-template-columns:1fr;}}
+      .ws-det .formcard{margin:0;max-width:none;}
+      .ws-det h2{font-size:17px;margin:0 0 10px;}
+      .ws-regel{border-top:1px solid var(--line);padding:12px 0;} .ws-regel:first-of-type{border-top:0;padding-top:0;}
+      .ws-ontw{display:grid;grid-template-columns:120px 1fr;gap:12px;margin-top:10px;background:#f7f9fc;border:1px solid var(--line);border-radius:12px;padding:10px;}
+      .ws-ontw .tn{width:120px;height:120px;border-radius:8px;object-fit:contain;background-color:#fff;background-image:linear-gradient(45deg,#e9edf3 25%,transparent 25%),linear-gradient(-45deg,#e9edf3 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#e9edf3 75%),linear-gradient(-45deg,transparent 75%,#e9edf3 75%);background-size:14px 14px;background-position:0 0,0 7px,7px -7px,-7px 0;border:1px solid var(--line);display:grid;place-items:center;font-weight:800;color:var(--mut);}
+      .ws-ontw a{color:#1d4ed8;font-weight:600;}
+      .ws-oo{display:inline-block;font-size:12px;font-weight:700;border-radius:999px;padding:2px 9px;margin-bottom:4px;}
+      .ws-oo.goed,.ws-oo.vector{background:#e6f5ec;color:#166534;} .ws-oo.matig{background:#fff3d6;color:#7a4b00;} .ws-oo.slecht{background:#fdecec;color:#9b1c1c;} .ws-oo.onbekend{background:#eef1f6;color:#334155;}
+      .ws-acties{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+      .ws-uitleg{background:#f7f9fc;border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:14px;line-height:1.55;}
+      .ws-uitleg code{background:#fff;border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-size:13px;}
+      .ws-mini{font-size:13px;color:var(--mut);}
+    </style>
+    <h1>Webshop</h1>
+    <p class="sub">Verkoop je producten online. Je klanten betalen met iDEAL of een andere betaalmethode, via je eigen Mollie-account. Het geld komt rechtstreeks bij jou binnen.</p>
+    <?php
+    ws_tabs($t);
+    if (!$in['aan'] && $t !== 'instellen') echo '<div class="ok">Je webshop staat nog niet op je website. Zet hem aan bij <a href="admin.php?webshop=1&amp;t=instellen">Instellen</a>.</div>';
+    elseif ($in['aan'] && !ws_mollie_ok($in['mollie']) && $t !== 'instellen') echo '<div class="ok">Online betalen staat nog niet aan. Klanten kunnen wel bestellen, maar jij moet de betaling dan zelf regelen. <a href="admin.php?webshop=1&amp;t=instellen#mollie">Koppel Mollie</a>.</div>';
+    if ($t === 'instellen') { ws_view_instellen($in); return; }
+    if ($t === 'producten') { ws_view_producten($in); return; }
+    ws_view_bestellingen($in);
+}
+function ws_view_instellen($in) {
+    $c = function($v) { return (int)$v > 0 ? number_format($v / 100, 2, ',', '.') : ''; };
+    $k = $in['mollie'];
+    ?>
+    <form class="formcard" method="post">
+      <input type="hidden" name="action" value="ws_inst" />
+      <label class="check" style="margin-bottom:16px"><input type="checkbox" name="aan" value="1" <?= $in['aan'] ? 'checked' : '' ?> /> <span><strong>Webshop op mijn website zetten</strong><br /><span class="ws-mini">Er komt een knop in het menu van je website en een pagina met al je producten.</span></span></label>
+      <div class="two">
+        <div class="field"><label for="wsn">Naam in het menu</label><input type="text" id="wsn" name="naam" maxlength="30" value="<?= h($in['naam']) ?>" /></div>
+        <div class="field"><label for="wst">Titel van de pagina</label><input type="text" id="wst" name="titel" maxlength="90" value="<?= h($in['titel']) ?>" /></div>
+      </div>
+      <div class="field"><label for="wsi">Korte tekst bovenaan</label><input type="text" id="wsi" name="intro" maxlength="300" value="<?= h($in['intro']) ?>" /></div>
+
+      <h2 id="mollie" style="font-size:18px;margin:22px 0 8px">Online betalen met Mollie</h2>
+      <div class="ws-uitleg" style="margin-bottom:12px">
+        Mollie verwerkt de betalingen (iDEAL, creditcard, Bancontact en meer). Het geld komt op jouw rekening. Mollie rekent per betaling een klein bedrag; dat gaat buiten FormForge om.<br /><br />
+        <strong>Zo koppel je het:</strong><br />
+        1. Log in op <strong>mollie.com</strong> (of maak daar een account aan).<br />
+        2. Ga naar <strong>Developers</strong> en dan <strong>API keys</strong>.<br />
+        3. Kopieer de sleutel die begint met <code>live_</code> en plak hem hieronder.<br /><br />
+        Eerst proberen zonder echt te betalen? Plak dan de sleutel die begint met <code>test_</code>. Wil je echt verkopen, vervang hem dan door de <code>live_</code>-sleutel.
+      </div>
+      <div class="field"><label for="wsm">Mollie API-sleutel</label><input type="password" id="wsm" name="mollie" autocomplete="off" value="" placeholder="<?= $k !== '' ? h(substr($k, 0, 5) . str_repeat("\u{2022}", 10) . substr($k, -4)) . ' (bewaard)' : 'live_...' ?>" />
+        <?php if ($k !== ''): ?><input type="hidden" name="mollie_houd" value="1" /><div class="hint">Er staat een sleutel bewaard<?= strpos($k, 'test_') === 0 ? ' in <strong>testmodus</strong>: er wordt nog niet echt betaald' : '' ?>. Laat dit veld leeg om hem te houden. <label style="display:inline;font-weight:400"><input type="checkbox" onclick="var h=this.form.mollie_houd;if(h)h.value=this.checked?'':'1'" /> Sleutel weghalen</label></div><?php else: ?><div class="hint">Zonder sleutel kunnen klanten wel bestellen, maar niet online betalen.</div><?php endif; ?>
+      </div>
+
+      <h2 style="font-size:18px;margin:22px 0 8px">Bezorgen en ophalen</h2>
+      <label class="check"><input type="checkbox" name="verzenden" value="1" <?= $in['verzenden'] ? 'checked' : '' ?> /> <span>Ik verstuur bestellingen</span></label>
+      <div class="two" style="margin-top:10px">
+        <div class="field"><label for="wsvk">Verzendkosten in euro</label><input type="text" id="wsvk" name="verzendkosten" inputmode="decimal" value="<?= h($c($in['verzendkosten'])) ?>" placeholder="0 = gratis" /></div>
+        <div class="field"><label for="wsgv">Gratis verzenden vanaf (mag leeg)</label><input type="text" id="wsgv" name="gratis_vanaf" inputmode="decimal" value="<?= h($c($in['gratis_vanaf'])) ?>" placeholder="Bijvoorbeeld 50" /></div>
+      </div>
+      <label class="check"><input type="checkbox" name="ophalen" value="1" <?= $in['ophalen'] ? 'checked' : '' ?> /> <span>Klanten kunnen hun bestelling ophalen</span></label>
+      <div class="field" style="margin-top:10px"><label for="wsot">Waar en wanneer ophalen (mag leeg)</label><input type="text" id="wsot" name="ophaal_tekst" maxlength="200" value="<?= h($in['ophaal_tekst']) ?>" placeholder="<?= h(st('straat') !== '' ? 'Bijvoorbeeld: ' . st('straat') . ', ' . st('plaats') . ', maandag tot en met vrijdag 9 tot 17 uur' : 'Bijvoorbeeld: in de winkel, maandag tot en met vrijdag 9 tot 17 uur') ?>" /></div>
+      <label class="check"><input type="checkbox" name="winkel_betalen" value="1" <?= $in['winkel_betalen'] ? 'checked' : '' ?> /> <span>Bij ophalen mag de klant ook in de winkel betalen</span></label>
+
+      <h2 style="font-size:18px;margin:22px 0 8px">Meldingen en voorwaarden</h2>
+      <div class="field"><label for="wsme">Meldingen van nieuwe bestellingen naar (mag leeg)</label><input type="email" id="wsme" name="melding" maxlength="120" value="<?= h($in['melding']) ?>" placeholder="<?= h(st('email')) ?>" /><div class="hint">Leeg = het e-mailadres van je bedrijf. Mails gaan via je gekoppelde mailbox (Administratie, tabblad E-mail).</div></div>
+      <div class="field"><label for="wsvw">Voorwaarden van je webshop (mag leeg)</label><textarea id="wsvw" name="voorwaarden" rows="8"><?= h($in['voorwaarden']) ?></textarea>
+        <div class="hint">Staat hier tekst, dan moet de klant bij het bestellen akkoord gaan. Een webshop in Nederland moet onder andere vertellen hoe het zit met de bedenktijd van 14 dagen. Voor producten die speciaal voor de klant worden bedrukt geldt die bedenktijd niet. Laat je voorwaarden nakijken als je twijfelt.</div></div>
+      <div style="margin-top:6px"><button class="btn" type="submit">Opslaan en website bijwerken</button></div>
+    </form>
+    <?php
+}
+function ws_view_producten($in) {
+    $lijst = ws_lijst(); $id = (string)($_GET['id'] ?? ''); $nieuw = isset($_GET['nieuw']);
+    $x = null; foreach ($lijst as $y) { if ($y['id'] === $id) $x = $y; }
+    if ($x || $nieuw):
+        $x = $x ?: ['id' => '', 'fotos' => [], 'status' => 'actief', 'btw' => 21, 'voorraad' => ''];
+        $v = function($k) use ($x) { return h((string)($x[$k] ?? '')); };
+        $cats = array_values(array_unique(array_filter(array_map(function($y) { return (string)($y['cat'] ?? ''); }, $lijst), 'strlen')));
+        ?>
+        <p><a class="btn ghost sm" href="admin.php?webshop=1&amp;t=producten">&larr; Alle producten</a><?php if ($x['id'] !== '' && $in['aan'] && ws_zichtbaar($x)): ?> <a class="btn ghost sm" href="/webshop/<?= h($x['slug']) ?>/" target="_blank">Bekijk in je webshop</a><?php endif; ?></p>
+        <h2 style="font-size:22px"><?= $x['id'] === '' ? 'Nieuw product' : h($x['naam']) ?></h2>
+        <form class="formcard" method="post" enctype="multipart/form-data">
+          <input type="hidden" name="action" value="ws_save" /><input type="hidden" name="id" value="<?= h($x['id']) ?>" />
+          <div class="field"><label for="wpn">Naam</label><input type="text" id="wpn" name="naam" maxlength="120" required value="<?= $v('naam') ?>" placeholder="Bijvoorbeeld: T-shirt met eigen opdruk" /></div>
+          <div class="two">
+            <div class="field"><label for="wpc">Categorie (mag leeg)</label><input type="text" id="wpc" name="cat" maxlength="40" list="wpcl" value="<?= $v('cat') ?>" placeholder="Bijvoorbeeld: Kleding" /><datalist id="wpcl"><?php foreach ($cats as $c): ?><option value="<?= h($c) ?>"></option><?php endforeach; ?></datalist></div>
+            <div class="field"><label for="wpp">Prijs in euro, inclusief btw</label><input type="text" id="wpp" name="prijs" inputmode="decimal" value="<?= (int)($x['prijs'] ?? 0) > 0 ? h(number_format($x['prijs'] / 100, 2, ',', '.')) : '' ?>" placeholder="15,00" /></div>
+          </div>
+          <div class="two">
+            <div class="field"><label for="wpb">Btw</label><select id="wpb" name="btw"><?php foreach ([21 => '21%', 9 => '9%', 0 => '0% (of vrijgesteld)'] as $b => $l): ?><option value="<?= $b ?>" <?= (int)($x['btw'] ?? 21) === $b ? 'selected' : '' ?>><?= $l ?></option><?php endforeach; ?></select></div>
+            <div class="field"><label for="wpv">Voorraad (mag leeg)</label><input type="number" id="wpv" name="voorraad" min="0" value="<?= $v('voorraad') ?>" placeholder="Leeg = altijd te bestellen" /><div class="hint">Vul je een aantal in, dan telt de webshop af. Bij 0 staat er Uitverkocht.</div></div>
+          </div>
+          <div class="field"><label for="wps">Status</label><select id="wps" name="status"><?php foreach (['actief' => 'Te koop', 'uit' => 'Uitverkocht (wel zichtbaar)', 'verborgen' => 'Verborgen (niet op de website)'] as $s => $l): ?><option value="<?= $s ?>" <?= ($x['status'] ?? 'actief') === $s ? 'selected' : '' ?>><?= $l ?></option><?php endforeach; ?></select></div>
+          <div class="field"><label for="wpt">Omschrijving (mag leeg)</label><textarea id="wpt" name="tekst" class="short" rows="5"><?= $v('tekst') ?></textarea></div>
+          <div class="field"><label for="wpo">Keuzes zoals maat en kleur (mag leeg)</label><textarea id="wpo" name="opties" class="short" rows="3" placeholder="Maat: S, M, L, XL, XXL +2,00&#10;Kleur: Wit, Zwart, Navy"><?= $v('opties') ?></textarea>
+            <div class="hint">Per regel 1 keuze: eerst de naam, dan een dubbele punt, dan de mogelijkheden met komma's. Kost een mogelijkheid meer, zet er dan <strong>+</strong> en het bedrag achter, zoals <strong>XXL +2,00</strong>.</div></div>
+          <div class="field"><label for="wpd">Opdruk met eigen ontwerp (mag leeg)</label><textarea id="wpd" name="opdruk" class="short" rows="3" placeholder="Voorkant: 25 x 30 cm&#10;Rug: 30 x 40 cm +5,00"><?= $v('opdruk') ?></textarea>
+            <div class="hint">Per regel 1 plek waar een opdruk kan komen, met de grootste maat in centimeters. Kost een plek extra, zet er dan <strong>+</strong> en het bedrag achter. De klant kiest de plek en uploadt zijn logo of ontwerp. De webshop rekent uit of het scherp genoeg is voor die maat en waarschuwt de klant als het te klein is. Jij krijgt altijd het originele bestand.</div></div>
+          <div class="field"><label>Foto's</label>
+            <?php if (!empty($x['fotos'])): ?><div class="photos" style="margin-bottom:10px"><?php foreach ($x['fotos'] as $i => $f): ?><div><img src="<?= h(ws_foto_url($x, $f)) ?>" alt="" /><label><input type="radio" name="foto_hoofd" value="<?= h($f) ?>" <?= $i === 0 ? 'checked' : '' ?> /> Hoofdfoto</label><label><input type="checkbox" name="foto_weg[]" value="<?= h($f) ?>" /> Weghalen</label></div><?php endforeach; ?></div><?php endif; ?>
+            <input type="file" name="fotos[]" accept="image/*" multiple /><div class="hint">Je kunt meerdere foto's tegelijk kiezen (hoogstens <?= WS_MAX_FOTO ?>).</div></div>
+          <div class="ws-acties"><button class="btn" type="submit">Opslaan en website bijwerken</button></div>
+        </form>
+        <?php if ($x['id'] !== ''): ?>
+        <form method="post" onsubmit="return confirm('<?= h(addslashes($x['naam'])) ?> verwijderen? Dit kan niet ongedaan worden gemaakt.')" style="margin-top:-6px"><input type="hidden" name="action" value="ws_del" /><input type="hidden" name="id" value="<?= h($x['id']) ?>" /><button class="btn ghost sm" type="submit">Product verwijderen</button></form>
+        <?php endif;
+        return;
+    endif;
+    ?>
+    <p class="ws-acties"><a class="btn" href="admin.php?webshop=1&amp;t=producten&amp;nieuw=1">+ Nieuw product</a></p>
+    <?php if (!$lijst): ?><div class="formcard"><p class="sub" style="margin:0">Nog geen producten. Voeg er een toe, of laad ze in een keer in uit Excel.</p></div><?php endif; ?>
+    <div class="ws-l">
+    <?php usort($lijst, function($a, $b) { return [(string)($a['cat'] ?? ''), (string)$a['naam']] <=> [(string)($b['cat'] ?? ''), (string)$b['naam']]; });
+    foreach ($lijst as $p): $f = $p['fotos'][0] ?? ''; ?>
+      <div class="ws-p">
+        <?= $f !== '' ? '<img src="' . h(ws_foto_url($p, $f)) . '" alt="" />' : '<span class="ph"></span>' ?>
+        <div><b><?= h($p['naam']) ?></b><small><?= h(implode(" \u{b7} ", array_filter([(string)($p['cat'] ?? ''), ws_eur((int)$p['prijs']), ($p['voorraad'] ?? '') !== '' ? 'voorraad ' . (int)$p['voorraad'] : '', ws_plekken($p['opdruk'] ?? '') ? 'met opdruk' : '']))) ?></small></div>
+        <div class="acts">
+          <form method="post"><input type="hidden" name="action" value="ws_pstatus" /><input type="hidden" name="id" value="<?= h($p['id']) ?>" /><select name="status" onchange="this.form.submit()" aria-label="Status"><?php foreach (['actief' => 'Te koop', 'uit' => 'Uitverkocht', 'verborgen' => 'Verborgen'] as $s => $l): ?><option value="<?= $s ?>" <?= ($p['status'] ?? 'actief') === $s ? 'selected' : '' ?>><?= $l ?></option><?php endforeach; ?></select></form>
+          <a class="btn ghost sm" href="admin.php?webshop=1&amp;t=producten&amp;id=<?= h(rawurlencode($p['id'])) ?>">Bewerken</a>
+        </div>
+      </div>
+    <?php endforeach; ?>
+    </div>
+    <form class="formcard" id="inladen" method="post" enctype="multipart/form-data" style="margin-top:22px">
+      <input type="hidden" name="action" value="ws_import" />
+      <h2 style="font-size:18px;margin:0 0 8px">Veel producten tegelijk inladen</h2>
+      <p class="ws-mini" style="margin:0 0 12px">Heb je een lijst in Excel, bijvoorbeeld van al je cartridges? Zet de kopjes <strong>Naam, Categorie, Prijs, Btw, Voorraad, Omschrijving</strong> erboven, en eventueel <strong>Opties</strong> en <strong>Opdruk</strong> (meerdere regels scheid je met |). <a href="admin.php?webshop=1&amp;voorbeeld=1">Download het voorbeeldbestand</a>.</p>
+      <div class="ws-acties"><input type="file" name="bestand" accept=".xlsx,.csv" style="max-width:340px" /><button class="btn" type="submit">Inladen</button></div>
+    </form>
+    <?php
+}
+function ws_view_bestellingen($in) {
+    global $WS_STATUS;
+    $alle = ws_bestellingen(); $oid = (string)($_GET['b'] ?? '');
+    if ($oid !== '') {
+        $o = null; foreach ($alle as $x) { if ($x['id'] === $oid) $o = $x; }
+        if (!$o) { echo '<div class="err">Deze bestelling bestaat niet meer.</div>'; return; }
+        if (!empty($o['nieuw']) && empty($GLOBALS['is_demo'])) { ws_slot(function() use ($oid) { $l = ws_bestellingen(); foreach ($l as $k => $x) { if ($x['id'] === $oid) $l[$k]['nieuw'] = 0; } ws_best_bewaar($l); }); }
+        $k = $o['klant']; $betaald = ($o['betaald_op'] ?? '') !== '';
+        ?>
+        <p><a class="btn ghost sm" href="admin.php?webshop=1">&larr; Alle bestellingen</a></p>
+        <h2 style="font-size:22px;margin:0 0 4px">Bestelling <?= h($o['nr']) ?> <span class="ws-st <?= h($o['status']) ?>" style="vertical-align:middle"><?= h($WS_STATUS[$o['status']] ?? $o['status']) ?></span></h2>
+        <p class="sub"><?= h(nl_datum(substr($o['op'], 0, 10)) . ', ' . substr($o['op'], 11, 5)) ?> &middot; <?= h(adm_eur((int)$o['totaal'])) ?> &middot; <span class="ws-bet <?= $betaald ? 'ja' : 'nee' ?>"><?= $betaald ? 'Betaald met ' . h(ws_methode_tekst($o['methode'] ?? '')) : ($o['betaalwijze'] === 'winkel' ? 'Betaalt bij ophalen' : ($o['status'] === 'wacht' ? 'Wacht op betaling' : 'Nog niet betaald')) ?></span></p>
+        <div class="ws-det">
+          <div class="formcard" style="grid-column:1 / -1">
+            <h2>Producten</h2>
+            <?php foreach ($o['regels'] as $r): ?>
+              <div class="ws-regel">
+                <div style="display:flex;justify-content:space-between;gap:12px"><div><strong><?= (int)$r['aantal'] ?> x <?= h($r['naam']) ?></strong><?= $r['keuze_tekst'] !== '' ? '<div class="ws-mini">' . h($r['keuze_tekst']) . '</div>' : '' ?></div><strong style="white-space:nowrap"><?= h(adm_eur((int)$r['stuk'] * (int)$r['aantal'])) ?></strong></div>
+                <?php foreach ($r['ontwerpen'] as $on):
+                    $map = $on['map'] ?? ''; $beeld = '';
+                    if ($map !== '') { foreach ([$on['gebruik'] === 'bewerkt' ? ($on['bewerkt'] ?? '') : '', $on['origineel'] ?? '', $on['bewerkt'] ?? ''] as $kand) { if ($kand !== '' && preg_match('/\.(png|jpe?g|webp|gif)$/i', $kand)) { $beeld = $kand; break; } } }
+                    $oo = (string)($on['oordeel'] ?? ''); $ol = ['goed' => 'Scherp genoeg', 'matig' => 'Aan de kleine kant', 'slecht' => 'Te klein, kan wazig worden', 'vector' => 'Vectorbestand', 'onbekend' => 'Niet gecontroleerd'][$oo] ?? '';
+                ?>
+                  <div class="ws-ontw">
+                    <?= $beeld !== '' ? '<a href="admin.php?ws_bestand=' . h(rawurlencode($map) . '/' . rawurlencode($beeld)) . '&amp;zien=1" target="_blank"><img class="tn" src="admin.php?ws_bestand=' . h($map . '/' . rawurlencode($beeld)) . '&amp;zien=1" alt="" /></a>' : '<span class="tn">' . h(strtoupper(pathinfo((string)($on['origineel'] ?: $on['bestand']), PATHINFO_EXTENSION)) ?: 'Aa') . '</span>' ?>
+                    <div>
+                      <strong>Opdruk: <?= h($on['plek']) ?></strong><br />
+                      <?php if ($ol !== '' && $map !== ''): ?><span class="ws-oo <?= h($oo) ?>"><?= h($ol) ?><?= (int)$on['dpi'] > 0 ? ' (' . (int)$on['dpi'] . ' dpi)' : '' ?></span><br /><?php endif; ?>
+                      <?php if ($map !== ''): ?>
+                        <a href="admin.php?ws_bestand=<?= h(rawurlencode($map) . '/' . rawurlencode($on['origineel'])) ?>">Origineel downloaden</a> <span class="ws-mini"><?= h($on['bestand']) ?><?= (int)$on['w'] > 0 ? ', ' . (int)$on['w'] . ' x ' . (int)$on['h'] . ' pixels' : '' ?></span><br />
+                        <?php if (($on['bewerkt'] ?? '') !== ''): ?><a href="admin.php?ws_bestand=<?= h(rawurlencode($map) . '/' . rawurlencode($on['bewerkt'])) ?>"><?= ($on['soort_bewerkt'] ?? '') === 'achtergrond' ? 'Zonder achtergrond (PNG)' : 'Omgezet naar PNG' ?></a><?= $on['gebruik'] === 'bewerkt' ? ' <span class="ws-mini">de klant koos deze versie</span>' : '' ?><br /><?php endif; ?>
+                      <?php elseif (!empty($on['mail'])): ?><span class="ws-oo matig">De klant stuurt het bestand per mail</span> <span class="ws-mini"><?= h($on['bestand']) ?></span><br />
+                      <?php endif; ?>
+                      <?php if ($on['tekst'] !== ''): ?>Tekst: <strong><?= h($on['tekst']) ?></strong><?php endif; ?>
+                    </div>
+                  </div>
+                <?php endforeach; ?>
+              </div>
+            <?php endforeach; ?>
+            <?php if ((int)$o['verzend'] > 0): ?><div class="ws-regel" style="display:flex;justify-content:space-between"><span>Verzendkosten</span><span><?= h(adm_eur((int)$o['verzend'])) ?></span></div><?php endif; ?>
+            <div class="ws-regel" style="display:flex;justify-content:space-between;font-size:17px"><strong>Totaal inclusief btw</strong><strong><?= h(adm_eur((int)$o['totaal'])) ?></strong></div>
+            <?php if (($o['opm'] ?? '') !== ''): ?><div class="ws-uitleg" style="margin-top:10px"><strong>Opmerking van de klant:</strong><br /><?= nl2br(h($o['opm'])) ?></div><?php endif; ?>
+          </div>
+          <div class="formcard">
+            <h2>Klant</h2>
+            <p style="margin:0;line-height:1.6"><strong><?= h($k['naam']) ?></strong><?= $k['bedrijf'] !== '' ? '<br />' . h($k['bedrijf']) : '' ?><br /><a href="mailto:<?= h($k['mail']) ?>"><?= h($k['mail']) ?></a><br /><a href="tel:<?= h(tel_link($k['tel'])) ?>"><?= h($k['tel']) ?></a></p>
+            <h2 style="margin-top:16px"><?= $o['levering'] === 'ophalen' ? 'Ophalen' : 'Verzenden naar' ?></h2>
+            <p style="margin:0;line-height:1.6"><?= $o['levering'] === 'ophalen' ? 'De klant haalt de bestelling op.' : h($k['straat']) . '<br />' . h($k['postcode'] . ' ' . $k['plaats']) ?></p>
+          </div>
+          <div class="formcard">
+            <h2>Afhandelen</h2>
+            <?php if ($o['status'] === 'wacht'): ?><p class="ws-mini" style="margin:0 0 10px">De klant is nog aan het betalen, of heeft de betaling afgebroken. Je hoeft nog niets te doen.</p><?php endif; ?>
+            <form method="post" style="display:grid;gap:10px">
+              <input type="hidden" name="action" value="ws_ostatus" /><input type="hidden" name="b" value="<?= h($o['id']) ?>" />
+              <select name="status" id="wsNieuwSt"><?php foreach (array_diff_key($WS_STATUS, ['wacht' => 1, 'mislukt' => 1]) as $s => $l): if ($s === 'klaar' && $o['levering'] !== 'ophalen') continue; if ($s === 'verzonden' && $o['levering'] !== 'verzenden') continue; ?><option value="<?= $s ?>" <?= $o['status'] === $s ? 'selected' : '' ?>><?= h($l) ?></option><?php endforeach; ?></select>
+              <?php if ($o['levering'] === 'verzenden'): ?><input type="url" name="track" value="<?= h($o['track'] ?? '') ?>" placeholder="Track-en-tracelink (mag leeg)" /><?php endif; ?>
+              <label class="check"><input type="checkbox" name="mail" value="1" checked /> <span>Stuur de klant een mail bij Verzonden, Klaar om op te halen of Geannuleerd</span></label>
+              <div><button class="btn" type="submit">Status opslaan</button></div>
+            </form>
+            <hr style="border:0;border-top:1px solid var(--line);margin:16px 0" />
+            <?php if (!$betaald): ?>
+              <form method="post" class="ws-acties" style="margin-bottom:12px"><input type="hidden" name="action" value="ws_hand_betaald" /><input type="hidden" name="b" value="<?= h($o['id']) ?>" /><select name="wijze" style="width:auto"><option value="pin">Pin</option><option value="contant">Contant</option><option value="overboeking">Overboeking</option></select><button class="btn ghost sm" type="submit">Boeken als betaald</button></form>
+            <?php endif; ?>
+            <?php if (($o['factuur_id'] ?? '') !== '' && adm_vind(adm_docs(), $o['factuur_id']) !== null): ?>
+              <a class="btn ghost sm" href="admin.php?adm=doc&amp;id=<?= h(rawurlencode($o['factuur_id'])) ?>">Factuur bekijken</a>
+            <?php elseif ($o['status'] !== 'wacht' && $o['status'] !== 'mislukt'): ?>
+              <form method="post"><input type="hidden" name="action" value="ws_factuur" /><input type="hidden" name="b" value="<?= h($o['id']) ?>" /><button class="btn ghost sm" type="submit">Factuur maken</button><div class="hint">Er komt een open factuur in je administratie, die je naar de klant kunt sturen.</div></form>
+            <?php endif; ?>
+          </div>
+        </div>
+        <?php
+        return;
+    }
+    $toon = isset($_GET['alles']);
+    $lijst = array_values(array_filter($alle, function($o) use ($toon) { return $toon || !in_array($o['status'], ['wacht', 'mislukt'], true); }));
+    usort($lijst, function($a, $b) { return strcmp($b['op'], $a['op']); });
+    if (!$lijst) { echo '<div class="formcard"><p class="sub" style="margin:0">Nog geen bestellingen.' . ($in['aan'] ? ' Zodra iemand iets bestelt, staat het hier en krijg je een mail.' : '') . '</p></div>'; }
+    echo '<div class="ws-l">';
+    foreach (array_slice($lijst, 0, 300) as $o) {
+        $betaald = ($o['betaald_op'] ?? '') !== '';
+        $n = 0; foreach ($o['regels'] as $r) $n += (int)$r['aantal'];
+        echo '<a class="ws-r' . (!empty($o['nieuw']) && !in_array($o['status'], ['wacht', 'mislukt'], true) ? ' nieuw' : '') . '" href="admin.php?webshop=1&amp;b=' . h(rawurlencode($o['id'])) . '">'
+           . '<span class="ws-st ' . h($o['status']) . '">' . h($WS_STATUS[$o['status']] ?? $o['status']) . '</span>'
+           . '<span><strong>' . h($o['klant']['naam']) . ($o['klant']['bedrijf'] !== '' ? ', ' . h($o['klant']['bedrijf']) : '') . '</strong><small>' . h($o['nr']) . ' &middot; ' . h(nl_datum(substr($o['op'], 0, 10))) . ' &middot; ' . $n . ($n === 1 ? ' product' : ' producten') . ' &middot; ' . ($o['levering'] === 'ophalen' ? 'ophalen' : 'verzenden') . '</small></span>'
+           . '<span class="ws-bet ' . ($betaald ? 'ja' : 'nee') . '">' . ($betaald ? 'Betaald' : ($o['betaalwijze'] === 'winkel' ? 'Bij ophalen' : 'Niet betaald')) . '</span>'
+           . '<span class="bedrag">' . h(adm_eur((int)$o['totaal'])) . '</span></a>';
+    }
+    echo '</div>';
+    if (!$toon && count($alle) > count($lijst)) echo '<p class="ws-mini" style="margin-top:12px"><a href="admin.php?webshop=1&amp;alles=1">Ook afgebroken en niet betaalde pogingen tonen</a></p>';
 }
 
 /* ===========================================================
@@ -5652,7 +7120,7 @@ $LIC = function_exists('ff_licentie_status') ? ff_licentie_status(isset($_GET['c
 /* Abonnement gestopt of niet betaald: de website staat offline, maar je administratie blijft bereikbaar om te bekijken en te downloaden (alleen lezen) */
 $ADM_ALLEEN_LEZEN = false;
 if ($config && empty($LIC['actief'])) {
-    if (isset($_GET['doc']) || isset($_GET['res']) || isset($_GET['beoordeel']) || isset($_GET['taak']) || isset($_GET['agenda']) || isset($_GET['download']) || isset($_GET['herinnering']) || isset($_GET['bijlage']) || (($_POST['action'] ?? '') === 'adm_akkoord')) {
+    if (isset($_GET['doc']) || isset($_GET['res']) || isset($_GET['shop']) || isset($_GET['beoordeel']) || isset($_GET['taak']) || isset($_GET['agenda']) || isset($_GET['download']) || isset($_GET['herinnering']) || isset($_GET['bijlage']) || (($_POST['action'] ?? '') === 'adm_akkoord')) {
         http_response_code(503); header('Content-Type: text/html; charset=UTF-8');
         exit('<!DOCTYPE html><html lang="nl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Niet beschikbaar</title></head><body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#111827;color:#fff;font-family:Segoe UI,Arial,sans-serif;text-align:center;padding:24px"><div><h1 style="font-size:28px;margin:0 0 10px">Deze pagina is niet beschikbaar.</h1><p style="margin:0;color:rgba(255,255,255,.75)">Neem contact op met de afzender.</p></div></body></html>');
     }
@@ -6193,6 +7661,9 @@ function adm_papier($d, $inst) {
   <div class="p-voet">
     <?php if ($d['soort'] === 'factuur' && !empty($d['credit'])): ?>
       <p>Dit bedrag verrekenen wij met u of storten wij terug.</p>
+    <?php elseif ($d['soort'] === 'factuur' && !empty($d['webshop']) && ($d['betaald_op'] ?? '') !== ''): ?>
+      <p>Dit bedrag is op <?= h(nl_datum($d['betaald_op'])) ?> betaald. U hoeft niets meer te doen.</p>
+      <?php if ($inst['voet_f'] !== ''): ?><p><?= nl2br(h($inst['voet_f'])) ?></p><?php endif; ?>
     <?php elseif ($d['soort'] === 'factuur'): ?>
       <p>Wij verzoeken u het bedrag van <strong><?= h(adm_eur($t['incl'])) ?></strong> binnen <?= (int)$d['termijn'] ?> dagen over te maken<?php if ($inst['iban'] !== ''): ?> op <strong><?= h($inst['iban']) ?></strong><?php if ($inst['tnv'] !== ''): ?> ten name van <?= h($inst['tnv']) ?><?php endif; ?><?php endif; ?>, onder vermelding van <?= $d['nummer'] !== '' ? 'factuurnummer <strong>' . h($d['nummer']) . '</strong>' : 'het factuurnummer' ?>.</p>
       <?php if ($inst['voet_f'] !== ''): ?><p><?= nl2br(h($inst['voet_f'])) ?></p><?php endif; ?>
@@ -10327,6 +11798,7 @@ define('DEMO_FILE', DATA_DIR . '/demo-aan.txt');
 if (isset($_GET['doc']) || (($_POST['action'] ?? '') === 'adm_akkoord')) { adm_publiek(); }
 if (isset($_GET['taak']) || isset($_GET['agenda']) || isset($_GET['download']) || isset($_GET['herinnering']) || isset($_GET['bijlage'])) { adm_openbaar(); }
 if (isset($_GET['res'])) { res_openbaar(); }
+if (isset($_GET['shop'])) { ws_openbaar(); }
 if (isset($_GET['beoordeel'])) { bd_formulier(); }
 $demoEnabled = $config && file_exists(DEMO_FILE);
 if ($demoEnabled && isset($_GET['demo']) && empty($_SESSION['ff_admin'])) {
@@ -10679,7 +12151,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-10-26-worldchat');
+define('SITE_BOUW', '2026-11-09-webshop');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -10739,6 +12211,7 @@ if ($logged_in && isset($_POST['action'])) {
     if (strpos($action, 'mk_') === 0) { mk_acties($action); }
     if (strpos($action, 'bd_') === 0) { bd_acties($action); }
     if (strpos($action, 'wc_') === 0) { wc_acties($action); }
+    if (strpos($action, 'ws_') === 0) { ws_acties($action); }
 
     if ($action === 'save') {
         $title = trim($_POST['title'] ?? '');
@@ -11116,13 +12589,16 @@ $showProj = $logged_in && isset($_GET['projecten']);
 $showBer = $logged_in && isset($_GET['berichten']);
 $showVer = $logged_in && isset($_GET['versies']);
 $showWc = $logged_in && isset($_GET['worldchat']);
+$showWs = $logged_in && isset($_GET['webshop']);
+if ($logged_in && isset($_GET['ws_bestand'])) { ws_bestand_sturen(); }
+if ($showWs && isset($_GET['voorbeeld'])) { ws_voorbeeld_csv(); }
 /* Terug van de betaalpagina: betaling direct bijboeken en de chatknop aanzetten. */
 if ($showWc && empty($is_demo) && isset($_GET['sessie']) && preg_match('/^cs_[A-Za-z0-9_]+$/', (string)$_GET['sessie'])) {
     $wcNa = wc_status((string)$_GET['sessie']);
     $_SESSION['ff_notice'] = !empty($wcNa['actief']) ? 'Betaling ontvangen. Worldchat staat aan op je website.' : 'Je betaling is nog niet verwerkt. Ververs deze pagina over een minuut.';
     header('Location: admin.php?worldchat=1'); exit;
 }
-$showStart = $logged_in && !$showForm && !$showAccount && !$showSettings && !$showAdm && !$showRes && !$showAb && !$showBd && !$showMk && !$showProj && !$showBer && !$showVer && !$showWc;
+$showStart = $logged_in && !$showForm && !$showAccount && !$showSettings && !$showAdm && !$showRes && !$showAb && !$showBd && !$showMk && !$showProj && !$showBer && !$showVer && !$showWc && !$showWs;
 $uploadLimit = ini_get('upload_max_filesize');
 $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (string)($_SERVER['HTTP_HOST'] ?? '')));
 ?>
@@ -11371,7 +12847,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
   </main>
 <?php else: ?>
 <?php
-  $nRes = $showRes ? 0 : res_nieuw_aantal(); $nBd = $showBd ? 0 : bd_nieuw_aantal();
+  $nRes = $showRes ? 0 : res_nieuw_aantal(); $nBd = $showBd ? 0 : bd_nieuw_aantal(); $nWs = ws_nieuw_aantal();
   $ic = function($d) { return '<svg viewBox="0 0 24 24" aria-hidden="true">' . $d . '</svg>'; };
   $mi = function($href, $label, $on, $icon, $badge = 0, $extra = '') use ($ic) { return '<a class="si' . ($on ? ' on' : '') . '" href="' . $href . '"' . $extra . '>' . $ic($icon) . '<span>' . $label . '</span>' . ($badge ? '<b class="tel">' . (int)$badge . '</b>' : '') . '</a>'; };
 ?>
@@ -11389,6 +12865,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
       <?= $mi('admin.php?beoordelingen=1', 'Beoordelingen', $showBd, '<path d="M12 4l2.4 5 5.6.8-4 3.9 1 5.5-5-2.7-5 2.7 1-5.5-4-3.9 5.6-.8z"/>', $nBd) ?>
       <div class="sg">Klanten en geld</div>
       <?= $mi('admin.php?berichten=1', 'Berichten', $showBer, '<path d="M4 6h16v10H8l-4 3z"/>') ?>
+      <?= $mi('admin.php?webshop=1', h(ws_inst()['naam']), $showWs, '<path d="M3 4h2l2.2 11h11l2-8H6.2"/><circle cx="9" cy="19.5" r="1.4"/><circle cx="17" cy="19.5" r="1.4"/>', $nWs) ?>
       <?= $mi('admin.php?reserveren=1', 'Afspraakplanner', $showRes, '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>', $nRes) ?>
       <?= $mi('admin.php?worldchat=1', 'Worldchat', $showWc, '<circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c2.5 2.2 3.5 5 3.5 8s-1 5.8-3.5 8c-2.5-2.2-3.5-5-3.5-8s1-5.8 3.5-8z"/>') ?>
       <?= $mi('admin.php?adm', 'Administratie', $showAdm, '<path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4M10 12h5M10 16h5"/>') ?>
@@ -11433,6 +12910,9 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
 
       <?php elseif ($showWc): ?>
         <?php wc_beheer_view(); ?>
+
+      <?php elseif ($showWs): ?>
+        <?php ws_beheer_view(); ?>
 
       <?php elseif ($showMk): ?>
         <?php mk_beheer_view(); ?>
