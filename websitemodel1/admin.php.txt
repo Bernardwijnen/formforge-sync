@@ -4985,6 +4985,15 @@ function ws_beheer_view() {
       .ws-uitleg code{background:#fff;border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-size:13px;}
       .ws-mini{font-size:13px;color:var(--mut);}
       .ws-snel{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;} .ws-snel span{font-size:13px;color:var(--mut);margin-right:2px;}
+      .ws-snel+.ws-snel{margin-top:6px;}
+      .ws-sectie{border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:0 0 16px;background:#fbfcfe;}
+      .ws-sectie h3{font-size:16px;margin:0 0 4px;}
+      .ws-sectie .hint{margin-top:10px;}
+      .ws-vh{position:absolute;left:-9999px;}
+      .ws-voorbeeld{margin-top:12px;background:#fff;border:1px dashed #b8c4d8;border-radius:10px;padding:10px 12px;}
+      .ws-voorbeeld label{display:block;font-weight:700;font-size:14px;margin:8px 0 4px;}
+      .ws-voorbeeld select{max-width:320px;}
+      .ws-vbplek{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-top:8px;font-size:14px;}
     </style>
     <h1>Webshop</h1>
     <p class="sub">Verkoop je producten online. Je klanten betalen met iDEAL of een andere betaalmethode, via je eigen Mollie-account. Het geld komt rechtstreeks bij jou binnen.</p>
@@ -5052,6 +5061,10 @@ function ws_view_producten($in) {
         <h2 style="font-size:22px"><?= $x['id'] === '' ? 'Nieuw product' : h($x['naam']) ?></h2>
         <form class="formcard" method="post" enctype="multipart/form-data">
           <input type="hidden" name="action" value="ws_save" /><input type="hidden" name="id" value="<?= h($x['id']) ?>" />
+          <div class="ws-uitleg" style="margin-bottom:16px"><strong>Wat vul je in?</strong> Alleen een <strong>naam</strong> en een <strong>prijs</strong> zijn nodig. De rest vul je in als het bij je product past:<br />
+            &bull; <strong>Keuzes</strong>: als de koper iets moet kiezen, zoals een maat, een kleur of de inhoud van een pot verf.<br />
+            &bull; <strong>Opdruk</strong>: alleen als je het product bedrukt met het logo of de tekst van de koper.<br />
+            Onder elk veld zie je meteen hoe het er voor de koper uitziet.</div>
           <div class="field"><label for="wpn">Naam</label><input type="text" id="wpn" name="naam" maxlength="120" required value="<?= $v('naam') ?>" placeholder="Bijvoorbeeld: T-shirt met eigen opdruk" /></div>
           <div class="two">
             <div class="field"><label for="wpc">Categorie (mag leeg)</label><input type="text" id="wpc" name="cat" maxlength="40" list="wpcl" value="<?= $v('cat') ?>" placeholder="Bijvoorbeeld: Kleding" /><datalist id="wpcl"><?php foreach ($cats as $c): ?><option value="<?= h($c) ?>"></option><?php endforeach; ?></datalist></div>
@@ -5063,12 +5076,23 @@ function ws_view_producten($in) {
           </div>
           <div class="field"><label for="wps">Status</label><select id="wps" name="status"><?php foreach (['actief' => 'Te koop', 'uit' => 'Uitverkocht (wel zichtbaar)', 'verborgen' => 'Verborgen (niet op de website)'] as $s => $l): ?><option value="<?= $s ?>" <?= ($x['status'] ?? 'actief') === $s ? 'selected' : '' ?>><?= $l ?></option><?php endforeach; ?></select></div>
           <div class="field"><label for="wpt">Omschrijving (mag leeg)</label><textarea id="wpt" name="tekst" class="short" rows="5"><?= $v('tekst') ?></textarea></div>
-          <div class="field"><label for="wpo">Keuzes zoals maat en kleur (mag leeg)</label><textarea id="wpo" name="opties" class="short" rows="3" placeholder="Maat: S, M, L, XL, XXL +2,00&#10;Kleur: Wit, Zwart, Navy"><?= $v('opties') ?></textarea>
-            <div class="ws-snel" data-veld="wpo"><span>Snel toevoegen:</span><button type="button" class="btn ghost sm" data-r="Maat: S, M, L, XL, XXL">Maten S tot en met XXL</button><button type="button" class="btn ghost sm" data-r="Maat: XS, S, M, L, XL, XXL, 3XL">Maten XS tot en met 3XL</button><button type="button" class="btn ghost sm" data-r="Maat: 98/104, 110/116, 122/128, 134/140, 146/152">Kindermaten</button><button type="button" class="btn ghost sm" data-r="Kleur: Wit, Zwart, Navy, Grijs, Rood">Kleuren</button></div>
-            <div class="hint">Per regel 1 keuze: eerst de naam, dan een dubbele punt, dan de mogelijkheden met komma's. De koper kiest uit een keuzemenu. Kost een mogelijkheid meer, zet er dan <strong>+</strong> en het bedrag achter, zoals <strong>XXL +2,00</strong>.</div></div>
-          <div class="field"><label for="wpd">Opdruk met eigen ontwerp (mag leeg)</label><textarea id="wpd" name="opdruk" class="short" rows="3" placeholder="Voorkant: 25 x 30 cm&#10;Rug: 30 x 40 cm +5,00"><?= $v('opdruk') ?></textarea>
+          <div class="ws-sectie">
+            <h3>Keuzes voor de koper <span class="ws-mini">(mag leeg)</span></h3>
+            <p class="ws-mini" style="margin:0 0 10px">Moet de koper iets kiezen, zoals een maat, kleur of inhoud? Zet dat hier. Hij kiest dan uit een keuzemenu. Heeft je product geen keuzes, laat dit dan leeg.</p>
+            <div class="field" style="margin-bottom:8px"><label for="wpo" class="ws-vh">Keuzes</label><textarea id="wpo" name="opties" class="short" rows="3" placeholder="Bijvoorbeeld:&#10;Maat: S, M, L, XL&#10;Inhoud: 1 liter, 2,5 liter +18,00"><?= $v('opties') ?></textarea></div>
+            <div class="ws-snel" data-veld="wpo"><span>Kleding:</span><button type="button" class="btn ghost sm" data-r="Maat: S, M, L, XL, XXL">Maten S tot en met XXL</button><button type="button" class="btn ghost sm" data-r="Maat: XS, S, M, L, XL, XXL, 3XL">Maten XS tot en met 3XL</button><button type="button" class="btn ghost sm" data-r="Maat: 98/104, 110/116, 122/128, 134/140, 146/152">Kindermaten</button><button type="button" class="btn ghost sm" data-r="Kleur: Wit, Zwart, Navy, Grijs, Rood">Kleuren</button></div>
+            <div class="ws-snel" data-veld="wpo"><span>Andere producten:</span><button type="button" class="btn ghost sm" data-r="Inhoud: 1 liter, 2,5 liter +18,00, 5 liter +40,00">Inhoud</button><button type="button" class="btn ghost sm" data-r="Glans: Mat, Zijdeglans, Hoogglans">Glans</button><button type="button" class="btn ghost sm" data-r="Formaat: Klein, Middel, Groot">Formaat</button><button type="button" class="btn ghost sm" data-r="Uitvoering: Standaard, Luxe +10,00">Uitvoering</button></div>
+            <div class="hint"><strong>Zo schrijf je het:</strong> per regel 1 keuze. Eerst de naam, dan een dubbele punt, dan de mogelijkheden met een komma ertussen. Kost een mogelijkheid meer dan de prijs hierboven, zet er dan een <strong>+</strong> en het extra bedrag achter, zoals <strong>XXL +2,00</strong>.</div>
+            <div class="ws-voorbeeld" id="wpoVb" hidden><span class="ws-mini">Zo ziet de koper het:</span><div></div></div>
+          </div>
+          <div class="ws-sectie">
+            <h3>Opdruk met het ontwerp van de koper <span class="ws-mini">(alleen als je iets bedrukt, mag leeg)</span></h3>
+            <p class="ws-mini" style="margin:0 0 10px">Bedruk je dit product met het logo of de tekst van de koper, zoals een T-shirt, pet of mok? Zet hier waar de opdruk kan komen. De koper kan dan zijn ontwerp uploaden. Verkoop je gewone producten, laat dit dan leeg.</p>
+            <div class="field" style="margin-bottom:8px"><label for="wpd" class="ws-vh">Opdruk</label><textarea id="wpd" name="opdruk" class="short" rows="3" placeholder="Bijvoorbeeld:&#10;Voorkant: 25 x 30 cm&#10;Rug: 30 x 40 cm +5,00"><?= $v('opdruk') ?></textarea></div>
             <div class="ws-snel" data-veld="wpd"><span>Snel toevoegen:</span><button type="button" class="btn ghost sm" data-r="Voorkant: 25 x 30 cm">Voorkant shirt</button><button type="button" class="btn ghost sm" data-r="Rug: 30 x 40 cm +5,00">Rug shirt</button><button type="button" class="btn ghost sm" data-r="Borst links: 10 x 10 cm">Borst links</button><button type="button" class="btn ghost sm" data-r="Voorkant: 10 x 6 cm">Pet</button><button type="button" class="btn ghost sm" data-r="Rondom: 20 x 8 cm">Mok</button></div>
-            <div class="hint">Per regel 1 plek waar een opdruk kan komen, met de grootste maat in centimeters. Kost een plek extra, zet er dan <strong>+</strong> en het bedrag achter. De klant kiest de plek en uploadt zijn logo of ontwerp. De webshop rekent uit of het scherp genoeg is voor die maat en waarschuwt de klant als het te klein is. Jij krijgt altijd het originele bestand.</div></div>
+            <div class="hint"><strong>Zo schrijf je het:</strong> per regel 1 plek, met de grootste maat van de opdruk in centimeters. Kost een plek extra, zet er dan een <strong>+</strong> en het bedrag achter. De webshop controleert of het ontwerp van de koper scherp genoeg is voor die maat en waarschuwt hem als het te klein is. Jij krijgt altijd het originele bestand.</div>
+            <div class="ws-voorbeeld" id="wpdVb" hidden><span class="ws-mini">Zo ziet de koper het:</span><div></div></div>
+          </div>
           <div class="field"><label>Foto's</label>
             <?php if (!empty($x['fotos'])): ?><div class="photos" style="margin-bottom:10px"><?php foreach ($x['fotos'] as $i => $f): ?><div><img src="<?= h(ws_foto_url($x, $f)) ?>" alt="" /><label><input type="radio" name="foto_hoofd" value="<?= h($f) ?>" <?= $i === 0 ? 'checked' : '' ?> /> Hoofdfoto</label><label><input type="checkbox" name="foto_weg[]" value="<?= h($f) ?>" /> Weghalen</label></div><?php endforeach; ?></div><?php endif; ?>
             <input type="file" name="fotos[]" accept="image/*" multiple /><div class="hint">Je kunt meerdere foto's tegelijk kiezen (hoogstens <?= WS_MAX_FOTO ?>).</div></div>
@@ -5081,9 +5105,28 @@ function ws_view_producten($in) {
             var regels = ta.value.split(/\r?\n/).filter(function (x) { return x.trim() !== ''; }), vervangen = false;
             regels = regels.map(function (x) { if (x.split(':')[0].trim().toLowerCase() === naam) { vervangen = true; return r; } return x; });
             if (!vervangen) regels.push(r);
-            ta.value = regels.join('\n'); ta.focus();
+            ta.value = regels.join('\n'); ta.focus(); toon();
           });
         });
+        function esc(t) { var d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+        function toon() {
+          var o = document.getElementById('wpo'), ob = document.getElementById('wpoVb'), d = document.getElementById('wpd'), db = document.getElementById('wpdVb'), h = '';
+          o.value.split(/\r?\n/).forEach(function (r) {
+            r = r.trim(); if (!r) return; var i = r.indexOf(':'), naam = i < 0 ? 'Keuze' : r.slice(0, i).trim(), rest = i < 0 ? r : r.slice(i + 1);
+            var w = rest.split(/,(?=\s|$)|,(?=[^\d\s])/).map(function (x) { return x.trim(); }).filter(Boolean).map(function (x) { var m = x.match(/^(.*?)\s*\+\s*([0-9][0-9.,]*)$/); return m ? esc(m[1]) + ' (+ \u20ac ' + esc(m[2]) + ')' : esc(x); });
+            if (!w.length) return;
+            h += '<label>' + esc(naam.charAt(0).toUpperCase() + naam.slice(1)) + '</label><select>' + (w.length > 1 ? '<option>Kies ' + esc(naam.toLowerCase()) + '</option>' : '') + w.map(function (x) { return '<option>' + x + '</option>'; }).join('') + '</select>';
+          });
+          ob.hidden = !h; ob.querySelector('div').innerHTML = h; h = '';
+          d.value.split(/\r?\n/).forEach(function (r) {
+            r = r.trim(); if (!r) return; var pr = r.match(/\+\s*([0-9][0-9.,]*)\s*$/); if (pr) r = r.slice(0, pr.index).trim();
+            var m = r.match(/(\d+(?:[.,]\d+)?)\s*[x\u00d7]\s*(\d+(?:[.,]\d+)?)\s*(cm)?/i), naam = (m ? r.replace(m[0], '') : r).replace(/:\s*$/, '').trim() || 'Opdruk';
+            h += '<div class="ws-vbplek">&#9744; <strong>' + esc(naam) + '</strong>' + (m ? ', ' + esc(m[1]) + ' x ' + esc(m[2]) + ' cm' : '') + (pr ? ' + \u20ac ' + esc(pr[1]) : '') + '<br /><span class="ws-mini">Hier kan de koper zijn logo of ontwerp uploaden.</span></div>';
+          });
+          db.hidden = !h; db.querySelector('div').innerHTML = h;
+        }
+        ['wpo', 'wpd'].forEach(function (id) { document.getElementById(id).addEventListener('input', toon); });
+        toon();
         </script>
         <?php if ($x['id'] !== ''): ?>
         <form method="post" onsubmit="return confirm('<?= h(addslashes($x['naam'])) ?> verwijderen? Dit kan niet ongedaan worden gemaakt.')" style="margin-top:-6px"><input type="hidden" name="action" value="ws_del" /><input type="hidden" name="id" value="<?= h($x['id']) ?>" /><button class="btn ghost sm" type="submit">Product verwijderen</button></form>
@@ -12024,6 +12067,26 @@ function venturo_html() {
 <div class="vt-v"><h5>Hoe antwoord ik een bezoeker?</h5><p>Klik bij Worldchat op Open je chat. Bewaar die pagina als bladwijzer of zet hem op het beginscherm van je telefoon. Schrijft een bezoeker iets, dan krijg je ook een mail met een link naar je chat.</p></div>
 <div class="vt-v"><h5>Een bezoeker ziet dat de lijn bezet is. Hoe kan dat?</h5><p>Er chat een bezoeker tegelijk. Zolang die in gesprek is, en nog een paar minuten daarna, ziet de volgende bezoeker dat de lijn bezet is. Hij kan het daarna opnieuw proberen. Elke nieuwe bezoeker begint met een leeg gesprek en ziet niets van de vorige.</p></div>
 <div class="vt-v"><h5>Wat gebeurt er als mijn credits op zijn?</h5><p>Dan verdwijnt de chatknop van je website. Je hoeft niets op te zeggen. Koop je bij, dan staat de knop er weer. Bij Worldchat zie je altijd hoeveel credits je nog hebt.</p></div>
+</div>
+<div class="vt-o"><h4>Webshop</h4>
+<div class="vt-v"><h5>Wat is de webshop?</h5><p>Met de webshop verkoop je producten op je eigen website. Je klanten kiezen een product, leggen het in de winkelwagen en betalen online met iDEAL of een andere betaalmethode. De webshop zit bij de prijs inbegrepen.</p></div>
+<div class="vt-v"><h5>Wat is het verschil tussen Aanbod en de webshop?</h5><p>Bij Aanbod laat je auto's of producten zien, maar de klant kan niet online bestellen. In de webshop kan de klant bestellen en meteen betalen.</p></div>
+<div class="vt-v"><h5>Hoe zet ik de webshop aan?</h5><p>Klik links op Webshop en dan bovenaan op Instellen. Vink Webshop op mijn website zetten aan en klik op Opslaan en website bijwerken. Er staat dan een knop Webshop in het menu van je website.</p></div>
+<div class="vt-v"><h5>Hoe voeg ik een product toe?</h5><p>Klik bij Webshop op Producten en dan op Nieuw product. Alleen een naam en een prijs zijn nodig. Voeg foto's toe en klik op Opslaan en website bijwerken. Het product staat dan meteen in je webshop.</p></div>
+<div class="vt-v"><h5>Wat vul ik in bij Keuzes?</h5><p>Bij Keuzes zet je wat de koper moet kiezen, zoals een maat, een kleur of de inhoud van een pot verf. Per regel 1 keuze: eerst de naam, dan een dubbele punt, dan de mogelijkheden met een komma ertussen. Bijvoorbeeld Maat: S, M, L, XL. De koper kiest dan uit een keuzemenu. Kost een mogelijkheid meer, zet er dan een plus en het bedrag achter, zoals XXL +2,00. Onder het veld zie je meteen hoe het eruitziet. Heeft je product geen keuzes, laat het veld dan leeg.</p></div>
+<div class="vt-v"><h5>Wat vul ik in bij Opdruk?</h5><p>Alleen als je het product bedrukt met het logo of de tekst van de koper, zoals een T-shirt, pet of mok. Per regel zet je een plek met de grootste maat in centimeters, bijvoorbeeld Voorkant: 25 x 30 cm. De koper kiest de plek en uploadt zijn ontwerp. Verkoop je gewone producten, laat het veld dan leeg.</p></div>
+<div class="vt-v"><h5>Hoe weet ik of het logo van de koper goed genoeg is om te drukken?</h5><p>De webshop kijkt dat na terwijl de koper uploadt. Is de afbeelding te klein voor de opdruk, dan ziet de koper een waarschuwing met hoe groot het bestand moet zijn. Wil hij toch bestellen, dan moet hij dat eerst aanvinken. Heeft het logo een witte achtergrond, dan kan de koper die laten weghalen. Bij de bestelling zie jij de uitkomst van de controle en download je het originele bestand en de versie zonder achtergrond.</p></div>
+<div class="vt-v"><h5>Hoe koppel ik Mollie voor online betalen?</h5><p>Log in op mollie.com en ga naar Developers en dan API keys. Kopieer de sleutel die begint met live_. Plak hem in je beheerpagina bij Webshop, Instellen, Mollie API-sleutel, en klik op Opslaan. Het geld van je klanten komt dan rechtstreeks op je eigen rekening.</p></div>
+<div class="vt-v"><h5>Kan ik eerst testen zonder echt te betalen?</h5><p>Ja. Plak bij Mollie API-sleutel de sleutel die begint met test_. Je kunt dan bestellen en afrekenen zonder dat er geld wordt afgeschreven. Wil je echt verkopen, vervang hem dan door de sleutel die begint met live_.</p></div>
+<div class="vt-v"><h5>Wat kost online betalen?</h5><p>FormForge rekent niets extra voor de webshop. Mollie rekent per betaling een klein bedrag. Wat dat is, zie je op de website van Mollie.</p></div>
+<div class="vt-v"><h5>Kan ik de webshop gebruiken zonder Mollie?</h5><p>Ja. Zonder Mollie-sleutel kunnen klanten wel bestellen, maar niet online betalen. Je krijgt de bestelling binnen en regelt de betaling dan zelf met de klant.</p></div>
+<div class="vt-v"><h5>Waar zie ik mijn bestellingen?</h5><p>Klik links op Webshop. Bij Bestellingen staat elke bestelling met de klant, de producten, het bedrag en of er al is betaald. Je krijgt bij elke nieuwe bestelling ook een mail. Die mail gaat via je gekoppelde mailbox.</p></div>
+<div class="vt-v"><h5>Hoe laat ik de klant weten dat zijn bestelling klaar is?</h5><p>Open de bestelling en kies bij Afhandelen de status Klaar om op te halen of Verzonden. Laat het vinkje aan staan, dan krijgt de klant een mail. Bij Verzonden kun je ook een track-en-tracelink invullen.</p></div>
+<div class="vt-v"><h5>Komt een bestelling in mijn administratie?</h5><p>Ja. Is er online betaald, dan staat de bestelling meteen als betaalde factuur in je administratie, met precies het bedrag dat de klant betaalde. Betaalt de klant later of in de winkel, klik dan bij de bestelling op Boeken als betaald of op Factuur maken.</p></div>
+<div class="vt-v"><h5>Hoe werkt de voorraad?</h5><p>Vul je bij een product een voorraad in, dan telt de webshop bij elke bestelling af. Bij 0 staat er Uitverkocht en kan niemand het meer bestellen. Laat je het veld leeg, dan is het product altijd te bestellen.</p></div>
+<div class="vt-v"><h5>Hoe werken de verzendkosten?</h5><p>Bij Instellen vul je een vast bedrag aan verzendkosten in, en eventueel vanaf welk bedrag het verzenden gratis is. Het is 1 bedrag per bestelling. Je kunt ook kiezen dat klanten hun bestelling ophalen, en of ze dan in de winkel mogen betalen.</p></div>
+<div class="vt-v"><h5>Kan ik veel producten tegelijk inladen?</h5><p>Ja, bij Producten onderaan, met een Excel- of CSV-bestand. Download eerst het voorbeeldbestand en gebruik dezelfde kopjes. Foto's voeg je daarna per product toe.</p></div>
+<div class="vt-v"><h5>Wat zet ik in de voorwaarden van mijn webshop?</h5><p>Bij Instellen kun je je voorwaarden kwijt. De klant moet daar bij het bestellen mee akkoord gaan. Een webshop in Nederland moet onder andere vertellen hoe het zit met de bedenktijd van 14 dagen. Voor producten die speciaal voor de klant zijn gemaakt, zoals bedrukte kleding, geldt die bedenktijd niet. Laat je voorwaarden nakijken als je twijfelt.</p></div>
 </div>
 </div>
 <div class="vt-g" data-param="adm"><h3>Administratie</h3>
