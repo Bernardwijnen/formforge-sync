@@ -5270,6 +5270,396 @@ function ws_view_bestellingen($in) {
 }
 
 /* ===========================================================
+   Overzetten uit Exact Online (eenmalig).
+   Uit het transactiebestand van Exact (FinTransactionSearch.csv) komen verkoopfacturen,
+   inkoopfacturen en bankregels; uit de auditfile (.xaf) de klanten met adres.
+   Eerst een overzicht van wat erin komt, pas na Importeren wordt het bewaard.
+   Wat er al in staat, wordt overgeslagen. Alle boekingen blijven als archief te bekijken.
+   =========================================================== */
+define('ADM_EXACT_PLAN', DATA_DIR . '/adm_exact_plan.json');
+define('ADM_EXACT_ARCHIEF', DATA_DIR . '/adm_exact_archief.json');
+
+function ex_tekst($bin) {
+    if (substr($bin, 0, 2) === "\xFF\xFE") return mb_convert_encoding(substr($bin, 2), 'UTF-8', 'UTF-16LE');
+    if (substr($bin, 0, 2) === "\xFE\xFF") return mb_convert_encoding(substr($bin, 2), 'UTF-8', 'UTF-16BE');
+    if (substr($bin, 0, 3) === "\xEF\xBB\xBF") $bin = substr($bin, 3);
+    return mb_check_encoding($bin, 'UTF-8') ? $bin : mb_convert_encoding($bin, 'UTF-8', 'Windows-1252');
+}
+function ex_rijen($tekst) {
+    $eerste = strtok($tekst, "\n");
+    $sep = substr_count((string)$eerste, "\t") >= substr_count((string)$eerste, ';') ? "\t" : (substr_count((string)$eerste, ';') >= substr_count((string)$eerste, ',') ? ';' : ',');
+    $h = fopen('php://temp', 'w+'); fwrite($h, $tekst); rewind($h);
+    $uit = [];
+    while (($r = fgetcsv($h, 0, $sep, '"', '')) !== false) { if ($r === [null] || $r === ['']) continue; $uit[] = $r; }
+    fclose($h);
+    return $uit;
+}
+function ex_bedrag($v) {
+    $v = trim(str_replace(["\u{20AC}", ' ', "\xC2\xA0"], '', (string)$v));
+    if ($v === '') return 0;
+    if (strpos($v, ',') !== false) { $v = str_replace('.', '', $v); $v = str_replace(',', '.', $v); }
+    return (int)round((float)$v * 100);
+}
+function ex_datum($v) {
+    $v = trim((string)$v);
+    if (preg_match('/^(\d{1,2})-(\d{1,2})-(\d{4})/', $v, $m)) return sprintf('%04d-%02d-%02d', $m[3], $m[2], $m[1]);
+    if (preg_match('/^(\d{4})-(\d{2})-(\d{2})/', $v, $m)) return $m[1] . '-' . $m[2] . '-' . $m[3];
+    return '';
+}
+function ex_nrnorm($n) { return preg_replace('/[^0-9a-z]/', '', strtolower((string)$n)); }
+function ex_nummer($oms, $verkoop) {
+    if (preg_match('/(20\d{2})\s?-?\s?(\d{3,4})(?!\d)/', (string)$oms, $m)) return preg_replace('/\s/', '', $m[0]);
+    $w = array_values(array_filter(array_slice(preg_split('/\s+/', (string)$oms), $verkoop ? 0 : 1), function($x) { return preg_match('/\d/', $x) && !preg_match('/^\d{8}$/', $x) && strlen($x) >= 4; }));
+    return $w ? rtrim(end($w), ',;') : '';
+}
+function ex_klant_uit_oms($oms, $nummer) {
+    $t = (string)$oms;
+    if ($nummer !== '') $t = str_replace($nummer, ' ', $t);
+    $t = preg_replace(['/\b(factuur(nr|nummer)?|nummer|nr)\b\.?:?/i', '/\b\d{6,8}\b/', '/[:\-]+/', '/\s+/'], [' ', ' ', ' ', ' '], $t);
+    $t = trim($t);
+    if ($t === '' || preg_match('/^particulier\b/i', $t)) return 'Particulier';
+    return mb_strtoupper(mb_substr($t, 0, 1)) . mb_substr($t, 1);
+}
+/* Welke grootboekrekening is wat. Op naam (zoals in het standaardschema van Exact), met de gebruikelijke nummers als reserve. */
+function ex_rollen($gl) {
+    $r = ['deb' => [], 'cred' => [], 'bank' => [], 'af_hoog' => [], 'af_laag' => [], 'af_verlegd' => [], 'voor_hoog' => [], 'voor_laag' => [], 'voor_verlegd' => [], 'voor_buiten' => [], 'btw' => []];
+    foreach ($gl as $code => $naam) {
+        $code = (string)$code; $n = mb_strtolower((string)$naam);
+        if (preg_match('/^debiteuren\b/', $n) && !preg_match('/voorgaand|vorig|dubieu|voorziening/', $n)) $r['deb'][] = $code;
+        elseif (preg_match('/^crediteuren\b/', $n) && !preg_match('/voorgaand|vorig/', $n)) $r['cred'][] = $code;
+        elseif ((preg_match('/^1[01]/', $code) || preg_match('/^1\d{3}$/', $code)) && (preg_match('/\b[a-z]{2}\d{2}\s?[a-z]{4}\s?\d/i', $naam) || preg_match('/\bbank|rabo|\bing\b|abn|knab|bunq|triodos|\bsns\b|\basn\b|regiobank|revolut/', $n))) $r['bank'][] = $code;
+        if (preg_match('/btw|omzetbelasting/', $n) && !preg_match("/afgedragen|priv\u{e9}|prive|r\\/c|rekening.courant/", $n)) {
+            $r['btw'][] = $code;
+            $af = preg_match('/af te dragen|te betalen/', $n); $voor = preg_match('/voor(druk|belasting|aftrek)|te vorderen/', $n);
+            if (preg_match('/invoer|icw|icl|buiten|\beu\b/', $n)) { if ($voor) $r['voor_buiten'][] = $code; }
+            elseif (preg_match('/verlegd/', $n)) { $r[$voor ? 'voor_verlegd' : 'af_verlegd'][] = $code; }
+            elseif (preg_match('/laag|\b9\s?%|\b6\s?%/', $n)) { $r[$voor ? 'voor_laag' : 'af_laag'][] = $code; }
+            elseif (preg_match('/hoog|\b21\s?%/', $n) || $af || $voor) { $r[$voor ? 'voor_hoog' : 'af_hoog'][] = $code; }
+        }
+    }
+    if (!$r['deb'] && isset($gl['131000'])) $r['deb'][] = '131000';
+    if (!$r['deb'] && isset($gl['1300'])) $r['deb'][] = '1300';
+    if (!$r['cred'] && isset($gl['151000'])) $r['cred'][] = '151000';
+    if (!$r['cred'] && isset($gl['1600'])) $r['cred'][] = '1600';
+    return $r;
+}
+/* Relaties uit de auditfile (XAF, los of in een zip) */
+function ex_relaties($bin, $naam, &$fout) {
+    if (substr($bin, 0, 2) === 'PK') {
+        if (!class_exists('ZipArchive')) { $fout = 'Deze hosting kan geen zip openen. Pak de zip uit en kies het .xaf-bestand.'; return []; }
+        $tmp = tempnam(sys_get_temp_dir(), 'xaf'); file_put_contents($tmp, $bin);
+        $z = new ZipArchive(); $bin = '';
+        if ($z->open($tmp) === true) { for ($i = 0; $i < $z->numFiles; $i++) { $n = $z->getNameIndex($i); if (preg_match('/\.(xaf|xml)$/i', $n)) { $bin = (string)$z->getFromIndex($i); break; } } $z->close(); }
+        @unlink($tmp);
+        if ($bin === '') { $fout = 'In de zip zit geen auditfile.'; return []; }
+    }
+    $xml = ex_tekst($bin);
+    $prev = libxml_use_internal_errors(true);
+    $d = new DOMDocument();
+    $ok = $d->loadXML($xml, LIBXML_NONET);
+    libxml_use_internal_errors($prev);
+    if (!$ok || !$d->getElementsByTagNameNS('*', 'auditfile')->length) { $fout = $naam . ' is geen auditfile.'; return []; }
+    $w = function($el, $tag) { $e = $el->getElementsByTagNameNS('*', $tag)->item(0); return $e ? trim($e->textContent) : ''; };
+    $uit = [];
+    foreach ($d->getElementsByTagNameNS('*', 'customerSupplier') as $c) {
+        $uit[] = ['code' => $w($c, 'custSupID'), 'naam' => $w($c, 'custSupName'), 'tp' => $w($c, 'custSupTp'), 'tel' => $w($c, 'telephone'), 'mail' => $w($c, 'eMail'),
+                  'straat' => trim($w($c, 'streetname') . ' ' . $w($c, 'number')), 'postcode' => $w($c, 'postalCode'), 'plaats' => $w($c, 'city'), 'kvk' => $w($c, 'commerceNr'), 'btw' => $w($c, 'vatID') ?: $w($c, 'taxRegIdent')];
+    }
+    return $uit;
+}
+function ex_sleutel($naam) { return trim(preg_replace('/\s+/', ' ', preg_replace('/\b(b\.?v\.?|v\.?o\.?f\.?|bv|nv|vof)\b|[^a-z0-9 ]/', '', mb_strtolower((string)$naam)))); }
+
+/* Het plan: wat er uit Exact in je administratie komt */
+function ex_plan($rijen, $relaties, &$fout) {
+    $kop = array_map(function($k) { return trim((string)$k, " \t\"\xEF\xBB\xBF"); }, $rijen[0] ?? []);
+    $ix = array_flip($kop);
+    foreach (['EntryDate', 'EntryNumber', 'GLAccountCodeDescriptionCode', 'Description', 'AccountCodeNameDescription', 'AmountDC'] as $k) {
+        if (!isset($ix[$k])) { $fout = 'Dit lijkt niet het transactiebestand uit Exact Online: de kolom ' . $k . ' ontbreekt.'; return null; }
+    }
+    $gnaam = $ix['GLAccountCodeDescriptionDescription'] ?? null;
+    $L = []; $gl = []; $archief = [];
+    foreach (array_slice($rijen, 1) as $r) {
+        $d = ex_datum($r[$ix['EntryDate']] ?? '');
+        $code = trim((string)($r[$ix['GLAccountCodeDescriptionCode']] ?? ''));
+        if ($d === '' || $code === '') continue;
+        $ruw = (string)($r[$ix['Description']] ?? '');
+        $x = ['nr' => trim((string)($r[$ix['EntryNumber']] ?? '')), 'datum' => $d, 'gl' => $code, 'ruw' => $ruw, 'oms' => trim(preg_replace('/\s+/', ' ', $ruw)), 'rel' => trim((string)($r[$ix['AccountCodeNameDescription']] ?? '')), 'a' => ex_bedrag($r[$ix['AmountDC']] ?? '')];
+        $x['g'] = $x['nr'] . '|' . $x['datum'];
+        $L[] = $x;
+        $gn = $gnaam !== null ? trim((string)($r[$gnaam] ?? '')) : '';
+        if (!isset($gl[$code]) || $gl[$code] === '') $gl[$code] = $gn;
+        $archief[] = [$d, $x['nr'], $code, $gn, cut($x['oms'], 300), cut($x['rel'], 100), $x['a']];
+    }
+    if (!$L) { $fout = 'In dit bestand staan geen boekingen.'; return null; }
+    $rol = ex_rollen($gl);
+    if (!$rol['deb'] && !$rol['cred'] && !$rol['bank']) { $fout = 'Ik herken in dit bestand geen rekening Debiteuren, Crediteuren of Bank. Stuur het bestand naar FormForge, dan kijken we mee.'; return null; }
+    $in = function($code, $lijst) { return in_array($code, $lijst, true); };
+    $G = []; foreach ($L as $i => $x) { $G[$x['g']][] = $i; }
+    $isBank = []; foreach ($G as $k => $idx) { foreach ($idx as $i) { if ($in($L[$i]['gl'], $rol['bank'])) { $isBank[$k] = true; break; } } }
+    $som = function($idx, $test) use ($L) { $s = 0; foreach ($idx as $i) { if ($test($L[$i]['gl'])) $s += $L[$i]['a']; } return $s; };
+    $heeft = function($idx, $lijst) use ($L) { foreach ($idx as $i) { if (in_array($L[$i]['gl'], $lijst, true)) return true; } return false; };
+    $diverse = '/diverse debiteuren|particulier|kassa/i';
+    $plan = ['vk' => [], 'ik' => [], 'bank' => [], 'klanten' => [], 'dubbel' => ['vk' => 0, 'ik' => 0, 'bank' => 0], 'twijfel' => [], 'credit' => 0, 'regels' => count($L),
+             'rollen' => ['deb' => $rol['deb'], 'cred' => $rol['cred'], 'bank' => array_map(function($c) use ($gl) { return $c . ' ' . $gl[$c]; }, $rol['bank'])]];
+    /* verkoopfacturen */
+    foreach ($L as $x) {
+        if (!$in($x['gl'], $rol['deb']) || isset($isBank[$x['g']]) || $x['a'] === 0) continue;
+        if ($x['a'] < 0) { $plan['credit']++; continue; }
+        $idx = $G[$x['g']];
+        $btw = -$som($idx, function($c) use ($rol) { return in_array($c, array_merge($rol['af_hoog'], $rol['af_laag'], $rol['af_verlegd']), true); });
+        $pct = $heeft($idx, $rol['af_hoog']) ? 21 : ($heeft($idx, $rol['af_laag']) ? 9 : ($btw > 0 ? 21 : 0));
+        $nr = ex_nummer($x['oms'], true);
+        $plan['vk'][] = ['id' => adm_id('d'), 'klant' => $x['rel'] !== '' && !preg_match($diverse, $x['rel']) ? $x['rel'] : ex_klant_uit_oms($x['oms'], $nr), 'rel' => $x['rel'], 'nummer' => $nr !== '' ? $nr : 'Exact ' . $x['nr'],
+                         'datum' => $x['datum'], 'incl' => $x['a'], 'btw' => max(0, $btw), 'pct' => $pct, 'verlegd' => $heeft($idx, $rol['af_verlegd']), 'oms' => cut($x['oms'], 140), 'exact' => $x['nr'], 'betaald_op' => '', 'bank' => ''];
+    }
+    /* inkoopfacturen */
+    foreach ($L as $x) {
+        if (!$in($x['gl'], $rol['cred']) || isset($isBank[$x['g']]) || $x['a'] === 0) continue;
+        if ($x['a'] > 0) { $plan['credit']++; continue; }
+        $idx = $G[$x['g']];
+        $btw = $som($idx, function($c) use ($rol) { return in_array($c, array_merge($rol['voor_hoog'], $rol['voor_laag']), true); });
+        $soort = $heeft($idx, $rol['voor_buiten']) ? 'eu' : ($heeft($idx, $rol['voor_verlegd']) ? 'verlegd' : 'nl');
+        $naam = $x['rel'] !== '' ? $x['rel'] : (explode(' ', $x['oms'])[0] ?: 'Leverancier');
+        $plan['ik'][] = ['id' => adm_id('i'), 'leverancier' => cut($naam, 100), 'rel' => $x['rel'], 'nummer' => cut(ex_nummer($x['oms'], false), 40), 'datum' => $x['datum'], 'bedrag' => -$x['a'],
+                         'btw' => $soort === 'nl' ? max(0, $btw) : 0, 'btwsoort' => $soort, 'vpct' => $heeft($idx, $rol['voor_laag']) ? 9 : 21, 'oms' => cut($x['oms'], 140), 'exact' => $x['nr'], 'betaald_op' => '', 'bank' => ''];
+    }
+    /* bankregels, ingedeeld met de tegenboeking */
+    $tel = [];
+    foreach ($L as $x) {
+        if (!$in($x['gl'], $rol['bank'])) continue;
+        $tegen = array_values(array_filter($G[$x['g']], function($i) use ($L, $x, $rol) { return !in_array($L[$i]['gl'], $rol['bank'], true) && $L[$i]['oms'] === $x['oms']; }));
+        $precies = array_values(array_filter($tegen, function($i) use ($L, $x) { return $L[$i]['a'] === -$x['a']; }));
+        if ($precies) $tegen = $precies;
+        $codes = array_map(function($i) use ($L) { return $L[$i]['gl']; }, $tegen);
+        $ind = ''; $btw = 21;
+        if (array_intersect($codes, $rol['deb'])) $ind = 'omzet';
+        elseif (array_intersect($codes, $rol['cred'])) $ind = 'zakelijk';
+        elseif (array_filter($codes, function($c) { return preg_match('/^9/', $c); })) $ind = 'prive';
+        elseif (array_filter($codes, function($c) { return preg_match('/^[4678]/', $c); })) {
+            $metBtw = array_intersect($codes, array_merge($rol['voor_hoog'], $rol['voor_laag']));
+            $ind = $metBtw ? 'zakelijk_geen' : 'zakelijk_vrij';
+            if (array_intersect($codes, $rol['voor_laag'])) $btw = 9;
+        }
+        $regel1 = trim(explode("\n", str_replace("\r", '', $x['ruw']))[0]);
+        $basis = $x['datum'] . '|' . $x['a'] . '|' . $x['g'] . '|' . $x['oms'];
+        $tel[$basis] = ($tel[$basis] ?? 0) + 1;
+        $plan['bank'][] = ['id' => 't' . substr(sha1('exact|' . $basis . '|' . $tel[$basis]), 0, 16), 'datum' => $x['datum'], 'bedrag' => $x['a'], 'naam' => cut($x['rel'] !== '' ? $x['rel'] : ($regel1 !== '' ? $regel1 : $x['oms']), 100),
+                           'oms' => cut($x['oms'], 300), 'indeling' => $ind, 'btw' => $btw, 'koppel' => '', 'exact' => $x['nr'],
+                           '_teg' => array_map(function($i) use ($L) { return [$L[$i]['gl'], $L[$i]['rel'], $L[$i]['a']]; }, $tegen)];
+    }
+    /* betalingen aan de facturen koppelen */
+    $koppel = function(&$lijst, $rolcodes, $teken, $veld, $prefix) use (&$plan, $L) {
+        $bet = [];
+        foreach ($plan['bank'] as $bi => $b) { foreach ($b['_teg'] as $t) { if (in_array($t[0], $rolcodes, true) && $t[2] * $teken < 0) $bet[] = ['rel' => $t[1], 'datum' => $b['datum'], 'bedrag' => abs($t[2]), 'bi' => $bi, 'gebruikt' => false]; } }
+        usort($lijst, function($a, $b) { return strcmp($a['datum'], $b['datum']); });
+        foreach ($lijst as $fi => $f) {
+            $best = null;
+            foreach ($bet as $pi => $p) { if (!$p['gebruikt'] && $p['rel'] === $f['rel'] && $p['bedrag'] === $f[$veld] && $p['datum'] >= date('Y-m-d', strtotime($f['datum'] . ' -10 days')) && ($best === null || $p['datum'] < $bet[$best]['datum'])) $best = $pi; }
+            if ($best !== null) { $bet[$best]['gebruikt'] = true; $lijst[$fi]['betaald_op'] = $bet[$best]['datum']; $lijst[$fi]['bank'] = $plan['bank'][$bet[$best]['bi']]['id']; $plan['bank'][$bet[$best]['bi']]['koppel'] = $prefix . $f['id']; }
+        }
+        /* staat een relatie in Exact helemaal op nul, dan is alles van die relatie betaald */
+        $saldo = []; foreach ($L as $x) { if (in_array($x['gl'], $rolcodes, true)) $saldo[$x['rel']] = ($saldo[$x['rel']] ?? 0) + $x['a']; }
+        foreach ($lijst as $fi => $f) {
+            if ($f['betaald_op'] !== '' || abs($saldo[$f['rel']] ?? 1) > 2) continue;
+            $later = ''; foreach ($bet as $p) { if ($p['rel'] === $f['rel'] && $p['datum'] >= $f['datum'] && ($later === '' || $p['datum'] < $later)) $later = $p['datum']; }
+            $lijst[$fi]['betaald_op'] = $later !== '' ? $later : $f['datum'];
+        }
+    };
+    $koppel($plan['vk'], $rol['deb'], 1, 'incl', 'd:');
+    $koppel($plan['ik'], $rol['cred'], -1, 'bedrag', 'i:');
+    /* wat staat er al in je administratie? */
+    $docs = adm_docs(); $inkoop = adm_inkoop(); $bank = adm_bank();
+    $plan['vk'] = array_values(array_filter($plan['vk'], function($f) use ($docs, &$plan) {
+        $n = ex_nrnorm($f['nummer']);
+        foreach ($docs as $d) {
+            if (($d['soort'] ?? '') !== 'factuur' || ex_nrnorm($d['nummer'] ?? '') !== $n || $n === '') continue;
+            if (adm_tot($d)['incl'] === $f['incl']) { $plan['dubbel']['vk']++; return false; }
+            $plan['twijfel'][] = 'Verkoopfactuur ' . $f['nummer'] . ' (' . $f['klant'] . ', ' . adm_eur($f['incl']) . ') staat al in je administratie met een ander bedrag (' . adm_eur(adm_tot($d)['incl']) . '). Die is overgeslagen.';
+            return false;
+        }
+        return true;
+    }));
+    $plan['ik'] = array_values(array_filter($plan['ik'], function($f) use ($inkoop, &$plan) {
+        foreach ($inkoop as $x) { if ((int)$x['bedrag'] === $f['bedrag'] && ($x['datum'] ?? '') !== '' && abs(strtotime($x['datum']) - strtotime($f['datum'])) <= 7 * 86400) { $plan['dubbel']['ik']++; return false; } }
+        return true;
+    }));
+    $teller = []; foreach ($bank as $t) { $k = $t['datum'] . '|' . (int)$t['bedrag']; $teller[$k] = ($teller[$k] ?? 0) + 1; }
+    $ids = array_flip(array_column($bank, 'id'));
+    $plan['bank'] = array_values(array_filter($plan['bank'], function($b) use (&$teller, $ids, &$plan) {
+        $k = $b['datum'] . '|' . $b['bedrag'];
+        if (isset($ids[$b['id']]) || ($teller[$k] ?? 0) > 0) { if (($teller[$k] ?? 0) > 0) $teller[$k]--; $plan['dubbel']['bank']++; return false; }
+        return true;
+    }));
+    /* koppelingen naar overgeslagen facturen vervallen */
+    $nieuw = []; foreach ($plan['vk'] as $f) $nieuw['d:' . $f['id']] = 1; foreach ($plan['ik'] as $f) $nieuw['i:' . $f['id']] = 1;
+    $bids = [];
+    foreach ($plan['bank'] as $bi => $b) { if ($b['koppel'] !== '' && !isset($nieuw[$b['koppel']])) $plan['bank'][$bi]['koppel'] = ''; unset($plan['bank'][$bi]['_teg']); $bids[$b['id']] = 1; }
+    foreach (['vk', 'ik'] as $s) { foreach ($plan[$s] as $fi => $f) { if ($f['bank'] !== '' && !isset($bids[$f['bank']])) $plan[$s][$fi]['bank'] = ''; } }
+    /* klanten: uit de auditfile, en anders de namen van de verkoopfacturen */
+    $bestaand = []; foreach (adm_klanten() as $k) { $bestaand[ex_sleutel($k['naam'])] = 1; }
+    $eigen = ex_sleutel(st('naam'));
+    foreach ($relaties as $r) {
+        if (!in_array($r['tp'], ['C', 'B'], true) || preg_match($diverse, $r['naam']) || ($s = ex_sleutel($r['naam'])) === '' || isset($bestaand[$s]) || ($eigen !== '' && $s === $eigen)) continue;
+        $bestaand[$s] = 1; $plan['klanten'][] = $r;
+    }
+    foreach ($plan['vk'] as $f) {
+        $s = ex_sleutel($f['klant']); if ($s === '' || isset($bestaand[$s])) continue;
+        $bestaand[$s] = 1; $plan['klanten'][] = ['code' => '', 'naam' => $f['klant'], 'tp' => 'C', 'tel' => '', 'mail' => '', 'straat' => '', 'postcode' => '', 'plaats' => '', 'kvk' => '', 'btw' => ''];
+    }
+    $plan['archief'] = $archief;
+    return $plan;
+}
+function ex_per_jaar($l, $veld) { $j = []; foreach ($l as $x) { $y = substr($x['datum'], 0, 4); $j[$y] = $j[$y] ?? ['n' => 0, 'som' => 0]; $j[$y]['n']++; $j[$y]['som'] += (int)$x[$veld]; } return $j; }
+
+function ex_acties($action) {
+    if ($action === 'adm_exact_lees') {
+        $f = $_FILES['trans'] ?? null;
+        if (!$f || $f['error'] !== UPLOAD_ERR_OK) adm_terug('admin.php?adm=exact', $f && $f['error'] === UPLOAD_ERR_INI_SIZE ? 'Het transactiebestand is te groot voor deze hosting.' : 'Kies eerst het transactiebestand uit Exact (FinTransactionSearch.csv).');
+        $fout = '';
+        $rel = [];
+        if (!empty($_FILES['audit']) && $_FILES['audit']['error'] === UPLOAD_ERR_OK) { $rel = ex_relaties((string)file_get_contents($_FILES['audit']['tmp_name']), (string)$_FILES['audit']['name'], $fout); if ($fout !== '') adm_terug('admin.php?adm=exact', $fout); }
+        @set_time_limit(120);
+        $plan = ex_plan(ex_rijen(ex_tekst((string)file_get_contents($f['tmp_name']))), $rel, $fout);
+        if ($plan === null) adm_terug('admin.php?adm=exact', $fout);
+        $plan['bestand'] = cut((string)$f['name'], 100); $plan['op'] = date('Y-m-d H:i');
+        write_json(ADM_EXACT_PLAN, $plan);
+        adm_terug('admin.php?adm=exact', 'Bekijk hieronder wat erin komt. Er is nog niets bewaard.');
+    }
+    if ($action === 'adm_exact_weg') { @unlink(ADM_EXACT_PLAN); adm_terug('admin.php?adm=exact', 'Niets overgezet.'); }
+    if ($action === 'adm_exact_import') {
+        $plan = read_json(ADM_EXACT_PLAN, []);
+        if (!$plan) adm_terug('admin.php?adm=exact', 'Lees eerst het bestand uit Exact in.');
+        @set_time_limit(120);
+        $klanten = adm_klanten();
+        foreach ($plan['klanten'] as $r) {
+            $klanten[] = ['id' => adm_id('k'), 'naam' => cut($r['naam'], 100), 'contact' => '', 'email' => filter_var($r['mail'], FILTER_VALIDATE_EMAIL) ? $r['mail'] : '', 'tel' => cut($r['tel'], 30), 'straat' => cut($r['straat'], 100),
+                          'postcode' => cut($r['postcode'], 10), 'plaats' => cut($r['plaats'], 60), 'kvk' => cut($r['kvk'], 20), 'btw' => cut($r['btw'], 20), 'notitie' => 'Overgezet uit Exact Online.'];
+        }
+        usort($klanten, function($a, $b) { return strcasecmp($a['naam'], $b['naam']); });
+        adm_save_klanten($klanten);
+        $perNaam = []; foreach ($klanten as $k) { $perNaam[ex_sleutel($k['naam'])] = $k; }
+        $docs = adm_docs();
+        foreach ($plan['vk'] as $f) {
+            $k = $perNaam[ex_sleutel($f['klant'])] ?? ['id' => '', 'naam' => $f['klant']];
+            $snap = adm_snap(array_merge(['naam' => '', 'contact' => '', 'email' => '', 'straat' => '', 'postcode' => '', 'plaats' => '', 'kvk' => '', 'btw' => ''], $k));
+            $docs[] = ['id' => $f['id'], 'soort' => 'factuur', 'extern' => true, 'exact' => $f['exact'], 'status' => $f['betaald_op'] !== '' ? 'betaald' : 'open', 'credit' => false, 'van' => '', 'token' => bin2hex(random_bytes(12)),
+                       'betaald_op' => $f['betaald_op'], 'verstuurd_op' => '', 'akkoord_op' => '', 'aangemaakt' => date('Y-m-d H:i'), 'regels' => [], 'opmerking' => '', 'leverdatum' => '', 'geldig_tot' => '', 'kor' => false, 'pdf' => '',
+                       'klant_id' => $k['id'], 'klant' => $snap, 'nummer' => cut($f['nummer'], 40), 'datum' => $f['datum'], 'termijn' => 14, 'onderwerp' => cut('Uit Exact Online: ' . $f['oms'], 140),
+                       'vast' => ['excl' => $f['incl'] - $f['btw'], 'btw' => $f['btw'], 'pct' => $f['pct']]];
+        }
+        usort($docs, function($a, $b) { return strcmp(($b['datum'] ?? '') . ($b['aangemaakt'] ?? ''), ($a['datum'] ?? '') . ($a['aangemaakt'] ?? '')); });
+        adm_save_docs($docs);
+        $inkoop = adm_inkoop();
+        foreach ($plan['ik'] as $f) {
+            $inkoop[] = ['id' => $f['id'], 'leverancier' => $f['leverancier'], 'afzender' => '', 'nummer' => $f['nummer'], 'datum' => $f['datum'], 'termijn' => 30, 'verval' => date('Y-m-d', strtotime($f['datum'] . ' +30 days')),
+                         'bedrag' => $f['bedrag'], 'btw' => $f['btw'], 'btwsoort' => $f['btwsoort'], 'vpct' => $f['vpct'], 'oms' => cut('Uit Exact Online: ' . $f['oms'], 140), 'status' => $f['betaald_op'] !== '' ? 'betaald' : 'open',
+                         'betaald_op' => $f['betaald_op'], 'pdf' => '', 'hash' => '', 'bron' => 'exact', 'exact' => $f['exact'], 'controleren' => false, 'leesbaar' => false, 'aangemaakt' => date('Y-m-d H:i')];
+        }
+        adm_save_inkoop($inkoop);
+        $bank = adm_bank();
+        foreach ($plan['bank'] as $b) { $bank[] = ['id' => $b['id'], 'datum' => $b['datum'], 'bedrag' => $b['bedrag'], 'naam' => $b['naam'], 'iban' => '', 'oms' => $b['oms'], 'indeling' => $b['indeling'], 'btw' => $b['btw'], 'koppel' => $b['koppel'], 'exact' => $b['exact']]; }
+        adm_save_bank($bank);
+        $oud = read_json(ADM_EXACT_ARCHIEF, ['regels' => []]);
+        $gezien = []; foreach ($oud['regels'] as $r) { $gezien[implode('|', $r)] = 1; }
+        foreach ($plan['archief'] as $r) { $s = implode('|', $r); if (!isset($gezien[$s])) { $oud['regels'][] = $r; $gezien[$s] = 1; } }
+        usort($oud['regels'], function($a, $b) { return strcmp($b[0] . $b[1], $a[0] . $a[1]); });
+        $oud['op'] = date('Y-m-d H:i');
+        write_json(ADM_EXACT_ARCHIEF, $oud);
+        @unlink(ADM_EXACT_PLAN);
+        adm_terug('admin.php?adm=exact', 'Overgezet uit Exact: ' . count($plan['vk']) . ' verkoopfacturen, ' . count($plan['ik']) . ' inkoopfacturen, ' . count($plan['bank']) . ' bankregels en ' . count($plan['klanten']) . ' klanten.');
+    }
+}
+
+function adm_v_exact() {
+    $plan = adm_voorbeeld() ? [] : read_json(ADM_EXACT_PLAN, []);
+    $arch = adm_voorbeeld() ? ['regels' => []] : read_json(ADM_EXACT_ARCHIEF, ['regels' => []]);
+    ?>
+    <style>
+      .ex-tabel{width:100%;border-collapse:collapse;font-size:14.5px;background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+      .ex-tabel th,.ex-tabel td{padding:9px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+      .ex-tabel th{background:#f7f9fc;font-size:13px;color:var(--mut)} .ex-tabel td.n,.ex-tabel th.n{text-align:right;white-space:nowrap}
+      .ex-tabel tr:last-child td{border-bottom:0}
+      .ex-wrap{overflow-x:auto}
+      .ex-stap{display:grid;gap:12px}
+      .ex-lijst{margin:12px 0 0;padding-left:20px;line-height:1.6}
+    </style>
+    <h2 style="font-size:22px">Gegevens overzetten uit Exact Online</h2>
+    <p class="sub">Werkte je eerder met Exact Online? Dan zet je hier in 1 keer je verkoopfacturen, inkoopfacturen, bankregels en klanten over. Alle boekingen blijven daarna ook als archief te bekijken.</p>
+    <?php if ($plan): $vk = ex_per_jaar($plan['vk'], 'incl'); $ik = ex_per_jaar($plan['ik'], 'bedrag'); $bk = ex_per_jaar($plan['bank'], 'bedrag');
+        $jaren = array_unique(array_merge(array_keys($vk), array_keys($ik), array_keys($bk))); sort($jaren);
+        $openV = count(array_filter($plan['vk'], function($f) { return $f['betaald_op'] === ''; })); $openI = count(array_filter($plan['ik'], function($f) { return $f['betaald_op'] === ''; }));
+        $teIndelen = count(array_filter($plan['bank'], function($b) { return $b['indeling'] === ''; }));
+        $cel = function($o, $y, $som) { return isset($o[$y]) ? $o[$y]['n'] . ($som ? ' <span class="hint">(' . h(adm_eur($o[$y]['som'])) . ')</span>' : '') : '-'; };
+    ?>
+      <div class="formcard" style="max-width:none;border-color:#2f6bff">
+        <h2 style="margin:0 0 6px">Dit komt erin</h2>
+        <p class="hint" style="margin:0">Uit <?= h($plan['bestand']) ?>: <?= (int)$plan['regels'] ?> boekingsregels. Er is nog niets bewaard.</p>
+        <div class="ex-wrap" style="margin-top:12px"><table class="ex-tabel"><thead><tr><th>Nieuw in je administratie</th><?php foreach ($jaren as $y): ?><th class="n"><?= h($y) ?></th><?php endforeach; ?></tr></thead><tbody>
+          <tr><td>Verkoopfacturen</td><?php foreach ($jaren as $y): ?><td class="n"><?= $cel($vk, $y, true) ?></td><?php endforeach; ?></tr>
+          <tr><td>Inkoopfacturen</td><?php foreach ($jaren as $y): ?><td class="n"><?= $cel($ik, $y, true) ?></td><?php endforeach; ?></tr>
+          <tr><td>Bankregels</td><?php foreach ($jaren as $y): ?><td class="n"><?= $cel($bk, $y, false) ?></td><?php endforeach; ?></tr>
+        </tbody></table></div>
+        <ul class="ex-lijst">
+          <li>Nieuwe klanten in je klantenlijst: <?= count($plan['klanten']) ?>.</li>
+          <li>Nog niet betaald volgens Exact: <?= $openV ?> verkoopfacturen en <?= $openI ?> inkoopfacturen. De rest komt erin als betaald.</li>
+          <li>Bankregels die je zelf nog moet indelen: <?= $teIndelen ?>. Dat zijn bijvoorbeeld betalingen van btw of leningen.</li>
+          <li>Al in je administratie, dus overgeslagen: <?= (int)$plan['dubbel']['vk'] ?> verkoopfacturen, <?= (int)$plan['dubbel']['ik'] ?> inkoopfacturen en <?= (int)$plan['dubbel']['bank'] ?> bankregels.</li>
+          <?php if ($plan['credit']): ?><li>Creditnota's die niet worden overgezet: <?= (int)$plan['credit'] ?>. Die blijven wel in het archief.</li><?php endif; ?>
+          <li>Herkend in Exact: debiteuren <?= h(implode(', ', $plan['rollen']['deb']) ?: 'niet gevonden') ?>, crediteuren <?= h(implode(', ', $plan['rollen']['cred']) ?: 'niet gevonden') ?>, bank <?= h(implode(', ', $plan['rollen']['bank']) ?: 'niet gevonden') ?>.</li>
+          <li>De pdf's van de facturen geeft Exact niet mee. De facturen staan erin met datum, nummer, klant en bedragen.</li>
+        </ul>
+        <?php if ($plan['twijfel']): ?><div class="ws-uitleg" style="margin-top:10px;background:#fff6e0;border:1px solid #f3d38a;border-radius:10px;padding:10px 12px;font-size:14px"><strong>Let op:</strong><br /><?= implode('<br />', array_map('h', array_slice($plan['twijfel'], 0, 20))) ?></div><?php endif; ?>
+        <?php $iets = $plan['vk'] || $plan['ik'] || $plan['bank'] || $plan['klanten']; ?>
+        <?php if (!$iets): ?><p style="margin:12px 0 0"><strong>Er staat niets nieuws in dit bestand.</strong> Alles staat al in je administratie.</p><?php endif; ?>
+        <div class="row" style="margin-top:14px;gap:8px;display:flex;flex-wrap:wrap">
+          <?php if ($iets): ?><form method="post"><input type="hidden" name="action" value="adm_exact_import" /><button class="btn" type="submit">Importeren</button></form><?php endif; ?>
+          <form method="post"><input type="hidden" name="action" value="adm_exact_weg" /><button class="btn ghost" type="submit"><?= $iets ? 'Toch niet' : 'Sluiten' ?></button></form>
+        </div>
+      </div>
+    <?php else: ?>
+      <form class="formcard ex-stap" method="post" enctype="multipart/form-data" style="max-width:760px">
+        <input type="hidden" name="action" value="adm_exact_lees" />
+        <div class="field"><label for="exT">1. Transacties uit Exact (het bestand FinTransactionSearch.csv)</label><input type="file" id="exT" name="trans" accept=".csv,.txt,.tsv" required />
+          <div class="hint">Exporteer in Exact Online het overzicht met al je transacties naar een bestand. Weet je niet waar dat staat? Vraag het je boekhouder, of zoek in Exact op transacties.</div></div>
+        <div class="field"><label for="exA">2. Auditfile uit Exact, voor de adressen van je klanten (mag leeg)</label><input type="file" id="exA" name="audit" accept=".xaf,.xml,.zip" />
+          <div class="hint">Het .xaf-bestand, of de zip waar het in zit. Zonder auditfile komen je klanten erin met alleen hun naam.</div></div>
+        <div><button class="btn" type="submit">Bekijken wat erin komt</button></div>
+        <p class="hint" style="margin:0">Je ziet eerst een overzicht. Pas als je op Importeren klikt, wordt het bewaard. Wat al in je administratie staat, wordt overgeslagen. Je kunt dit dus ook later nog een keer doen met een nieuwer bestand.</p>
+      </form>
+    <?php endif; ?>
+    <?php if ($arch['regels']):
+        $jaar = preg_match('/^\d{4}$/', (string)($_GET['jaar'] ?? '')) ? $_GET['jaar'] : '';
+        $zoek = trim((string)($_GET['zoek'] ?? '')); $rek = trim((string)($_GET['rek'] ?? ''));
+        $jaren = array_values(array_unique(array_map(function($r) { return substr($r[0], 0, 4); }, $arch['regels']))); rsort($jaren);
+        $reks = []; foreach ($arch['regels'] as $r) { $reks[$r[2]] = $r[3]; } ksort($reks);
+        $rij = array_values(array_filter($arch['regels'], function($r) use ($jaar, $zoek, $rek) {
+            if ($jaar !== '' && substr($r[0], 0, 4) !== $jaar) return false;
+            if ($rek !== '' && $r[2] !== $rek) return false;
+            if ($zoek !== '' && mb_stripos($r[4] . ' ' . $r[5] . ' ' . $r[1], $zoek) === false) return false;
+            return true;
+        }));
+        $som = array_sum(array_column($rij, 6)); $pag = max(1, (int)($_GET['p'] ?? 1)); $per = 200; $tot = count($rij);
+    ?>
+      <h2 style="font-size:20px;margin-top:28px" id="archief">Archief uit Exact Online</h2>
+      <p class="hint">Alle boekingen uit Exact, alleen om in te kijken. <?= count($arch['regels']) ?> regels.</p>
+      <form method="get" class="row" style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">
+        <input type="hidden" name="adm" value="exact" />
+        <select name="jaar" style="width:auto"><option value="">Alle jaren</option><?php foreach ($jaren as $y): ?><option value="<?= h($y) ?>" <?= $y === $jaar ? 'selected' : '' ?>><?= h($y) ?></option><?php endforeach; ?></select>
+        <select name="rek" style="width:auto;max-width:280px"><option value="">Alle rekeningen</option><?php foreach ($reks as $c => $n): ?><option value="<?= h($c) ?>" <?= (string)$c === $rek ? 'selected' : '' ?>><?= h($c . ' ' . $n) ?></option><?php endforeach; ?></select>
+        <input type="search" name="zoek" value="<?= h($zoek) ?>" placeholder="Zoek op omschrijving, relatie of boekstuk" style="flex:1;min-width:200px" />
+        <button class="btn ghost sm" type="submit">Zoeken</button>
+      </form>
+      <p class="hint" style="margin:0 0 8px"><?= $tot ?> regels<?= $rek !== '' ? ', saldo ' . h(adm_eur($som)) : '' ?>.</p>
+      <div class="ex-wrap"><table class="ex-tabel"><thead><tr><th>Datum</th><th>Boekstuk</th><th>Rekening</th><th>Omschrijving</th><th>Relatie</th><th class="n">Bedrag</th></tr></thead><tbody>
+        <?php foreach (array_slice($rij, ($pag - 1) * $per, $per) as $r): ?><tr><td style="white-space:nowrap"><?= h(nl_datum($r[0])) ?></td><td><?= h($r[1]) ?></td><td><?= h($r[2] . ' ' . $r[3]) ?></td><td><?= h($r[4]) ?></td><td><?= h($r[5]) ?></td><td class="n"><?= h(adm_eur($r[6])) ?></td></tr><?php endforeach; ?>
+      </tbody></table></div>
+      <?php if ($tot > $per): $q = function($p) use ($jaar, $rek, $zoek) { return 'admin.php?' . http_build_query(['adm' => 'exact', 'jaar' => $jaar, 'rek' => $rek, 'zoek' => $zoek, 'p' => $p]) . '#archief'; }; ?>
+        <p style="margin-top:10px;display:flex;gap:8px"><?php if ($pag > 1): ?><a class="btn ghost sm" href="<?= h($q($pag - 1)) ?>">&larr; Vorige</a><?php endif; ?><?php if ($pag * $per < $tot): ?><a class="btn ghost sm" href="<?= h($q($pag + 1)) ?>">Volgende &rarr;</a><?php endif; ?></p>
+      <?php endif; ?>
+    <?php endif;
+}
+
+/* ===========================================================
    Aanbod: occasions voor autobedrijven, of producten voor een etalage
    Lijst met filters (merk, model, zoeken), een eigen pagina per item,
    kenteken opzoeken bij de RDW en veel tegelijk inladen uit Excel/CSV.
@@ -7911,6 +8301,7 @@ function adm_klant_uit_post($pre, $k = []) {
 function adm_snap($k) { unset($k['id'], $k['tel'], $k['notitie']); return $k; }
 function adm_acties($action) {
     global $ADM_EENHEDEN;
+    if (strpos($action, 'adm_exact_') === 0) { if (adm_voorbeeld()) { adm_terug('admin.php?adm=exact', 'Dit kan niet in de voorbeeldadministratie.'); } ex_acties($action); }
     if (in_array($action, ['adm_ink_save', 'adm_ink_status', 'adm_ink_del', 'adm_mail_inst', 'adm_mail_los', 'adm_afz_add', 'adm_afz_save', 'adm_afz_del', 'adm_mail_halen', 'adm_bank_upload', 'adm_bank_indeel', 'adm_extern_save'], true)) { adm_acties2($action); }
     if ($action === 'adm_vrije_mail') {
         $naar = trim((string)($_POST['naar'] ?? '')); $cc = trim((string)($_POST['cc'] ?? ''));
@@ -10759,13 +11150,13 @@ function adm_pakket_maak($kw, &$fout) {
     $z->addFromString('Overzicht/Bank.csv', adm_csv_tekst(['Datum', 'Naam', 'Omschrijving', 'Bedrag', 'Indeling', 'Btw-tarief (zonder factuur)'], array_map(function($t) use ($f, $ADM_INDELING) { return [$t['datum'], $t['naam'], $t['oms'], $f($t['bedrag']), $ADM_INDELING[$t['indeling']] ?? '', $t['indeling'] === 'zakelijk_geen' ? $t['btw'] . '%' : '']; }, $bk)));
     foreach ($verkoop as $d) {
         $nm = adm_bestandsnaam($d['datum'] . ' ' . $d['klant']['naam'] . ' ' . $d['nummer'] . ' ' . $f(adm_tot($d)['incl'])) . '.pdf';
-        if (!empty($d['extern'])) { $pd = adm_pdf_pad($d['pdf'] ?? ''); if ($pd !== '' && is_file($pd)) { $z->addFile($pd, 'Verkoop/' . $nm); } else { $ontbreekt[] = 'Pdf van verkoopfactuur ' . $d['nummer']; } }
+        if (!empty($d['extern'])) { $pd = adm_pdf_pad($d['pdf'] ?? ''); if ($pd !== '' && is_file($pd)) { $z->addFile($pd, 'Verkoop/' . $nm); } elseif (empty($d['exact'])) { $ontbreekt[] = 'Pdf van verkoopfactuur ' . $d['nummer']; } }
         else { $z->addFromString('Verkoop/' . $nm, adm_doc_pdf($d, $inst)); }
     }
     foreach ($ink as $x) {
         $pd = adm_pdf_pad($x['pdf']);
         $nm = adm_bestandsnaam($x['datum'] . ' ' . $x['leverancier'] . ' ' . $x['nummer'] . ' ' . $f($x['bedrag'])) . '.pdf';
-        if ($pd !== '' && is_file($pd)) { $z->addFile($pd, 'Inkoop/' . $nm); } elseif (adm_voorbeeld()) { $z->addFromString('Inkoop/' . $nm, adm_demo_inkpdf($x)); } else { $ontbreekt[] = 'Pdf van inkoopfactuur ' . $x['leverancier'] . ' ' . $x['nummer']; }
+        if ($pd !== '' && is_file($pd)) { $z->addFile($pd, 'Inkoop/' . $nm); } elseif (adm_voorbeeld()) { $z->addFromString('Inkoop/' . $nm, adm_demo_inkpdf($x)); } elseif (($x['bron'] ?? '') !== 'exact') { $ontbreekt[] = 'Pdf van inkoopfactuur ' . $x['leverancier'] . ' ' . $x['nummer']; }
     }
     $bb = 0;
     foreach (adm_voorbeeld() ? [] : read_json(ADM_BANKBEST_DIR . '/lijst.json', []) as $b) {
@@ -10808,7 +11199,7 @@ function adm_alles_maak(&$fout) {
     if ($rsl) { $z->addFromString('Overzichten/Reserveringen.csv', adm_csv_tekst(['Datum', 'Tijd', 'Personen', 'Naam', 'Telefoon', 'E-mail', 'Opmerking', 'Status', 'Gemaakt op'], array_map(function($r) { return [$r['dag'], $r['tijd'], (int)($r['p'] ?? 1), $r['naam'] ?? '', $r['tel'] ?? '', $r['mail'] ?? '', $r['opm'] ?? '', $r['status'] ?? '', $r['op'] ?? '']; }, $rsl))); }
     foreach ($vk as $d) {
         $nm = substr($d['datum'], 0, 4) . '/' . adm_bestandsnaam($d['datum'] . ' ' . $d['klant']['naam'] . ' ' . $d['nummer'] . ' ' . $f(adm_tot($d)['incl'])) . '.pdf';
-        if (!empty($d['extern'])) { $pd = adm_pdf_pad($d['pdf'] ?? ''); if ($pd !== '' && is_file($pd)) { $z->addFile($pd, 'Verkoopfacturen/' . $nm); } else { $ontbreekt[] = 'Pdf van verkoopfactuur ' . $d['nummer']; } }
+        if (!empty($d['extern'])) { $pd = adm_pdf_pad($d['pdf'] ?? ''); if ($pd !== '' && is_file($pd)) { $z->addFile($pd, 'Verkoopfacturen/' . $nm); } elseif (empty($d['exact'])) { $ontbreekt[] = 'Pdf van verkoopfactuur ' . $d['nummer']; } }
         else { $z->addFromString('Verkoopfacturen/' . $nm, adm_doc_pdf($d, $inst)); }
     }
     foreach ($of as $d) { $z->addFromString('Offertes/' . substr($d['datum'], 0, 4) . '/' . adm_bestandsnaam($d['datum'] . ' ' . $d['klant']['naam'] . ' ' . ($d['nummer'] !== '' ? $d['nummer'] : 'concept') . ' ' . $f(adm_tot($d)['incl'])) . '.pdf', adm_doc_pdf($d, $inst)); }
@@ -11298,6 +11689,7 @@ function adm_view() {
     if ($w === 'bank') { $tab = 'ba'; }
     if ($w === 'agenda' || $w === 'afspraak') { $tab = 'ag'; }
     if ($w === 'extern') { $tab = 'fa'; }
+    if ($w === 'exact') { $tab = 'i'; }
     if (in_array($w, ['doc', 'bewerk', 'mail'], true)) {
         $i = adm_vind($docs, (string)($_GET['id'] ?? ''));
         if ($i !== null) { $tab = $docs[$i]['soort'] === 'offerte' ? 'of' : 'fa'; }
@@ -11333,6 +11725,7 @@ function adm_view() {
     if ($w === 'nieuwemail') { adm_v_nieuwemail($klanten); return; }
     if ($w === 'bank') { adm_v_bank(); return; }
     if ($w === 'extern') { adm_v_extern(); return; }
+    if ($w === 'exact') { adm_v_exact(); return; }
     if ($w === 'agenda') { adm_v_agenda(); return; }
     if ($w === 'afspraak') { adm_v_afspraak(); return; }
     adm_v_overzicht($docs, $inst);
@@ -11747,6 +12140,11 @@ function adm_v_inst($inst) {
       <a class="btn" href="admin.php?adm=alles">Alles downloaden (zip)</a>
     </div>
     <div class="formcard">
+      <h2 style="margin-bottom:6px">Gegevens overzetten uit Exact Online</h2>
+      <p class="hint" style="margin:0 0 12px">Werkte je eerder met Exact Online? Zet dan in 1 keer je verkoopfacturen, inkoopfacturen, bankregels en klanten over. Je ziet eerst wat erin komt.</p>
+      <a class="btn ghost" href="admin.php?adm=exact">Overzetten uit Exact Online</a>
+    </div>
+    <div class="formcard">
       <div class="two">
         <div><div class="hint" style="margin:0">Bedrijfsnaam</div><?= h(st('naam')) ?: '<span style="color:#c62828">nog niet ingevuld</span>' ?></div>
         <div><div class="hint" style="margin:0">Adres</div><?= (st('straat') . st('plaats')) !== '' ? h(st('straat') . ', ' . trim(st('postcode') . ' ' . st('plaats'))) : '<span style="color:#c62828">nog niet ingevuld</span>' ?></div>
@@ -12121,6 +12519,7 @@ function venturo_html() {
 <div class="vt-v"><h5>Het koppelen van mijn e-mail lukt niet.</h5><p>Controleer of je het wachtwoord van je mailbox gebruikt, niet dat van je beheerpagina. Gebruik je Gmail, maak dan een app-wachtwoord aan in je Google-account. Lukt het nog niet, vul dan bij Servers zelf invullen de servers van je mailprovider in. Mail bij WebReus: webreus.email, poort 993 en 465.</p></div>
 <div class="vt-v"><h5>Kan ik mijn oude factuurnummers doortellen?</h5><p>Ja. Zet bij Mijn gegevens, bij Volgend factuurnummer, het nummer waarmee je verder wilt. Doe dit alleen als je overstapt van een ander programma, want facturen moeten doorlopend genummerd zijn.</p></div>
 <div class="vt-v"><h5>Kan ik een vaste tekst onder al mijn facturen zetten?</h5><p>Ja. Bij Mijn gegevens vul je een extra tekst in onder elke factuur, bijvoorbeeld je betaalvoorwaarden, en een aparte tekst onder elke offerte.</p></div>
+<div class="vt-v"><h5>Kan ik mijn gegevens uit Exact Online overzetten?</h5><p>Ja. Ga naar Administratie, Mijn gegevens, en klik op Overzetten uit Exact Online. Kies het transactiebestand uit Exact (FinTransactionSearch.csv) en eventueel je auditfile voor de adressen van je klanten. Je ziet eerst wat erin komt: verkoopfacturen, inkoopfacturen, bankregels en klanten. Pas als je op Importeren klikt, wordt het bewaard. Wat er al in staat, wordt overgeslagen. Alle boekingen uit Exact blijven daarna als archief te bekijken. De pdf's van de facturen geeft Exact niet mee.</p></div>
 </div>
 <div class="vt-o"><h4>Een offerte maken</h4>
 <div class="vt-v"><h5>Hoe maak ik een offerte?</h5><p>Klik op + Offerte. Kies een klant of + Nieuwe klant toevoegen, vul de regels in en klik op Offerte opslaan. Daarna kun je hem bekijken en versturen.</p></div>
