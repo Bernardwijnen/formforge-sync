@@ -12547,7 +12547,7 @@ function venturo_html() {
 <div class="vt-v"><h5>Wat staat er in het menu links?</h5><p>Je website: Instellingen, Projecten, Aanbod, Menukaart, Versies en Beoordelingen. Klanten en geld: Berichten, Afspraakplanner, Worldchat en Administratie. Account: Inloggegevens, Website bekijken en Uitloggen. Op je telefoon open je het menu met de knop linksboven.</p></div>
 <div class="vt-v"><h5>Wat zie ik op de startpagina?</h5><p>Een overzicht: wat je nog moet doen, nieuwe afspraken, nieuwe beoordelingen, te laat betaalde facturen, en knoppen voor + Factuur, + Offerte en + Nieuw project.</p></div>
 <div class="vt-v"><h5>Wat betekent "Nog te doen" op de startpagina?</h5><p>Dingen die nog ontbreken, bijvoorbeeld je bedrijfsnaam als die nog op de voorbeeldtekst staat, je e-mailadres, of je IBAN en btw-nummer voor je facturen. Klik erop, dan ga je meteen naar de goede plek.</p></div>
-<div class="vt-v"><h5>Wat betekenen de vraagtekens naast de velden?</h5><p>Klik op een vraagteken, dan zie je uitleg over dat veld. Klik nog een keer om het te sluiten.</p></div>
+<div class="vt-v"><h5>Wat betekenen de blauwe rondjes met een i?</h5><p>Overal in je beheer staat naast een veld of onderdeel een blauw rondje met een i. Klik erop, dan zie je in gewone taal wat het is, waar het voor dient en wat je moet invullen. Klik nog een keer om het te sluiten. Staat je vraag er niet bij? Stel hem dan hier aan mij.</p></div>
 <div class="vt-v"><h5>Hoe bekijk ik mijn website?</h5><p>Klik links in het menu op Website bekijken. Je website opent in een nieuw venster.</p></div>
 </div>
 <div class="vt-o"><h4>Instellingen: je bedrijf en je teksten</h4>
@@ -13426,7 +13426,8 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
   .dienst{border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:12px;background:#f7f9fc;}
   .dienst h3{margin:0 0 12px;font-size:15px;color:var(--mut);font-weight:600;}
   .colors{display:flex;gap:28px;flex-wrap:wrap;}
-  .hulp{display:inline-grid;place-items:center;width:20px;height:20px;margin-left:8px;border-radius:50%;border:0;background:#2f6bff;color:#fff;font:700 12px/1 inherit;font-family:inherit;cursor:pointer;vertical-align:middle;padding:0;}
+  .hulp{display:inline-grid;place-items:center;width:20px;height:20px;margin-left:8px;border-radius:50%;border:0;background:#2f6bff;color:#fff;font:italic 700 13px/1 Georgia,"Times New Roman",serif;cursor:pointer;vertical-align:middle;padding:0;flex:none;}
+  .hulpbox[hidden]{display:none !important;} summary .hulpbox{cursor:default;}
   .hulp:hover{background:#1f55e0;}
   .hulp[aria-expanded="true"]{background:#fff;color:#2f6bff;box-shadow:inset 0 0 0 2px #2f6bff;}
   .hulpbox{white-space:pre-line;margin:6px 0 10px;padding:10px 14px;border-radius:10px;background:rgba(47,107,255,.12);border:1px solid rgba(47,107,255,.35);font-size:14px;font-weight:400;line-height:1.5;letter-spacing:0;text-transform:none;}
@@ -14263,7 +14264,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
 })();
 </script>
 <script>
-/* Hulp bij elk onderdeel: een rond vraagtekentje opent een korte uitleg */
+/* Hulp bij elk onderdeel: een rond i-tje opent een korte uitleg */
 (function () {
   var H = {
     "h1:Projecten": "Hier staan al je projecten: het werk dat je wilt laten zien. Klik op + Nieuw project om er een toe te voegen. Met Alle pagina's bijwerken bouw je de hele website opnieuw op, bijvoorbeeld na het wisselen van stijl of als er iets niet klopt.",
@@ -14508,18 +14509,244 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     "f:anot": "Iets wat je niet wilt vergeten. Alleen jij ziet dit.",
     "f:aem": "Het e-mailadres waarmee je inlogt. Hier komt ook de mail naartoe als je je wachtwoord vergeten bent.",
     "f:cur": "Ter controle: je huidige wachtwoord.",
-    "f:npw": "Je nieuwe wachtwoord, minimaal 10 tekens. Kies iets wat je nergens anders gebruikt."
+    "f:npw": "Je nieuwe wachtwoord, minimaal 10 tekens. Kies iets wat je nergens anders gebruikt.",
+    "h2:Nog te doen": "Dingen die je nog moet regelen voordat je website helemaal af is. Klik erop, dan ga je meteen naar de goede plek. Is alles gedaan, dan verdwijnt dit blok.",
+    "f:whatsapp_tekst": "De eerste zin die al klaarstaat als een bezoeker op de WhatsApp-knop drukt, bijvoorbeeld: Hallo, ik heb een vraag over. Zo weet je meteen dat het bericht via je website komt.",
+    "lbl:Meer bannerfoto's die elkaar afwisselen": "Kies meer foto's voor bovenaan je voorpagina. Ze wisselen elkaar dan om de paar seconden af. Laat je dit leeg, dan staat er alleen de ene bannerfoto.",
+    "f:knop_link": "Waar een bezoeker terechtkomt als hij op de grote knop bovenaan klikt. Laat je het leeg, dan gaat de knop naar je contactpagina. Je kunt ook een pagina van je eigen website invullen, zoals /webshop/.",
+    "s:Extra knoppen in het menu": "Wil je meer knoppen in het menu bovenaan je website? Bijvoorbeeld naar je Facebook-pagina of naar een andere website. Per knop vul je een tekst en een link in.",
+    "f:mlt": "De tekst op de knop in het menu, bijvoorbeeld Facebook of Vacatures. Kort houden: 1 of 2 woorden.",
+    "f:mll": "Waar de knop naartoe gaat. Een volledig adres zoals https://www.facebook.com/jouwbedrijf, of een pagina van je eigen website zoals /contact.html.",
+    "h3:Dienst #": "Een dienst die je aanbiedt. Vul een naam en een korte omschrijving in. De uitgebreide tekst komt op een eigen pagina van deze dienst. Laat je de naam leeg, dan staat deze dienst niet op je website.",
+    "s:Dienst # toevoegen": "Klik hier om nog een dienst toe te voegen. Vul de naam in en klik onderaan op Opslaan en website bijwerken.",
+    "f:bwsnel": "Hoe snel de beweging gaat. Rustig is meestal het mooist, zeker als er tekst overheen staat.",
+    "h3:Je eigen video": "Een eigen filmpje als achtergrond bovenaan je voorpagina, bijvoorbeeld van je werk of je zaak. Het speelt zonder geluid en begint steeds opnieuw. Houd het kort, 10 tot 30 seconden is genoeg.",
+    "f:bwFile": "Kies een filmpje van je computer of telefoon, het liefst een mp4. Hoe kleiner het bestand, hoe sneller je website laadt.",
+    "n:video_telefoon": "Aangevinkt speelt je video ook op telefoons. Uitgevinkt zien telefoons alleen een stilstaand beeld uit je video. Dat is sneller en kost je bezoekers geen mobiele data.",
+    "h2:Blokken op je voorpagina": "Je voorpagina bestaat uit blokken onder elkaar. Vink aan welke blokken je wilt laten zien en zet ze met de pijltjes in de goede volgorde. Bij sommige blokken klap je de inhoud open om de teksten en foto's in te vullen. Een blok met (nog leeg) staat pas op je website als je er iets in hebt gezet.",
+    "n:blok_aan[aanbod]": "Laat een paar auto's of producten uit je aanbod zien op je voorpagina, met een knop naar alles. Je vult je aanbod in bij Aanbod in het menu links.",
+    "n:blok_aan[diensten]": "Laat je diensten zien op je voorpagina. Die vul je hierboven in bij Diensten.",
+    "n:blok_aan[reserveren]": "Een kalender op je voorpagina waarin bezoekers meteen een afspraak of tafel kunnen kiezen. Die stel je in bij Afspraakplanner in het menu links.",
+    "n:blok_aan[over]": "Een stukje over jou en je bedrijf, met een foto. Klap Inhoud open om je verhaal te schrijven.",
+    "n:blok_aan[vragen]": "Vragen die klanten vaak stellen, met jouw antwoord. Dat scheelt je telefoontjes en Google vindt het ook goed. Klap Inhoud open om ze in te vullen.",
+    "n:blok_aan[strook]": "Een smalle balk met de namen van je diensten die langzaam voorbij schuiven.",
+    "n:blok_aan[werkwijze]": "Laat in een paar stappen zien hoe je werkt, bijvoorbeeld: 1 kennismaken, 2 offerte, 3 uitvoeren. Klap Inhoud open om de stappen in te vullen.",
+    "n:blok_aan[cijfers]": "Een paar opvallende getallen over je bedrijf, bijvoorbeeld 25 jaar ervaring of 500 tevreden klanten. Klap Inhoud open om ze in te vullen.",
+    "n:blok_aan[projecten]": "Laat je nieuwste projecten zien op je voorpagina. Die voeg je toe bij Projecten in het menu links.",
+    "n:blok_aan[webshop]": "Laat een paar producten uit je webshop zien op je voorpagina, met een knop naar de hele webshop. Je producten zet je bij Webshop in het menu links.",
+    "n:blok_aan[voorna]": "Foto's van voor en na je werk naast elkaar. Bezoekers schuiven met een streep heen en weer om het verschil te zien. Klap Inhoud open om de foto's te kiezen.",
+    "n:blok_aan[beoordelingen]": "De sterren en beoordelingen van je klanten. Dit blok staat er pas als je beoordelingen hebt. Die zet je aan bij Beoordelingen in het menu links.",
+    "n:blok_aan[menukaart]": "Je menukaart op de voorpagina, voor horeca. Je kaart maak je bij Menukaart in het menu links.",
+    "n:blok_aan[beeld#]": "Een eigen blok met een grote afbeelding, een titel, een tekst en eventueel een knop. Handig voor een actie, een seizoen of iets wat je extra wilt laten zien. Klap Inhoud open om het in te vullen.",
+    "s:Inhoud": "Klik hier om de teksten en foto's van dit blok in te vullen. Vergeet niet onderaan op Opslaan en website bijwerken te klikken.",
+    "lbl:Titel@_instellingen": "Het kopje boven dit blok op je voorpagina.",
+    "lbl:Titel (mag leeg)@_instellingen": "Het kopje boven dit blok. Laat je het leeg, dan staat er geen kopje.",
+    "lbl:Naam onder de tekst (mag leeg)": "Bijvoorbeeld je eigen naam, of Jan en Petra. Het staat als ondertekening onder je verhaal.",
+    "lbl:Je verhaal": "Vertel in je eigen woorden wie je bent, hoe je begonnen bent en waarom klanten voor jou kiezen. Een paar korte alinea's is genoeg.",
+    "lbl:Foto (mag leeg)": "Een foto van jezelf, je team of je zaak. Mensen kiezen sneller voor een bedrijf als ze zien met wie ze te maken hebben.",
+    "n:over_foto_weg": "Vink aan en sla op om de foto weg te halen.",
+    "lbl:Vraag #": "Een vraag die klanten je vaak stellen, bijvoorbeeld: Hoe lang duurt een klus? Laat je de vraag leeg, dan staat hij niet op je website.",
+    "lbl:Antwoord": "Je antwoord op de vraag. Kort en duidelijk, zoals je het aan de telefoon ook zou zeggen.",
+    "lbl:Korte tekst@_instellingen": "Een korte zin onder het kopje van dit blok.",
+    "lbl:Korte tekst (mag leeg)@_instellingen": "Een korte zin onder het kopje van dit blok. Mag leeg blijven.",
+    "lbl:Stap #": "De naam van deze stap, bijvoorbeeld Kennismaken of Offerte. Laat je hem leeg, dan staat de stap er niet.",
+    "lbl:Uitleg": "Een of twee zinnen over wat er in deze stap gebeurt.",
+    "lbl:Cijfer #": "Het getal zelf, bijvoorbeeld 25, 500+ of 9,2.",
+    "lbl:Wat het is": "Wat het getal betekent, bijvoorbeeld jaar ervaring of tevreden klanten.",
+    "s:Hoe noem je je werk?": "Noem je je werk geen projecten maar bijvoorbeeld klussen, reizen of behandelingen? Vul dat hier in. Dan staat dat woord overal op je website.",
+    "f:woordenk": "Het woord voor 1 stuk, bijvoorbeeld project, klus of reis.",
+    "f:woordmv": "Het woord voor meer stuks, bijvoorbeeld projecten, klussen of reizen.",
+    "lbl:Voor": "De foto van voordat je begon.",
+    "lbl:Na": "De foto van hetzelfde, nadat je klaar was. Maak hem het liefst vanaf dezelfde plek als de foto van voor.",
+    "lbl:Onderschrift (mag leeg)": "Een korte tekst onder de foto's, bijvoorbeeld Gevel geschilderd in Geleen.",
+    "n:vn_weg[#]": "Vink aan en sla op om deze voor- en nafoto's weg te halen.",
+    "f:bdtitel@_instellingen": "Het kopje op de afbeelding. Mag leeg blijven.",
+    "f:bdknop": "Wil je een knop op de afbeelding? Vul de tekst in, bijvoorbeeld Bekijk de actie. Laat je het leeg, dan komt er geen knop.",
+    "f:bdtekst": "De tekst bij de afbeelding. Mag leeg blijven.",
+    "n:bd_periode[#]": "Vink aan als dit blok alleen in een bepaalde periode op je website moet staan, bijvoorbeeld in december. Elk jaar komt het dan vanzelf terug en verdwijnt het weer.",
+    "lbl:Van": "De eerste dag waarop het blok op je website staat.",
+    "lbl:Tot en met": "De laatste dag waarop het blok op je website staat.",
+    "n:kleur_achtergrond_aan": "Vink aan om zelf de achtergrondkleur van je pagina's te kiezen.",
+    "n:kleur_vlak_aan": "Vink aan om zelf de kleur te kiezen van de vlakken die om en om lichter zijn.",
+    "n:kleur_tekst_aan": "Vink aan om zelf de kleur van de tekst te kiezen. Let op dat het goed leesbaar blijft.",
+    "h1:Nieuwe pagina": "Kies voor welke dienst deze pagina is en vul de teksten in. Na opslaan staat de pagina meteen op je website.",
+    "s:Eigen code": "Alleen voor gevorderden: hier kun je zelf HTML-code op deze pagina zetten, bijvoorbeeld een rekenhulp of een filmpje van YouTube. Weet je niet wat dit is? Dan heb je het niet nodig.",
+    "h1:Occasions": "Hier staan de auto's die je te koop hebt. Klik op een auto om hem aan te passen, of op + Nieuwe auto om er een toe te voegen. Alles wat hier staat, komt vanzelf op je website.",
+    "h1:Aanbod": "Hier staan de producten die je te koop hebt. Klik op een product om het aan te passen, of voeg er een toe. Alles wat hier staat, komt vanzelf op je website.",
+    "h2:Je aanbod staat nog niet op je website": "Je aanbod is nog niet zichtbaar voor bezoekers. Zet het aan bij Instellingen hieronder.",
+    "h2:Veel tegelijk inladen": "Heb je veel auto's of producten? Zet ze in een Excel-bestand of CSV en laad ze in 1 keer in. Download eerst het voorbeeldbestand, dan zie je welke kolommen erin moeten.",
+    "h2:Instellingen@_aanbod": "Hier zet je je aanbod aan of uit en kies je wat er bovenaan de pagina op je website staat.",
+    "n:ab_aan": "Aangevinkt komt er een pagina met je aanbod op je website en een knop in het menu.",
+    "lbl:Wat verkoop je?": "Kies of je auto's verkoopt of andere producten. Bij auto's krijg je vakjes voor kenteken, bouwjaar en kilometerstand. Bij producten vakjes voor categorie, soort en kenmerken.",
+    "f:abkop": "Het grote kopje bovenaan de pagina met je aanbod, bijvoorbeeld Onze occasions.",
+    "f:abintro": "Een korte zin onder het kopje, bijvoorbeeld Alle auto's met garantie en nieuwe APK.",
+    "f:abmerken": "De merken die bezoekers kunnen kiezen, 1 per regel. Merken waarvan je een auto hebt, komen er vanzelf bij.",
+    "n:ab_kenteken": "Aangevinkt staat het kenteken bij elke auto op je website. Sommige bedrijven laten het liever weg.",
+    "n:ab_proefrit": "Aangevinkt staat bij elke auto een knop waarmee bezoekers meteen een proefrit plannen. Dat werkt alleen als je afspraakplanner aan staat.",
+    "h1:Nieuwe auto": "Vul het kenteken in en klik op Gegevens ophalen, dan vullen merk, model, bouwjaar en meer zich vanzelf in. Voeg foto's toe en klik op Opslaan. De auto staat dan meteen op je website.",
+    "h1:Nieuw product": "Vul de naam, de prijs en een omschrijving in en voeg foto's toe. Klik op Opslaan, dan staat het product meteen op je website.",
+    "f:abuitv": "De uitvoering van de auto, bijvoorbeeld 1.0 EcoBoost Titanium. Mag leeg blijven.",
+    "f:abtitel": "Wil je een andere titel dan merk, model en uitvoering? Vul hem dan hier in. Meestal laat je dit leeg.",
+    "f:abjaar": "Het jaar waarin de auto voor het eerst op de weg kwam, bijvoorbeeld 2019.",
+    "f:abkm": "De kilometerstand, alleen het getal, bijvoorbeeld 84500.",
+    "f:abbrand": "Benzine, diesel, elektrisch, hybride of iets anders.",
+    "f:abtrans": "Handgeschakeld of automaat.",
+    "f:abkleur": "De kleur van de auto, bijvoorbeeld zwart of donkerblauw metallic.",
+    "f:abpk": "Het vermogen van de motor in pk, alleen het getal.",
+    "f:abcar": "De vorm van de auto, bijvoorbeeld hatchback, sedan, stationwagen of SUV.",
+    "f:abapk": "Tot wanneer de APK geldig is.",
+    "f:abdeur": "Het aantal deuren.",
+    "f:abzit": "Het aantal zitplaatsen.",
+    "f:abtekst": "Vertel iets over de auto of het product: de staat, het onderhoud, wat er bijzonder aan is. Mag leeg blijven.",
+    "f:abopties": "Wat erop of erin zit, 1 per regel. Bijvoorbeeld Airco, Navigatie of Trekhaak.",
+    "lbl:Foto's@_aanbod": "Kies een of meer foto's. De eerste foto is de hoofdfoto, die staat in het overzicht op je website.",
+    "f:abstatus": "Te koop: staat op je website. Gereserveerd of Verkocht: staat er met een label. Verborgen: alleen jij ziet hem.",
+    "n:foto_hoofd": "Kies welke foto de hoofdfoto is. Die staat in het overzicht op je website.",
+    "n:foto_weg[]": "Vink aan en sla op om deze foto weg te halen.",
+    "h1:Menukaart": "Hier maak je je menukaart: kaarten (zoals Lunch en Diner), daarin rubrieken (zoals Voorgerechten) en daarin je gerechten. Alles komt vanzelf op je website.",
+    "h2:Je menukaart staat nog niet op je website": "Je menukaart is nog niet zichtbaar voor bezoekers. Zet hem aan bij de instellingen onderaan deze pagina.",
+    "h2:Maak je eerste kaart": "Begin met een kaart, bijvoorbeeld Lunch of Diner. Daarna voeg je er rubrieken en gerechten aan toe.",
+    "h2:Nieuwe kaart": "Maak een nieuwe kaart, bijvoorbeeld Dranken of Kinderkaart. Op je website staat elke kaart als een eigen knop.",
+    "h2:Nieuwe rubriek": "Een rubriek is een groep op je kaart, zoals Voorgerechten, Hoofdgerechten of Wijnen. Vul een naam in en klik op Toevoegen.",
+    "h2:Je eigen pdf erbij": "Heb je je menukaart ook als pdf, bijvoorbeeld van je drukker? Zet hem hier, dan staat er op je website een knop om hem te downloaden.",
+    "f:mkkoms": "Een korte zin bij deze kaart, bijvoorbeeld Elke dag van 12.00 tot 16.00 uur. Mag leeg blijven.",
+    "f:mkroms": "Een korte zin bij deze rubriek, bijvoorbeeld Alle broodjes ook glutenvrij. Mag leeg blijven.",
+    "f:mkro": "Een korte zin bij deze rubriek. Mag leeg blijven.",
+    "f:mkrn": "De naam van de rubriek, bijvoorbeeld Voorgerechten of Wijnen.",
+    "n:leeg@_menukaart": "Vink dit alleen aan als je je hele menukaart wilt vervangen door wat in het bestand staat. Alles wat er nu staat, gaat dan eerst weg.",
+    "f:mkpdfnaam": "De tekst op de knop, bijvoorbeeld Download de menukaart. Laat je het leeg, dan staat er Menukaart als pdf.",
+    "n:mk_aan": "Aangevinkt staat je menukaart op je website, met een knop in het menu.",
+    "f:mknaamm": "De tekst van de knop in het menu van je website, bijvoorbeeld Menukaart of Eten en drinken.",
+    "f:mktitel": "Het grote kopje bovenaan de pagina met je menukaart.",
+    "f:mkintro": "Een korte zin onder het kopje, bijvoorbeeld Alles vers bereid met producten uit de regio.",
+    "s:Kaart": "Klik hier om deze kaart een andere naam te geven, hem te verplaatsen of te verwijderen.",
+    "s:Rubriek aanpassen of verwijderen": "Klik hier om deze rubriek een andere naam te geven, te verplaatsen of te verwijderen.",
+    "lbl:Allergenen": "Vink aan welke allergenen in dit gerecht zitten. Dat ben je volgens de wet verplicht te vertellen. Gasten met een allergie kunnen er op je website op filteren.",
+    "n:allerg_ingevuld": "Heb je de allergenen voor dit gerecht nagekeken? Kies dan Ingevuld. Zolang er Nog niet ingevuld staat, zien gasten dat ze het moeten vragen.",
+    "lbl:Kenmerken": "Extra labels bij het gerecht, zoals Vegetarisch, Vegan of Pittig. Gasten zien ze als een klein icoontje.",
+    "h1:Beoordelingen": "Hier verzamel je beoordelingen van je klanten. Zij krijgen een persoonlijke link om sterren en een tekstje te geven. Alle beoordelingen komen op je website.",
+    "h2:Beoordelingen staan nog uit": "Je beoordelingen staan nog niet op je website. Zet ze aan bij de instellingen onderaan.",
+    "h2:Zelf iemand om een beoordeling vragen": "Vul de naam en het e-mailadres van een klant in. Hij krijgt dan een mail met een persoonlijke link om je te beoordelen.",
+    "f:bdvn": "De naam van de klant die je om een beoordeling vraagt.",
+    "f:bdvw": "Waarvoor je hem om een beoordeling vraagt, bijvoorbeeld Schilderwerk gevel. Dat staat in de mail. Mag leeg blijven.",
+    "n:bd_aan": "Aangevinkt staan je beoordelingen op je website, met de sterren erbij.",
+    "n:bd_afspraak": "Aangevinkt krijgt een klant na een afspraak uit je afspraakplanner vanzelf een mail met de vraag om je te beoordelen.",
+    "f:bdtitel@_beoordelingen": "Het kopje boven je beoordelingen op je website, bijvoorbeeld Wat klanten zeggen.",
+    "h1:Afspraakplanner": "Hiermee kunnen klanten op je website zelf een afspraak of tafel kiezen. Bovenaan zie je wie er komt. Onderaan stel je in wanneer je open bent en wat je aanbiedt.",
+    "h2:Afspraken": "De afspraken die gemaakt zijn, per dag. Klap een dag open om te zien wie er komt.",
+    "h2:Reserveringen": "De reserveringen die gemaakt zijn, per dag. Klap een dag open om te zien wie er komt.",
+    "h2:De afspraakplanner staat nog uit": "Je afspraakplanner staat nog niet op je website. Zet hem aan bij de instellingen onderaan.",
+    "h2:Zelf een afspraak invoeren": "Belt iemand of komt iemand langs? Zet de afspraak hier zelf in. Dan is die tijd op je website ook niet meer te kiezen.",
+    "h2:Zelf een reservering invoeren": "Belt iemand of komt iemand langs? Zet de reservering hier zelf in. Dan telt hij mee en kun je niet te vaak dezelfde tijd weggeven.",
+    "h2:Instellingen van de afspraakplanner": "Hier stel je in of de planner aan staat, wat klanten kunnen kiezen en op welke dagen en tijden.",
+    "f:rzdag": "De dag van de afspraak.",
+    "f:rztijd": "Hoe laat de afspraak begint.",
+    "f:rznaam": "De naam van de klant.",
+    "f:rzd": "Wat de klant komt doen. Je behandelingen stel je hieronder in.",
+    "f:rzp": "Met hoeveel personen de gasten komen.",
+    "f:rztel": "Het telefoonnummer van de klant, handig als je iets moet verzetten. Mag leeg blijven.",
+    "f:rzmail": "Vul je het e-mailadres in, dan kan de klant een bevestiging krijgen. Mag leeg blijven.",
+    "f:rzopm": "Iets wat je wilt onthouden, bijvoorbeeld Kinderstoel nodig. Mag leeg blijven.",
+    "n:stuur@_reserveren": "Aangevinkt krijgt de klant een mail met de afspraak, als je een e-mailadres hebt ingevuld.",
+    "n:rs_aan": "Aangevinkt staat de afspraakplanner op je website en kunnen klanten zelf een tijd kiezen.",
+    "lbl:Waarvoor gebruik je het?": "Kies Tafels reserveren voor horeca, dan kiezen gasten met hoeveel personen ze komen. Kies Afspraken voor bijvoorbeeld een kapper of praktijk, dan kiezen klanten een behandeling.",
+    "h3:Behandelingen": "Wat klanten kunnen kiezen, met hoe lang het duurt en wat het kost. Bijvoorbeeld Knippen, 30 minuten, 25 euro. Op je website zien ze alleen tijden waarin de behandeling past.",
+    "n:bedrag@_reserveren": "Wat deze afspraak kost. Het staat vast op basis van de behandeling, maar je kunt het hier aanpassen.",
+    "n:extra_bedrag@_reserveren": "Heb je iets extra gedaan of verkocht? Vul het bedrag hier in, dan telt het mee in je overzicht.",
+    "n:extra_oms@_reserveren": "Wat het extra bedrag is, bijvoorbeeld Shampoo verkocht.",
+    "n:rs_knop": "Aangevinkt staat bovenaan je website een opvallende knop waarmee bezoekers meteen een afspraak maken, in plaats van de knop Contact.",
+    "f:rsknoptekst": "De tekst op die knop, bijvoorbeeld Afspraak maken of Tafel reserveren.",
+    "f:rsintro": "Een korte zin boven de kalender op je website, bijvoorbeeld Kies een dag en een tijd die je uitkomt.",
+    "h3:Wanneer kan er gereserveerd worden?": "Vink de dagen aan waarop je open bent en vul de tijden in. Klanten kunnen alleen op die dagen en tijden iets kiezen. Gesloten op een losse dag? Dat zet je hieronder bij de uitzonderingen.",
+    "n:rs_open[#]": "Vink aan als je deze dag open bent en vul daarnaast de tijden in.",
+    "h1:Webshop": "Hier verkoop je je producten online. Bestellingen: wat er besteld is. Producten: wat je verkoopt. Categorie\u00ebn: hoe je producten zijn verdeeld. Instellen: betalen, verzenden en de teksten.",
+    "h2:Veel producten tegelijk inladen": "Heb je veel producten? Zet ze in een Excel-bestand of CSV en laad ze in 1 keer in. Download eerst het voorbeeldbestand, dan zie je welke kolommen erin moeten.",
+    "h2:Nieuw product": "Alleen een naam en een prijs zijn nodig. De rest vul je in als het bij je product past. Klik op Opslaan, dan staat het product meteen in je webshop.",
+    "h2:Product bewerken": "Pas aan wat niet klopt en klik op Opslaan. Je webshop wordt meteen bijgewerkt.",
+    "f:wpn": "De naam van het product zoals de koper hem ziet, bijvoorbeeld Werkbroek stretch.",
+    "f:wpc": "Een groep waar dit product bij hoort, bijvoorbeeld Broeken, Truien of Verf. Elke categorie krijgt een eigen pagina in je webshop. Kies een bestaande uit de lijst of typ een nieuwe.",
+    "f:wpp": "De prijs die de koper betaalt, met btw. Bijvoorbeeld 49,95.",
+    "f:wpb": "Het btw-tarief van dit product. Meestal 21%. Voor bijvoorbeeld boeken en eten is het 9%.",
+    "f:wpv": "Hoeveel je er nog hebt. Bij elke bestelling telt het vanzelf af. Op 0 kan niemand het meer bestellen. Laat je het leeg, dan is er altijd genoeg.",
+    "f:wps": "Te koop: staat in je webshop. Uitverkocht: staat erin, maar is niet te bestellen. Verborgen: alleen jij ziet het.",
+    "f:wpt": "Vertel wat het product is: het materiaal, de maten, waarvoor het handig is. Mag leeg blijven.",
+    "h3:Keuzes voor de koper": "Kan de koper iets kiezen, zoals een maat, kleur of inhoud? Zet het hier. De koper kiest dan uit een keuzemenu. Rechts zie je meteen hoe het eruitziet.",
+    "f:wpo": "Per regel 1 keuze: eerst de naam, dan een dubbele punt, dan de mogelijkheden met komma's. Bijvoorbeeld Maat: S, M, L, XL. Kost een keuze meer? Zet er +5 achter, bijvoorbeeld XXL +5.",
+    "h3:Opdruk met het ontwerp van de koper": "Alleen als je iets bedrukt, zoals shirts of petten. De koper uploadt dan zijn logo en de webshop controleert of het scherp genoeg is om te drukken.",
+    "f:wpd": "Per regel 1 plek waar je kunt drukken, met de grootte en de prijs. Bijvoorbeeld Borst links 10x10 cm +5.",
+    "f:cn": "De naam van de categorie zoals hij in je webshop staat. Pas je hem aan, dan verhuizen alle producten mee.",
+    "f:ct": "Een korte tekst bovenaan de pagina van deze categorie. Mag leeg blijven.",
+    "f:cf": "Een eigen foto voor de tegel van deze categorie. Laat je het leeg, dan gebruiken we de foto van het eerste product.",
+    "n:foto_weg@_webshop": "Vink aan en klik op Opslaan om je eigen foto weg te halen. Dan staat de foto van het eerste product weer op de tegel.",
+    "n:aan@_webshop": "Aangevinkt staat je webshop op je website, met een knop in het menu.",
+    "f:wsn": "De tekst van de knop in het menu van je website, bijvoorbeeld Webshop of Winkel.",
+    "f:wst": "Het grote kopje bovenaan je webshop.",
+    "f:wsi": "Een korte zin onder het kopje, bijvoorbeeld Alles op voorraad en snel in huis.",
+    "h2:Online betalen met Mollie": "Mollie zorgt dat je klanten met iDEAL en andere betaalmethoden kunnen betalen. Het geld komt rechtstreeks op jouw rekening. Je hebt daarvoor een eigen account bij Mollie nodig.",
+    "f:wsm": "Deze sleutel vind je in je Mollie-dashboard onder Developers, API keys. Begint hij met test_, dan kun je oefenen zonder echt geld. Met live_ worden betalingen echt.",
+    "h2:Bezorgen en ophalen": "Kies of je bestellingen verstuurt, of klanten ze komen ophalen, of allebei.",
+    "n:verzenden@_webshop": "Aangevinkt kan de klant kiezen om de bestelling te laten versturen.",
+    "f:wsvk": "Wat de klant betaalt voor het versturen, bijvoorbeeld 6,95.",
+    "f:wsgv": "Vanaf welk bedrag het versturen gratis is, bijvoorbeeld 50. Laat je het leeg, dan betaalt de klant altijd verzendkosten.",
+    "n:ophalen@_webshop": "Aangevinkt kan de klant kiezen om de bestelling bij jou op te halen. Hij betaalt dan geen verzendkosten.",
+    "f:wsot": "Waar en wanneer de klant zijn bestelling kan ophalen, bijvoorbeeld Maandag tot vrijdag van 9 tot 17 uur, Dorpsstraat 1.",
+    "n:winkel_betalen@_webshop": "Aangevinkt mag de klant bij ophalen ook pas in je winkel betalen, in plaats van online.",
+    "h2:Meldingen en voorwaarden": "Waar je mail krijgt bij een nieuwe bestelling, en de regels van je webshop.",
+    "f:wsme": "Bij elke nieuwe bestelling krijg je een mail op dit adres. Laat je het leeg, dan gaat hij naar het e-mailadres van je bedrijf.",
+    "f:wsvw": "De regels van je webshop: levertijd, retourneren en garantie. Bij online verkopen mag een klant binnen 14 dagen van de koop afzien. Vul je niets in, dan staan er nette standaardvoorwaarden.",
+    "lbl:Maat": "Zo ziet de koper het keuzemenu. Hier kun je het uitproberen, er wordt niets opgeslagen.",
+    "h1:Worldchat": "Met Worldchat kunnen bezoekers in hun eigen taal met je chatten. Jij leest en schrijft in het Nederlands, de bezoeker in zijn eigen taal. Het vertalen gaat vanzelf.",
+    "h2:Worldchat aanzetten": "Zet hier Worldchat aan. Er komt dan een chatknop op je website.",
+    "h2:Zo werkt Worldchat op je website": "Een korte uitleg van wat je bezoekers zien en hoe jij de berichten krijgt.",
+    "h3:Tips": "Een paar tips om er het meeste uit te halen.",
+    "h3:Goed om te weten": "Dingen die handig zijn om te weten voordat je begint.",
+    "s:Hulp bij je btw-aangifte": "Klap open om te zien welke bedragen je in welk vakje van je btw-aangifte invult. De bedragen komen uit je eigen facturen en inkoop.",
+    "s:Versturen naar je boekhouder": "Klap open om het pakket met al je facturen en inkoop van een kwartaal naar je boekhouder te mailen.",
+    "h2:Gegevens overzetten uit Exact Online": "Kom je van Exact Online? Zet dan in 1 keer al je facturen, inkoop, bankboekingen en klanten over. Klik op de knop en volg de stappen.",
+    "f:exT": "In Exact ga je naar Financieel, Transacties, Zoeken. Kies de periode en exporteer als CSV. Dat bestand heet FinTransactionSearch.csv. Kies het hier.",
+    "f:exA": "Wil je ook de adressen van je klanten? Maak in Exact een auditfile (XAF) en kies die hier. Mag leeg blijven.",
+    "lbl:Omschrijving": "Wat je doet of levert, bijvoorbeeld Schilderen voorgevel.",
+    "lbl:Aantal": "Hoeveel, bijvoorbeeld 3 (uren) of 25 (m2).",
+    "lbl:Eenheid": "Waarin je het aantal telt, bijvoorbeeld uur, m2, stuk of dag. Mag leeg blijven.",
+    "lbl:Prijs excl. btw": "De prijs per eenheid zonder btw. De btw wordt er vanzelf bij gerekend.",
+    "lbl:Btw": "Het btw-tarief van deze regel. Meestal 21%. Bij verlegde btw of geen btw kies je 0%.",
+    "h2:Nieuwe mail": "Stuur een mail naar een klant, vanaf je eigen e-mailadres. Je kunt er een offerte of factuur als pdf bij doen.",
+    "f:nmk": "Kies de klant, dan vult zijn e-mailadres zich vanzelf in.",
+    "f:nmo": "De onderwerpregel van de mail.",
+    "lbl:Offerte of factuur meesturen": "Vink de offertes of facturen aan die als pdf mee moeten met de mail. Mag leeg blijven.",
+    "lbl:Soort": "Afspraak: een gewone afspraak. Opname: je gaat bij een klant kijken en opmeten. Klus: je voert het werk uit.",
+    "s:Ander e-mailadres of wachtwoord": "Klap open als je e-mailadres of het wachtwoord van je mailbox veranderd is.",
+    "s:Servers zelf invullen": "Meestal niet nodig. Lukt het koppelen niet vanzelf? Vraag dan bij je mailprovider de gegevens van IMAP en SMTP en vul ze hier in.",
+    "s:Dagelijkse taak": "Een keer per dag kijkt je beheerpagina of er nieuwe inkoopfacturen in je mail zijn, en verstuurt hij herinneringen en mails die je voor later hebt klaargezet. Hier zie je wanneer dat voor het laatst gebeurde.",
+    "h1:Factuur": "Je factuur. Bovenaan zie je wat je ermee kunt doen: versturen, op betaald zetten, downloaden als pdf of een creditfactuur maken.",
+    "h1:Offerte": "Je offerte. Bovenaan zie je wat je ermee kunt doen: versturen, downloaden als pdf of omzetten naar een factuur als je klant akkoord is.",
+    "h1:Kassabon": "Een kassabon van een betaling in je zaak. Hij telt mee in je omzet en btw.",
+    "kop@_aanbod-id": "Pas aan wat niet klopt en klik op Opslaan. Je website wordt meteen bijgewerkt. Is hij verkocht? Zet de status op Verkocht, dan staat hij met een label op je website.",
+    "kop@_webshop-id": "Pas aan wat niet klopt en klik op Opslaan. Je webshop wordt meteen bijgewerkt. Rechts zie je hoe de koper de keuzes ziet.",
+    "kop@_menukaart-g": "Pas de naam, de omschrijving, de prijs en de allergenen aan en klik op Opslaan. Je menukaart op je website wordt meteen bijgewerkt.",
+    "h2:Bestelling@_webshop": "Alles over deze bestelling: wie het besteld heeft, wat er besteld is en of er al betaald is. Zijn er bestanden van de koper, zoals een logo voor een opdruk? Die download je bij de producten.",
+    "h2:Producten@_webshop": "Wat de klant besteld heeft, met zijn keuzes. Heeft hij een ontwerp geupload voor een opdruk? Klik op het bestand om het te downloaden in het formaat dat je nodig hebt.",
+    "h2:Klant@_webshop": "De gegevens van de koper. Klik op het e-mailadres of telefoonnummer om contact op te nemen.",
+    "h2:Verzenden naar": "Het adres waar de bestelling naartoe moet.",
+    "h2:Ophalen": "De klant komt de bestelling bij jou ophalen.",
+    "h2:Afhandelen": "Zet hier de status van de bestelling. Kies Verzonden of Klaar om op te halen als het zover is, dan krijgt de klant vanzelf een mail. Verstuur je met een pakketdienst? Vul de track-en-tracelink in, die gaat mee in de mail.",
+    "n:track@_webshop": "De link van de pakketdienst waarmee de klant zijn pakket kan volgen. Mag leeg blijven.",
+    "n:mail@_webshop": "Aangevinkt krijgt de klant een mail als je de status verandert in Verzonden, Klaar om op te halen of Geannuleerd.",
+    "n:wijze@_webshop": "Heeft de klant in je winkel betaald? Kies hoe, en klik op de knop. De bestelling staat dan op betaald en komt in je administratie.",
+    "h1:Nieuw gerecht": "Vul de naam, een korte omschrijving en de prijs in. Vink de allergenen aan die erin zitten en klik op Opslaan. Het gerecht staat dan meteen op je menukaart."
   };
   var pg = null;
-  try { var q = new URLSearchParams(location.search); if (q.has("adm")) { pg = q.get("adm") || "o"; } } catch (e) {}
-  function zoek(k) { return (pg !== null && H[k + "@" + pg]) || H[k]; }
+  var pg2 = "", q = null;
+  try { q = new URLSearchParams(location.search); if (q.has("adm")) { pg = q.get("adm") || "o"; } var k0 = q.keys().next(); if (!k0.done) pg2 = "_" + k0.value; } catch (e) {}
+  function zoek1(k) { return (pg !== null && H[k + "@" + pg]) || (pg2 && H[k + "@" + pg2]) || H[k]; }
+  function zoek(k) { var i = k.indexOf(":") + 1; return zoek1(k) || zoek1(k.slice(0, i) + k.slice(i).replace(/\d+/g, "#")); }
   var nr = 0;
   function voegToe(el, tekst) {
     if (!el || !tekst || el.querySelector(".hulp")) return;
     nr++;
     var id = "hulp" + nr;
     var b = document.createElement("button");
-    b.type = "button"; b.className = "hulp"; b.textContent = "?";
+    b.type = "button"; b.className = "hulp"; b.textContent = "i";
     b.setAttribute("aria-expanded", "false"); b.setAttribute("aria-controls", id);
     b.setAttribute("aria-label", "Uitleg");
     var box = document.createElement("div");
@@ -14535,24 +14762,37 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
   var kopGedaan = false;
   document.querySelectorAll("h1, h2, h3").forEach(function (h) {
     var t = (h.childNodes[0] && h.childNodes[0].nodeType === 3 ? h.childNodes[0].nodeValue : h.textContent).trim();
-    var tekst = zoek(h.tagName.toLowerCase() + ":" + t);
+    var tekst = zoek(h.tagName.toLowerCase() + ":" + t) || zoek(h.tagName.toLowerCase() + ":" + t.split(" (")[0]) || (t.indexOf(" ") > 0 ? zoek1(h.tagName.toLowerCase() + ":" + t.split(" ")[0]) : "");
     /* De eerste kop van een scherm in de administratie zonder eigen uitleg krijgt de uitleg van dat scherm */
     if (!tekst && h.tagName === "H2" && !kopGedaan && pg !== null && !h.closest(".adm-doc,.papier,.doc,details")) { tekst = H["kop@" + pg]; if (tekst) kopGedaan = true; }
+    /* Bewerkscherm met de naam van een product, auto of gerecht als kop */
+    if (!tekst && !kopGedaan && pg2 && (h.tagName === "H1" || h.tagName === "H2") && !h.closest("details")) { var sx = q && q.has("id") ? "-id" : (q && q.has("g") ? "-g" : ""); if (sx) { tekst = H["kop@" + pg2 + sx]; if (tekst) kopGedaan = true; } }
     voegToe(h, tekst);
   });
   document.querySelectorAll("label[for]").forEach(function (l) {
     var id = l.getAttribute("for");
-    voegToe(l, zoek("f:" + id) || H["f:" + id.replace(/\d+$/, "")] || (id.indexOf("f-") === 0 ? H["f:f-"] : ""));
+    voegToe(l, zoek("f:" + id) || zoek("f:" + id.replace(/\d+$/, "")) || (id.indexOf("f-") === 0 ? H["f:f-"] : ""));
   });
   document.querySelectorAll("label:not([for])").forEach(function (l) {
     if (l.querySelector("input")) return;
-    voegToe(l, H["lbl:" + l.textContent.trim()]);
+    var t = l.textContent.replace(/\s+/g, " ").trim();
+    voegToe(l, zoek("lbl:" + t) || zoek("lbl:" + t.split(" (")[0]));
+  });
+  /* Uitklappers: de uitleg komt in de regel zelf, zodat hij ook te lezen is als het blok dicht is */
+  document.querySelectorAll("main summary").forEach(function (sm) {
+    if (sm.querySelector(".hulp")) return;
+    var t = sm.textContent.replace(/\s+/g, " ").trim(), kort = t.split(" (")[0];
+    var tekst = zoek("s:" + t) || zoek("s:" + kort) || zoek("s:" + kort.split(":")[0]) || zoek("s:" + kort.split(" ")[0]);
+    if (!tekst) return;
+    voegToe(sm, tekst);
+    var box = sm.nextElementSibling;
+    if (box && box.classList.contains("hulpbox")) { sm.appendChild(box); box.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); }); }
   });
   /* Velden op naam (zoekvakjes, keuzes zonder eigen label, aanvinkvakjes) */
   var gehad = {};
   document.querySelectorAll("main input, main select, main textarea").forEach(function (e) {
     if (e.type === "hidden" || e.type === "submit" || (!e.getAttribute("name") && !e.id)) return;
-    var nm = e.getAttribute("name") || "", tekst = (nm && ((pg !== null && H["n@" + pg + ":" + nm]) || H["n:" + nm])) || (e.id && e.closest("label") ? H["f:" + e.id] : "");
+    var nm = e.getAttribute("name") || "", tekst = (nm && ((pg !== null && H["n@" + pg + ":" + nm]) || zoek("n:" + nm))) || (e.id && e.closest("label") ? H["f:" + e.id] : "");
     if (!nm) nm = "#" + e.id;
     if (!tekst || gehad[nm]) return;
     var lab = e.id ? document.querySelector('label[for="' + e.id + '"]') : null;
