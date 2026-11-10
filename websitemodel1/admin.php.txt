@@ -2735,6 +2735,7 @@ function write_seo_files($pages) {
     }
     if (!empty(ws_inst()['aan'])) {
         $urls[] = ['loc' => $u . '/webshop/', 'lastmod' => $today];
+        foreach (ws_categorieen() as $c) { $urls[] = ['loc' => $u . '/webshop/' . rawurlencode($c['slug']) . '/', 'lastmod' => $today]; }
         foreach (ws_lijst() as $x) { if (ws_zichtbaar($x)) { $urls[] = ['loc' => $u . '/webshop/' . rawurlencode($x['slug']) . '/', 'lastmod' => substr((string)($x['gewijzigd'] ?? $x['aangemaakt'] ?? $today), 0, 10) ?: $today]; } }
     }
     foreach ($pages as $p) {
@@ -4210,6 +4211,51 @@ function ws_openbaar() {
 /* ---------- Webshop-pagina's op de website ---------- */
 function ws_eur($c) { return adm_eur((int)$c); }
 function ws_menu_link() { $in = ws_inst(); return !empty($in['aan']) ? '<a class="nav" href="/webshop/">' . h($in['naam']) . '</a>' : ''; }
+/* ---------- Categorieen van de webshop ---------- */
+define('WS_CATS', DATA_DIR . '/ws_categorieen.json');
+function ws_cat_meta() { $l = read_json(WS_CATS, []); $u = []; foreach ((array)$l as $k => $v) { if (is_array($v)) $u[(string)$k] = $v; } return $u; }
+function ws_cat_slug($c) { $s = substr(slugify((string)$c) ?: 'categorie', 0, 60); if (in_array($s, ['winkelwagen', 'bedankt', 'voorwaarden', 'ws'], true)) $s .= '-producten'; return $s; }
+function ws_volg_sort(&$items) { usort($items, function($a, $b) { return [(int)($a['volg'] ?? 0), mb_strtolower((string)$a['naam'])] <=> [(int)($b['volg'] ?? 0), mb_strtolower((string)$b['naam'])]; }); }
+function ws_categorieen($alleenZichtbaar = true) {
+    $meta = ws_cat_meta(); $per = [];
+    foreach (ws_lijst() as $p) { if ($alleenZichtbaar && !ws_zichtbaar($p)) continue; $c = trim((string)($p['cat'] ?? '')); if ($c === '') continue; $per[$c][] = $p; }
+    $uit = [];
+    foreach ($per as $c => $ps) {
+        $c = (string)$c; $m = $meta[$c] ?? []; ws_volg_sort($ps);
+        $eigen = basename((string)($m['foto'] ?? ''));
+        $foto = $eigen !== '' && is_file(UPLOAD_DIR . '/webshop/_cat/' . $eigen) ? '/uploads/webshop/_cat/' . rawurlencode($eigen) : '';
+        if ($foto === '') { foreach ($ps as $p) { if (($p['fotos'][0] ?? '') !== '') { $foto = ws_foto_url($p, $p['fotos'][0]); break; } } }
+        $uit[] = ['naam' => $c, 'slug' => ws_cat_slug($c), 'n' => count($ps), 'tekst' => (string)($m['tekst'] ?? ''), 'foto' => $foto, 'eigen_foto' => $foto !== '' && $eigen !== '' && strpos($foto, '/_cat/') !== false ? $eigen : '', 'volg' => isset($m['volg']) ? (int)$m['volg'] : 9999, 'items' => $ps];
+    }
+    usort($uit, function($a, $b) { return [$a['volg'], mb_strtolower($a['naam'])] <=> [$b['volg'], mb_strtolower($b['naam'])]; });
+    return $uit;
+}
+/* Alle zichtbare producten: de categorieen op volgorde, daarbinnen de eigen volgorde. Producten zonder categorie achteraan. */
+function ws_gesorteerd() {
+    $uit = []; foreach (ws_categorieen() as $c) { foreach ($c['items'] as $p) $uit[] = $p; }
+    $los = array_values(array_filter(ws_lijst(), function($p) { return ws_zichtbaar($p) && trim((string)($p['cat'] ?? '')) === ''; })); ws_volg_sort($los);
+    return array_merge($uit, $los);
+}
+function ws_chips($cats, $actief) {
+    if (count($cats) < 2) return '';
+    $o = '<nav class="ws-cats" aria-label="Categorie&euml;n"><a href="/webshop/"' . ($actief === '' ? ' class="on" aria-current="page"' : '') . '>Alles</a>';
+    foreach ($cats as $c) { $o .= '<a href="/webshop/' . h($c['slug']) . '/"' . ($actief === $c['slug'] ? ' class="on" aria-current="page"' : '') . '>' . h($c['naam']) . '</a>'; }
+    return $o . '</nav>';
+}
+function ws_kruimel($delen) {
+    $ld = ['@context' => 'https://schema.org', '@type' => 'BreadcrumbList', 'itemListElement' => []];
+    $o = '<nav class="ws-kruim" aria-label="Kruimelpad">'; $n = 0;
+    foreach ($delen as $i => $d) {
+        $n++; $laatste = $i === count($delen) - 1;
+        $ld['itemListElement'][] = ['@type' => 'ListItem', 'position' => $n, 'name' => $d[0], 'item' => site_url() . $d[1]];
+        $o .= ($i ? '<span aria-hidden="true">&rsaquo;</span>' : '') . ($laatste ? '<span aria-current="page">' . h($d[0]) . '</span>' : '<a href="' . h($d[1]) . '">' . h($d[0]) . '</a>');
+    }
+    return [$o . '</nav>', '<script type="application/ld+json">' . json_encode($ld, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG) . '</script>'];
+}
+function ws_tegel($c) {
+    return '<a class="ws-ct" href="/webshop/' . h($c['slug']) . '/">' . ($c['foto'] !== '' ? '<img src="' . h($c['foto']) . '" alt="" loading="lazy" />' : '')
+         . '<span><b>' . h($c['naam']) . '</b><small>' . $c['n'] . ($c['n'] === 1 ? ' product' : ' producten') . '</small></span></a>';
+}
 function ws_css() {
     return ab_css() . <<<'CSS'
 <style>
@@ -4279,6 +4325,22 @@ function ws_css() {
 .ws-leeg{text-align:center;padding:30px 10px;}
 .ws-voorw{white-space:pre-wrap;line-height:1.6;}
 .ws-hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;}
+.ws-kruim{font-size:14.5px;color:var(--muted);margin:0 0 14px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+.ws-kruim a{color:inherit;font-weight:600;text-decoration:none;} .ws-kruim a:hover{text-decoration:underline;}
+.abhero .ws-kruim{color:inherit;opacity:.85;}
+.ws-ctgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin:0 0 48px;}
+@media (max-width:900px){.ws-ctgrid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;}}
+@media (max-width:520px){.ws-ctgrid{gap:10px;margin-bottom:32px;} .ws-ctgrid .ws-ct{aspect-ratio:1/1;border-radius:14px;} .ws-ctgrid .ws-ct span{left:12px;right:12px;bottom:10px;flex-direction:column;align-items:flex-start;justify-content:flex-end;gap:2px;} .ws-ctgrid .ws-ct b{font-size:16px;} .ws-ctgrid .ws-ct small{font-size:12px;}}
+.ws-ct{position:relative;display:block;aspect-ratio:4/3;border-radius:18px;overflow:hidden;background:var(--navy);text-decoration:none;color:#fff;box-shadow:0 18px 40px -26px rgba(0,0,0,.55);}
+.ws-ct img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transition:transform .5s;}
+.ws-ct:hover img{transform:scale(1.05);}
+.ws-ct::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,0) 38%,rgba(0,0,0,.75));}
+.ws-ct span{position:absolute;left:18px;right:18px;bottom:16px;z-index:1;display:flex;justify-content:space-between;align-items:flex-end;gap:10px;}
+.ws-ct b{font-size:22px;line-height:1.15;} .ws-ct small{font-size:13.5px;opacity:.9;white-space:nowrap;}
+.ws-groep{margin:0 0 48px;} .ws-groep-kop{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin:0 0 16px;flex-wrap:wrap;}
+.ws-groep-kop h2{margin:0;font-size:clamp(22px,3vw,28px);} .ws-groep-kop a{font-weight:700;text-decoration:none;color:inherit;border-bottom:2px solid currentColor;padding-bottom:1px;}
+.ws-cats a{font:inherit;font-size:14.5px;font-weight:600;padding:8px 14px;border-radius:999px;border:1.5px solid var(--line);background:#fff;color:var(--navy);text-decoration:none;}
+.ws-cats a.on{background:var(--navy);border-color:var(--navy);color:#fff;}
 .ws-zij [hidden],.ws-pil[hidden],.ws-mand [hidden],#wsAdres[hidden],#wsBet[hidden]{display:none !important;}
 </style>
 CSS;
@@ -4302,19 +4364,35 @@ function ws_kaart($p) {
          . '<em>' . ($vanaf ? '<small>vanaf</small>' : '') . h(ws_eur($pr)) . '</em></span></a>';
 }
 function render_ws_lijst($in, $items) {
-    $cats = array_values(array_unique(array_filter(array_map(function($p) { return (string)($p['cat'] ?? ''); }, $items), 'strlen')));
-    sort($cats, SORT_NATURAL | SORT_FLAG_CASE);
+    $cats = ws_categorieen();
     $out = site_head($in['titel'] . ' | ' . st('naam'), cut($in['intro'] . ' ' . st('naam') . (st('plaats') !== '' ? ', ' . st('plaats') : '') . '.', 160), '/webshop/', business_jsonld(), true);
     $out .= ws_css() . "\n</head>\n<body>\n" . site_header();
     $out .= '<main><section class="abhero"><div class="wrap"><h1>' . h($in['titel']) . '</h1><p>' . h($in['intro']) . '</p></div></section><section class="abwrap"><div class="wrap">';
-    if (count($cats) > 1) {
-        $out .= '<div class="ws-cats" id="wsCats" role="group" aria-label="Categorie"><button type="button" class="on" data-c="">Alles</button>';
-        foreach ($cats as $c) { $out .= '<button type="button" data-c="' . h($c) . '">' . h($c) . '</button>'; }
-        $out .= '</div>';
+    if (count($cats) >= 2) {
+        $out .= '<div class="ws-ctgrid">'; foreach ($cats as $c) { $out .= ws_tegel($c); } $out .= '</div>';
+        foreach ($cats as $c) {
+            $out .= '<section class="ws-groep" aria-labelledby="g-' . h($c['slug']) . '"><div class="ws-groep-kop"><h2 id="g-' . h($c['slug']) . '">' . h($c['naam']) . '</h2>'
+                  . '<a href="/webshop/' . h($c['slug']) . '/">' . ($c['n'] > 3 ? 'Bekijk alle ' . $c['n'] . ' &rarr;' : 'Bekijk ' . h(mb_strtolower($c['naam'])) . ' &rarr;') . '</a></div><div class="ab-grid">';
+            foreach (array_slice($c['items'], 0, 3) as $p) { $out .= ws_kaart($p); }
+            $out .= '</div></section>';
+        }
+        $los = array_values(array_filter($items, function($p) { return trim((string)($p['cat'] ?? '')) === ''; }));
+        if ($los) { $out .= '<section class="ws-groep"><div class="ws-groep-kop"><h2>Overige producten</h2></div><div class="ab-grid">'; foreach ($los as $p) { $out .= ws_kaart($p); } $out .= '</div></section>'; }
+    } else {
+        $out .= '<div class="ab-grid" id="wsGrid">'; foreach ($items as $p) { $out .= ws_kaart($p); } $out .= '</div>';
     }
-    $out .= '<div class="ab-grid" id="wsGrid">';
-    foreach ($items as $p) { $out .= ws_kaart($p); }
-    $out .= '</div>' . (!$items ? '<div class="ab-leeg">Hier komen binnenkort onze producten.</div>' : '') . '</div></section></main>' . site_footer() . ws_pil() . ws_js_tag();
+    $out .= (!$items ? '<div class="ab-leeg">Hier komen binnenkort onze producten.</div>' : '') . '</div></section></main>' . site_footer() . ws_pil() . ws_js_tag();
+    return $out . "\n</body>\n</html>\n";
+}
+function render_ws_cat($in, $c, $cats) {
+    list($kr, $krld) = ws_kruimel([[$in['titel'], '/webshop/'], [$c['naam'], '/webshop/' . $c['slug'] . '/']]);
+    $oms = $c['tekst'] !== '' ? $c['tekst'] : $c['naam'] . ' bij ' . st('naam') . '. Bekijk ' . ($c['n'] === 1 ? 'het product' : 'alle ' . $c['n'] . ' producten') . ' en bestel online.';
+    $out = site_head($c['naam'] . ' | ' . st('naam'), cut($oms, 160), '/webshop/' . $c['slug'] . '/', $krld, true, $c['foto'] !== '' ? site_url() . $c['foto'] : '');
+    $out .= ws_css() . "\n</head>\n<body>\n" . site_header('/webshop/', $in['naam']);
+    $out .= '<main><section class="abhero"><div class="wrap">' . $kr . '<h1>' . h($c['naam']) . '</h1>' . ($c['tekst'] !== '' ? '<p>' . nl2br(h($c['tekst'])) . '</p>' : '<p>' . $c['n'] . ($c['n'] === 1 ? ' product' : ' producten') . '</p>') . '</div></section>';
+    $out .= '<section class="abwrap"><div class="wrap">' . ws_chips($cats, $c['slug']) . '<div class="ab-grid">';
+    foreach ($c['items'] as $p) { $out .= ws_kaart($p); }
+    $out .= '</div></div></section></main>' . site_footer() . ws_pil() . ws_js_tag();
     return $out . "\n</body>\n</html>\n";
 }
 function ws_prod_json($p) {
@@ -4331,9 +4409,13 @@ function render_ws_item($in, $p) {
     if ($fotos) $ld['image'] = array_map(function($f) use ($p) { return site_url() . ws_foto_url($p, $f); }, array_slice($fotos, 0, 5));
     if (trim((string)($p['tekst'] ?? '')) !== '') $ld['description'] = cut(trim($p['tekst']), 300);
     $extra = '<script type="application/ld+json">' . json_encode($ld, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG) . '</script>';
+    $kd = [[$in['titel'], '/webshop/']]; $pc = trim((string)($p['cat'] ?? ''));
+    if ($pc !== '') $kd[] = [$pc, '/webshop/' . ws_cat_slug($pc) . '/'];
+    $kd[] = [$p['naam'], '/webshop/' . $p['slug'] . '/'];
+    list($kr, $krld) = ws_kruimel($kd); $extra .= $krld;
     $out = site_head($p['naam'] . ' | ' . st('naam'), cut($p['naam'] . ' voor ' . ws_eur($pr) . '. ' . trim((string)($p['tekst'] ?? '')), 160), '/webshop/' . $p['slug'] . '/', $extra, true, $fotos ? site_url() . ws_foto_url($p, $fotos[0]) : '');
-    $out .= ws_css() . "\n</head>\n<body>\n" . site_header('/webshop/', 'Alle producten');
-    $out .= '<main><section class="abwrap"><div class="wrap"><a class="ab-terug" href="/webshop/">&larr; Alle producten</a><div class="ab-det"><div class="ab-gal">';
+    $out .= ws_css() . "\n</head>\n<body>\n" . site_header($pc !== '' ? '/webshop/' . ws_cat_slug($pc) . '/' : '/webshop/', $pc !== '' ? $pc : 'Alle producten');
+    $out .= '<main><section class="abwrap"><div class="wrap">' . $kr . '<div class="ab-det"><div class="ab-gal">';
     if ($fotos) {
         $out .= '<div class="ab-groot"><img id="abFoto" src="' . h(ws_foto_url($p, $fotos[0])) . '" alt="' . h($p['naam']) . '" />';
         if (count($fotos) > 1) $out .= '<button type="button" class="vo" aria-label="Vorige foto">&lsaquo;</button><button type="button" class="na" aria-label="Volgende foto">&rsaquo;</button><span class="tel" id="abTel">1 / ' . count($fotos) . '</span>';
@@ -4405,9 +4487,13 @@ function render_ws_voorwaarden($in) {
 }
 function ws_blok_html($sky) {
     $in = ws_inst();
-    $items = array_values(array_filter(ws_lijst(), function($p) { return ws_zichtbaar($p) && ws_te_koop($p); }));
-    usort($items, function($a, $b) { return [(int)($a['volg'] ?? 0), (string)($a['cat'] ?? ''), (string)$a['naam']] <=> [(int)($b['volg'] ?? 0), (string)($b['cat'] ?? ''), (string)$b['naam']]; });
-    $alle = count($items); $items = array_slice($items, 0, 3);
+    $items = array_values(array_filter(ws_gesorteerd(), 'ws_te_koop'));
+    $alle = count($items);
+    /* liefst uit elke categorie 1, daarna aanvullen */
+    $kies = []; $gezien = [];
+    foreach ($items as $p) { $c = (string)($p['cat'] ?? ''); if (!isset($gezien[$c])) { $gezien[$c] = 1; $kies[$p['id']] = $p; } if (count($kies) >= 3) break; }
+    foreach ($items as $p) { if (count($kies) >= 3) break; $kies[$p['id']] = $kies[$p['id']] ?? $p; }
+    $items = array_values($kies);
     if (!$items) return '';
     $o = '<section class="section blok-webshop' . ($sky ? ' sky' : '') . '" id="webshop"><div class="wrap">' . blok_kop($in['titel'], $in['intro']) . ws_css() . '<div class="ab-grid">';
     foreach ($items as $p) { $o .= ws_kaart($p); }
@@ -4420,8 +4506,13 @@ function write_webshop_pages() {
     if (!is_dir($dir)) mkdir($dir, 0755, true);
     @file_put_contents($dir . '/.ff-webshop', '1');
     file_put_contents($dir . '/ws.js', ws_js(), LOCK_EX);
-    $items = array_values(array_filter(ws_lijst(), 'ws_zichtbaar'));
-    usort($items, function($a, $b) { return [(int)($a['volg'] ?? 0), (string)($a['cat'] ?? ''), (string)$a['naam']] <=> [(int)($b['volg'] ?? 0), (string)($b['cat'] ?? ''), (string)$b['naam']]; });
+    /* een product mag niet hetzelfde adres hebben als een categorie */
+    $cs = []; foreach (ws_categorieen(false) as $c) { $cs[$c['slug']] = 1; }
+    $alle = ws_lijst(); $aangepast = false;
+    foreach ($alle as $k => $p) { if (isset($cs[$p['slug'] ?? ''])) { $alle[$k]['slug'] = ws_uniek_slug($p['naam'] . ' product', $p['id'], $alle); $aangepast = true; } }
+    if ($aangepast) ws_bewaar($alle);
+    $items = ws_gesorteerd();
+    $cats = ws_categorieen();
     schrijf_pagina($dir, stijl_pagina(render_ws_lijst($in, $items)));
     $kop = function($diepte) { return '<?php $ffp = dirname(__DIR__, ' . $diepte . ') . ' . "'/licentie.php'; if (is_file(\$ffp)) { require \$ffp; } ?>"; };
     $houd = ['winkelwagen' => 1, 'bedankt' => 1, 'voorwaarden' => 1];
@@ -4430,6 +4521,14 @@ function write_webshop_pages() {
         file_put_contents($dir . '/' . $sl . '/index.php', $kop(2) . stijl_pagina($html), LOCK_EX);
     }
     if ($in['voorwaarden'] === '' && is_dir($dir . '/voorwaarden')) ab_rm_map($dir . '/voorwaarden');
+    if (count($cats) >= 1) {
+        foreach ($cats as $c) {
+            $d = $dir . '/' . $c['slug'];
+            if (!is_dir($d)) mkdir($d, 0755, true);
+            file_put_contents($d . '/index.php', $kop(2) . stijl_pagina(render_ws_cat($in, $c, $cats)), LOCK_EX);
+            $houd[$c['slug']] = 1;
+        }
+    }
     foreach ($items as $p) {
         $d = $dir . '/' . $p['slug'];
         if (!is_dir($d)) mkdir($d, 0755, true);
@@ -4810,6 +4909,7 @@ function ws_terug($url, $tekst) { $_SESSION['ff_notice'] = $tekst; header('Locat
 function ws_uniek_slug($naam, $id, $lijst) {
     $base = substr(slugify($naam !== '' ? $naam : 'product') ?: 'product', 0, 60);
     if (in_array($base, ['winkelwagen', 'bedankt', 'voorwaarden', 'ws'], true)) $base .= '-product';
+    foreach ($lijst as $x) { if (trim((string)($x['cat'] ?? '')) !== '' && ws_cat_slug($x['cat']) === $base) { $base .= '-product'; break; } }
     $s = $base;
     foreach ($lijst as $x) { if (($x['slug'] ?? '') === $s && $x['id'] !== $id) { $s = $base . '-' . substr($id, -4); break; } }
     return $s;
@@ -4907,6 +5007,46 @@ function ws_acties($action) {
         ws_bewaar($lijst); rebuild_everything(load_pages());
         ws_terug('admin.php?webshop=1&t=producten', $naam !== '' ? $naam . ' is verwijderd.' : 'Niet gevonden.');
     }
+    if ($action === 'ws_p_volg') {
+        $lijst = ws_lijst(); $id = (string)($_POST['id'] ?? ''); $r = ($_POST['r'] ?? '') === 'op' ? -1 : 1; $cat = null;
+        foreach ($lijst as $x) { if ($x['id'] === $id) $cat = trim((string)($x['cat'] ?? '')); }
+        if ($cat !== null) {
+            $groep = array_values(array_filter($lijst, function($x) use ($cat) { return trim((string)($x['cat'] ?? '')) === $cat; })); ws_volg_sort($groep);
+            $ids = array_column($groep, 'id'); $i = array_search($id, $ids, true); $j = $i + $r;
+            if ($i !== false && $j >= 0 && $j < count($ids)) { $t = $ids[$i]; $ids[$i] = $ids[$j]; $ids[$j] = $t; }
+            $plek = array_flip($ids);
+            foreach ($lijst as $k => $x) { if (isset($plek[$x['id']])) $lijst[$k]['volg'] = ($plek[$x['id']] + 1) * 10; }
+            ws_bewaar($lijst); rebuild_everything(load_pages());
+        }
+        ws_terug('admin.php?webshop=1&t=producten#p-' . rawurlencode($id), 'Volgorde aangepast. Zo staat het nu ook op je website.');
+    }
+    if ($action === 'ws_cat_volg') {
+        $naam = (string)($_POST['cat'] ?? ''); $r = ($_POST['r'] ?? '') === 'op' ? -1 : 1;
+        $namen = array_column(ws_categorieen(false), 'naam'); $i = array_search($naam, $namen, true); $j = $i === false ? -1 : $i + $r;
+        if ($i !== false && $j >= 0 && $j < count($namen)) { $t = $namen[$i]; $namen[$i] = $namen[$j]; $namen[$j] = $t; }
+        $meta = ws_cat_meta(); foreach ($namen as $n => $c) { $meta[(string)$c]['volg'] = ($n + 1) * 10; }
+        write_json(WS_CATS, $meta); rebuild_everything(load_pages());
+        ws_terug('admin.php?webshop=1&t=categorieen', "Volgorde van de categorie\u{eb}n aangepast.");
+    }
+    if ($action === 'ws_cat_save') {
+        $oud = (string)($_POST['cat'] ?? ''); $nieuw = cut(trim(preg_replace('/\s+/', ' ', (string)($_POST['naam'] ?? ''))), 40);
+        if ($oud === '' || $nieuw === '') ws_terug('admin.php?webshop=1&t=categorieen', 'Een categorie moet een naam hebben.');
+        $meta = ws_cat_meta(); $m = $meta[$oud] ?? [];
+        $m['tekst'] = cut(trim(str_replace("\r\n", "\n", (string)($_POST['tekst'] ?? ''))), 600);
+        $map = UPLOAD_DIR . '/webshop/_cat'; $fouten = [];
+        if (!empty($_POST['foto_weg']) && !empty($m['foto'])) { @unlink($map . '/' . basename($m['foto'])); $m['foto'] = ''; }
+        if (!empty($_FILES['foto']) && $_FILES['foto']['error'] !== UPLOAD_ERR_NO_FILE) {
+            if ($_FILES['foto']['error'] !== UPLOAD_ERR_OK) { $fouten[] = upload_error_text($_FILES['foto']['error'], $_FILES['foto']['name']); }
+            else { ensure_upload_dir(); $f = save_one_image($_FILES['foto']['tmp_name'], $_FILES['foto']['name'], $map, '', $fouten); if ($f !== '') { if (!empty($m['foto'])) @unlink($map . '/' . basename($m['foto'])); $m['foto'] = $f; } }
+        }
+        unset($meta[$oud]);
+        if ($nieuw !== $oud) {
+            if (isset($meta[$nieuw])) { $m = array_merge($meta[$nieuw], array_filter($m, function($v) { return $v !== '' && $v !== null; })); }
+            $lijst = ws_lijst(); foreach ($lijst as $k => $x) { if (trim((string)($x['cat'] ?? '')) === $oud) $lijst[$k]['cat'] = $nieuw; } ws_bewaar($lijst);
+        }
+        $meta[$nieuw] = $m; write_json(WS_CATS, $meta); rebuild_everything(load_pages());
+        ws_terug('admin.php?webshop=1&t=categorieen', 'Opgeslagen: ' . $nieuw . '.' . ($nieuw !== $oud ? ' Alle producten uit ' . $oud . ' staan nu onder ' . $nieuw . '.' : '') . ($fouten ? ' ' . implode(' ', $fouten) : ''));
+    }
     if ($action === 'ws_pstatus') {
         $lijst = ws_lijst(); $id = (string)($_POST['id'] ?? ''); $st = (string)($_POST['status'] ?? '');
         foreach ($lijst as $k => $x) { if ($x['id'] === $id && in_array($st, ['actief', 'uit', 'verborgen'], true)) $lijst[$k]['status'] = $st; }
@@ -4963,13 +5103,13 @@ function ws_acties($action) {
 function ws_tabs($t) {
     $n = ws_nieuw_aantal();
     echo '<div class="ws-tabs">';
-    foreach (['bestellingen' => 'Bestellingen' . ($n ? ' <b class="ws-tel">' . $n . '</b>' : ''), 'producten' => 'Producten', 'instellen' => 'Instellen'] as $k => $l) { echo '<a href="admin.php?webshop=1' . ($k !== 'bestellingen' ? '&t=' . $k : '') . '"' . ($t === $k ? ' class="on"' : '') . '>' . $l . '</a>'; }
+    foreach (['bestellingen' => 'Bestellingen' . ($n ? ' <b class="ws-tel">' . $n . '</b>' : ''), 'producten' => 'Producten', 'categorieen' => 'Categorie&euml;n', 'instellen' => 'Instellen'] as $k => $l) { echo '<a href="admin.php?webshop=1' . ($k !== 'bestellingen' ? '&t=' . $k : '') . '"' . ($t === $k ? ' class="on"' : '') . '>' . $l . '</a>'; }
     echo '</div>';
 }
 function ws_beheer_view() {
     global $WS_STATUS;
     $in = ws_inst();
-    $t = in_array($_GET['t'] ?? '', ['producten', 'instellen'], true) ? $_GET['t'] : 'bestellingen';
+    $t = in_array($_GET['t'] ?? '', ['producten', 'categorieen', 'instellen'], true) ? $_GET['t'] : 'bestellingen';
     if (isset($_GET['b'])) $t = 'bestellingen';
     ?>
     <style>
@@ -5015,6 +5155,12 @@ function ws_beheer_view() {
       .ws-voorbeeld label{display:block;font-weight:700;font-size:14px;margin:8px 0 4px;}
       .ws-voorbeeld select{max-width:320px;}
       .ws-vbplek{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-top:8px;font-size:14px;}
+      .ws-gk{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin:18px 0 2px;font-size:15px;} .ws-gk:first-child{margin-top:0;} .ws-gk a{font-size:13.5px;color:#1d4ed8;font-weight:600;}
+      .ws-pijl{display:inline-flex;gap:2px;} .ws-pijl form{margin:0;} .ws-pijl button{width:32px;height:32px;border:1px solid var(--line);background:#fff;border-radius:8px;cursor:pointer;font-size:15px;line-height:1;color:var(--text);} .ws-pijl button:hover:not(:disabled){border-color:#2f6bff;color:#2f6bff;} .ws-pijl button:disabled{opacity:.3;cursor:default;}
+      .ws-cr{display:grid;grid-template-columns:auto 120px 1fr;gap:16px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px;max-width:980px;margin:0 0 10px;}
+      .ws-cr .ws-pijl{flex-direction:column;} .ws-cr .tn{width:120px;aspect-ratio:4/3;border-radius:10px;object-fit:cover;background:#eef1f6;display:block;}
+      .ws-cr .field{margin-bottom:10px;} .ws-cr h3{margin:0 0 8px;font-size:17px;}
+      @media (max-width:700px){.ws-cr{grid-template-columns:auto 1fr;} .ws-cr .tn{width:100%;} .ws-cr > div:last-child{grid-column:1 / -1;}}
     </style>
     <h1>Webshop</h1>
     <p class="sub">Verkoop je producten online. Je klanten betalen met iDEAL of een andere betaalmethode, via je eigen Mollie-account. Het geld komt rechtstreeks bij jou binnen.</p>
@@ -5024,6 +5170,7 @@ function ws_beheer_view() {
     elseif ($in['aan'] && !ws_mollie_ok($in['mollie']) && $t !== 'instellen') echo '<div class="ok">Online betalen staat nog niet aan. Klanten kunnen wel bestellen, maar jij moet de betaling dan zelf regelen. <a href="admin.php?webshop=1&amp;t=instellen#mollie">Koppel Mollie</a>.</div>';
     if ($t === 'instellen') { ws_view_instellen($in); return; }
     if ($t === 'producten') { ws_view_producten($in); return; }
+    if ($t === 'categorieen') { ws_view_categorieen($in); return; }
     ws_view_bestellingen($in);
 }
 function ws_view_instellen($in) {
@@ -5069,6 +5216,32 @@ function ws_view_instellen($in) {
       <div style="margin-top:6px"><button class="btn" type="submit">Opslaan en website bijwerken</button></div>
     </form>
     <?php
+}
+function ws_view_categorieen($in) {
+    $cats = ws_categorieen(false);
+    ?>
+    <div class="ws-uitleg" style="max-width:980px;margin-bottom:16px">
+      <strong>Zo werken categorie&euml;n.</strong> Geef een product bij <em>Producten</em> een categorie, bijvoorbeeld <code>Broeken</code>, <code>Truien</code> of <code>Petten</code>. Elke categorie krijgt dan vanzelf een eigen pagina op je website, met een eigen adres (zoals <code>/webshop/broeken/</code>). Heb je 2 of meer categorie&euml;n, dan begint je webshop met een tegel per categorie.<br /><br />
+      Hieronder kies je de volgorde, een korte tekst en eventueel een eigen foto voor de tegel. Zonder eigen foto gebruiken we de foto van het eerste product. Pas je hier de naam aan, dan verhuizen alle producten mee.
+    </div>
+    <?php if (!$cats): ?><div class="formcard"><p class="sub" style="margin:0">Nog geen categorie&euml;n. Open een product bij <a href="admin.php?webshop=1&amp;t=producten">Producten</a> en vul bij <strong>Categorie</strong> een naam in.</p></div><?php return; endif;
+    foreach ($cats as $i => $c): ?>
+      <div class="ws-cr">
+        <span class="ws-pijl"><?php foreach (['op' => ['&uarr;', 'Hoger zetten', $i === 0], 'neer' => ['&darr;', 'Lager zetten', $i === count($cats) - 1]] as $rk => $rv): ?><form method="post"><input type="hidden" name="action" value="ws_cat_volg" /><input type="hidden" name="cat" value="<?= h($c['naam']) ?>" /><input type="hidden" name="r" value="<?= $rk ?>" /><button type="submit" title="<?= $rv[1] ?>" aria-label="<?= h($c['naam']) . ': ' . $rv[1] ?>" <?= $rv[2] ? 'disabled' : '' ?>><?= $rv[0] ?></button></form><?php endforeach; ?></span>
+        <?= $c['foto'] !== '' ? '<img class="tn" src="' . h($c['foto']) . '" alt="" />' : '<span class="tn"></span>' ?>
+        <div>
+          <form method="post" enctype="multipart/form-data">
+            <input type="hidden" name="action" value="ws_cat_save" /><input type="hidden" name="cat" value="<?= h($c['naam']) ?>" />
+            <h3><?= h($c['naam']) ?> <span class="ws-mini">&middot; <?= $c['n'] ?> <?= $c['n'] === 1 ? 'product' : 'producten' ?> &middot; <a href="<?= h(site_url() . '/webshop/' . $c['slug'] . '/') ?>" target="_blank" rel="noopener">/webshop/<?= h($c['slug']) ?>/</a></span></h3>
+            <div class="field"><label for="cn<?= $i ?>">Naam</label><input type="text" id="cn<?= $i ?>" name="naam" maxlength="40" value="<?= h($c['naam']) ?>" /></div>
+            <div class="field"><label for="ct<?= $i ?>">Korte tekst bovenaan de pagina (mag leeg)</label><textarea id="ct<?= $i ?>" name="tekst" rows="2" maxlength="600" style="min-height:64px;height:64px" placeholder="Bijvoorbeeld: Sterke werkbroeken, ook met je eigen logo."><?= h($c['tekst']) ?></textarea></div>
+            <div class="field"><label for="cf<?= $i ?>">Eigen foto voor de tegel (mag leeg)</label><input type="file" id="cf<?= $i ?>" name="foto" accept="image/*" />
+              <?php if ($c['eigen_foto'] !== ''): ?><label class="check" style="margin-top:6px"><input type="checkbox" name="foto_weg" value="1" /> <span>Eigen foto weghalen</span></label><?php endif; ?></div>
+            <button class="btn sm" type="submit">Opslaan</button>
+          </form>
+        </div>
+      </div>
+    <?php endforeach;
 }
 function ws_view_producten($in) {
     $lijst = ws_lijst(); $id = (string)($_GET['id'] ?? ''); $nieuw = isset($_GET['nieuw']);
@@ -5158,17 +5331,24 @@ function ws_view_producten($in) {
     <p class="ws-acties"><a class="btn" href="admin.php?webshop=1&amp;t=producten&amp;nieuw=1">+ Nieuw product</a></p>
     <?php if (!$lijst): ?><div class="formcard"><p class="sub" style="margin:0">Nog geen producten. Voeg er een toe, of laad ze in een keer in uit Excel.</p></div><?php endif; ?>
     <div class="ws-l">
-    <?php usort($lijst, function($a, $b) { return [(string)($a['cat'] ?? ''), (string)$a['naam']] <=> [(string)($b['cat'] ?? ''), (string)$b['naam']]; });
-    foreach ($lijst as $p): $f = $p['fotos'][0] ?? ''; ?>
-      <div class="ws-p">
+    <?php
+    $groepen = []; foreach (ws_categorieen(false) as $c) { $groepen[] = [$c['naam'], $c['items']]; }
+    $los = array_values(array_filter($lijst, function($p) { return trim((string)($p['cat'] ?? '')) === ''; })); ws_volg_sort($los);
+    if ($los) $groepen[] = ['', $los];
+    $metKop = count($groepen) > 1 || ($groepen && $groepen[0][0] !== '');
+    foreach ($groepen as $g):
+      if ($metKop) echo '<div class="ws-gk"><b>' . ($g[0] !== '' ? h($g[0]) : 'Zonder categorie') . ' <span class="ws-mini">(' . count($g[1]) . ')</span></b>' . ($g[0] !== '' ? '<a href="admin.php?webshop=1&amp;t=categorieen">Categorie aanpassen</a>' : '') . '</div>';
+      foreach ($g[1] as $pi => $p): $f = $p['fotos'][0] ?? ''; ?>
+      <div class="ws-p" id="p-<?= h($p['id']) ?>">
         <?= $f !== '' ? '<img src="' . h(ws_foto_url($p, $f)) . '" alt="" />' : '<span class="ph"></span>' ?>
         <div><b><?= h($p['naam']) ?></b><small><?= h(implode(" \u{b7} ", array_filter([(string)($p['cat'] ?? ''), ws_eur((int)$p['prijs']), ($p['voorraad'] ?? '') !== '' ? 'voorraad ' . (int)$p['voorraad'] : '', ws_plekken($p['opdruk'] ?? '') ? 'met opdruk' : '']))) ?></small></div>
         <div class="acts">
+          <?php if (count($g[1]) > 1): ?><span class="ws-pijl"><?php foreach (['op' => ['&uarr;', 'Hoger zetten', $pi === 0], 'neer' => ['&darr;', 'Lager zetten', $pi === count($g[1]) - 1]] as $rk => $rv): ?><form method="post"><input type="hidden" name="action" value="ws_p_volg" /><input type="hidden" name="id" value="<?= h($p['id']) ?>" /><input type="hidden" name="r" value="<?= $rk ?>" /><button type="submit" title="<?= $rv[1] ?>" aria-label="<?= h($p['naam']) . ': ' . $rv[1] ?>" <?= $rv[2] ? 'disabled' : '' ?>><?= $rv[0] ?></button></form><?php endforeach; ?></span><?php endif; ?>
           <form method="post"><input type="hidden" name="action" value="ws_pstatus" /><input type="hidden" name="id" value="<?= h($p['id']) ?>" /><select name="status" onchange="this.form.submit()" aria-label="Status"><?php foreach (['actief' => 'Te koop', 'uit' => 'Uitverkocht', 'verborgen' => 'Verborgen'] as $s => $l): ?><option value="<?= $s ?>" <?= ($p['status'] ?? 'actief') === $s ? 'selected' : '' ?>><?= $l ?></option><?php endforeach; ?></select></form>
           <a class="btn ghost sm" href="admin.php?webshop=1&amp;t=producten&amp;id=<?= h(rawurlencode($p['id'])) ?>">Bewerken</a>
         </div>
       </div>
-    <?php endforeach; ?>
+    <?php endforeach; endforeach; ?>
     </div>
     <form class="formcard" id="inladen" method="post" enctype="multipart/form-data" style="margin-top:22px">
       <input type="hidden" name="action" value="ws_import" />
@@ -12492,6 +12672,7 @@ function venturo_html() {
 <div class="vt-v"><h5>Wat is het verschil tussen Aanbod en de webshop?</h5><p>Bij Aanbod laat je auto's of producten zien, maar de klant kan niet online bestellen. In de webshop kan de klant bestellen en meteen betalen.</p></div>
 <div class="vt-v"><h5>Hoe zet ik de webshop aan?</h5><p>Klik links op Webshop en dan bovenaan op Instellen. Vink Webshop op mijn website zetten aan en klik op Opslaan en website bijwerken. Er staat dan een knop Webshop in het menu van je website.</p></div>
 <div class="vt-v"><h5>Hoe voeg ik een product toe?</h5><p>Klik bij Webshop op Producten en dan op Nieuw product. Alleen een naam en een prijs zijn nodig. Voeg foto's toe en klik op Opslaan en website bijwerken. Het product staat dan meteen in je webshop.</p></div>
+<div class="vt-v"><h5>Hoe maak ik categorie&#235;n, zoals broeken, truien en petten?</h5><p>Open een product bij Webshop, tabblad Producten, en vul bij Categorie een naam in, bijvoorbeeld Broeken. Doe dat bij elk product. Elke categorie krijgt vanzelf een eigen pagina op je website, zoals /webshop/broeken/. Heb je 2 of meer categorie&#235;n, dan begint je webshop met een tegel per categorie. Bij het tabblad Categorie&#235;n kies je de volgorde met de pijltjes, schrijf je een korte tekst en kun je een eigen foto voor de tegel kiezen. Pas je daar de naam aan, dan verhuizen alle producten mee. De volgorde van de producten binnen een categorie zet je bij Producten met de pijltjes.</p></div>
 <div class="vt-v"><h5>Wat vul ik in bij Keuzes?</h5><p>Bij Keuzes zet je wat de koper moet kiezen, zoals een maat, een kleur of de inhoud van een pot verf. Per regel 1 keuze: eerst de naam, dan een dubbele punt, dan de mogelijkheden met een komma ertussen. Bijvoorbeeld Maat: S, M, L, XL. De koper kiest dan uit een keuzemenu. Kost een mogelijkheid meer, zet er dan een plus en het bedrag achter, zoals XXL +2,00. Onder het veld zie je meteen hoe het eruitziet. Heeft je product geen keuzes, laat het veld dan leeg.</p></div>
 <div class="vt-v"><h5>Wat vul ik in bij Opdruk?</h5><p>Alleen als je het product bedrukt met het logo of de tekst van de koper, zoals een T-shirt, pet of mok. Per regel zet je een plek met de grootste maat in centimeters, bijvoorbeeld Voorkant: 25 x 30 cm. De koper kiest de plek en uploadt zijn ontwerp. Verkoop je gewone producten, laat het veld dan leeg.</p></div>
 <div class="vt-v"><h5>Hoe weet ik of het logo van de koper goed genoeg is om te drukken?</h5><p>De webshop kijkt dat na terwijl de koper uploadt. Is de afbeelding te klein voor de opdruk, dan ziet de koper een waarschuwing met hoe groot het bestand moet zijn. Wil hij toch bestellen, dan moet hij dat eerst aanvinken. Heeft het logo een witte achtergrond, dan kan de koper die laten weghalen. Bij de bestelling zie jij de uitkomst van de controle en download je het originele bestand en de versie zonder achtergrond.</p></div>
@@ -12659,7 +12840,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-11-10-webshop3');
+define('SITE_BOUW', '2026-11-11-categorie');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
