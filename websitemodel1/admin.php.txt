@@ -12526,7 +12526,7 @@ function venturo_html() {
 <div class="vt-paneel" id="vtPaneel" role="dialog" aria-label="Venturo" hidden>
 <div class="vt-kop"><svg class="vt-av" viewBox="0 0 40 40" aria-hidden="true"><rect width="40" height="40" rx="13" fill="#2f6fed"/><path d="M21.2 5.5 17.6 11h2.6l-.6 3.8 4-5.6h-2.6l.2-3.7Z" fill="#fff" fill-opacity=".85"/><rect x="12" y="17" width="5" height="8.5" rx="2.5" fill="#fff"/><rect x="23" y="17" width="5" height="8.5" rx="2.5" fill="#fff"/><path d="M14.6 29.2c3.2 2.6 7.6 2.6 10.8 0" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></svg><div class="vt-naam"><strong>Venturo</strong><small>AI-ontwikkelaar van FormForge</small></div><button type="button" class="vt-top" aria-label="Opnieuw beginnen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4"/></svg></button><button type="button" class="vt-dicht" aria-label="Sluiten">&times;</button></div>
 <div class="vt-log" aria-live="polite"></div>
-<div class="vt-voet">Vaste antwoorden, samengesteld door Ben en Venturo.</div>
+<div class="vt-voet">Vaste antwoorden, samengesteld door FormForge en Venturo.</div>
 </div>
 <div class="vt-data" hidden>
 <p class="vt-groet">Hoi, ik ben Venturo, de AI-ontwikkelaar van FormForge. Ik heb de antwoorden op de meest gestelde vragen over je beheerpagina en je administratie voor je klaargezet.</p>
@@ -12537,7 +12537,7 @@ function venturo_html() {
 <p class="vt-l-terug">Terug naar de onderwerpen</p>
 <p class="vt-l-ander-deel">Iets anders: website of administratie</p>
 <p class="vt-l-mail">Staat je vraag er niet tussen?</p>
-<p class="vt-mailtekst">Mail je vraag naar info@formforge.nl. Ben reageert op werkdagen binnen 24 uur, tussen 07.00 en 19.00 uur.</p>
+<p class="vt-mailtekst">Mail je vraag naar info@formforge.nl. We reageren op werkdagen binnen 24 uur, tussen 07.00 en 19.00 uur.</p>
 <a class="vt-mailknop" href="mailto:info@formforge.nl">Mail je vraag</a>
 <div class="vt-g"><h3>Je website aanpassen</h3>
 <div class="vt-o"><h4>Inloggen en de weg vinden</h4>
