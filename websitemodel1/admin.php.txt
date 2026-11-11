@@ -5736,10 +5736,21 @@ function ws_bestand_sturen() {
     readfile($pad); exit;
 }
 /* Excel-sjabloon voor de webshop: een echt .xlsx-bestand met een blad Producten en een blad Uitleg */
-function ws_voorbeeld_xlsx() {
+function ws_mijn_xlsx() {
+    /* Al je producten in hetzelfde Excel-sjabloon: aanpassen in Excel en weer inladen */
+    $rijen = [];
+    foreach (ws_gesorteerd() as $p) {
+        $vr = ($p['voorraad'] ?? '') === '' || $p['voorraad'] === null ? '' : (int)$p['voorraad'];
+        $rijen[] = [(string)$p['naam'], (string)($p['cat'] ?? ''), round(((int)$p['prijs']) / 100, 2), (int)($p['btw'] ?? 21), $vr, (string)($p['tekst'] ?? ''),
+                    str_replace("\n", ' | ', trim(str_replace("\r\n", "\n", (string)($p['opties'] ?? '')))), str_replace("\n", ' | ', trim(str_replace("\r\n", "\n", (string)($p['opdruk'] ?? ''))))];
+    }
+    foreach (ws_lijst() as $p) { if (!ws_zichtbaar($p)) { $rijen[] = [(string)$p['naam'], (string)($p['cat'] ?? ''), round(((int)$p['prijs']) / 100, 2), (int)($p['btw'] ?? 21), ($p['voorraad'] ?? '') === '' || $p['voorraad'] === null ? '' : (int)$p['voorraad'], (string)($p['tekst'] ?? ''), str_replace("\n", ' | ', trim((string)($p['opties'] ?? ''))), str_replace("\n", ' | ', trim((string)($p['opdruk'] ?? '')))]; } }
+    ws_voorbeeld_xlsx($rijen, 'mijn-webshop-producten-' . date('Y-m-d') . '.xlsx');
+}
+function ws_voorbeeld_xlsx($eigen = null, $bestandsnaam = 'webshop-producten.xlsx') {
     if (!class_exists('ZipArchive')) ws_voorbeeld_csv();
     $kop = ['Naam', 'Categorie', 'Prijs', 'Btw', 'Voorraad', 'Omschrijving', 'Opties', 'Opdruk'];
-    $rijen = [
+    $rijen = $eigen !== null ? $eigen : [
         ['Muurverf mat wit', 'Muurverf', 24.95, 21, 40, 'Goed dekkende, afwasbare muurverf voor binnen. Mat, bijna geurloos.', 'Inhoud: 2,5 liter, 5 liter +18,00, 10 liter +39,00 | Kleur: Wit, Gebroken wit, Zandkleur', ''],
         ['Kwast plat 50 mm', 'Kwasten', 7.95, 21, '', 'Platte kwast voor lak en beits.', '', ''],
         ['T-shirt met eigen opdruk', 'Kleding', 15, 21, '', 'Katoenen T-shirt, bedrukt met uw logo.', 'Maat: S, M, L, XL, XXL +2,00 | Kleur: Wit, Zwart, Navy', 'Voorkant: 25 x 30 cm | Rug: 30 x 40 cm +5,00'],
@@ -5796,7 +5807,7 @@ function ws_voorbeeld_xlsx() {
     $z->close();
     if (function_exists('adm_schoon_uitvoer')) adm_schoon_uitvoer();
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    header('Content-Disposition: attachment; filename="webshop-producten.xlsx"');
+    header('Content-Disposition: attachment; filename="' . $bestandsnaam . '"');
     header('Content-Length: ' . filesize($tmp));
     readfile($tmp); @unlink($tmp); exit;
 }
@@ -6016,14 +6027,14 @@ function ws_acties($action) {
                 if (isset($kolom['btw'])) $q['btw'] = in_array((int)$w('btw'), [21, 9, 0], true) && $w('btw') !== '' ? (int)$w('btw') : 21;
                 if (isset($kolom['voorraad'])) $q['voorraad'] = $w('voorraad') === '' ? '' : max(0, (int)$w('voorraad'));
                 if (isset($kolom['tekst'])) $q['tekst'] = cut($w('tekst'), 6000);
-                if (isset($kolom['opties'])) $q['opties'] = cut(str_replace('|', "\n", $w('opties')), 3000);
-                if (isset($kolom['opdruk'])) $q['opdruk'] = cut(str_replace('|', "\n", $w('opdruk')), 1500);
+                if (isset($kolom['opties'])) $q['opties'] = cut(preg_replace('/\s*\|\s*/', "\n", $w('opties')), 3000);
+                if (isset($kolom['opdruk'])) $q['opdruk'] = cut(preg_replace('/\s*\|\s*/', "\n", $w('opdruk')), 1500);
                 $q['gewijzigd'] = date('Y-m-d H:i:s'); $lijst[$li] = $q; $bij++;
                 continue;
             }
             $x = ['id' => bin2hex(random_bytes(5)), 'aangemaakt' => date('Y-m-d H:i:s'), 'fotos' => [], 'status' => 'actief', 'naam' => cut($w('naam'), 120), 'cat' => cut($w('cat'), 40), 'prijs' => ab_prijs_in($w('prijs')),
                   'btw' => in_array((int)$w('btw'), [21, 9, 0], true) && $w('btw') !== '' ? (int)$w('btw') : 21, 'voorraad' => $w('voorraad') === '' ? '' : max(0, (int)$w('voorraad')), 'tekst' => cut($w('tekst'), 6000),
-                  'opties' => cut(str_replace('|', "\n", $w('opties')), 3000), 'opdruk' => cut(str_replace('|', "\n", $w('opdruk')), 1500)];
+                  'opties' => cut(preg_replace('/\s*\|\s*/', "\n", $w('opties')), 3000), 'opdruk' => cut(preg_replace('/\s*\|\s*/', "\n", $w('opdruk')), 1500)];
             $x['slug'] = ws_uniek_slug($x['naam'], $x['id'], $lijst);
             $lijst[] = $x; $opNaam[$sl] = count($lijst) - 1; $n++;
         }
@@ -6510,7 +6521,7 @@ function ws_view_producten($in) {
         return;
     endif;
     ?>
-    <p class="ws-acties"><a class="btn" href="admin.php?webshop=1&amp;t=producten&amp;nieuw=1">+ Nieuw product</a></p>
+    <p class="ws-acties"><a class="btn" href="admin.php?webshop=1&amp;t=producten&amp;nieuw=1">+ Nieuw product</a> <?php if (ws_lijst()): ?><a class="btn ghost" href="admin.php?webshop=1&amp;voorbeeld=mijn">Producten downloaden (Excel)</a> <?php else: ?><a class="btn ghost" href="admin.php?webshop=1&amp;voorbeeld=1">Excel-sjabloon downloaden</a> <?php endif; ?><a class="btn ghost" href="#inladen">Excel inladen</a></p>
     <?php if (!$lijst): ?><div class="formcard"><p class="sub" style="margin:0">Nog geen producten. Voeg er een toe, of laad ze in een keer in uit Excel.</p></div><?php endif; ?>
     <div class="ws-l">
     <?php
@@ -6536,7 +6547,7 @@ function ws_view_producten($in) {
       <input type="hidden" name="action" value="ws_import" />
       <h2 style="font-size:18px;margin:0 0 8px">Veel producten tegelijk inladen</h2>
       <div class="ws-uitleg" style="margin:0 0 12px"><strong>Zo werkt het:</strong><br />
-        1. <a href="admin.php?webshop=1&amp;voorbeeld=1" style="font-weight:700">Download het Excel-sjabloon</a>. Daarin staan de kopjes al klaar, met een paar voorbeelden en een blad <strong>Uitleg</strong>.<br />
+        1. <a href="admin.php?webshop=1&amp;voorbeeld=1" style="font-weight:700">Download het Excel-sjabloon</a>. Daarin staan de kopjes al klaar, met een paar voorbeelden en een blad <strong>Uitleg</strong>.<?php if (ws_lijst()): ?> Of <a href="admin.php?webshop=1&amp;voorbeeld=mijn" style="font-weight:700">download al je producten als Excel</a> om ze in Excel aan te passen.<?php endif; ?><br />
         2. Open het in Excel (of Google Spreadsheets of Numbers) en zet per regel 1 product, met de <strong>Categorie</strong> erbij. Elke categorie krijgt vanzelf een eigen pagina.<br />
         3. Sla het op als Excel-bestand (.xlsx) en kies het hieronder. Klik op Inladen.<br />
         Laad je het later nog eens in, dan worden producten met dezelfde naam bijgewerkt en niet dubbel gezet. Je foto's blijven staan.</div>
@@ -14475,7 +14486,7 @@ $showVer = $logged_in && isset($_GET['versies']);
 $showWc = $logged_in && isset($_GET['worldchat']);
 $showWs = $logged_in && isset($_GET['webshop']);
 if ($logged_in && isset($_GET['ws_bestand'])) { ws_bestand_sturen(); }
-if ($showWs && isset($_GET['voorbeeld'])) { if (($_GET['voorbeeld'] ?? '') === 'csv') ws_voorbeeld_csv(); ws_voorbeeld_xlsx(); }
+if ($showWs && isset($_GET['voorbeeld'])) { if (($_GET['voorbeeld'] ?? '') === 'csv') ws_voorbeeld_csv(); if (($_GET['voorbeeld'] ?? '') === 'mijn') ws_mijn_xlsx(); ws_voorbeeld_xlsx(); }
 /* Terug van de betaalpagina: betaling direct bijboeken en de chatknop aanzetten. */
 if ($showWc && empty($is_demo) && isset($_GET['sessie']) && preg_match('/^cs_[A-Za-z0-9_]+$/', (string)$_GET['sessie'])) {
     $wcNa = wc_status((string)$_GET['sessie']);
