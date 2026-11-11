@@ -3834,6 +3834,27 @@ function ws_inst() {
 }
 /* ---------- Opbouw van de webshop: kop, blokken, indeling, kleuren en vormen ---------- */
 define('WS_OPBOUW', DATA_DIR . '/ws_opbouw.json');
+/* Lettertypes voor de webshop (Google Fonts). Leeg = hetzelfde als de website. */
+function ws_fonts() {
+    return ['' => ['Zelfde als de website', ''], 'inter' => ['Inter', 'Inter:wght@400;600;800'], 'poppins' => ['Poppins', 'Poppins:wght@400;600;800'], 'montserrat' => ['Montserrat', 'Montserrat:wght@400;600;800'],
+            'roboto' => ['Roboto', 'Roboto:wght@400;700;900'], 'lato' => ['Lato', 'Lato:wght@400;700;900'], 'nunito' => ['Nunito', 'Nunito:wght@400;700;900'], 'source' => ['Source Sans 3', 'Source+Sans+3:wght@400;600;800'],
+            'oswald' => ['Oswald', 'Oswald:wght@500;700'], 'fredoka' => ['Fredoka', 'Fredoka:wght@500;700'], 'space' => ['Space Grotesk', 'Space+Grotesk:wght@500;700'],
+            'playfair' => ['Playfair Display', 'Playfair+Display:wght@600;800'], 'cormorant' => ['Cormorant Garamond', 'Cormorant+Garamond:wght@600;700'], 'merriweather' => ['Merriweather', 'Merriweather:wght@700;900'], 'dmserif' => ['DM Serif Display', 'DM+Serif+Display']];
+}
+/* Complete looks met 1 klik. Daarna kan de winkelier alles nog aanpassen. */
+function ws_stijlen() {
+    return [
+        'modern' => ['Modern', 'Strak en fris, zwevende kaarten', ['kop_stijl' => 'donker', 'kop_uitlijn' => 'links', 'kolommen' => 3, 'beeld' => 'liggend', 'vulling' => 'passend', 'cats_als' => 'tegels', 'hoek' => 'rond', 'schaduw' => 1, 'achtergrond' => 'licht', 'fotogrond' => 'wit', 'kaart' => 'zwevend', 'accent' => '', 'font_kop' => '', 'font_tekst' => '', 'pp_foto' => 'links']],
+        'boetiek' => ['Boetiek', 'Rustig en stijlvol, staande foto\'s', ['kop_stijl' => 'licht', 'kop_uitlijn' => 'midden', 'kolommen' => 3, 'beeld' => 'staand', 'vulling' => 'vullend', 'cats_als' => 'knoppen', 'hoek' => 'recht', 'schaduw' => 0, 'achtergrond' => 'wit', 'fotogrond' => 'licht', 'kaart' => 'zwevend', 'accent' => '#8a6d5a', 'font_kop' => 'playfair', 'font_tekst' => 'lato', 'pp_foto' => 'links']],
+        'bouwmarkt' => ['Bouwmarkt', 'Veel producten, duidelijk en stevig', ['kop_stijl' => 'donker', 'kop_uitlijn' => 'links', 'kolommen' => 4, 'beeld' => 'vierkant', 'vulling' => 'passend', 'cats_als' => 'tegels', 'hoek' => 'klein', 'schaduw' => 1, 'achtergrond' => 'licht', 'fotogrond' => 'wit', 'kaart' => 'rand', 'accent' => '#ea580c', 'font_kop' => 'oswald', 'font_tekst' => 'roboto', 'pp_foto' => 'links', 'aan' => ['zoeken', 'voordelen']]],
+        'minimaal' => ['Minimaal', 'Veel wit, alleen het product telt', ['kop_stijl' => 'licht', 'kop_uitlijn' => 'links', 'kolommen' => 4, 'beeld' => 'vierkant', 'vulling' => 'passend', 'cats_als' => 'knoppen', 'hoek' => 'recht', 'schaduw' => 0, 'achtergrond' => 'wit', 'fotogrond' => 'licht', 'kaart' => 'zwevend', 'accent' => '#111111', 'font_kop' => 'inter', 'font_tekst' => 'inter', 'pp_foto' => 'links']],
+        'donker' => ['Donker', 'Donkere achtergrond, producten springen eruit', ['kop_stijl' => 'donker', 'kop_uitlijn' => 'midden', 'kolommen' => 3, 'beeld' => 'vierkant', 'vulling' => 'passend', 'cats_als' => 'tegels', 'hoek' => 'rond', 'schaduw' => 1, 'achtergrond' => 'donker', 'fotogrond' => 'wit', 'kaart' => 'rand', 'accent' => '#38bdf8', 'font_kop' => 'space', 'font_tekst' => 'inter', 'pp_foto' => 'links']],
+        'speels' => ['Speels', 'Vrolijk en rond, voor cadeaus en kinderen', ['kop_stijl' => 'licht', 'kop_uitlijn' => 'midden', 'kolommen' => 3, 'beeld' => 'vierkant', 'vulling' => 'passend', 'cats_als' => 'knoppen', 'hoek' => 'rond', 'schaduw' => 1, 'achtergrond' => 'licht', 'fotogrond' => 'licht', 'kaart' => 'zwevend', 'accent' => '#db2777', 'font_kop' => 'fredoka', 'font_tekst' => 'nunito', 'pp_foto' => 'links']],
+        'luxe' => ['Luxe', 'Groot, rustig en chic, tekst op de foto', ['kop_stijl' => 'donker', 'kop_uitlijn' => 'midden', 'kolommen' => 2, 'beeld' => 'staand', 'vulling' => 'vullend', 'cats_als' => 'tegels', 'hoek' => 'recht', 'schaduw' => 0, 'achtergrond' => 'wit', 'fotogrond' => 'licht', 'kaart' => 'overlay', 'accent' => '#a8865a', 'font_kop' => 'cormorant', 'font_tekst' => 'montserrat', 'pp_foto' => 'rechts']],
+        'ambacht' => ['Ambachtelijk', 'Warm en eerlijk, voor vakmanschap', ['kop_stijl' => 'licht', 'kop_uitlijn' => 'links', 'kolommen' => 3, 'beeld' => 'liggend', 'vulling' => 'vullend', 'cats_als' => 'tegels', 'hoek' => 'klein', 'schaduw' => 1, 'achtergrond' => 'warm', 'fotogrond' => 'licht', 'kaart' => 'rand', 'accent' => '#4d7c0f', 'font_kop' => 'merriweather', 'font_tekst' => 'source', 'pp_foto' => 'links']],
+        'catalogus' => ['Catalogus', 'Als lijst, handig bij veel artikelen', ['kop_stijl' => 'geen', 'kop_uitlijn' => 'links', 'kolommen' => 2, 'beeld' => 'vierkant', 'vulling' => 'passend', 'cats_als' => 'knoppen', 'hoek' => 'klein', 'schaduw' => 0, 'achtergrond' => 'wit', 'fotogrond' => 'wit', 'kaart' => 'lijst', 'accent' => '', 'font_kop' => '', 'font_tekst' => '', 'pp_foto' => 'links', 'aan' => ['zoeken']]],
+    ];
+}
 function ws_blokken_namen() { return ['kop' => 'Bovenkant met titel en tekst', 'voordelen' => 'Voordelen (bijvoorbeeld snelle levering)', 'zoeken' => 'Zoeken', 'categorieen' => 'Categorie&euml;n', 'uitgelicht' => 'Uitgelicht', 'nieuw' => 'Nieuw binnen', 'groepen' => 'Producten per categorie', 'alle' => 'Alle producten']; }
 function ws_opbouw($x = null) {
     $WS_BLOKKEN = ws_blokken_namen();
@@ -3867,7 +3888,13 @@ function ws_opbouw($x = null) {
         'accent' => preg_match('/^#[0-9a-f]{6}$/i', $acc) ? strtolower($acc) : '',
         'hoek' => $kies('hoek', ['rond', 'klein', 'recht'], 'rond'),
         'schaduw' => isset($x['schaduw']) ? !empty($x['schaduw']) : true,
-        'achtergrond' => $kies('achtergrond', ['licht', 'wit'], 'licht'),
+        'achtergrond' => $kies('achtergrond', ['licht', 'wit', 'warm', 'donker'], 'licht'),
+        'kaart' => $kies('kaart', ['rand', 'zwevend', 'overlay', 'lijst'], 'rand'),
+        'pp_foto' => $kies('pp_foto', ['links', 'rechts', 'boven'], 'links'),
+        'knop_tekst' => cut(trim((string)($x['knop_tekst'] ?? '')), 30) ?: 'In winkelwagen',
+        'font_kop' => isset(ws_fonts()[(string)($x['font_kop'] ?? '')]) ? (string)($x['font_kop'] ?? '') : '',
+        'font_tekst' => isset(ws_fonts()[(string)($x['font_tekst'] ?? '')]) ? (string)($x['font_tekst'] ?? '') : '',
+        'stijl' => isset(ws_stijlen()[(string)($x['stijl'] ?? '')]) ? (string)$x['stijl'] : '',
         'fotogrond' => $kies('fotogrond', ['wit', 'licht', 'donker'], 'wit'),
         'menu' => $kies('menu', ['eigen', 'website'], 'eigen'),
         'terug_tekst' => cut(trim((string)($x['terug_tekst'] ?? '')), 30) ?: 'Naar de website',
@@ -3898,7 +3925,24 @@ function ws_opbouw_css($o) {
     $grond = ['wit' => '#fff', 'licht' => '#f1f4f9', 'donker' => '#111'][$o['fotogrond']];
     $c .= 'main .ab-img,main .ab-groot{background:' . $grond . ';}';
     if ($o['vulling'] === 'passend') $c .= 'main .ab-kaart .ab-img img{object-fit:contain;padding:6%;box-sizing:border-box;}';
-    return $c . '</style>';
+    /* Productkaarten */
+    if ($o['kaart'] === 'zwevend') $c .= 'main .ab-kaart{border:0;background:transparent;box-shadow:none;overflow:visible;} main .ab-kaart .ab-img{border-radius:' . $r[0] . 'px;' . ($o['schaduw'] ? 'box-shadow:0 14px 30px -22px rgba(0,0,0,.45);' : '') . '} main .ab-kaart .ab-txt{padding:12px 2px 4px;} main .ab-kaart:hover{box-shadow:none;}';
+    if ($o['kaart'] === 'overlay') $c .= 'main .ab-kaart{position:relative;} main .ab-kaart .ab-txt{position:absolute;left:0;right:0;bottom:0;padding:40px 16px 14px;background:linear-gradient(transparent,rgba(0,0,0,.72));} main .ab-kaart .ab-txt b,main .ab-kaart .ab-txt em,main .ab-kaart .ab-txt em small{color:#fff !important;} main .ab-kaart .ab-txt small{color:rgba(255,255,255,.8);} main .ab-kaart .ab-img{aspect-ratio:3/4;}';
+    if ($o['kaart'] === 'lijst') $c .= 'main .ab-grid{grid-template-columns:repeat(' . min(2, $n) . ',minmax(0,1fr)) !important;} main .ab-kaart{flex-direction:row;align-items:stretch;} main .ab-kaart .ab-img{width:150px;flex:none;aspect-ratio:1/1 !important;} main .ab-kaart .ab-txt{padding:14px 16px;} @media (max-width:640px){main .ab-grid{grid-template-columns:1fr !important;} main .ab-kaart .ab-img{width:104px;}}';
+    /* Achtergrond warm en donker */
+    if ($o['achtergrond'] === 'warm') $c .= 'main .abwrap{background:#f7f2ea;} main .abhero.ws-kop-licht,main .ws-kop-foto{background:#fbf8f3;}';
+    if ($o['achtergrond'] === 'donker') $c .= 'main .abwrap{background:#0f1320;} main .ws-groep-kop h2,main .ws-groep-kop a,main .ws-kop-geen h1,main .ab-leeg,main .ws-kantenkop,main .ws-kant label{color:#fff;} main .ab-kaart{background:#182033;border-color:#26304a;} main .ab-kaart .ab-txt b{color:#fff;} main .ab-kaart .ab-txt small{color:#9aa4bb;} main .ws-voordelen{background:#182033;border-color:#26304a;} main .ws-voordelen li{color:#fff;} main .ws-zoek input{background:#182033;border-color:#26304a;color:#fff;} main .ws-cats a{background:#182033;border-color:#26304a;color:#fff;} main .ws-kaart.zw .ab-txt b{color:#fff;} main .ws-kruim{color:#cbd5e1;}' . ($o['kaart'] === 'zwevend' ? 'main .ab-kaart .ab-txt b{color:#fff;}' : '');
+    /* Productpagina */
+    if ($o['pp_foto'] === 'rechts') $c .= '@media (min-width:901px){main .ab-det{grid-template-columns:.75fr 1.25fr;grid-template-areas:"zij gal";} main .ab-det .ab-oms{grid-column:1 / -1;}}';
+    if ($o['pp_foto'] === 'boven') $c .= '@media (min-width:901px){main .ab-det{grid-template-columns:1fr;grid-template-areas:"gal" "zij";} main .ab-det .ab-gal{position:static;max-width:860px;margin:0 auto;width:100%;} main .ab-det .ab-zij{max-width:860px;margin:0 auto;width:100%;} main .ab-det .ab-oms{grid-column:1 / -1;max-width:860px;margin:0 auto;width:100%;}}';
+    /* Lettertypes */
+    $F = ws_fonts(); $kf = $F[$o['font_kop']] ?? null; $tf = $F[$o['font_tekst']] ?? null; $q = [];
+    if ($kf && $kf[1] !== '') $q[] = 'family=' . $kf[1];
+    if ($tf && $tf[1] !== '' && (!$kf || $tf[1] !== $kf[1])) $q[] = 'family=' . $tf[1];
+    if ($tf && $tf[1] !== '') $c .= 'main{font-family:"' . $tf[0] . '",system-ui,sans-serif;} main input,main select,main textarea,main button{font-family:inherit;}';
+    if ($kf && $kf[1] !== '') $c .= 'main h1,main h2,main h3,main .ab-txt b,main .ws-ct b,main .ab-prijs{font-family:"' . $kf[0] . '",' . (in_array($o['font_kop'], ['playfair', 'cormorant', 'merriweather', 'dmserif'], true) ? 'Georgia,serif' : 'system-ui,sans-serif') . ';}';
+    $link = $q ? '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?' . h(implode('&', $q)) . '&amp;display=swap" />' : '';
+    return $link . $c . '</style>';
 }
 
 function ws_mollie_ok($k) { return (bool)preg_match('/^(live|test)_[A-Za-z0-9]{20,}$/', (string)$k); }
@@ -4731,7 +4775,8 @@ function ws_prod_json($p) {
             'voorraad' => ($p['voorraad'] ?? '') === '' || $p['voorraad'] === null ? -1 : (int)$p['voorraad']];
 }
 function ws_json_html($d) { return json_encode($d, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); }
-function render_ws_item($in, $p) {
+function render_ws_item($in, $p, $o = null) {
+    $o = $o ?: ws_opbouw();
     $fotos = array_values($p['fotos'] ?? []);
     list($pr, $vanaf) = ws_vanaf($p);
     $ld = ['@context' => 'https://schema.org', '@type' => 'Product', 'name' => $p['naam'], 'url' => site_url() . '/webshop/' . $p['slug'] . '/',
@@ -4745,7 +4790,7 @@ function render_ws_item($in, $p) {
     $kd[] = [$p['naam'], '/webshop/' . $p['slug'] . '/'];
     list($kr, $krld) = ws_kruimel($kd); $extra .= $krld;
     $out = site_head($p['naam'] . ' | ' . st('naam'), cut($p['naam'] . ' voor ' . ws_eur($pr) . '. ' . trim((string)($p['tekst'] ?? '')), 160), '/webshop/' . $p['slug'] . '/', $extra, true, $stil ? ws_foto_url($p, $stil[0]) : '');
-    $out .= ws_css() . "\n</head>\n<body>\n" . ws_header(ws_opbouw(), $pc !== '' ? '/webshop/' . ws_cat_slug($pc) . '/' : '/webshop/', $pc !== '' ? $pc : 'Alle producten');
+    $out .= ws_css($o) . "\n</head>\n<body>\n" . ws_header($o, $pc !== '' ? '/webshop/' . ws_cat_slug($pc) . '/' : '/webshop/', $pc !== '' ? $pc : 'Alle producten');
     $out .= '<main><section class="abwrap"><div class="wrap">' . $kr . '<div class="ab-det"><div class="ab-gal">';
     if ($fotos) {
         $out .= '<div class="ab-groot">';
@@ -4776,7 +4821,7 @@ function render_ws_item($in, $p) {
             $out .= '</div>';
         }
         $out .= '<div class="ws-veld"><span class="ws-kop">Aantal</span><div class="ws-teller"><button type="button" data-d="-1" aria-label="Minder">&minus;</button><input type="number" id="wsAantal" value="1" min="1" max="999" inputmode="numeric" aria-label="Aantal" /><button type="button" data-d="1" aria-label="Meer">+</button></div></div>';
-        $out .= '<button class="btn primary ws-knop" type="submit" id="wsKnop">In winkelwagen</button><div class="ws-melding" id="wsMelding" role="status" aria-live="polite"></div></form>';
+        $out .= '<button class="btn primary ws-knop" type="submit" id="wsKnop">' . h($o['knop_tekst']) . '</button><div class="ws-melding" id="wsMelding" role="status" aria-live="polite"></div></form>';
     }
     $out .= '</aside>';
     if (trim((string)($p['tekst'] ?? '')) !== '') {
@@ -5830,7 +5875,8 @@ function ws_acties($action) {
                   'titel_uitgelicht' => $g('titel_uitgelicht'), 'titel_nieuw' => $g('titel_nieuw'), 'nieuw_n' => (int)$g('nieuw_n'), 'kolommen' => (int)$g('kolommen'), 'per_groep' => (int)$g('per_groep'),
                   'beeld' => $g('beeld'), 'vulling' => $g('vulling'), 'cats_als' => $g('cats_als'), 'accent' => !empty($_POST['eigen_kleur']) ? $g('accent') : '',
                   'hoek' => $g('hoek'), 'schaduw' => !empty($_POST['schaduw']), 'achtergrond' => $g('achtergrond'), 'fotogrond' => $g('fotogrond'),
-                  'menu' => $g('menu'), 'terug_tekst' => $g('terug_tekst')];
+                  'menu' => $g('menu'), 'terug_tekst' => $g('terug_tekst'), 'kaart' => $g('kaart'), 'pp_foto' => $g('pp_foto'), 'knop_tekst' => $g('knop_tekst'),
+                  'font_kop' => $g('font_kop'), 'font_tekst' => $g('font_tekst'), 'stijl' => $g('stijl')];
         $weg = !empty($_POST['kop_foto_weg']);
         if ($weg) $nieuw['kop_foto'] = '';
         $titel = cut(trim($g('titel')), 90); $intro = cut(trim($g('intro')), 300);
@@ -5846,7 +5892,8 @@ function ws_acties($action) {
             }
             $o = ws_opbouw($nieuw);
             if ($kopFoto !== null && $o['kop_stijl'] === 'foto') { $o['kop_foto'] = 'x'; }
-            $html = render_ws_lijst($in2, ws_gesorteerd(), $o, $kopFoto);
+            $alleP = ws_gesorteerd();
+            $html = ($g('vb_pagina') === 'product' && $alleP) ? render_ws_item($in2, $alleP[0], $o) : render_ws_lijst($in2, $alleP, $o, $kopFoto);
             if (strpos($html, 'data-flip=') !== false && strpos($html, 'flipspeler.js') === false) $html = str_replace("\n</body>", '<script src="/flipspeler.js" defer></script>' . "\n</body>", $html);
             $html = stijl_pagina($html);
             $html = str_replace('</head>', '<style>html{scroll-behavior:auto}.ws-pil{display:none!important}</style><script>document.addEventListener("click",function(e){var a=e.target.closest("a");if(a){e.preventDefault();}},true);</script></head>', $html);
@@ -6162,12 +6209,29 @@ function ws_view_opbouw($in) {
       .wso-scherm{background:#e9edf3;border-radius:14px;position:relative;overflow:hidden;height:78vh;}
       .wso-scherm iframe{position:absolute;top:0;left:0;border:0;background:#fff;transform-origin:0 0;box-shadow:0 10px 30px -18px rgba(0,0,0,.4);}
       .wso-laden{font-size:13px;color:var(--mut);}
+      .wso-stijlen{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+      .wso-st{display:grid;grid-template-columns:28px 1fr;grid-template-rows:auto auto;column-gap:10px;text-align:left;border:1.5px solid var(--line);background:#fff;border-radius:12px;padding:10px;cursor:pointer;font:inherit;}
+      .wso-st i{grid-row:1 / 3;width:28px;height:28px;border-radius:8px;align-self:center;}
+      .wso-st b{font-size:14.5px;} .wso-st small{font-size:12.5px;color:var(--mut);line-height:1.35;}
+      .wso-st:hover{border-color:#2f6bff;} .wso-st.on{border-color:#2f6bff;background:#eef3ff;box-shadow:0 0 0 1px #2f6bff;}
+      @media (max-width:520px){.wso-stijlen{grid-template-columns:1fr;}}
       @media (max-width:1100px){.wso{grid-template-columns:1fr;} .wso-vb{position:static;order:-1;} .wso-scherm{height:60vh;}}
     </style>
     <div class="wso">
     <form class="formcard wso-form" method="post" enctype="multipart/form-data" id="wsOpb">
       <input type="hidden" name="action" value="ws_opbouw_save" />
       <p class="ws-mini" style="margin-top:0">Bouw je webshop zoals jij hem wilt. Wat je verandert, zie je meteen in het voorbeeld. Pas na <strong>Opslaan</strong> staat het op je website.</p>
+
+      <input type="hidden" name="stijl" id="wsoStijl" value="<?= h($o['stijl']) ?>" /><input type="hidden" name="vb_pagina" id="wsoPag" value="lijst" />
+      <div class="ws-sectie"><h3>Stijl van de webshop</h3>
+        <div class="hint" style="margin:0 0 8px">Kies een complete look met 1 klik. Daarna kun je hieronder alles nog aanpassen.</div>
+        <div class="wso-stijlen">
+          <button type="button" class="wso-st<?= $o['stijl'] === '' ? ' on' : '' ?>" data-s=""><i style="background:linear-gradient(135deg,#0b1a33 50%,#2563eb 50%)"></i><b>Zelfde als mijn website</b><small>De kleuren en letters van je website</small></button>
+          <?php foreach (ws_stijlen() as $sk => $sv): $fk = ws_fonts()[$sv[2]['font_kop']][0] ?? ''; ?>
+          <button type="button" class="wso-st<?= $o['stijl'] === $sk ? ' on' : '' ?>" data-s="<?= h($sk) ?>"><i style="background:<?= h($sv[2]['accent'] !== '' ? $sv[2]['accent'] : '#2563eb') ?>"></i><b><?= h($sv[0]) ?></b><small><?= h($sv[1]) ?><?= $fk !== '' && $sv[2]['font_kop'] !== '' ? ' &middot; ' . h($fk) : '' ?></small></button>
+          <?php endforeach; ?>
+        </div>
+      </div>
 
       <div class="ws-sectie"><h3>Menubalk</h3>
         <div class="wso-keuzes"><?= $r('menu', 'eigen', $o['menu'], 'Alleen een knop naar de website') . $r('menu', 'website', $o['menu'], 'Het menu van de website') ?></div>
@@ -6220,6 +6284,7 @@ function ws_view_opbouw($in) {
           <div class="field"><label>Foto in het vak</label><?= $sel('vulling', ['passend' => 'Helemaal zichtbaar', 'vullend' => 'Vak helemaal vullen'], $o['vulling']) ?></div>
           <div class="field"><label>Categorie&euml;n tonen als</label><?= $sel('cats_als', ['tegels' => 'Tegels met foto', 'knoppen' => 'Knoppen'], $o['cats_als']) ?></div>
           <div class="field"><label>Achter de foto's</label><?= $sel('fotogrond', ['wit' => 'Wit', 'licht' => 'Lichtgrijs', 'donker' => 'Donker'], $o['fotogrond']) ?></div>
+          <div class="field"><label>Productkaarten</label><?= $sel('kaart', ['rand' => 'Met rand', 'zwevend' => 'Zonder rand (zwevend)', 'overlay' => 'Tekst over de foto', 'lijst' => 'Als lijst, foto links'], $o['kaart']) ?></div>
         </div>
       </div>
 
@@ -6232,14 +6297,25 @@ function ws_view_opbouw($in) {
         <label style="font-weight:700;font-size:14px">Hoeken</label>
         <div class="wso-keuzes"><?= $r('hoek', 'rond', $o['hoek'], 'Rond') . $r('hoek', 'klein', $o['hoek'], 'Een beetje rond') . $r('hoek', 'recht', $o['hoek'], 'Recht') ?></div>
         <label style="font-weight:700;font-size:14px">Achtergrond</label>
-        <div class="wso-keuzes"><?= $r('achtergrond', 'licht', $o['achtergrond'], 'Lichtblauw') . $r('achtergrond', 'wit', $o['achtergrond'], 'Wit') ?></div>
+        <div class="wso-keuzes"><?= $r('achtergrond', 'licht', $o['achtergrond'], 'Lichtblauw') . $r('achtergrond', 'wit', $o['achtergrond'], 'Wit') . $r('achtergrond', 'warm', $o['achtergrond'], 'Warm') . $r('achtergrond', 'donker', $o['achtergrond'], 'Donker') ?></div>
+        <?php $fo = []; foreach (ws_fonts() as $fk2 => $fv2) { $fo[$fk2] = $fv2[0]; } ?>
+        <div class="wso-twee" style="margin-top:10px">
+          <div class="field"><label>Lettertype koppen</label><?= $sel('font_kop', $fo, $o['font_kop']) ?></div>
+          <div class="field"><label>Lettertype tekst</label><?= $sel('font_tekst', $fo, $o['font_tekst']) ?></div>
+        </div>
         <label class="check" style="margin-top:8px"><input type="checkbox" name="schaduw" value="1" <?= $o['schaduw'] ? 'checked' : '' ?> /> <span>Schaduw onder tegels</span></label>
+      </div>
+
+      <div class="ws-sectie"><h3>Productpagina</h3>
+        <div class="wso-keuzes"><?= $r('pp_foto', 'links', $o['pp_foto'], 'Foto links') . $r('pp_foto', 'rechts', $o['pp_foto'], 'Foto rechts') . $r('pp_foto', 'boven', $o['pp_foto'], 'Grote foto bovenaan') ?></div>
+        <div class="field" style="margin-top:8px"><label for="wsoKT">Tekst op de bestelknop</label><input type="text" id="wsoKT" name="knop_tekst" maxlength="30" value="<?= h($o['knop_tekst']) ?>" placeholder="In winkelwagen" /></div>
+        <div class="hint">Kijk in het voorbeeld bij Productpagina hoe het eruitziet.</div>
       </div>
 
       <div class="ws-acties"><button class="btn" type="submit">Opslaan en website bijwerken</button></div>
     </form>
     <div class="wso-vb">
-      <div class="wso-vbkop"><b>Voorbeeld</b> <span class="wso-laden" id="wsoLaden"></span><span class="wso-apparaat"><button type="button" data-a="pc" class="on">Computer</button> <button type="button" data-a="tel">Telefoon</button></span></div>
+      <div class="wso-vbkop"><b>Voorbeeld</b> <span class="wso-laden" id="wsoLaden"></span><span class="wso-apparaat wso-pagina"><button type="button" data-p="lijst" class="on">Overzicht</button> <button type="button" data-p="product">Productpagina</button></span><span class="wso-apparaat"><button type="button" data-a="pc" class="on">Computer</button> <button type="button" data-a="tel">Telefoon</button></span></div>
       <div class="wso-scherm" id="wsoScherm"><iframe id="wsoVb" title="Voorbeeld van je webshop"></iframe></div>
     </div>
     </div>
@@ -6262,6 +6338,28 @@ function ws_view_opbouw($in) {
       var kf = document.getElementById('wsoF');
       kf.addEventListener('change', function () { if (kf.files && kf.files.length) { var r = f.querySelector('input[name=kop_stijl][value=foto]'); if (r) r.checked = true; var w = f.querySelector('input[name=kop_foto_weg]'); if (w) w.checked = false; } });
       f.addEventListener('input', ververs); f.addEventListener('change', ververs);
+      /* Een complete stijl in 1 klik: alle keuzes hieronder worden ingevuld */
+      var STIJL = <?= json_encode(array_map(function($v) { return $v[2]; }, ws_stijlen()), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+      var STD = {kop_stijl: 'donker', kop_uitlijn: 'links', kolommen: 3, beeld: 'liggend', vulling: 'passend', cats_als: 'tegels', hoek: 'rond', schaduw: 1, achtergrond: 'licht', fotogrond: 'wit', kaart: 'rand', accent: '', font_kop: '', font_tekst: '', pp_foto: 'links'};
+      function zet(k, v) {
+        if (k === 'aan') { v.forEach(function (b) { var c = f.querySelector('input[name="blok_aan[' + b + ']"]'); if (c) c.checked = true; }); return; }
+        if (k === 'accent') { document.getElementById('wsoEK').checked = v !== ''; if (v) document.getElementById('wsoAC').value = v; return; }
+        if (k === 'schaduw') { f.querySelector('input[name=schaduw]').checked = !!v; return; }
+        var el = f.querySelector('[name="' + k + '"]'); if (!el) return;
+        if (el.type === 'radio') { var r = f.querySelector('input[name="' + k + '"][value="' + v + '"]'); if (r) r.checked = true; } else el.value = String(v);
+      }
+      document.querySelectorAll('.wso-st').forEach(function (b) { b.addEventListener('click', function () {
+        var k = b.getAttribute('data-s'), w = k ? STIJL[k] : STD;
+        Object.keys(STD).forEach(function (n) { if (!(n in w)) zet(n, STD[n]); });
+        Object.keys(w).forEach(function (n) { zet(n, w[n]); });
+        document.getElementById('wsoStijl').value = k;
+        document.querySelectorAll('.wso-st').forEach(function (x) { x.classList.toggle('on', x === b); });
+        ververs();
+      }); });
+      document.querySelectorAll('.wso-pagina button').forEach(function (b) { b.addEventListener('click', function () {
+        document.querySelectorAll('.wso-pagina button').forEach(function (x) { x.classList.toggle('on', x === b); });
+        document.getElementById('wsoPag').value = b.getAttribute('data-p'); ververs();
+      }); });
       document.getElementById('wsoBlokken').addEventListener('click', function (e) {
         var b = e.target.closest('button[data-r]'); if (!b) return;
         var rij = b.parentNode, r = parseInt(b.getAttribute('data-r'), 10);
@@ -6280,8 +6378,8 @@ function ws_view_opbouw($in) {
         fr.style.left = Math.max(0, (W - bw * sc) / 2) + 'px'; fr.style.top = (tel ? 10 : 0) + 'px'; fr.style.borderRadius = tel ? '18px' : '0';
       }
       window.addEventListener('resize', schaal); schaal();
-      document.querySelectorAll('.wso-apparaat button').forEach(function (b) { b.addEventListener('click', function () {
-        document.querySelectorAll('.wso-apparaat button').forEach(function (x) { x.classList.toggle('on', x === b); });
+      document.querySelectorAll('.wso-apparaat button[data-a]').forEach(function (b) { b.addEventListener('click', function () {
+        document.querySelectorAll('.wso-apparaat button[data-a]').forEach(function (x) { x.classList.toggle('on', x === b); });
         tel = b.getAttribute('data-a') === 'tel'; schaal();
       }); });
       ververs();
@@ -13886,7 +13984,7 @@ function venturo_html() {
 <div class="vt-v"><h5>Wat zet ik in de voorwaarden van mijn webshop?</h5><p>Bij Instellen kun je je voorwaarden kwijt. De klant moet daar bij het bestellen mee akkoord gaan. Een webshop in Nederland moet onder andere vertellen hoe het zit met de bedenktijd van 14 dagen. Voor producten die speciaal voor de klant zijn gemaakt, zoals bedrukte kleding, geldt die bedenktijd niet. Laat je voorwaarden nakijken als je twijfelt.</p></div>
 <div class="vt-v"><h5>Kan ik een bewegende foto (flip) bij een product zetten?</h5><p>Ja. Open het product en klik bij Foto's op Maak een flip van foto's. Kies een paar foto's, bijvoorbeeld een T-shirt van voren, van opzij en van achteren, kies de snelheid en klik op Flip toevoegen. Klik daarna op Opslaan. Heb je al een .flip-bestand, dan kun je dat ook gewoon kiezen. Zet altijd ook minstens 1 gewone foto bij het product, want de winkelwagen en Google gebruiken de eerste gewone foto.</p></div>
 <div class="vt-v"><h5>Kan de koper zelf de grootte en plaats van zijn logo kiezen?</h5><p>Ja. Zet bij Opdruk de plekken met de grootste maat, bijvoorbeeld Borst links 10x10 en Rug 30x40, en klik op Opslaan. Kies daarna bij Drukvakken op de foto per plek een foto en schuif het blauwe vak naar de goede plek. De koper ziet zijn logo dan meteen op je product, maakt het groter of kleiner en zet het boven, in het midden of onder, maar nooit buiten het vak. Bij de bestelling zie je precies welke grootte en plaats hij koos.</p></div>
-<div class="vt-v"><h5>Kan ik de opbouw en de kleuren van mijn webshop zelf kiezen?</h5><p>Ja. Ga naar Webshop en dan Opbouw en uiterlijk. Daar kies je de bovenkant (donker, licht, met een foto of flip), zet je blokken aan of uit en in de volgorde die jij wilt, zoals Uitgelicht, Nieuw binnen, Voordelen en Zoeken, en kies je hoeveel producten naast elkaar staan, de vorm van de foto's, een eigen kleur en ronde of rechte hoeken. Rechts zie je meteen een voorbeeld, op de computer en op de telefoon. Klik op Opslaan en website bijwerken, dan staat het op je website.</p></div>
+<div class="vt-v"><h5>Kan ik de opbouw en de kleuren van mijn webshop zelf kiezen?</h5><p>Ja. Ga naar Webshop en dan Opbouw en uiterlijk. Daar kies je de bovenkant (donker, licht, met een foto of flip), zet je blokken aan of uit en in de volgorde die jij wilt, zoals Uitgelicht, Nieuw binnen, Voordelen en Zoeken, en kies je hoeveel producten naast elkaar staan, de vorm van de foto's, een eigen kleur en ronde of rechte hoeken. Rechts zie je meteen een voorbeeld, op de computer en op de telefoon. Klik op Opslaan en website bijwerken, dan staat het op je website. Wil je het snel? Kies bovenaan een van de 9 stijlen, zoals Modern, Boetiek, Bouwmarkt of Luxe. Je kunt ook een eigen lettertype kiezen, de vorm van de productkaarten, en bij Productpagina waar de foto staat en welke tekst op de bestelknop komt.</p></div>
 </div>
 </div>
 <div class="vt-g" data-param="adm"><h3>Administratie</h3>
@@ -14040,7 +14138,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-11-11-wsmenu');
+define('SITE_BOUW', '2026-11-11-wsstijlen');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -16031,6 +16129,8 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     "f:abstatus": "Te koop: staat op je website. Gereserveerd of Verkocht: staat er met een label. Verborgen: alleen jij ziet hem.",
     "lbl:Foto's@_webshop": "De foto's van dit product. Kies bij Hoofdfoto welke vooraan staat. Met Verwijderen haal je een foto meteen weg (klik twee keer, voor de zekerheid). Bij een flip kun je met Flip aanpassen de beelden, de volgorde en de snelheid veranderen. Nieuwe foto's voeg je hieronder toe.",
     "lbl:Drukvakken op de foto": "Hier laat je zien waar de opdruk op je product komt, bijvoorbeeld op de borst of op de rug. Kies per plek een foto en schuif het blauwe vak naar de goede plek. Met het rondje rechtsonder maak je het vak groter of kleiner. De koper ziet zijn eigen logo dan meteen op je product. Hij kan het zelf groter of kleiner maken en hoger of lager zetten, maar nooit buiten het vak. Bij de bestelling zie je precies welke grootte en plaats hij koos.",
+    "h3:Stijl van de webshop@_webshop": "Een complete look voor je webshop met 1 klik: kleuren, letters, vorm van de kaarten en de indeling. Kies daarna gerust nog andere dingen hieronder. Zelfde als mijn website gebruikt de stijl die je bij je website hebt gekozen.",
+    "h3:Productpagina@_webshop": "Hoe de pagina van een product eruitziet: de foto links, rechts of groot bovenaan, en de tekst op de knop, bijvoorbeeld Bestellen. Klik bovenaan het voorbeeld op Productpagina om het te zien.",
     "h3:Menubalk@_webshop": "Wat er bovenin je webshop staat. Met Alleen een knop naar de website staat de webshop los van je website: bovenin staan alleen je naam en een knop terug naar je website, zodat bezoekers bij het winkelen blijven. Kies Het menu van de website als je liever het gewone menu ziet.",
     "h3:Bovenkant@_webshop": "Het bovenste stuk van je webshop. Kies Donker of Licht voor een balk met titel en tekst, Met foto voor een foto of flip naast de tekst, of Alleen de titel. Een knop brengt bezoekers meteen naar je producten.",
     "h3:Blokken@_webshop": "De onderdelen van je webshop. Vink aan wat je wilt laten zien en zet ze met de pijltjes in de goede volgorde. Wat bovenaan staat, zien bezoekers het eerst.",
