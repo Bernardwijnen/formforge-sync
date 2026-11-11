@@ -3845,6 +3845,17 @@ function ws_bestellingen() { $l = read_json(WS_BEST, []); return is_array($l) ? 
 function ws_best_bewaar($l) { write_json(WS_BEST, array_values($l)); }
 function ws_vind_prod($id) { foreach (ws_lijst() as $p) { if (($p['id'] ?? '') === $id) return $p; } return null; }
 function ws_foto_url($p, $f) { return '/uploads/webshop/' . rawurlencode($p['id']) . '/' . rawurlencode($f); }
+/* Een productfoto of een bewegende flip als <img>. */
+function ws_img($p, $f, $alt, $extra = '') {
+    if (function_exists('is_flip') && is_flip($f)) return '<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" data-flip="' . h(ws_foto_url($p, $f)) . '" alt="' . h($alt) . '"' . $extra . ' />';
+    return '<img src="' . h(ws_foto_url($p, $f)) . '" alt="' . h($alt) . '"' . $extra . ' />';
+}
+/* De eerste gewone foto, voor plekken waar niets mag bewegen (Google, delen, winkelwagen). */
+function ws_stil($p) { foreach ((array)($p['fotos'] ?? []) as $f) { if (!is_flip($f)) return $f; } return ''; }
+function ws_admin_thumb($p, $f) {
+    if (is_flip($f)) return '<span class="ph" style="display:grid;place-items:center;background:#11162b;color:#fff;font-weight:800;font-size:12px;letter-spacing:.06em">FLIP</span>';
+    return '<img src="' . h(ws_foto_url($p, $f)) . '" alt="" />';
+}
 function ws_te_koop($p) { return ($p['status'] ?? 'actief') === 'actief' && !ws_op($p); }
 function ws_op($p) { return ($p['voorraad'] ?? '') !== '' && $p['voorraad'] !== null && (int)$p['voorraad'] <= 0; }
 function ws_zichtbaar($p) { return ($p['status'] ?? 'actief') !== 'verborgen'; }
@@ -4294,7 +4305,7 @@ function ws_categorieen($alleenZichtbaar = true) {
         $c = (string)$c; $m = $meta[$c] ?? []; ws_volg_sort($ps);
         $eigen = basename((string)($m['foto'] ?? ''));
         $foto = $eigen !== '' && is_file(UPLOAD_DIR . '/webshop/_cat/' . $eigen) ? '/uploads/webshop/_cat/' . rawurlencode($eigen) : '';
-        if ($foto === '') { foreach ($ps as $p) { if (($p['fotos'][0] ?? '') !== '') { $foto = ws_foto_url($p, $p['fotos'][0]); break; } } }
+        if ($foto === '') { foreach ($ps as $p) { $sf = ws_stil($p); if ($sf !== '') { $foto = ws_foto_url($p, $sf); break; } } }
         $uit[] = ['naam' => $c, 'slug' => ws_cat_slug($c), 'n' => count($ps), 'tekst' => (string)($m['tekst'] ?? ''), 'foto' => $foto, 'eigen_foto' => $foto !== '' && $eigen !== '' && strpos($foto, '/_cat/') !== false ? $eigen : '', 'volg' => isset($m['volg']) ? (int)$m['volg'] : 9999, 'items' => $ps];
     }
     usort($uit, function($a, $b) { return [$a['volg'], mb_strtolower($a['naam'])] <=> [$b['volg'], mb_strtolower($b['naam'])]; });
@@ -4395,6 +4406,7 @@ function ws_css() {
 .ws-leeg{text-align:center;padding:30px 10px;}
 .ws-voorw{white-space:pre-wrap;line-height:1.6;}
 .ws-hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;}
+.ab-groot img[hidden]{display:none !important;}
 .ws-kruim{font-size:14.5px;color:var(--muted);margin:0 0 14px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
 .ws-kruim a{color:inherit;font-weight:600;text-decoration:none;} .ws-kruim a:hover{text-decoration:underline;}
 .abhero .ws-kruim{color:inherit;opacity:.85;}
@@ -4429,7 +4441,7 @@ function ws_kaart($p) {
     list($pr, $vanaf) = ws_vanaf($p);
     $lab = ws_op($p) || ($p['status'] ?? '') === 'uit' ? 'Uitverkocht' : '';
     return '<a class="ab-kaart ws-kaart' . ($lab !== '' ? ' weg' : '') . '" href="/webshop/' . h($p['slug']) . '/" data-cat="' . h($p['cat'] ?? '') . '">'
-         . '<span class="ab-img">' . ($f !== '' ? '<img src="' . h(ws_foto_url($p, $f)) . '" alt="' . h($p['naam']) . '" loading="lazy" />' : '') . ($lab !== '' ? '<i class="ab-lab verkocht">' . $lab . '</i>' : '') . '</span>'
+         . '<span class="ab-img">' . ($f !== '' ? ws_img($p, $f, $p['naam'], is_flip($f) ? '' : ' loading="lazy"') : '') . ($lab !== '' ? '<i class="ab-lab verkocht">' . $lab . '</i>' : '') . '</span>'
          . '<span class="ab-txt"><b>' . h($p['naam']) . '</b>' . (($p['cat'] ?? '') !== '' ? '<small>' . h($p['cat']) . '</small>' : '')
          . '<em>' . ($vanaf ? '<small>vanaf</small>' : '') . h(ws_eur($pr)) . '</em></span></a>';
 }
@@ -4451,22 +4463,24 @@ function render_ws_lijst($in, $items) {
     } else {
         $out .= '<div class="ab-grid" id="wsGrid">'; foreach ($items as $p) { $out .= ws_kaart($p); } $out .= '</div>';
     }
-    $out .= (!$items ? '<div class="ab-leeg">Hier komen binnenkort onze producten.</div>' : '') . '</div></section></main>' . site_footer() . ws_pil() . ws_js_tag();
+    $out .= (!$items ? '<div class="ab-leeg">Hier komen binnenkort onze producten.</div>' : '') . '</div></section></main>' . site_footer() . ws_pil();
+    $out .= flip_speler_tag($out) . ws_js_tag();
     return $out . "\n</body>\n</html>\n";
 }
 function render_ws_cat($in, $c, $cats) {
     list($kr, $krld) = ws_kruimel([[$in['titel'], '/webshop/'], [$c['naam'], '/webshop/' . $c['slug'] . '/']]);
     $oms = $c['tekst'] !== '' ? $c['tekst'] : $c['naam'] . ' bij ' . st('naam') . '. Bekijk ' . ($c['n'] === 1 ? 'het product' : 'alle ' . $c['n'] . ' producten') . ' en bestel online.';
-    $out = site_head($c['naam'] . ' | ' . st('naam'), cut($oms, 160), '/webshop/' . $c['slug'] . '/', $krld, true, $c['foto'] !== '' ? site_url() . $c['foto'] : '');
+    $out = site_head($c['naam'] . ' | ' . st('naam'), cut($oms, 160), '/webshop/' . $c['slug'] . '/', $krld, true, $c['foto']);
     $out .= ws_css() . "\n</head>\n<body>\n" . site_header('/webshop/', $in['naam']);
     $out .= '<main><section class="abhero"><div class="wrap">' . $kr . '<h1>' . h($c['naam']) . '</h1>' . ($c['tekst'] !== '' ? '<p>' . nl2br(h($c['tekst'])) . '</p>' : '<p>' . $c['n'] . ($c['n'] === 1 ? ' product' : ' producten') . '</p>') . '</div></section>';
     $out .= '<section class="abwrap"><div class="wrap">' . ws_chips($cats, $c['slug']) . '<div class="ab-grid">';
     foreach ($c['items'] as $p) { $out .= ws_kaart($p); }
-    $out .= '</div></div></section></main>' . site_footer() . ws_pil() . ws_js_tag();
+    $out .= '</div></div></section></main>' . site_footer() . ws_pil();
+    $out .= flip_speler_tag($out) . ws_js_tag();
     return $out . "\n</body>\n</html>\n";
 }
 function ws_prod_json($p) {
-    return ['id' => $p['id'], 'naam' => $p['naam'], 'url' => '/webshop/' . $p['slug'] . '/', 'foto' => ($p['fotos'][0] ?? '') !== '' ? ws_foto_url($p, $p['fotos'][0]) : '',
+    return ['id' => $p['id'], 'naam' => $p['naam'], 'url' => '/webshop/' . $p['slug'] . '/', 'foto' => ws_stil($p) !== '' ? ws_foto_url($p, ws_stil($p)) : '',
             'prijs' => (int)$p['prijs'], 'opties' => ws_opties($p['opties'] ?? ''), 'plekken' => ws_plekken($p['opdruk'] ?? ''), 'koop' => ws_te_koop($p),
             'voorraad' => ($p['voorraad'] ?? '') === '' || $p['voorraad'] === null ? -1 : (int)$p['voorraad']];
 }
@@ -4476,21 +4490,23 @@ function render_ws_item($in, $p) {
     list($pr, $vanaf) = ws_vanaf($p);
     $ld = ['@context' => 'https://schema.org', '@type' => 'Product', 'name' => $p['naam'], 'url' => site_url() . '/webshop/' . $p['slug'] . '/',
            'offers' => ['@type' => 'Offer', 'price' => number_format($pr / 100, 2, '.', ''), 'priceCurrency' => 'EUR', 'availability' => ws_te_koop($p) ? 'https://schema.org/InStock' : 'https://schema.org/SoldOut']];
-    if ($fotos) $ld['image'] = array_map(function($f) use ($p) { return site_url() . ws_foto_url($p, $f); }, array_slice($fotos, 0, 5));
+    $stil = array_values(array_filter($fotos, function($f) { return !is_flip($f); }));
+    if ($stil) $ld['image'] = array_map(function($f) use ($p) { return site_url() . ws_foto_url($p, $f); }, array_slice($stil, 0, 5));
     if (trim((string)($p['tekst'] ?? '')) !== '') $ld['description'] = cut(trim($p['tekst']), 300);
     $extra = '<script type="application/ld+json">' . json_encode($ld, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG) . '</script>';
     $kd = [[$in['titel'], '/webshop/']]; $pc = trim((string)($p['cat'] ?? ''));
     if ($pc !== '') $kd[] = [$pc, '/webshop/' . ws_cat_slug($pc) . '/'];
     $kd[] = [$p['naam'], '/webshop/' . $p['slug'] . '/'];
     list($kr, $krld) = ws_kruimel($kd); $extra .= $krld;
-    $out = site_head($p['naam'] . ' | ' . st('naam'), cut($p['naam'] . ' voor ' . ws_eur($pr) . '. ' . trim((string)($p['tekst'] ?? '')), 160), '/webshop/' . $p['slug'] . '/', $extra, true, $fotos ? site_url() . ws_foto_url($p, $fotos[0]) : '');
+    $out = site_head($p['naam'] . ' | ' . st('naam'), cut($p['naam'] . ' voor ' . ws_eur($pr) . '. ' . trim((string)($p['tekst'] ?? '')), 160), '/webshop/' . $p['slug'] . '/', $extra, true, $stil ? ws_foto_url($p, $stil[0]) : '');
     $out .= ws_css() . "\n</head>\n<body>\n" . site_header($pc !== '' ? '/webshop/' . ws_cat_slug($pc) . '/' : '/webshop/', $pc !== '' ? $pc : 'Alle producten');
     $out .= '<main><section class="abwrap"><div class="wrap">' . $kr . '<div class="ab-det"><div class="ab-gal">';
     if ($fotos) {
-        $out .= '<div class="ab-groot"><img id="abFoto" src="' . h(ws_foto_url($p, $fotos[0])) . '" alt="' . h($p['naam']) . '" />';
+        $out .= '<div class="ab-groot">';
+        foreach ($fotos as $i => $f) { $out .= ws_img($p, $f, $p['naam'], ' class="abF"' . ($i === 0 ? ' id="abFoto"' : ' hidden')); }
         if (count($fotos) > 1) $out .= '<button type="button" class="vo" aria-label="Vorige foto">&lsaquo;</button><button type="button" class="na" aria-label="Volgende foto">&rsaquo;</button><span class="tel" id="abTel">1 / ' . count($fotos) . '</span>';
         $out .= '</div>';
-        if (count($fotos) > 1) { $out .= '<div class="ab-duims">'; foreach ($fotos as $i => $f) { $out .= '<button type="button"' . ($i === 0 ? ' class="on"' : '') . ' data-i="' . $i . '" aria-label="Foto ' . ($i + 1) . '"><img src="' . h(ws_foto_url($p, $f)) . '" alt="" loading="lazy" /></button>'; } $out .= '</div>'; }
+        if (count($fotos) > 1) { $out .= '<div class="ab-duims">'; foreach ($fotos as $i => $f) { $out .= '<button type="button"' . ($i === 0 ? ' class="on"' : '') . ' data-i="' . $i . '" aria-label="Foto ' . ($i + 1) . '">' . ws_img($p, $f, '') . '</button>'; } $out .= '</div>'; }
     } else { $out .= '<div class="ab-groot"></div>'; }
     $out .= '</div><aside class="ab-zij ws-zij"><h1>' . h($p['naam']) . '</h1>';
     $out .= '<div class="ab-prijs" id="wsPrijs">' . ($vanaf ? '<small style="font-size:16px;font-weight:600;color:var(--muted)">vanaf </small>' : '') . h(ws_eur($pr)) . '</div><div class="ws-stuk" id="wsStuk">Inclusief btw</div>';
@@ -4529,7 +4545,7 @@ function render_ws_item($in, $p) {
         $urls = json_encode(array_map(function($f) use ($p) { return ws_foto_url($p, $f); }, $fotos), JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP);
         $out .= '<script>var ABF=' . $urls . ';</script>';
     }
-    $out .= ws_js_tag();
+    $out .= flip_speler_tag($out) . ws_js_tag();
     return $out . "\n</body>\n</html>\n";
 }
 function render_ws_mand($in, $items) {
@@ -4647,12 +4663,13 @@ function ws_js() {
   /* ---------- Foto's op de productpagina ---------- */
   if (window.ABF && document.getElementById('abFoto')) {
     var gi = 0, gimg = document.getElementById('abFoto'), gtel = document.getElementById('abTel'), duims = document.querySelectorAll('.ab-duims button');
-    var zet = function (n) { gi = (n + ABF.length) % ABF.length; gimg.src = ABF[gi]; gtel.textContent = (gi + 1) + ' / ' + ABF.length; duims.forEach(function (d, k) { d.classList.toggle('on', k === gi); }); };
+    var gimgs = document.querySelectorAll('.ab-groot .abF');
+    var zet = function (n) { gi = (n + ABF.length) % ABF.length; if (gimgs.length > 1) { gimgs.forEach(function (im, k) { im.hidden = k !== gi; }); gimg = gimgs[gi]; } else { gimg.src = ABF[gi]; } gtel.textContent = (gi + 1) + ' / ' + ABF.length; duims.forEach(function (d, k) { d.classList.toggle('on', k === gi); }); };
     document.querySelector('.ab-groot .vo').onclick = function () { zet(gi - 1); };
     document.querySelector('.ab-groot .na').onclick = function () { zet(gi + 1); };
     duims.forEach(function (d) { d.onclick = function () { zet(parseInt(d.getAttribute('data-i'), 10)); }; });
-    var x0 = null; gimg.addEventListener('touchstart', function (e) { x0 = e.touches[0].clientX; }, { passive: true });
-    gimg.addEventListener('touchend', function (e) { if (x0 === null) return; var dx = e.changedTouches[0].clientX - x0; if (Math.abs(dx) > 40) zet(gi + (dx < 0 ? 1 : -1)); x0 = null; });
+    var x0 = null, gvlak = document.querySelector('.ab-groot'); gvlak.addEventListener('touchstart', function (e) { x0 = e.touches[0].clientX; }, { passive: true });
+    gvlak.addEventListener('touchend', function (e) { if (x0 === null) return; var dx = e.changedTouches[0].clientX - x0; if (Math.abs(dx) > 40) zet(gi + (dx < 0 ? 1 : -1)); x0 = null; });
   }
 
   /* ---------- Ontwerp bekijken: scherpte, achtergrond en bestandssoort ---------- */
@@ -5060,7 +5077,7 @@ function ws_acties($action) {
                 if ($err === UPLOAD_ERR_NO_FILE) continue;
                 if (count($x['fotos']) >= WS_MAX_FOTO) { $fouten[] = 'Er kunnen maximaal ' . WS_MAX_FOTO . " foto's bij."; break; }
                 if ($err !== UPLOAD_ERR_OK) { $fouten[] = upload_error_text($err, $_FILES['fotos']['name'][$n]); continue; }
-                $f = save_one_image($_FILES['fotos']['tmp_name'][$n], $_FILES['fotos']['name'][$n], $map, '', $fouten);
+                $f = is_flip($_FILES['fotos']['name'][$n]) ? save_flip($_FILES['fotos']['tmp_name'][$n], $_FILES['fotos']['name'][$n], $map, '', $fouten) : save_one_image($_FILES['fotos']['tmp_name'][$n], $_FILES['fotos']['name'][$n], $map, '', $fouten);
                 if ($f !== '') $x['fotos'][] = $f;
             }
         }
@@ -5358,8 +5375,8 @@ function ws_view_producten($in) {
             <div class="ws-voorbeeld" id="wpdVb" hidden><span class="ws-mini">Zo ziet de koper het:</span><div></div></div>
           </div>
           <div class="field"><label>Foto's</label>
-            <?php if (!empty($x['fotos'])): ?><div class="photos" style="margin-bottom:10px"><?php foreach ($x['fotos'] as $i => $f): ?><div><img src="<?= h(ws_foto_url($x, $f)) ?>" alt="" /><label><input type="radio" name="foto_hoofd" value="<?= h($f) ?>" <?= $i === 0 ? 'checked' : '' ?> /> Hoofdfoto</label><label><input type="checkbox" name="foto_weg[]" value="<?= h($f) ?>" /> Weghalen</label></div><?php endforeach; ?></div><?php endif; ?>
-            <input type="file" name="fotos[]" accept="image/*" multiple /><div class="hint">Je kunt meerdere foto's tegelijk kiezen (hoogstens <?= WS_MAX_FOTO ?>).</div></div>
+            <?php if (!empty($x['fotos'])): ?><div class="photos" style="margin-bottom:10px"><?php foreach ($x['fotos'] as $i => $f): ?><div><?= ws_admin_thumb($x, $f) ?><label><input type="radio" name="foto_hoofd" value="<?= h($f) ?>" <?= $i === 0 ? 'checked' : '' ?> /> Hoofdfoto</label><label><input type="checkbox" name="foto_weg[]" value="<?= h($f) ?>" /> Weghalen</label></div><?php endforeach; ?></div><?php endif; ?>
+            <input type="file" name="fotos[]" accept="image/*,.flip" multiple /><div class="hint">Je kunt meerdere foto's tegelijk kiezen (hoogstens <?= WS_MAX_FOTO ?>). Een bewegende flip (.flip) mag ook, bijvoorbeeld een trui die ronddraait.</div></div>
           <div class="ws-acties"><button class="btn" type="submit">Opslaan en website bijwerken</button></div>
         </form>
         <script>
@@ -5410,7 +5427,7 @@ function ws_view_producten($in) {
       if ($metKop) echo '<div class="ws-gk"><b>' . ($g[0] !== '' ? h($g[0]) : 'Zonder categorie') . ' <span class="ws-mini">(' . count($g[1]) . ')</span></b>' . ($g[0] !== '' ? '<a href="admin.php?webshop=1&amp;t=categorieen">Categorie aanpassen</a>' : '') . '</div>';
       foreach ($g[1] as $pi => $p): $f = $p['fotos'][0] ?? ''; ?>
       <div class="ws-p" id="p-<?= h($p['id']) ?>">
-        <?= $f !== '' ? '<img src="' . h(ws_foto_url($p, $f)) . '" alt="" />' : '<span class="ph"></span>' ?>
+        <?= $f !== '' ? ws_admin_thumb($p, $f) : '<span class="ph"></span>' ?>
         <div><b><?= h($p['naam']) ?></b><small><?= h(implode(" \u{b7} ", array_filter([(string)($p['cat'] ?? ''), ws_eur((int)$p['prijs']), ($p['voorraad'] ?? '') !== '' ? 'voorraad ' . (int)$p['voorraad'] : '', ws_plekken($p['opdruk'] ?? '') ? 'met opdruk' : '']))) ?></small></div>
         <div class="acts">
           <?php if (count($g[1]) > 1): ?><span class="ws-pijl"><?php foreach (['op' => ['&uarr;', 'Hoger zetten', $pi === 0], 'neer' => ['&darr;', 'Lager zetten', $pi === count($g[1]) - 1]] as $rk => $rv): ?><form method="post"><input type="hidden" name="action" value="ws_p_volg" /><input type="hidden" name="id" value="<?= h($p['id']) ?>" /><input type="hidden" name="r" value="<?= $rk ?>" /><button type="submit" title="<?= $rv[1] ?>" aria-label="<?= h($p['naam']) . ': ' . $rv[1] ?>" <?= $rv[2] ? 'disabled' : '' ?>><?= $rv[0] ?></button></form><?php endforeach; ?></span><?php endif; ?>
@@ -6210,7 +6227,7 @@ function render_aanbod_item($in, $x) {
     }
     if ($prijs > 0) $ld['offers'] = ['@type' => 'Offer', 'price' => number_format($prijs / 100, 2, '.', ''), 'priceCurrency' => 'EUR', 'availability' => $x['status'] === 'verkocht' ? 'https://schema.org/SoldOut' : 'https://schema.org/InStock'];
     $extra = '<script type="application/ld+json">' . json_encode($ld, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG) . '</script>';
-    $out = site_head($titel . ' | ' . st('naam'), $desc, '/' . $in['slug'] . '/' . $x['slug'] . '/', $extra, true, $fotos ? site_url() . ab_foto_url($x, $fotos[0]) : '');
+    $out = site_head($titel . ' | ' . st('naam'), $desc, '/' . $in['slug'] . '/' . $x['slug'] . '/', $extra, true, $fotos ? ab_foto_url($x, $fotos[0]) : '');
     $out .= ab_css() . "\n</head>\n<body>\n" . site_header('/' . $in['slug'] . '/', 'Alle ' . mb_strtolower($in['naam'], 'UTF-8'));
     $out .= '<main><section class="abwrap"><div class="wrap"><a class="ab-terug" href="/' . $in['slug'] . '/' . (!empty($x['merk']) ? '#merk=' . rawurlencode($x['merk']) : '') . '">&larr; ' . h(!empty($x['merk']) ? 'Meer ' . $x['merk'] : 'Terug naar het overzicht') . '</a><div class="ab-det">';
     $out .= '<div class="ab-gal">';
@@ -12758,6 +12775,7 @@ function venturo_html() {
 <div class="vt-v"><h5>Hoe werken de verzendkosten?</h5><p>Bij Instellen vul je een vast bedrag aan verzendkosten in, en eventueel vanaf welk bedrag het verzenden gratis is. Het is 1 bedrag per bestelling. Je kunt ook kiezen dat klanten hun bestelling ophalen, en of ze dan in de winkel mogen betalen.</p></div>
 <div class="vt-v"><h5>Kan ik veel producten tegelijk inladen?</h5><p>Ja, bij Producten onderaan, met een Excel- of CSV-bestand. Download eerst het voorbeeldbestand en gebruik dezelfde kopjes. Foto's voeg je daarna per product toe.</p></div>
 <div class="vt-v"><h5>Wat zet ik in de voorwaarden van mijn webshop?</h5><p>Bij Instellen kun je je voorwaarden kwijt. De klant moet daar bij het bestellen mee akkoord gaan. Een webshop in Nederland moet onder andere vertellen hoe het zit met de bedenktijd van 14 dagen. Voor producten die speciaal voor de klant zijn gemaakt, zoals bedrukte kleding, geldt die bedenktijd niet. Laat je voorwaarden nakijken als je twijfelt.</p></div>
+<div class="vt-v"><h5>Kan ik een bewegende foto (flip) bij een product zetten?</h5><p>Ja. Kies bij Foto's van het product naast je gewone foto's een .flip-bestand, bijvoorbeeld een trui die ronddraait. Wil je dat de flip vooraan staat, kies hem dan als Hoofdfoto. In de winkelwagen en bij Google wordt de eerste gewone foto gebruikt, zet daarom ook altijd minstens 1 gewone foto bij het product.</p></div>
 </div>
 </div>
 <div class="vt-g" data-param="adm"><h3>Administratie</h3>
@@ -12911,7 +12929,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-11-11-flip');
+define('SITE_BOUW', '2026-11-11-wsflip');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
