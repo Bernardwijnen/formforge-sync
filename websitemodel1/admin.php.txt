@@ -3869,6 +3869,8 @@ function ws_opbouw($x = null) {
         'schaduw' => isset($x['schaduw']) ? !empty($x['schaduw']) : true,
         'achtergrond' => $kies('achtergrond', ['licht', 'wit'], 'licht'),
         'fotogrond' => $kies('fotogrond', ['wit', 'licht', 'donker'], 'wit'),
+        'menu' => $kies('menu', ['eigen', 'website'], 'eigen'),
+        'terug_tekst' => cut(trim((string)($x['terug_tekst'] ?? '')), 30) ?: 'Naar de website',
     ];
 }
 function ws_kop_foto_url($o) { return $o['kop_foto'] !== '' && is_file(UPLOAD_DIR . '/webshop/_kop/' . $o['kop_foto']) ? '/uploads/webshop/_kop/' . rawurlencode($o['kop_foto']) : ''; }
@@ -4626,6 +4628,16 @@ function ws_kaart($p) {
          . '<span class="ab-txt"><b>' . h($p['naam']) . '</b>' . (($p['cat'] ?? '') !== '' ? '<small>' . h($p['cat']) . '</small>' : '')
          . '<em>' . ($vanaf ? '<small>vanaf</small>' : '') . h(ws_eur($pr)) . '</em></span></a>';
 }
+/* Menubalk van de webshop: de webshop staat los van de website, met alleen een knop terug naar de website */
+function ws_header($o, $backUrl = '', $backLabel = '') {
+    if ($o['menu'] === 'website') return site_header($backUrl, $backLabel);
+    $brand = preg_replace('/href="\/"/', 'href="/webshop/"', brand_html(), 1);
+    $out = slogan_bar() . '<header class="top ws-top"><div class="wrap">' . $brand . '<nav class="menu" aria-label="Menu">';
+    if ($backUrl !== '') {
+        $out .= '<a class="back" href="' . h($backUrl) . '" onclick="try{var r=document.referrer;if(r&&r.indexOf(location.origin+\'/\')===0&&history.length>1){history.back();return false;}}catch(e){}return true;"><svg viewBox="0 0 24 24" fill="none" width="16" height="16" aria-hidden="true"><path d="M19 12H5M11 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="long">' . h($backLabel) . '</span><span class="short">Terug</span></a>';
+    }
+    return $out . '<a class="cta ws-naarsite" href="/">' . h($o['terug_tekst']) . '</a></nav></div></header>' . "\n";
+}
 function ws_kop_html($in, $o, $fotoUrl = null) {
     $foto = $fotoUrl !== null ? $fotoUrl : ws_kop_foto_url($o);
     $st = $o['kop_stijl']; if ($st === 'foto' && $foto === '') $st = 'donker';
@@ -4644,7 +4656,7 @@ function render_ws_lijst($in, $items, $o = null, $kopFoto = null) {
     $o = $o ?: ws_opbouw();
     $cats = ws_categorieen();
     $out = site_head($in['titel'] . ' | ' . st('naam'), cut($in['intro'] . ' ' . st('naam') . (st('plaats') !== '' ? ', ' . st('plaats') : '') . '.', 160), '/webshop/', business_jsonld(), true);
-    $out .= ws_css($o) . "\n</head>\n<body>\n" . site_header();
+    $out .= ws_css($o) . "\n</head>\n<body>\n" . ws_header($o);
     $out .= '<main>';
     $aan = []; foreach ($o['blokken'] as $b) { if ($b['aan']) $aan[$b['k']] = 1; }
     if (!isset($aan['kop'])) $out .= '<h1 class="ws-vh">' . h($in['titel']) . '</h1>';
@@ -4699,7 +4711,7 @@ function render_ws_cat($in, $c, $cats) {
     list($kr, $krld) = ws_kruimel([[$in['titel'], '/webshop/'], [$c['naam'], '/webshop/' . $c['slug'] . '/']]);
     $oms = $c['tekst'] !== '' ? $c['tekst'] : $c['naam'] . ' bij ' . st('naam') . '. Bekijk ' . ($c['n'] === 1 ? 'het product' : 'alle ' . $c['n'] . ' producten') . ' en bestel online.';
     $out = site_head($c['naam'] . ' | ' . st('naam'), cut($oms, 160), '/webshop/' . $c['slug'] . '/', $krld, true, $c['foto']);
-    $out .= ws_css() . "\n</head>\n<body>\n" . site_header('/webshop/', $in['naam']);
+    $out .= ws_css() . "\n</head>\n<body>\n" . ws_header(ws_opbouw(), '/webshop/', $in['naam']);
     $out .= '<main><section class="abhero"><div class="wrap">' . $kr . '<h1>' . h($c['naam']) . '</h1>' . ($c['tekst'] !== '' ? '<p>' . nl2br(h($c['tekst'])) . '</p>' : '<p>' . $c['n'] . ($c['n'] === 1 ? ' product' : ' producten') . '</p>') . '</div></section>';
     $out .= '<section class="abwrap"><div class="wrap">' . ws_chips($cats, $c['slug']) . '<div class="ab-grid">';
     foreach ($c['items'] as $p) { $out .= ws_kaart($p); }
@@ -4733,7 +4745,7 @@ function render_ws_item($in, $p) {
     $kd[] = [$p['naam'], '/webshop/' . $p['slug'] . '/'];
     list($kr, $krld) = ws_kruimel($kd); $extra .= $krld;
     $out = site_head($p['naam'] . ' | ' . st('naam'), cut($p['naam'] . ' voor ' . ws_eur($pr) . '. ' . trim((string)($p['tekst'] ?? '')), 160), '/webshop/' . $p['slug'] . '/', $extra, true, $stil ? ws_foto_url($p, $stil[0]) : '');
-    $out .= ws_css() . "\n</head>\n<body>\n" . site_header($pc !== '' ? '/webshop/' . ws_cat_slug($pc) . '/' : '/webshop/', $pc !== '' ? $pc : 'Alle producten');
+    $out .= ws_css() . "\n</head>\n<body>\n" . ws_header(ws_opbouw(), $pc !== '' ? '/webshop/' . ws_cat_slug($pc) . '/' : '/webshop/', $pc !== '' ? $pc : 'Alle producten');
     $out .= '<main><section class="abwrap"><div class="wrap">' . $kr . '<div class="ab-det"><div class="ab-gal">';
     if ($fotos) {
         $out .= '<div class="ab-groot">';
@@ -4788,20 +4800,20 @@ function render_ws_mand($in, $items) {
             'winkel' => $in['winkel_betalen'], 'online' => ws_mollie_ok($in['mollie']), 'ophaal' => $in['ophaal_tekst'] !== '' ? $in['ophaal_tekst'] : (st('straat') !== '' ? st('straat') . ', ' . trim(st('postcode') . ' ' . st('plaats')) : ''),
             'voorw' => $in['voorwaarden'] !== '', 'tel' => st('tel')];
     $out = site_head('Winkelwagen | ' . st('naam'), '', '/webshop/winkelwagen/', '<meta name="robots" content="noindex" />', true);
-    $out .= ws_css() . "\n</head>\n<body>\n" . site_header('/webshop/', 'Verder winkelen');
+    $out .= ws_css() . "\n</head>\n<body>\n" . ws_header(ws_opbouw(), '/webshop/', 'Verder winkelen');
     $out .= '<main><section class="abwrap"><div class="wrap"><h1 style="margin:0 0 18px;font-size:clamp(28px,4vw,40px)">Winkelwagen</h1><div id="wsMand"><div class="ws-blok ws-leeg">Even laden...</div></div></div></section></main>' . site_footer();
     $out .= '<script>var WSC=' . ws_json_html($cfg) . ';</script>' . ws_js_tag();
     return $out . "\n</body>\n</html>\n";
 }
 function render_ws_bedankt($in) {
     $out = site_head('Bedankt voor uw bestelling | ' . st('naam'), '', '/webshop/bedankt/', '<meta name="robots" content="noindex" />', true);
-    $out .= ws_css() . "\n</head>\n<body>\n" . site_header('/webshop/', 'Naar de webshop');
+    $out .= ws_css() . "\n</head>\n<body>\n" . ws_header(ws_opbouw(), '/webshop/', 'Naar de webshop');
     $out .= '<main><section class="abwrap"><div class="wrap" style="max-width:720px"><div class="ws-blok" id="wsBedankt" data-tel="' . h(st('tel')) . '"><h1 style="margin:0 0 10px;font-size:clamp(26px,4vw,36px)">Bedankt voor uw bestelling</h1><p id="wsBedTekst">Even kijken of uw betaling binnen is...</p></div></div></section></main>' . site_footer();
     return $out . ws_js_tag() . "\n</body>\n</html>\n";
 }
 function render_ws_voorwaarden($in) {
     $out = site_head('Voorwaarden webshop | ' . st('naam'), '', '/webshop/voorwaarden/', '<meta name="robots" content="noindex" />', true);
-    $out .= ws_css() . "\n</head>\n<body>\n" . site_header('/webshop/winkelwagen/', 'Terug naar de winkelwagen');
+    $out .= ws_css() . "\n</head>\n<body>\n" . ws_header(ws_opbouw(), '/webshop/winkelwagen/', 'Terug naar de winkelwagen');
     $out .= '<main><section class="abwrap"><div class="wrap" style="max-width:820px"><div class="ws-blok"><h1 style="margin:0 0 14px;font-size:clamp(26px,4vw,36px)">Voorwaarden</h1><div class="ws-voorw">' . h($in['voorwaarden']) . '</div></div></div></section></main>' . site_footer();
     return $out . "\n</body>\n</html>\n";
 }
@@ -5744,7 +5756,8 @@ function ws_acties($action) {
                   'voordelen' => array_map('strval', (array)($_POST['voordelen'] ?? [])), 'uitgelicht' => array_map('strval', (array)($_POST['uitgelicht'] ?? [])),
                   'titel_uitgelicht' => $g('titel_uitgelicht'), 'titel_nieuw' => $g('titel_nieuw'), 'nieuw_n' => (int)$g('nieuw_n'), 'kolommen' => (int)$g('kolommen'), 'per_groep' => (int)$g('per_groep'),
                   'beeld' => $g('beeld'), 'vulling' => $g('vulling'), 'cats_als' => $g('cats_als'), 'accent' => !empty($_POST['eigen_kleur']) ? $g('accent') : '',
-                  'hoek' => $g('hoek'), 'schaduw' => !empty($_POST['schaduw']), 'achtergrond' => $g('achtergrond'), 'fotogrond' => $g('fotogrond')];
+                  'hoek' => $g('hoek'), 'schaduw' => !empty($_POST['schaduw']), 'achtergrond' => $g('achtergrond'), 'fotogrond' => $g('fotogrond'),
+                  'menu' => $g('menu'), 'terug_tekst' => $g('terug_tekst')];
         $weg = !empty($_POST['kop_foto_weg']);
         if ($weg) $nieuw['kop_foto'] = '';
         $titel = cut(trim($g('titel')), 90); $intro = cut(trim($g('intro')), 300);
@@ -6067,6 +6080,11 @@ function ws_view_opbouw($in) {
       <input type="hidden" name="action" value="ws_opbouw_save" />
       <p class="ws-mini" style="margin-top:0">Bouw je webshop zoals jij hem wilt. Wat je verandert, zie je meteen in het voorbeeld. Pas na <strong>Opslaan</strong> staat het op je website.</p>
 
+      <div class="ws-sectie"><h3>Menubalk</h3>
+        <div class="wso-keuzes"><?= $r('menu', 'eigen', $o['menu'], 'Alleen een knop naar de website') . $r('menu', 'website', $o['menu'], 'Het menu van de website') ?></div>
+        <div class="field" style="margin-top:8px"><label for="wsoTT">Tekst op de knop</label><input type="text" id="wsoTT" name="terug_tekst" maxlength="30" value="<?= h($o['terug_tekst']) ?>" /></div>
+      </div>
+
       <div class="ws-sectie"><h3>Bovenkant</h3>
         <div class="wso-keuzes"><?= $r('kop_stijl', 'donker', $o['kop_stijl'], 'Donker') . $r('kop_stijl', 'licht', $o['kop_stijl'], 'Licht') . $r('kop_stijl', 'foto', $o['kop_stijl'], 'Met foto') . $r('kop_stijl', 'geen', $o['kop_stijl'], 'Alleen de titel') ?></div>
         <div class="field"><label for="wsoT">Titel</label><input type="text" id="wsoT" name="titel" maxlength="90" value="<?= h($in['titel']) ?>" /></div>
@@ -6078,7 +6096,7 @@ function ws_view_opbouw($in) {
         <div class="field" style="margin-top:10px"><label for="wsoF">Foto of flip voor de bovenkant</label>
           <?php if ($foto !== ''): ?><div class="ws-mini" style="margin-bottom:6px">Er staat een <?= is_flip($o['kop_foto']) ? 'flip' : 'foto' ?>. <label style="display:inline;font-weight:400"><input type="checkbox" name="kop_foto_weg" value="1" /> Weghalen</label></div><?php endif; ?>
           <input type="file" id="wsoF" name="kop_foto" accept="image/jpeg,image/png,image/webp,.flip" />
-          <div class="hint">Wordt gebruikt bij de keuze Met foto. Een bewegende flip mag ook.</div></div>
+          <div class="hint">Kies je een foto of flip, dan springt de bovenkant vanzelf op <strong>Met foto</strong>. Een bewegende flip mag ook.</div></div>
       </div>
 
       <div class="ws-sectie"><h3>Blokken</h3>
@@ -6151,6 +6169,9 @@ function ws_view_opbouw($in) {
           }).catch(function () { laden.textContent = 'Voorbeeld lukt niet. Probeer het nog eens.'; });
         }, 350);
       }
+      /* Kies je een foto voor de bovenkant, dan zetten we de keuze ook meteen op Met foto */
+      var kf = document.getElementById('wsoF');
+      kf.addEventListener('change', function () { if (kf.files && kf.files.length) { var r = f.querySelector('input[name=kop_stijl][value=foto]'); if (r) r.checked = true; var w = f.querySelector('input[name=kop_foto_weg]'); if (w) w.checked = false; } });
       f.addEventListener('input', ververs); f.addEventListener('change', ververs);
       document.getElementById('wsoBlokken').addEventListener('click', function (e) {
         var b = e.target.closest('button[data-r]'); if (!b) return;
@@ -13926,7 +13947,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-11-11-opbouw');
+define('SITE_BOUW', '2026-11-11-wsmenu');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -15917,6 +15938,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     "f:abstatus": "Te koop: staat op je website. Gereserveerd of Verkocht: staat er met een label. Verborgen: alleen jij ziet hem.",
     "lbl:Foto's@_webshop": "De foto's van dit product. Kies bij Hoofdfoto welke vooraan staat. Met Verwijderen haal je een foto meteen weg (klik twee keer, voor de zekerheid). Bij een flip kun je met Flip aanpassen de beelden, de volgorde en de snelheid veranderen. Nieuwe foto's voeg je hieronder toe.",
     "lbl:Drukvakken op de foto": "Hier laat je zien waar de opdruk op je product komt, bijvoorbeeld op de borst of op de rug. Kies per plek een foto en schuif het blauwe vak naar de goede plek. Met het rondje rechtsonder maak je het vak groter of kleiner. De koper ziet zijn eigen logo dan meteen op je product. Hij kan het zelf groter of kleiner maken en hoger of lager zetten, maar nooit buiten het vak. Bij de bestelling zie je precies welke grootte en plaats hij koos.",
+    "h3:Menubalk@_webshop": "Wat er bovenin je webshop staat. Met Alleen een knop naar de website staat de webshop los van je website: bovenin staan alleen je naam en een knop terug naar je website, zodat bezoekers bij het winkelen blijven. Kies Het menu van de website als je liever het gewone menu ziet.",
     "h3:Bovenkant@_webshop": "Het bovenste stuk van je webshop. Kies Donker of Licht voor een balk met titel en tekst, Met foto voor een foto of flip naast de tekst, of Alleen de titel. Een knop brengt bezoekers meteen naar je producten.",
     "h3:Blokken@_webshop": "De onderdelen van je webshop. Vink aan wat je wilt laten zien en zet ze met de pijltjes in de goede volgorde. Wat bovenaan staat, zien bezoekers het eerst.",
     "h3:Voordelen@_webshop": "Korte zinnen met een groen vinkje, bijvoorbeeld Gratis verzending vanaf 50 euro. Ze staan alleen op je webshop als het blok Voordelen aan staat.",
