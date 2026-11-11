@@ -1893,6 +1893,76 @@ function site_lists($pages) {
    =========================================================== */
 $BLOKKEN = ['strook' => 'Balk met diensten', 'diensten' => 'Diensten', 'projecten' => 'Uitgelichte projecten', 'voorna' => 'Voor en na (foto\'s)', 'werkwijze' => 'Werkwijze in stappen', 'cijfers' => 'Cijfers', 'over' => 'Over ons', 'vragen' => 'Veelgestelde vragen', 'reserveren' => 'Afspraakplanner (kalender)', 'aanbod' => 'Aanbod: occasions of producten', 'webshop' => 'Webshop: je producten', 'beoordelingen' => 'Beoordelingen (sterren)', 'menukaart' => 'Menukaart (horeca)', 'beeld1' => 'Eigen afbeelding 1', 'beeld2' => 'Eigen afbeelding 2', 'beeld3' => 'Eigen afbeelding 3', 'beeld4' => 'Eigen afbeelding 4', 'beeld5' => 'Eigen afbeelding 5', 'beeld6' => 'Eigen afbeelding 6'];
 $BEELD_VORMEN = ['links' => 'Foto links, tekst rechts', 'rechts' => 'Foto rechts, tekst links', 'breed' => 'Grote foto over de hele breedte', 'klein' => 'Kleine foto in het midden (bijvoorbeeld een logo of keurmerk)'];
+/* ---------- Flip: het eigen bewegende beeldformaat van FormForge ---------- */
+function is_flip($f) { return strtolower(pathinfo((string)$f, PATHINFO_EXTENSION)) === 'flip'; }
+function save_flip($tmp, $name, $dir, $prefix, &$errors) {
+    if (!is_uploaded_file($tmp)) return '';
+    if (filesize($tmp) > MAX_PHOTO_BYTES) { $errors[] = "'" . $name . "' is groter dan 8 MB."; return ''; }
+    $fh = @fopen($tmp, 'rb'); $kop = $fh ? fread($fh, 4) : ''; if ($fh) fclose($fh);
+    if ($kop !== 'FLIP') { $errors[] = "'" . $name . "' is geen geldige flip."; return ''; }
+    if (!is_dir($dir)) { mkdir($dir, 0755, true); }
+    $file = $prefix . date('Ymd-His') . '-' . bin2hex(random_bytes(4)) . '.flip';
+    return move_uploaded_file($tmp, $dir . '/' . $file) ? $file : '';
+}
+/* Een foto of een flip uit uploads/site als <img>. Een flip krijgt data-flip; flipspeler.js laat hem bewegen. */
+function site_beeld($file, $alt, $lazy = true) {
+    $url = '/uploads/site/' . rawurlencode($file);
+    if (is_flip($file)) {
+        return '<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" data-flip="' . h($url) . '" alt="' . h($alt) . '" />';
+    }
+    return '<img src="' . h($url) . '" alt="' . h($alt) . '"' . ($lazy ? ' loading="lazy"' : '') . ' />';
+}
+function admin_mini_beeld($file) {
+    if (is_flip($file)) return '<span class="blk-mini" style="display:inline-grid;place-items:center;background:#11162b;color:#fff;font-weight:800;font-size:13px;letter-spacing:.06em">FLIP</span>';
+    return '<img class="blk-mini" src="/uploads/site/' . h(rawurlencode($file)) . '" alt="" />';
+}
+/* Zet de flipspeler op de site als hij er nog niet staat. Een eigen flipspeler.js wordt nooit overschreven. */
+function flip_speler_tag($html) {
+    if (strpos($html, 'data-flip=') === false) return '';
+    $f = ROOT . '/flipspeler.js';
+    if (!is_file($f)) { @file_put_contents($f, flip_speler_js(), LOCK_EX); }
+    return '<script src="/flipspeler.js" defer></script>';
+}
+function flip_speler_js() {
+    return <<<'FLIPJS'
+/* Flipspeler - speelt .flip-bestanden af. Flip is een beeldformaat van Ben Wijnen | FormForge. */
+(function () {
+  function speel(img) {
+    var bron = img.getAttribute("data-flip");
+    if (!bron || img.getAttribute("data-flip-bezig")) return;
+    img.setAttribute("data-flip-bezig", "1");
+    fetch(bron).then(function (r) { return r.arrayBuffer(); }).then(function (ab) {
+      var u = new Uint8Array(ab), dv = new DataView(ab);
+      if (u[0] !== 70 || u[1] !== 76 || u[2] !== 73 || u[3] !== 80) return;
+      var p = 5, bt = dv.getUint8(p); p += 2;
+      var n = dv.getUint16(p); p += 2;
+      var ms = dv.getUint16(p); p += 2;
+      var cl = dv.getUint16(p); p += 2 + cl;
+      var mime = bt === 1 ? "image/png" : bt === 2 ? "image/jpeg" : "image/webp";
+      var fr = [];
+      for (var i = 0; i < n; i++) {
+        var fm = dv.getUint16(p); p += 2;
+        var l = dv.getUint32(p); p += 4;
+        fr.push({ ms: fm || ms || 100, url: URL.createObjectURL(new Blob([u.subarray(p, p + l)], { type: mime })) });
+        p += l;
+      }
+      if (!fr.length) return;
+      img.src = fr[0].url;
+      var stil = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (stil || fr.length < 2) return;
+      var geladen = 0;
+      fr.forEach(function (f) { var x = new Image(); x.onload = x.onerror = function () { geladen++; if (geladen === fr.length) start(); }; x.src = f.url; });
+      function start() {
+        var k = 0;
+        (function volgende() { img.src = fr[k].url; var t = fr[k].ms; k = (k + 1) % fr.length; setTimeout(volgende, t); })();
+      }
+    }).catch(function () {});
+  }
+  function alles() { var l = document.querySelectorAll("img[data-flip]"); for (var i = 0; i < l.length; i++) speel(l[i]); }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", alles); else alles();
+})();
+FLIPJS;
+}
 function beeld_item($n) {
     global $ST, $BEELD_VORMEN;
     $x = is_array($ST['beelden'][$n] ?? null) ? $ST['beelden'][$n] : [];
@@ -1974,7 +2044,7 @@ function blok_html($k, $sky) {
     } elseif ($k === 'over') {
         $foto = st('over_foto');
         $o .= '<section class="' . $cl . '" id="over-ons"><div class="wrap"><div class="ov' . ($foto === '' ? ' zonder' : '') . '">';
-        if ($foto !== '') { $o .= '<div class="ov-foto"><img src="/uploads/site/' . h(rawurlencode($foto)) . '" alt="' . h(st('over_naam') !== '' ? st('over_naam') : st('naam')) . '" loading="lazy" /></div>'; }
+        if ($foto !== '') { $o .= '<div class="ov-foto">' . site_beeld($foto, st('over_naam') !== '' ? st('over_naam') : st('naam')) . '</div>'; }
         $o .= '<div class="ov-tekst"><h2>' . h(st('over_titel') ?: 'Over ons') . '</h2>';
         foreach (preg_split("/\n\s*\n/", st('over_tekst')) as $al) { $o .= '<p>' . nl2br(h(trim($al))) . '</p>'; }
         if (st('over_naam') !== '') { $o .= '<p class="ov-naam">' . h(st('over_naam')) . '</p>'; }
@@ -1998,7 +2068,7 @@ function blok_html($k, $sky) {
         if ($x['titel'] !== '') { $txt .= '<h2>' . h($x['titel']) . '</h2>'; }
         if ($x['tekst'] !== '') { foreach (preg_split("/\n\s*\n/", $x['tekst']) as $al) { $txt .= '<p>' . nl2br(h(trim($al))) . '</p>'; } }
         if ($x['knop'] !== '') { $txt .= '<p class="bd-knop"><a class="btn primary" href="' . h($x['link'] !== '' ? $x['link'] : '/contact/') . '">' . h($x['knop']) . '</a></p>'; }
-        $img = '<div class="bd-foto"><img src="/uploads/site/' . h(rawurlencode($x['foto'])) . '" alt="' . h($x['titel'] !== '' ? $x['titel'] : st('naam')) . '" loading="lazy" /></div>';
+        $img = '<div class="bd-foto">' . site_beeld($x['foto'], $x['titel'] !== '' ? $x['titel'] : st('naam')) . '</div>';
         $vorm = $x['vorm'];
         if ($txt === '' && ($vorm === 'links' || $vorm === 'rechts')) { $vorm = 'solo'; }
         $o .= '<section class="' . $cl . ' blok-beeld" id="' . $id . '"' . ($per ? ' hidden data-van="' . h($x['van']) . '" data-tot="' . h($x['tot']) . '"' : '') . '><div class="wrap"><div class="bd ' . $vorm . '">';
@@ -2339,7 +2409,7 @@ CSS;
 })();
 </script>
 JS;
-    $out .= str_replace('__DATA__', $json, $js) . "\n</body>\n</html>\n";
+    $out .= str_replace('__DATA__', $json, $js) . flip_speler_tag($out) . "\n</body>\n</html>\n";
     return $out;
 }
 
@@ -12595,6 +12665,7 @@ function venturo_html() {
 <div class="vt-v"><h5>Hoe zet ik een eigen afbeelding of actie op mijn voorpagina?</h5><p>Zet een van de blokken Eigen afbeelding aan (je hebt er 6). Kies een foto of plaatje, en eventueel een titel, tekst en knop. Bij Hoe laten zien kies je naast elkaar, over de hele breedte of klein in het midden.</p></div>
 <div class="vt-v"><h5>Kan een afbeelding alleen in een bepaald seizoen te zien zijn?</h5><p>Ja. Vul bij een eigen afbeelding Van en Tot en met in, bijvoorbeeld van 1 november tot en met 1 maart. Buiten die periode verdwijnt het blok vanzelf, en het volgende jaar komt het vanzelf terug.</p></div>
 <div class="vt-v"><h5>Hoe verander ik het woord "Projecten" op mijn website?</h5><p>In het blok Uitgelichte projecten vul je bij Een en Meer je eigen woord in, bijvoorbeeld klus en klussen, of boek en boeken. Dit woord staat in het menu en boven je werk.</p></div>
+<div class="vt-v"><h5>Kan ik een bewegend beeld (flip) op mijn voorpagina zetten?</h5><p>Ja. Een flip is het eigen bewegende beeldformaat van FormForge (.flip). Ga naar Instellingen, Blokken op je voorpagina, en open Over ons of een Eigen afbeelding. Kies bij de foto je .flip-bestand en klik op Opslaan en website bijwerken. De flip beweegt dan vanzelf op je website en blijft staan, ook als je later iets anders opslaat.</p></div>
 </div>
 <div class="vt-o"><h4>Projecten</h4>
 <div class="vt-v"><h5>Hoe voeg ik een project toe?</h5><p>Klik links op Projecten en daarna op + Nieuw project. Vul een titel, een korte omschrijving en de tekst in, voeg foto's toe en klik op Opslaan.</p></div>
@@ -12840,7 +12911,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-11-11-categorie');
+define('SITE_BOUW', '2026-11-11-flip');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -13126,7 +13197,9 @@ if ($logged_in && isset($_POST['action'])) {
             $naam = $idx === null ? $f['name'] : $f['name'][$idx];
             if ($err !== UPLOAD_ERR_OK) { $upErrors[] = upload_error_text($err, $naam); return ''; }
             ensure_upload_dir();
-            return save_one_image($idx === null ? $f['tmp_name'] : $f['tmp_name'][$idx], $naam, UPLOAD_DIR . '/site', $prefix, $upErrors);
+            $tmpf = $idx === null ? $f['tmp_name'] : $f['tmp_name'][$idx];
+            if (($veld === 'over_foto' || $veld === 'bd_foto') && is_flip($naam)) { return save_flip($tmpf, $naam, UPLOAD_DIR . '/site', $prefix, $upErrors); }
+            return save_one_image($tmpf, $naam, UPLOAD_DIR . '/site', $prefix, $upErrors);
         };
         $weg = function($f) { if ($f !== '') { foto_weg('site/' . basename($f)); } };
         if (isset($_POST['vn_tekst'])) {
@@ -13991,7 +14064,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
                     <details class="blk-in"><summary>Inhoud: tekst en foto</summary>
                       <div class="two"><div class="field"><label>Titel</label><input type="text" name="over_titel" maxlength="80" value="<?= h(st('over_titel')) ?>" /></div><div class="field"><label>Naam onder de tekst (mag leeg)</label><input type="text" name="over_naam" maxlength="100" value="<?= h(st('over_naam')) ?>" placeholder="Bijvoorbeeld: Jan Jansen, eigenaar" /></div></div>
                       <div class="field"><label>Je verhaal</label><textarea name="over_tekst" class="short" maxlength="3000"><?= h(st('over_tekst')) ?></textarea><div class="hint">Wie ben je, hoe lang doe je dit al, waarom kiezen klanten voor jou? Een lege regel begint een nieuwe alinea.</div></div>
-                      <div class="field"><label>Foto (mag leeg)</label><?php if (st('over_foto') !== ''): ?><img class="blk-mini" src="/uploads/site/<?= h(rawurlencode(st('over_foto'))) ?>" alt="" /><label class="check"><input type="checkbox" name="over_foto_weg" value="1" /> <span>Foto weghalen</span></label><?php endif; ?><input type="file" name="over_foto" accept="image/jpeg,image/png,image/webp" /></div>
+                      <div class="field"><label>Foto of flip (mag leeg)</label><?php if (st('over_foto') !== ''): ?><?= admin_mini_beeld(st('over_foto')) ?><label class="check"><input type="checkbox" name="over_foto_weg" value="1" /> <span>Foto weghalen</span></label><?php endif; ?><input type="file" name="over_foto" accept="image/jpeg,image/png,image/webp,.flip" /><div class="hint">Een foto, of een bewegende flip (.flip).</div></div>
                     </details>
                   <?php elseif ($k === 'vragen'): ?>
                     <details class="blk-in"><summary>Inhoud: vragen en antwoorden</summary>
@@ -14006,7 +14079,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
                     <?php if ($x['foto'] !== '' && $x['van'] !== ''): ?><div class="hint" style="margin:4px 0 0 28px"><?= beeld_nu_zichtbaar($x) ? 'Nu te zien' : 'Nu niet te zien' ?>: alleen van <?= h(beeld_datum_tekst($x['van'])) ?> tot en met <?= h(beeld_datum_tekst($x['tot'])) ?>.</div><?php endif; ?>
                     <details class="blk-in"><summary>Inhoud: afbeelding en tekst</summary>
                       <input type="hidden" name="bd_set[<?= $bi ?>]" value="1" />
-                      <div class="field"><label for="bdfoto<?= $bi ?>">Afbeelding</label><?php if ($x['foto'] !== ''): ?><img class="blk-mini" src="/uploads/site/<?= h(rawurlencode($x['foto'])) ?>" alt="" /><label class="check"><input type="checkbox" name="bd_weg[<?= $bi ?>]" value="1" /> <span>Afbeelding weghalen</span></label><?php endif; ?><input type="file" id="bdfoto<?= $bi ?>" name="bd_foto[<?= $bi ?>]" accept="image/jpeg,image/png,image/webp,image/gif" /><div class="hint">Een foto of plaatje, bijvoorbeeld voor je winterschilderwerk, een actie of een keurmerk. Jpg, png of webp, tot 8 MB.</div></div>
+                      <div class="field"><label for="bdfoto<?= $bi ?>">Afbeelding</label><?php if ($x['foto'] !== ''): ?><?= admin_mini_beeld($x['foto']) ?><label class="check"><input type="checkbox" name="bd_weg[<?= $bi ?>]" value="1" /> <span>Afbeelding weghalen</span></label><?php endif; ?><input type="file" id="bdfoto<?= $bi ?>" name="bd_foto[<?= $bi ?>]" accept="image/jpeg,image/png,image/webp,image/gif,.flip" /><div class="hint">Een foto of plaatje, bijvoorbeeld voor je winterschilderwerk, een actie of een keurmerk. Jpg, png of webp, tot 8 MB. Of een bewegende flip (.flip).</div></div>
                       <div class="field"><label for="bdvorm<?= $bi ?>">Hoe laten zien</label><select id="bdvorm<?= $bi ?>" name="bd_vorm[<?= $bi ?>]"><?php foreach ($BEELD_VORMEN as $vk => $vl): ?><option value="<?= h($vk) ?>"<?= $x['vorm'] === $vk ? ' selected' : '' ?>><?= h($vl) ?></option><?php endforeach; ?></select></div>
                       <div class="two"><div class="field"><label for="bdtitel<?= $bi ?>">Titel (mag leeg)</label><input type="text" id="bdtitel<?= $bi ?>" name="bd_titel[<?= $bi ?>]" maxlength="90" value="<?= h($x['titel']) ?>" placeholder="Bijvoorbeeld: Ook in de winter schilderen wij" /></div><div class="field"><label for="bdknop<?= $bi ?>">Tekst op de knop (mag leeg)</label><input type="text" id="bdknop<?= $bi ?>" name="bd_knop[<?= $bi ?>]" maxlength="40" value="<?= h($x['knop']) ?>" placeholder="Bijvoorbeeld: Vraag een offerte aan" /></div></div>
                       <div class="field"><label for="bdtekst<?= $bi ?>">Tekst (mag leeg)</label><textarea id="bdtekst<?= $bi ?>" name="bd_tekst[<?= $bi ?>]" class="short" maxlength="1500"><?= h($x['tekst']) ?></textarea></div>
@@ -14319,7 +14392,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     "f:rsmelding": "Naar dit adres sturen we een melding bij elke nieuwe reservering of annulering.",
     "f:banner": "Een grote foto bovenaan je voorpagina. Kies een liggende foto; op een telefoon wordt de zijkant soms iets afgesneden.",
     "f:banner_vorm": "Achter de titel: je titel en knop staan op de foto, met een donkere waas zodat de tekst leesbaar blijft. Als strook: de foto staat als brede baan onder het menu en je titel staat eronder.",
-    "f:bdfoto": "Kies een foto of plaatje van je telefoon of computer. Dit blok komt op je voorpagina, op de plek die je met de pijltjes kiest.",
+    "f:bdfoto": "Kies een foto of plaatje van je telefoon of computer. Een bewegende flip (.flip) mag ook. Dit blok komt op je voorpagina, op de plek die je met de pijltjes kiest.",
     "f:bdvorm": "Naast elkaar past goed bij een foto met wat tekst. Over de hele breedte is mooi voor een grote sfeerfoto. Klein in het midden is handig voor een logo of keurmerk.",
     "f:bdlink": "Waar bezoekers naartoe gaan als ze op de knop klikken. Laat je dit leeg, dan gaat de knop naar je contactpagina. Een andere website begint met https://.",
     "f:naam": "De naam van je bedrijf. Die staat bovenaan elke pagina en in Google.",
@@ -14544,6 +14617,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     "lbl:Naam onder de tekst (mag leeg)": "Bijvoorbeeld je eigen naam, of Jan en Petra. Het staat als ondertekening onder je verhaal.",
     "lbl:Je verhaal": "Vertel in je eigen woorden wie je bent, hoe je begonnen bent en waarom klanten voor jou kiezen. Een paar korte alinea's is genoeg.",
     "lbl:Foto (mag leeg)": "Een foto van jezelf, je team of je zaak. Mensen kiezen sneller voor een bedrijf als ze zien met wie ze te maken hebben.",
+    "lbl:Foto of flip (mag leeg)": "Een foto van jezelf, je team of je zaak. Of een flip: een bewegend beeld in het eigen formaat van FormForge (.flip), bijvoorbeeld boeken die om je heen draaien. Kies het bestand en klik op Opslaan, dan beweegt het vanzelf op je website.",
     "n:over_foto_weg": "Vink aan en sla op om de foto weg te halen.",
     "lbl:Vraag #": "Een vraag die klanten je vaak stellen, bijvoorbeeld: Hoe lang duurt een klus? Laat je de vraag leeg, dan staat hij niet op je website.",
     "lbl:Antwoord": "Je antwoord op de vraag. Kort en duidelijk, zoals je het aan de telefoon ook zou zeggen.",
