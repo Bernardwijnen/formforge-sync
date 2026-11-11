@@ -4062,7 +4062,11 @@ function ws_mollie_check($o) {
     list($code, $j) = ws_mollie($in['mollie'], 'GET', '/payments/' . rawurlencode($o['mollie_id']));
     if ($code !== 200 || !$j) return $o;
     $st = (string)($j['status'] ?? '');
-    if ($st === 'paid') { ws_betaald($o['id'], (string)($j['method'] ?? '')); }
+    if ($st === 'paid') {
+        ws_betaald($o['id'], (string)($j['method'] ?? ''));
+        $modus = (string)($j['mode'] ?? '');
+        if ($modus !== '') ws_slot(function() use ($o, $modus) { $l = ws_bestellingen(); foreach ($l as $k => $x) { if ($x['id'] === $o['id']) $l[$k]['mollie_modus'] = $modus; } ws_best_bewaar($l); });
+    }
     elseif (in_array($st, ['canceled', 'expired', 'failed'], true)) {
         ws_slot(function() use ($o) { $l = ws_bestellingen(); foreach ($l as $k => $x) { if ($x['id'] === $o['id'] && $x['status'] === 'wacht') { $l[$k]['status'] = 'mislukt'; } } ws_best_bewaar($l); });
     }
@@ -6662,6 +6666,7 @@ function ws_view_bestellingen($in) {
         <p><a class="btn ghost sm" href="admin.php?webshop=1">&larr; Alle bestellingen</a></p>
         <h2 style="font-size:22px;margin:0 0 4px">Bestelling <?= h($o['nr']) ?> <span class="ws-st <?= h($o['status']) ?>" style="vertical-align:middle"><?= h($WS_STATUS[$o['status']] ?? $o['status']) ?></span></h2>
         <p class="sub"><?= h(nl_datum(substr($o['op'], 0, 10)) . ', ' . substr($o['op'], 11, 5)) ?> &middot; <?= h(adm_eur((int)$o['totaal'])) ?> &middot; <span class="ws-bet <?= $betaald ? 'ja' : 'nee' ?>"><?= $betaald ? 'Betaald met ' . h(ws_methode_tekst($o['methode'] ?? '')) : ($o['betaalwijze'] === 'winkel' ? 'Betaalt bij ophalen' : ($o['status'] === 'wacht' ? 'Wacht op betaling' : 'Nog niet betaald')) ?></span></p>
+        <?php if (($o['uitbetaald'] ?? '') !== ''): ?><p class="ws-mini" style="margin:-6px 0 12px">Mollie heeft dit bedrag op <?= h(nl_datum($o['uitbetaald'])) ?> op je rekening gezet. Je ziet het bij Administratie, Bank.</p><?php endif; ?>
         <div class="ws-det">
           <div class="formcard" style="grid-column:1 / -1">
             <h2>Producten</h2>
@@ -11006,6 +11011,28 @@ function adm_regel_sleutel($naam, $bedrag = 0) {
     $n = trim(preg_replace('/\s+/', ' ', preg_replace('/[^a-z ]+/', ' ', preg_replace('/\d{2,}/', ' ', $n))));
     return $n === '' ? '' : ($bedrag < 0 ? 'af:' : 'bij:') . $n;
 }
+/* Mollie stort het geld van een paar webshopbestellingen in 1 keer, min de kosten.
+   Zo'n uitbetaling koppelen we aan de bestellingen die er (van oud naar nieuw) bij horen. */
+function adm_mollie_uitbetaling($t) {
+    if (!function_exists('ws_bestellingen') || !is_file(WS_BEST)) return null;
+    $l = ws_bestellingen(); $kand = [];
+    foreach ($l as $k => $o) {
+        if (($o['betaalwijze'] ?? '') !== 'online' || ($o['mollie_id'] ?? '') === '' || ($o['betaald_op'] ?? '') === '' || ($o['uitbetaald'] ?? '') !== '') continue;
+        if (($o['mollie_modus'] ?? '') === 'test' || ($o['status'] ?? '') === 'geannuleerd') continue;
+        if (substr($o['betaald_op'], 0, 10) > $t['datum']) continue;
+        $kand[] = [$o['betaald_op'], $k, (int)$o['totaal']];
+    }
+    sort($kand);
+    $som = 0; $gekozen = [];
+    foreach ($kand as $c) { $gekozen[] = $c[1]; $som += $c[2]; if ($som >= $t['bedrag']) break; }
+    if (!$gekozen || $som < $t['bedrag']) return null;
+    $kosten = $som - $t['bedrag'];
+    /* Mollie rekent een paar procent of een vast bedrag per betaling: meer dan 4% plus 50 cent per betaling klopt niet */
+    if ($kosten > (int)round($som * 0.04) + 50 * count($gekozen)) return null;
+    $nrs = [];
+    ws_slot(function() use ($gekozen, $t, &$nrs) { $l = ws_bestellingen(); foreach ($gekozen as $k) { if (isset($l[$k])) { $l[$k]['uitbetaald'] = $t['datum']; $l[$k]['uitbetaling'] = $t['id']; $nrs[] = $l[$k]['nr']; } } ws_best_bewaar($l); });
+    return ['n' => count($gekozen), 'som' => $som, 'kosten' => $kosten, 'nrs' => $nrs];
+}
 /* Betalingen koppelen aan open facturen en indelen volgens onthouden keuzes */
 function adm_bank_koppel(&$bank, &$docs, &$inkoop) {
     $regels = read_json(ADM_BANKREGELS, []);
@@ -11013,6 +11040,10 @@ function adm_bank_koppel(&$bank, &$docs, &$inkoop) {
     foreach ($bank as $bi => $t) {
         if ($t['indeling'] !== '' || $t['koppel'] !== '') continue;
         $tekst = strtolower($t['naam'] . ' ' . $t['oms']);
+        if ($t['bedrag'] > 0 && strpos($tekst, 'mollie') !== false) {
+            $m = adm_mollie_uitbetaling($t);
+            if ($m) { $bank[$bi]['koppel'] = 'm:' . $t['id']; $bank[$bi]['indeling'] = 'omzet'; $bank[$bi]['mollie'] = $m; $n++; continue; }
+        }
         if ($t['bedrag'] > 0) {
             $kand = [];
             foreach ($docs as $di => $d) {
@@ -11637,7 +11668,11 @@ function adm_v_bank() {
         echo '<tr data-id="' . h($t['id']) . '"><td class="mob-weg" style="white-space:nowrap">' . h(date('d-m-Y', strtotime($t['datum']))) . '</td>'
            . '<td><strong>' . h($t['naam']) . '</strong><span class="sub2">' . h(cut($t['oms'], 90)) . '</span><span class="sub2 mob-ja">' . h(date('d-m-Y', strtotime($t['datum']))) . '</span></td>'
            . '<td class="r" style="color:' . ($t['bedrag'] < 0 ? '#c62828' : '#157347') . ';font-weight:600">' . h(adm_eur($t['bedrag'])) . '</td><td>';
-        if ($t['koppel'] !== '' && isset($namen[$t['koppel']])) {
+        if ($t['koppel'] !== '' && $t['koppel'][0] === 'm' && !empty($t['mollie'])) {
+            $m = $t['mollie'];
+            echo '<span class="st st-betaald">Mollie-uitbetaling</span> <a href="admin.php?webshop=1" style="font-size:13px;color:#1d4ed8">' . (int)$m['n'] . ' webshopbestelling' . ((int)$m['n'] === 1 ? '' : 'en') . '</a>'
+               . '<span class="sub2">' . h(implode(', ', array_slice((array)$m['nrs'], 0, 6)) . (count((array)$m['nrs']) > 6 ? ' en meer' : '')) . '. Samen ' . h(adm_eur((int)$m['som'])) . ($m['kosten'] > 0 ? ', Mollie hield ' . h(adm_eur((int)$m['kosten'])) . ' kosten in. Die staan op de maandfactuur van Mollie.' : '.') . '</span>';
+        } elseif ($t['koppel'] !== '' && isset($namen[$t['koppel']])) {
             $kid = substr($t['koppel'], 2);
             $url = $t['koppel'][0] === 'i' ? 'admin.php?adm=ink&amp;id=' . h($kid) : 'admin.php?adm=doc&amp;id=' . h($kid);
             echo '<span class="st st-betaald">Gekoppeld</span> <a href="' . $url . '" style="font-size:13px;color:#1d4ed8">' . h(cut($namen[$t['koppel']], 40)) . '</a>';
@@ -13985,6 +14020,7 @@ function venturo_html() {
 <div class="vt-v"><h5>Kan ik een bewegende foto (flip) bij een product zetten?</h5><p>Ja. Open het product en klik bij Foto's op Maak een flip van foto's. Kies een paar foto's, bijvoorbeeld een T-shirt van voren, van opzij en van achteren, kies de snelheid en klik op Flip toevoegen. Klik daarna op Opslaan. Heb je al een .flip-bestand, dan kun je dat ook gewoon kiezen. Zet altijd ook minstens 1 gewone foto bij het product, want de winkelwagen en Google gebruiken de eerste gewone foto.</p></div>
 <div class="vt-v"><h5>Kan de koper zelf de grootte en plaats van zijn logo kiezen?</h5><p>Ja. Zet bij Opdruk de plekken met de grootste maat, bijvoorbeeld Borst links 10x10 en Rug 30x40, en klik op Opslaan. Kies daarna bij Drukvakken op de foto per plek een foto en schuif het blauwe vak naar de goede plek. De koper ziet zijn logo dan meteen op je product, maakt het groter of kleiner en zet het boven, in het midden of onder, maar nooit buiten het vak. Bij de bestelling zie je precies welke grootte en plaats hij koos.</p></div>
 <div class="vt-v"><h5>Kan ik de opbouw en de kleuren van mijn webshop zelf kiezen?</h5><p>Ja. Ga naar Webshop en dan Opbouw en uiterlijk. Daar kies je de bovenkant (donker, licht, met een foto of flip), zet je blokken aan of uit en in de volgorde die jij wilt, zoals Uitgelicht, Nieuw binnen, Voordelen en Zoeken, en kies je hoeveel producten naast elkaar staan, de vorm van de foto's, een eigen kleur en ronde of rechte hoeken. Rechts zie je meteen een voorbeeld, op de computer en op de telefoon. Klik op Opslaan en website bijwerken, dan staat het op je website. Wil je het snel? Kies bovenaan een van de 9 stijlen, zoals Modern, Boetiek, Bouwmarkt of Luxe. Je kunt ook een eigen lettertype kiezen, de vorm van de productkaarten, en bij Productpagina waar de foto staat en welke tekst op de bestelknop komt.</p></div>
+<div class="vt-v"><h5>Mollie stort het geld in 1 keer. Hoe zie ik bij welke bestellingen dat hoort?</h5><p>Laad je bankbestand in bij Administratie, Bank. Een storting van Mollie wordt vanzelf gekoppeld aan de webshopbestellingen die erbij horen, van oud naar nieuw. Je ziet welke bestellingen het zijn, hoeveel ze samen waren en hoeveel kosten Mollie heeft ingehouden. Die kosten staan op de maandfactuur van Mollie. Bij de bestelling zelf zie je op welke dag Mollie het geld heeft gestort.</p></div>
 </div>
 </div>
 <div class="vt-g" data-param="adm"><h3>Administratie</h3>
@@ -14138,7 +14174,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-11-11-wsstijlen');
+define('SITE_BOUW', '2026-11-11-mollieuit');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
