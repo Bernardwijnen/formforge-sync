@@ -5376,7 +5376,7 @@ function ws_view_producten($in) {
           </div>
           <div class="field"><label>Foto's</label>
             <?php if (!empty($x['fotos'])): ?><div class="photos" style="margin-bottom:10px"><?php foreach ($x['fotos'] as $i => $f): ?><div><?= ws_admin_thumb($x, $f) ?><label><input type="radio" name="foto_hoofd" value="<?= h($f) ?>" <?= $i === 0 ? 'checked' : '' ?> /> Hoofdfoto</label><label><input type="checkbox" name="foto_weg[]" value="<?= h($f) ?>" /> Weghalen</label></div><?php endforeach; ?></div><?php endif; ?>
-            <input type="file" name="fotos[]" accept="image/*,.flip" multiple /><div class="hint">Je kunt meerdere foto's tegelijk kiezen (hoogstens <?= WS_MAX_FOTO ?>). Een bewegende flip (.flip) mag ook, bijvoorbeeld een trui die ronddraait.</div></div>
+            <input type="file" name="fotos[]" accept="image/*,.flip" multiple /><div class="hint">Je kunt meerdere foto's tegelijk kiezen (hoogstens <?= WS_MAX_FOTO ?>). Een bewegende flip (.flip) mag ook, bijvoorbeeld een trui die ronddraait. Zelf een flip maken van een paar foto's? Klik op Maak een flip van foto's.</div></div>
           <div class="ws-acties"><button class="btn" type="submit">Opslaan en website bijwerken</button></div>
         </form>
         <script>
@@ -12775,7 +12775,7 @@ function venturo_html() {
 <div class="vt-v"><h5>Hoe werken de verzendkosten?</h5><p>Bij Instellen vul je een vast bedrag aan verzendkosten in, en eventueel vanaf welk bedrag het verzenden gratis is. Het is 1 bedrag per bestelling. Je kunt ook kiezen dat klanten hun bestelling ophalen, en of ze dan in de winkel mogen betalen.</p></div>
 <div class="vt-v"><h5>Kan ik veel producten tegelijk inladen?</h5><p>Ja, bij Producten onderaan, met een Excel- of CSV-bestand. Download eerst het voorbeeldbestand en gebruik dezelfde kopjes. Foto's voeg je daarna per product toe.</p></div>
 <div class="vt-v"><h5>Wat zet ik in de voorwaarden van mijn webshop?</h5><p>Bij Instellen kun je je voorwaarden kwijt. De klant moet daar bij het bestellen mee akkoord gaan. Een webshop in Nederland moet onder andere vertellen hoe het zit met de bedenktijd van 14 dagen. Voor producten die speciaal voor de klant zijn gemaakt, zoals bedrukte kleding, geldt die bedenktijd niet. Laat je voorwaarden nakijken als je twijfelt.</p></div>
-<div class="vt-v"><h5>Kan ik een bewegende foto (flip) bij een product zetten?</h5><p>Ja. Kies bij Foto's van het product naast je gewone foto's een .flip-bestand, bijvoorbeeld een trui die ronddraait. Wil je dat de flip vooraan staat, kies hem dan als Hoofdfoto. In de winkelwagen en bij Google wordt de eerste gewone foto gebruikt, zet daarom ook altijd minstens 1 gewone foto bij het product.</p></div>
+<div class="vt-v"><h5>Kan ik een bewegende foto (flip) bij een product zetten?</h5><p>Ja. Open het product en klik bij Foto's op Maak een flip van foto's. Kies een paar foto's, bijvoorbeeld een T-shirt van voren, van opzij en van achteren, kies de snelheid en klik op Flip toevoegen. Klik daarna op Opslaan. Heb je al een .flip-bestand, dan kun je dat ook gewoon kiezen. Zet altijd ook minstens 1 gewone foto bij het product, want de winkelwagen en Google gebruiken de eerste gewone foto.</p></div>
 </div>
 </div>
 <div class="vt-g" data-param="adm"><h3>Administratie</h3>
@@ -12929,7 +12929,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-11-11-wsflip');
+define('SITE_BOUW', '2026-11-11-flipmaker');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -14352,6 +14352,153 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     }, 0);
   }, true);
   window.addEventListener("pageshow", function () { document.querySelectorAll(".ff-bezig").forEach(herstel); document.querySelectorAll("form[data-ff-bezig]").forEach(function (f) { f.dataset.ffBezig = ""; }); });
+})();
+</script>
+<script>
+/* Flipmaker: bij elk upload-veld waar een flip mag, een knop om van een paar foto's zelf een flip te maken.
+   Alles gebeurt in de browser; de flip komt in het upload-veld en gaat mee als je op Opslaan klikt. */
+(function () {
+  var velden = document.querySelectorAll('input[type=file][accept*=".flip"]');
+  if (!velden.length || !window.DataTransfer || !window.HTMLCanvasElement || !HTMLCanvasElement.prototype.toBlob) return;
+  var st = document.createElement("style");
+  st.textContent = ".ffm-knop{margin:8px 0 0}.ffm{border:1px solid #d6dbe4;border-radius:12px;padding:14px;margin:10px 0;background:#f7f9fc}"
+    + ".ffm p{margin:0 0 10px;font-size:14px;color:#3a4456}.ffm-rij{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 10px}"
+    + ".ffm-lijst{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 10px}.ffm-st{position:relative;width:76px;text-align:center;font-size:12px;color:#5b6577}"
+    + ".ffm-st img{width:76px;height:76px;object-fit:cover;border-radius:8px;border:1px solid #d6dbe4;display:block;background:#fff}"
+    + ".ffm-st button{border:0;background:#e6eaf1;border-radius:6px;padding:2px 7px;margin:3px 1px 0;cursor:pointer;font-size:13px}"
+    + ".ffm-vb{display:none;margin:0 0 10px}.ffm-vb img{max-width:220px;max-height:220px;border-radius:10px;border:1px solid #d6dbe4;background:#fff}"
+    + ".ffm-msg{font-size:14px;font-weight:600;margin:8px 0 0}.ffm-msg.fout{color:#b42318}.ffm-msg.goed{color:#0f7a3d}";
+  document.head.appendChild(st);
+  velden.forEach(maak);
+
+  function maak(inp) {
+    var knop = document.createElement("button");
+    knop.type = "button"; knop.className = "btn quiet ffm-knop"; knop.textContent = "Maak een flip van foto's";
+    var pan = document.createElement("div");
+    pan.className = "ffm"; pan.hidden = true;
+    pan.innerHTML = '<p><b>Flip maken.</b> Kies 2 tot 60 foto\'s in de volgorde waarin ze moeten afspelen. Bijvoorbeeld een T-shirt van voren, van opzij en van achteren. '
+      + 'Maak de foto\'s vanaf dezelfde plek en met hetzelfde licht, dan wordt de beweging mooi rustig.</p>'
+      + '<div class="ffm-rij"><input type="file" accept="image/*" multiple class="ffm-in" /></div>'
+      + '<div class="ffm-lijst"></div>'
+      + '<div class="ffm-rij"><label>Snelheid <select class="ffm-ms">'
+      + '<option value="80">Heel snel</option><option value="150" selected>Snel</option><option value="300">Rustig</option>'
+      + '<option value="600">Langzaam</option><option value="1500">Als diavoorstelling</option></select></label>'
+      + '<label><input type="checkbox" class="ffm-heen" /> Heen en terug</label></div>'
+      + '<div class="ffm-vb"><img alt="Voorbeeld van je flip" /></div>'
+      + '<div class="ffm-rij"><button type="button" class="btn ffm-ok">Flip toevoegen</button><button type="button" class="btn quiet ffm-weg">Annuleren</button></div>'
+      + '<div class="ffm-msg" role="status"></div>';
+    inp.parentNode.insertBefore(knop, inp.nextSibling);
+    knop.parentNode.insertBefore(pan, knop.nextSibling);
+    var fotos = [], urls = [], timer = null;
+    var q = function (c) { return pan.querySelector(c); };
+    var lijst = q(".ffm-lijst"), vb = q(".ffm-vb"), vbImg = vb.querySelector("img"), msg = q(".ffm-msg");
+    function melding(t, soort) { msg.textContent = t; msg.className = "ffm-msg" + (soort ? " " + soort : ""); }
+    function volgorde() {
+      var r = []; for (var i = 0; i < urls.length; i++) r.push(i);
+      if (q(".ffm-heen").checked && urls.length > 2) { for (var j = urls.length - 2; j > 0; j--) r.push(j); }
+      return r;
+    }
+    function speel() {
+      clearTimeout(timer);
+      if (urls.length < 1) { vb.style.display = "none"; return; }
+      vb.style.display = "block";
+      var r = volgorde(), k = 0, ms = parseInt(q(".ffm-ms").value, 10) || 150;
+      (function volgende() { vbImg.src = urls[r[k]]; k = (k + 1) % r.length; if (r.length > 1) timer = setTimeout(volgende, ms); })();
+    }
+    function teken() {
+      lijst.innerHTML = "";
+      fotos.forEach(function (f, i) {
+        var d = document.createElement("div"); d.className = "ffm-st";
+        d.innerHTML = '<img alt="" src="' + urls[i] + '" />' + (i + 1)
+          + '<br><button type="button" data-z="-1" title="Eerder">&larr;</button><button type="button" data-z="1" title="Later">&rarr;</button><button type="button" data-z="x" title="Weghalen">&times;</button>';
+        d.addEventListener("click", function (e) {
+          var b = e.target.closest("button"); if (!b) return;
+          var z = b.getAttribute("data-z");
+          if (z === "x") { URL.revokeObjectURL(urls[i]); fotos.splice(i, 1); urls.splice(i, 1); }
+          else { var n = i + parseInt(z, 10); if (n < 0 || n >= fotos.length) return; var t = fotos[i]; fotos[i] = fotos[n]; fotos[n] = t; t = urls[i]; urls[i] = urls[n]; urls[n] = t; }
+          teken();
+        });
+        lijst.appendChild(d);
+      });
+      speel();
+    }
+    function sluit() {
+      clearTimeout(timer); urls.forEach(function (u) { URL.revokeObjectURL(u); });
+      fotos = []; urls = []; lijst.innerHTML = ""; vb.style.display = "none"; q(".ffm-in").value = "";
+      pan.hidden = true; knop.hidden = false;
+    }
+    knop.addEventListener("click", function () { pan.hidden = false; knop.hidden = true; melding(""); });
+    q(".ffm-weg").addEventListener("click", sluit);
+    q(".ffm-ms").addEventListener("change", speel);
+    q(".ffm-heen").addEventListener("change", speel);
+    q(".ffm-in").addEventListener("change", function () {
+      [].forEach.call(this.files, function (f) {
+        if (!/^image\//.test(f.type) || fotos.length >= 60) return;
+        fotos.push(f); urls.push(URL.createObjectURL(f));
+      });
+      this.value = ""; melding(""); teken();
+    });
+    function laad(u) {
+      return new Promise(function (ok, nee) { var im = new Image(); im.onload = function () { ok(im); }; im.onerror = nee; im.src = u; });
+    }
+    function blob(cv, type, kw) { return new Promise(function (ok) { cv.toBlob(ok, type, kw); }); }
+    function bouw(maxZijde, kw) {
+      var r = volgorde(), beelden = [], type = "image/webp", bt = 0, cv = document.createElement("canvas"), cx = cv.getContext("2d");
+      return laad(urls[0]).then(function (eerste) {
+        var s = Math.min(1, maxZijde / Math.max(eerste.naturalWidth, eerste.naturalHeight));
+        cv.width = Math.max(1, Math.round(eerste.naturalWidth * s)); cv.height = Math.max(1, Math.round(eerste.naturalHeight * s));
+        var gemaakt = {}, i = 0;
+        function volgende() {
+          if (i >= urls.length) return Promise.resolve();
+          var n = i++;
+          return laad(urls[n]).then(function (im) {
+            cx.clearRect(0, 0, cv.width, cv.height);
+            if (bt === 2) { cx.fillStyle = "#ffffff"; cx.fillRect(0, 0, cv.width, cv.height); }
+            var f = Math.min(cv.width / im.naturalWidth, cv.height / im.naturalHeight), w = im.naturalWidth * f, h = im.naturalHeight * f;
+            cx.drawImage(im, (cv.width - w) / 2, (cv.height - h) / 2, w, h);
+            return blob(cv, type, kw);
+          }).then(function (b) {
+            if (n === 0 && (!b || b.type !== "image/webp")) { type = "image/jpeg"; bt = 2; i = 0; return volgende(); }
+            return b.arrayBuffer().then(function (ab) { gemaakt[n] = new Uint8Array(ab); return volgende(); });
+          });
+        }
+        return volgende().then(function () {
+          r.forEach(function (n) { beelden.push(gemaakt[n]); });
+          var credit = "FormForge flip", ms = parseInt(q(".ffm-ms").value, 10) || 150, len = 13 + credit.length;
+          beelden.forEach(function (b) { len += 6 + b.length; });
+          var u = new Uint8Array(len), dv = new DataView(u.buffer), p = 0;
+          [70, 76, 73, 80, 2, bt, 1].forEach(function (x) { u[p++] = x; });
+          dv.setUint16(p, beelden.length); p += 2;
+          dv.setUint16(p, ms); p += 2;
+          dv.setUint16(p, credit.length); p += 2;
+          for (var c = 0; c < credit.length; c++) u[p++] = credit.charCodeAt(c);
+          beelden.forEach(function (b) { dv.setUint16(p, 0); p += 2; dv.setUint32(p, b.length); p += 4; u.set(b, p); p += b.length; });
+          return u;
+        });
+      });
+    }
+    q(".ffm-ok").addEventListener("click", function () {
+      var ok = this;
+      if (fotos.length < 2) { melding("Kies minstens 2 foto's.", "fout"); return; }
+      ok.disabled = true; melding("Bezig met maken...");
+      bouw(1000, 0.8).then(function (u) { return u.length > 7500000 ? bouw(700, 0.7) : u; }).then(function (u) {
+        ok.disabled = false;
+        if (u.length > 7500000) { melding("De flip wordt groter dan 8 MB. Kies minder foto's.", "fout"); return; }
+        var d = new Date(), nm = "flip-" + d.getFullYear() + ("0" + (d.getMonth() + 1)).slice(-2) + ("0" + d.getDate()).slice(-2) + "-" + ("0" + d.getHours()).slice(-2) + ("0" + d.getMinutes()).slice(-2) + ("0" + d.getSeconds()).slice(-2) + ".flip";
+        var bestand = new File([u], nm, { type: "application/octet-stream" }), dt = new DataTransfer();
+        if (inp.multiple) { [].forEach.call(inp.files, function (f) { dt.items.add(f); }); }
+        dt.items.add(bestand);
+        inp.files = dt.files;
+        inp.dispatchEvent(new Event("change", { bubbles: true }));
+        var kb = Math.round(u.length / 1024);
+        sluit();
+        var m = document.createElement("div"); m.className = "ffm-msg goed";
+        m.textContent = "Je flip is klaar (" + (kb > 1024 ? (Math.round(kb / 102.4) / 10).toString().replace(".", ",") + " MB" : kb + " KB") + "). Klik nu op Opslaan.";
+        var oud = knop.parentNode.querySelector(".ffm-klaar"); if (oud) oud.remove();
+        m.classList.add("ffm-klaar"); pan.parentNode.insertBefore(m, pan.nextSibling);
+      }).catch(function () { ok.disabled = false; melding("Dit lukte niet. Probeer andere foto's (jpg of png).", "fout"); });
+    });
+  }
 })();
 </script>
 <script>
