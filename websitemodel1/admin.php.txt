@@ -6518,7 +6518,7 @@ function ws_view_producten($in) {
         return;
     endif;
     ?>
-    <p class="ws-acties"><a class="btn" href="admin.php?webshop=1&amp;t=producten&amp;nieuw=1">+ Nieuw product</a> <?php if (ws_lijst()): ?><a class="btn ghost" href="admin.php?webshop=1&amp;voorbeeld=mijn">Producten downloaden (Excel)</a> <?php else: ?><a class="btn ghost" href="admin.php?webshop=1&amp;voorbeeld=1">Excel-sjabloon downloaden</a> <?php endif; ?><a class="btn ghost" href="#inladen">Excel inladen</a></p>
+    <p class="ws-acties"><a class="btn" href="admin.php?webshop=1&amp;t=producten&amp;nieuw=1">+ Nieuw product</a> <a class="btn ghost" href="admin.php?webshop=1&amp;voorbeeld=1">Leeg Excel-sjabloon</a> <?php if (ws_lijst()): ?><a class="btn ghost" href="admin.php?webshop=1&amp;voorbeeld=mijn">Mijn producten in Excel</a> <?php endif; ?><a class="btn ghost" href="#inladen">Excel inladen</a></p>
     <?php if (!$lijst): ?><div class="formcard"><p class="sub" style="margin:0">Nog geen producten. Voeg er een toe, of laad ze in een keer in uit Excel.</p></div><?php endif; ?>
     <div class="ws-l">
     <?php
