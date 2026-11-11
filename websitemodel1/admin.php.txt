@@ -3832,6 +3832,73 @@ function ws_inst() {
         'voorwaarden' => cut(trim(str_replace("\r\n", "\n", (string)($x['voorwaarden'] ?? ''))), 30000),
     ];
 }
+/* ---------- Opbouw van de webshop: kop, blokken, indeling, kleuren en vormen ---------- */
+define('WS_OPBOUW', DATA_DIR . '/ws_opbouw.json');
+function ws_blokken_namen() { return ['kop' => 'Bovenkant met titel en tekst', 'voordelen' => 'Voordelen (bijvoorbeeld snelle levering)', 'zoeken' => 'Zoeken', 'categorieen' => 'Categorie&euml;n', 'uitgelicht' => 'Uitgelicht', 'nieuw' => 'Nieuw binnen', 'groepen' => 'Producten per categorie', 'alle' => 'Alle producten']; }
+function ws_opbouw($x = null) {
+    $WS_BLOKKEN = ws_blokken_namen();
+    if ($x === null) $x = read_json(WS_OPBOUW, []);
+    if (!is_array($x)) $x = [];
+    $std = ['kop' => 1, 'voordelen' => 0, 'zoeken' => 0, 'categorieen' => 1, 'uitgelicht' => 0, 'nieuw' => 0, 'groepen' => 1, 'alle' => 0];
+    $bl = []; $gezien = [];
+    foreach ((array)($x['blokken'] ?? []) as $b) { $k = (string)($b['k'] ?? ''); if (!isset($WS_BLOKKEN[$k]) || isset($gezien[$k])) continue; $gezien[$k] = 1; $bl[] = ['k' => $k, 'aan' => !empty($b['aan'])]; }
+    foreach ($std as $k => $a) { if (!isset($gezien[$k])) $bl[] = ['k' => $k, 'aan' => (bool)$a]; }
+    $kies = function($k, $opties, $std) use ($x) { $v = (string)($x[$k] ?? ''); return in_array($v, $opties, true) ? $v : $std; };
+    $vd = []; foreach ((array)($x['voordelen'] ?? []) as $v) { $v = cut(trim((string)$v), 60); if ($v !== '') $vd[] = $v; }
+    if (!isset($x['voordelen'])) $vd = ['Snel in huis', 'Veilig betalen met iDEAL', 'Vragen? Wij helpen u graag'];
+    $ug = []; foreach ((array)($x['uitgelicht'] ?? []) as $v) { $v = (string)$v; if (preg_match('/^[a-z0-9]{6,32}$/i', $v) && count($ug) < 8) $ug[] = $v; }
+    $acc = (string)($x['accent'] ?? '');
+    return [
+        'blokken' => $bl,
+        'kop_stijl' => $kies('kop_stijl', ['donker', 'licht', 'foto', 'geen'], 'donker'),
+        'kop_foto' => basename((string)($x['kop_foto'] ?? '')),
+        'kop_knop' => cut(trim((string)($x['kop_knop'] ?? '')), 40),
+        'kop_uitlijn' => $kies('kop_uitlijn', ['links', 'midden'], 'links'),
+        'voordelen' => array_slice($vd, 0, 4),
+        'uitgelicht' => $ug,
+        'titel_uitgelicht' => cut(trim((string)($x['titel_uitgelicht'] ?? '')), 60) ?: 'Uitgelicht',
+        'titel_nieuw' => cut(trim((string)($x['titel_nieuw'] ?? '')), 60) ?: 'Nieuw binnen',
+        'nieuw_n' => in_array((int)($x['nieuw_n'] ?? 4), [3, 4, 6, 8], true) ? (int)($x['nieuw_n'] ?? 4) : 4,
+        'kolommen' => in_array((int)($x['kolommen'] ?? 3), [2, 3, 4], true) ? (int)($x['kolommen'] ?? 3) : 3,
+        'per_groep' => in_array((int)($x['per_groep'] ?? 3), [3, 4, 6, 8], true) ? (int)($x['per_groep'] ?? 3) : 3,
+        'beeld' => $kies('beeld', ['liggend', 'vierkant', 'staand'], 'liggend'),
+        'vulling' => $kies('vulling', ['passend', 'vullend'], 'passend'),
+        'cats_als' => $kies('cats_als', ['tegels', 'knoppen'], 'tegels'),
+        'accent' => preg_match('/^#[0-9a-f]{6}$/i', $acc) ? strtolower($acc) : '',
+        'hoek' => $kies('hoek', ['rond', 'klein', 'recht'], 'rond'),
+        'schaduw' => isset($x['schaduw']) ? !empty($x['schaduw']) : true,
+        'achtergrond' => $kies('achtergrond', ['licht', 'wit'], 'licht'),
+        'fotogrond' => $kies('fotogrond', ['wit', 'licht', 'donker'], 'wit'),
+    ];
+}
+function ws_kop_foto_url($o) { return $o['kop_foto'] !== '' && is_file(UPLOAD_DIR . '/webshop/_kop/' . $o['kop_foto']) ? '/uploads/webshop/_kop/' . rawurlencode($o['kop_foto']) : ''; }
+/* De keuzes als CSS. Alleen binnen <main>, zodat het menu en de onderkant van de website hetzelfde blijven. */
+function ws_opbouw_css($o) {
+    $r = ['rond' => [16, 18, 999], 'klein' => [8, 8, 10], 'recht' => [0, 0, 0]][$o['hoek']];
+    $c = '<style>';
+    if ($o['accent'] !== '') {
+        $hx = $o['accent']; $rr = hexdec(substr($hx, 1, 2)); $gg = hexdec(substr($hx, 3, 2)); $bb = hexdec(substr($hx, 5, 2));
+        $c .= 'main{--blue:' . $hx . ';--ws-acc:' . $hx . ';}';
+        $c .= 'main .abhero.ws-kop-donker{background:' . sprintf('#%02x%02x%02x', (int)($rr * .35), (int)($gg * .35), (int)($bb * .35)) . ';}';
+        $c .= 'main .ws-cats a.on{background:' . $hx . ';border-color:' . $hx . ';}';
+        $c .= 'main .ab-txt em,main .ab-prijs{color:' . $hx . ';} main .ws-groep-kop a{color:' . $hx . ';} main .ws-voordelen svg{color:' . $hx . ';}';
+    }
+    $c .= 'main .ab-kaart,main .ws-blokvak,main .ws-zij,main .ab-oms,main .ws-voordelen,main .ab-leeg{border-radius:' . $r[0] . 'px;}';
+    $c .= 'main .ws-ct,main .ab-groot{border-radius:' . $r[1] . 'px;}';
+    $c .= 'main .btn,main .ws-cats a,main .ws-zoek input{border-radius:' . $r[2] . 'px;}';
+    if (!$o['schaduw']) $c .= 'main .ab-kaart:hover,main .ws-ct{box-shadow:none;} main .ab-kaart:hover{transform:none;}';
+    if ($o['achtergrond'] === 'wit') $c .= 'main .abwrap{background:#fff;} main .ab-kaart{border-color:#e3e8f0;}';
+    $n = $o['kolommen'];
+    $c .= 'main .ab-grid{grid-template-columns:repeat(' . $n . ',minmax(0,1fr));}';
+    $c .= '@media (max-width:900px){main .ab-grid{grid-template-columns:repeat(' . min($n, 3) . ',minmax(0,1fr));}}';
+    $c .= '@media (max-width:640px){main .ab-grid{grid-template-columns:repeat(' . ($n >= 3 ? 2 : 1) . ',minmax(0,1fr));gap:12px;} main .ab-grid .ab-txt{padding:12px 12px 14px;} main .ab-grid .ab-txt b{font-size:15.5px;} main .ab-grid .ab-txt em{font-size:17px;}}';
+    $c .= 'main .ab-kaart .ab-img{aspect-ratio:' . ['liggend' => '4/3', 'vierkant' => '1/1', 'staand' => '3/4'][$o['beeld']] . ';}';
+    $grond = ['wit' => '#fff', 'licht' => '#f1f4f9', 'donker' => '#111'][$o['fotogrond']];
+    $c .= 'main .ab-img,main .ab-groot{background:' . $grond . ';}';
+    if ($o['vulling'] === 'passend') $c .= 'main .ab-kaart .ab-img img{object-fit:contain;padding:6%;box-sizing:border-box;}';
+    return $c . '</style>';
+}
+
 function ws_mollie_ok($k) { return (bool)preg_match('/^(live|test)_[A-Za-z0-9]{20,}$/', (string)$k); }
 function ws_slot($fn) {
     ensure_data_dir();
@@ -3853,7 +3920,7 @@ function ws_img($p, $f, $alt, $extra = '') {
 /* De eerste gewone foto, voor plekken waar niets mag bewegen (Google, delen, winkelwagen). */
 function ws_stil($p) { foreach ((array)($p['fotos'] ?? []) as $f) { if (!is_flip($f)) return $f; } return ''; }
 function ws_admin_thumb($p, $f) {
-    if (is_flip($f)) return '<span class="ph" style="display:grid;place-items:center;background:#11162b;color:#fff;font-weight:800;font-size:12px;letter-spacing:.06em">FLIP</span>';
+    if (is_flip($f)) return '<span class="ws-flipb"><img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" data-flip="' . h(ws_foto_url($p, $f)) . '" alt="" style="background:#11162b" /><i>FLIP</i></span>';
     return '<img src="' . h(ws_foto_url($p, $f)) . '" alt="" />';
 }
 function ws_te_koop($p) { return ($p['status'] ?? 'actief') === 'actief' && !ws_op($p); }
@@ -4069,7 +4136,7 @@ function ws_regels_tekst($o) {
     $t = '';
     foreach ($o['regels'] as $r) {
         $t .= (int)$r['aantal'] . ' x ' . $r['naam'] . ($r['keuze_tekst'] !== '' ? ' (' . $r['keuze_tekst'] . ')' : '') . '   ' . adm_eur((int)$r['stuk'] * (int)$r['aantal']) . "\n";
-        foreach ($r['ontwerpen'] as $on) { $t .= '   Opdruk ' . $on['plek'] . ': ' . ($on['bestand'] !== '' ? $on['bestand'] : '') . ($on['tekst'] !== '' ? ($on['bestand'] !== '' ? ', ' : '') . 'tekst "' . $on['tekst'] . '"' : '') . (!empty($on['mail']) ? ' (stuurt het bestand per mail)' : '') . "\n"; }
+        foreach ($r['ontwerpen'] as $on) { $t .= '   Opdruk ' . $on['plek'] . ': ' . ($on['bestand'] !== '' ? $on['bestand'] : '') . ($on['tekst'] !== '' ? ($on['bestand'] !== '' ? ', ' : '') . 'tekst "' . $on['tekst'] . '"' : '') . (!empty($on['plaats']) ? ', ' . $on['plaats'] : '') . (!empty($on['mail']) ? ' (stuurt het bestand per mail)' : '') . "\n"; }
     }
     if ((int)$o['verzend'] > 0) $t .= 'Verzendkosten   ' . adm_eur((int)$o['verzend']) . "\n";
     $t .= 'Totaal   ' . adm_eur((int)$o['totaal']) . " (inclusief btw)\n";
@@ -4106,7 +4173,26 @@ function ws_mail_eigenaar($o) {
          . (($o['opm'] ?? '') !== '' ? "Opmerking: " . $o['opm'] . "\n" : '')
          . ($waarsch ? "\nLet op:\n- " . implode("\n- ", $waarsch) . "\n" : '')
          . "\nBestelling en ontwerpen bekijken: " . adm_basis() . '?webshop=1&b=' . rawurlencode($o['id']);
-    return adm_mail_stuur($naar, 'Nieuwe bestelling ' . $o['nr'] . ': ' . adm_eur((int)$o['totaal']) . ' (' . $k['naam'] . ')', $txt, [], [], ['soort' => 'webshop', 'ref' => $o['id']]);
+    /* De ontwerpen van de klant als bijlage: origineel, bewerkte versie en proefplaatje */
+    $bijl = []; $tot = 0; $teGroot = false; $nr = 0;
+    $types = ['pdf' => 'application/pdf', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png', 'svg' => 'image/svg+xml', 'gif' => 'image/gif', 'webp' => 'image/webp'];
+    foreach ($o['regels'] as $r) {
+        foreach ($r['ontwerpen'] as $on) {
+            $map = (string)($on['map'] ?? ''); if ($map === '' || strpos($map, '..') !== false) continue;
+            $nr++; $plek = preg_replace('/[^a-z0-9]+/', '-', strtolower((string)$on['plek'])) ?: 'opdruk';
+            foreach ([['origineel', (string)($on['origineel'] ?? '')], ['bewerkt', (string)($on['bewerkt'] ?? '')], ['proef', (string)($on['proef'] ?? '')]] as $b) {
+                if ($b[1] === '') continue;
+                $pad = WS_ONTW . '/' . $map . '/' . basename($b[1]); if (!is_file($pad)) continue;
+                $grootte = filesize($pad); if ($tot + $grootte > 15 * 1048576) { $teGroot = true; continue; }
+                $ext = strtolower(pathinfo($pad, PATHINFO_EXTENSION));
+                $naamB = $o['nr'] . '-' . $nr . '-' . $plek . '-' . ($b[0] === 'origineel' ? preg_replace('/^origineel-/', '', basename($b[1])) : ($b[0] === 'proef' ? 'proefplaatje.jpg' : 'zonder-achtergrond.' . $ext));
+                $bijl[] = ['naam' => $naamB, 'data' => (string)file_get_contents($pad), 'type' => $types[$ext] ?? 'application/octet-stream'];
+                $tot += $grootte;
+            }
+        }
+    }
+    if ($bijl) $txt .= "\n\nDe ontwerpen van de klant zitten als bijlage bij deze mail" . ($teGroot ? ' (niet allemaal: samen te groot, de rest staat in je beheer)' : '') . ". Het proefplaatje laat zien waar de klant het logo op het product zette.";
+    return adm_mail_stuur($naar, 'Nieuwe bestelling ' . $o['nr'] . ': ' . adm_eur((int)$o['totaal']) . ' (' . $k['naam'] . ')', $txt, $bijl, [], ['soort' => 'webshop', 'ref' => $o['id']]);
 }
 function ws_mail_status($o, $st) {
     $in = ws_inst(); $zaak = st('naam'); $k = $o['klant'];
@@ -4167,6 +4253,14 @@ function ws_openbaar() {
         if ($bewerkt && is_file(DATA_DIR . '/demo-aan.txt')) ws_json(['ok' => 1, 'id' => $id]);
         if ($bewerkt) {
             if (!preg_match('/^[a-f0-9]{24}$/', $id) || !is_dir(WS_TMP . '/' . $id)) ws_json(['fout' => 'Onbekende upload.']);
+            if (($_POST['soort'] ?? '') === 'proef') {
+                /* Proefplaatje: de productfoto met het logo erop, zoals de klant het neerzette */
+                $info = @getimagesize($f['tmp_name']);
+                if (!$info || $info[2] !== IMAGETYPE_JPEG || filesize($f['tmp_name']) > 4 * 1024 * 1024) ws_json(['fout' => 'Geen proefplaatje.']);
+                move_uploaded_file($f['tmp_name'], WS_TMP . '/' . $id . '/proef.jpg');
+                $m = read_json(WS_TMP . '/' . $id . '/meta.json', []); $m['proef'] = 'proef.jpg'; write_json(WS_TMP . '/' . $id . '/meta.json', $m);
+                ws_json(['ok' => 1, 'id' => $id]);
+            }
             $info = @getimagesize($f['tmp_name']);
             if (!$info || $info[2] !== IMAGETYPE_PNG) ws_json(['fout' => 'Geen PNG.']);
             move_uploaded_file($f['tmp_name'], WS_TMP . '/' . $id . '/bewerkt.png');
@@ -4217,7 +4311,7 @@ function ws_openbaar() {
                 if ($tid !== '' && !preg_match('/^[a-f0-9]{24}$/', $tid)) $tid = '';
                 if ($tid !== '' && !is_file(DATA_DIR . '/demo-aan.txt') && !is_file(WS_TMP . '/' . $tid . '/meta.json')) ws_json(['fout' => 'Een ontwerp bij ' . $p['naam'] . ' is verlopen. Upload het opnieuw.']);
                 if ($tid === '' && $tekst === '' && !$permail) ws_json(['fout' => 'Bij ' . $p['naam'] . ' mist het ontwerp voor ' . $pn . '.']);
-                $gek[] = $pn; $ontw[] = ['plek' => $pn, 'tmp' => $tid, 'tekst' => $tekst, 'mail' => $permail, 'mailnaam' => cut((string)($pl['naam'] ?? ''), 120), 'gebruik' => ($pl['gebruik'] ?? '') === 'bewerkt' ? 'bewerkt' : 'origineel'];
+                $gek[] = $pn; $ontw[] = ['plek' => $pn, 'tmp' => $tid, 'tekst' => $tekst, 'mail' => $permail, 'mailnaam' => cut((string)($pl['naam'] ?? ''), 120), 'plaats' => cut(trim(preg_replace('/[\x00-\x1F<>]/', '', (string)($pl['plaats'] ?? ''))), 160), 'gebruik' => ($pl['gebruik'] ?? '') === 'bewerkt' ? 'bewerkt' : 'origineel'];
                 if ($tid !== '') $tmpIds[] = $tid;
             }
             if (ws_plekken($p['opdruk'] ?? '') && !$gek) ws_json(['fout' => 'Kies bij ' . $p['naam'] . ' waar de opdruk moet komen.']);
@@ -4252,7 +4346,7 @@ function ws_openbaar() {
             foreach ($r['ontwerpen'] as $oi => $on) {
                 $n++;
                 $doel = WS_ONTW . '/' . $o['id'] . '/' . $n;
-                $nieuw = ['plek' => $on['plek'], 'tekst' => $on['tekst'], 'mail' => $on['mail'], 'map' => '', 'bestand' => $on['mail'] ? $on['mailnaam'] : '', 'origineel' => '', 'bewerkt' => '', 'gebruik' => $on['gebruik'], 'dpi' => 0, 'oordeel' => '', 'w' => 0, 'h' => 0];
+                $nieuw = ['plek' => $on['plek'], 'plaats' => $on['plaats'] ?? '', 'tekst' => $on['tekst'], 'mail' => $on['mail'], 'map' => '', 'bestand' => $on['mail'] ? $on['mailnaam'] : '', 'origineel' => '', 'bewerkt' => '', 'gebruik' => $on['gebruik'], 'dpi' => 0, 'oordeel' => '', 'w' => 0, 'h' => 0];
                 if (!is_dir(dirname($doel))) mkdir(dirname($doel), 0755, true);
                 if ($on['tmp'] !== '' && isset($verplaatst[$on['tmp']])) {
                     /* hetzelfde ontwerp bij een andere maat of kleur: kopie */
@@ -4263,7 +4357,7 @@ function ws_openbaar() {
                     if (isset($verplaatst[$on['tmp']]) || @rename(WS_TMP . '/' . $on['tmp'], $doel)) {
                         if (!isset($verplaatst[$on['tmp']])) $verplaatst[$on['tmp']] = $doel;
                         $m = read_json($doel . '/meta.json', []);
-                        $nieuw = array_merge($nieuw, ['map' => $o['id'] . '/' . $n, 'bestand' => (string)($m['naam'] ?? ''), 'origineel' => (string)($m['bestand'] ?? ''), 'bewerkt' => (string)($m['bewerkt'] ?? ''), 'soort_bewerkt' => (string)($m['soort_bewerkt'] ?? ''), 'dpi' => (int)($m['dpi'] ?? 0), 'oordeel' => (string)($m['oordeel'] ?? ''), 'w' => (int)($m['w'] ?? 0), 'h' => (int)($m['h'] ?? 0)]);
+                        $nieuw = array_merge($nieuw, ['map' => $o['id'] . '/' . $n, 'bestand' => (string)($m['naam'] ?? ''), 'origineel' => (string)($m['bestand'] ?? ''), 'bewerkt' => (string)($m['bewerkt'] ?? ''), 'soort_bewerkt' => (string)($m['soort_bewerkt'] ?? ''), 'dpi' => (int)($m['dpi'] ?? 0), 'oordeel' => (string)($m['oordeel'] ?? ''), 'w' => (int)($m['w'] ?? 0), 'h' => (int)($m['h'] ?? 0), 'proef' => (string)($m['proef'] ?? '')]);
                     }
                 }
                 $o['regels'][$ri]['ontwerpen'][$oi] = $nieuw;
@@ -4306,7 +4400,8 @@ function ws_categorieen($alleenZichtbaar = true) {
         $eigen = basename((string)($m['foto'] ?? ''));
         $foto = $eigen !== '' && is_file(UPLOAD_DIR . '/webshop/_cat/' . $eigen) ? '/uploads/webshop/_cat/' . rawurlencode($eigen) : '';
         if ($foto === '') { foreach ($ps as $p) { $sf = ws_stil($p); if ($sf !== '') { $foto = ws_foto_url($p, $sf); break; } } }
-        $uit[] = ['naam' => $c, 'slug' => ws_cat_slug($c), 'n' => count($ps), 'tekst' => (string)($m['tekst'] ?? ''), 'foto' => $foto, 'eigen_foto' => $foto !== '' && $eigen !== '' && strpos($foto, '/_cat/') !== false ? $eigen : '', 'volg' => isset($m['volg']) ? (int)$m['volg'] : 9999, 'items' => $ps];
+        $flip = ''; if ($foto === '') { foreach ($ps as $p) { foreach ((array)($p['fotos'] ?? []) as $ff) { if (is_flip($ff)) { $flip = ws_foto_url($p, $ff); break 2; } } } }
+        $uit[] = ['naam' => $c, 'slug' => ws_cat_slug($c), 'n' => count($ps), 'tekst' => (string)($m['tekst'] ?? ''), 'foto' => $foto, 'flip' => $flip, 'eigen_foto' => $foto !== '' && $eigen !== '' && strpos($foto, '/_cat/') !== false ? $eigen : '', 'volg' => isset($m['volg']) ? (int)$m['volg'] : 9999, 'items' => $ps];
     }
     usort($uit, function($a, $b) { return [$a['volg'], mb_strtolower($a['naam'])] <=> [$b['volg'], mb_strtolower($b['naam'])]; });
     return $uit;
@@ -4334,10 +4429,39 @@ function ws_kruimel($delen) {
     return [$o . '</nav>', '<script type="application/ld+json">' . json_encode($ld, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG) . '</script>'];
 }
 function ws_tegel($c) {
-    return '<a class="ws-ct" href="/webshop/' . h($c['slug']) . '/">' . ($c['foto'] !== '' ? '<img src="' . h($c['foto']) . '" alt="" loading="lazy" />' : '')
+    return '<a class="ws-ct" href="/webshop/' . h($c['slug']) . '/">' . ($c['foto'] !== '' ? '<img src="' . h($c['foto']) . '" alt="" loading="lazy" />' : (!empty($c['flip']) ? '<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" data-flip="' . h($c['flip']) . '" alt="" />' : ''))
          . '<span><b>' . h($c['naam']) . '</b><small>' . $c['n'] . ($c['n'] === 1 ? ' product' : ' producten') . '</small></span></a>';
 }
-function ws_css() {
+function ws_css($o = null) { return ws_css_basis() . ws_css_extra() . ws_opbouw_css($o ?: ws_opbouw()); }
+function ws_css_extra() {
+    return <<<'CSS'
+<style>
+.ws-vh{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;}
+.ws-blk{padding:0 0 clamp(24px,4vw,40px);}
+main > .ws-blk:first-child,main > .ws-vh + .ws-blk,main > .abhero + .ws-blk,main > .ws-kop-foto + .ws-blk{padding-top:clamp(28px,5vw,48px);}
+main > .ws-blk:last-child{padding-bottom:clamp(48px,7vw,90px);}
+.ws-blk .ws-ctgrid{margin:0;} .ws-blk .ws-groep:last-child{margin-bottom:0;} .ws-blk .ws-cats{margin:0;}
+.abhero.ws-kop-licht{background:#fff;color:var(--navy);border-bottom:1px solid var(--line);} .abhero.ws-kop-licht p{color:var(--muted);}
+.ws-kop-mid .wrap{text-align:center;} .ws-kop-mid p{margin-left:auto;margin-right:auto;}
+.ws-kopknop{margin-top:22px;}
+.ws-kop-foto{background:#fff;border-bottom:1px solid var(--line);}
+.ws-kop-foto .wrap{display:grid;grid-template-columns:1.1fr .9fr;gap:clamp(20px,4vw,56px);align-items:center;padding-top:clamp(28px,5vw,64px);padding-bottom:clamp(28px,5vw,64px);}
+.ws-kop-foto h1{font-size:clamp(32px,4.6vw,54px);margin:0;color:var(--navy);} .ws-kop-foto p{margin:14px 0 0;color:var(--muted);font-size:18px;max-width:52ch;}
+.ws-kop-foto.ws-kop-mid .ws-kf-tekst{text-align:center;} .ws-kop-foto.ws-kop-mid p{margin-left:auto;margin-right:auto;}
+.ws-kf-beeld img{width:100%;max-height:440px;object-fit:contain;display:block;}
+@media (max-width:760px){.ws-kop-foto .wrap{grid-template-columns:1fr;} .ws-kf-beeld{order:-1;} .ws-kf-beeld img{max-height:280px;}}
+.ws-kop-geen h1{margin:0;font-size:clamp(28px,4vw,42px);}
+.ws-voordelen{list-style:none;margin:0;padding:14px 18px;display:flex;flex-wrap:wrap;gap:10px 30px;justify-content:center;background:#fff;border:1px solid var(--line);}
+.ws-voordelen li{display:flex;gap:8px;align-items:center;font-weight:600;font-size:15px;color:var(--navy);}
+.ws-voordelen svg{width:20px;height:20px;color:#16a34a;flex:none;}
+.ws-zoek input{width:100%;font:inherit;font-size:17px;color:var(--navy);padding:14px 18px;border:1.5px solid var(--line);background:#fff;box-sizing:border-box;}
+.ws-zoek input:focus{outline:2px solid var(--blue);outline-offset:1px;}
+.ws-zoekleeg{margin-top:12px;color:var(--muted);}
+.ws-ct img[data-flip]{object-fit:contain;background:#fff;}
+</style>
+CSS;
+}
+function ws_css_basis() {
     return ab_css() . <<<'CSS'
 <style>
 .ws-cats{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px;}
@@ -4351,6 +4475,60 @@ function ws_css() {
 .ws-stuk{color:var(--muted);font-size:14.5px;margin-top:-2px;}
 .ws-plek{border:1.5px solid var(--line);border-radius:12px;padding:12px;background:#fff;margin-bottom:10px;}
 .ws-plek.aan{border-color:var(--blue);}
+.ws-uitleg-k{margin:-2px 0 10px;font-size:14px;color:var(--muted);}
+.ws-tip{display:block;margin:4px 0 0 32px;font-size:13px;color:var(--blue);font-weight:600;cursor:pointer;}
+.ws-plek.aan .ws-tip{display:none;}
+.ws-laag{position:absolute;inset:0;pointer-events:none;z-index:1;}
+.ab-groot .vo,.ab-groot .na,.ab-groot .tel{z-index:2;}
+.ws-vak{position:absolute;border:2px dashed rgba(255,255,255,.95);box-shadow:0 0 0 1px rgba(0,0,0,.35);border-radius:4px;}
+.ws-logo{position:absolute;pointer-events:auto;cursor:grab;touch-action:none;display:flex;align-items:center;justify-content:center;outline:1.5px dashed rgba(37,99,235,.85);outline-offset:2px;user-select:none;-webkit-user-select:none;will-change:left,top,width,height;}
+.ws-logo.gekozen{outline:2px solid var(--blue);}
+.ws-greep{position:absolute;right:-24px;bottom:-24px;width:20px;height:20px;border-radius:50%;background:var(--blue);border:2.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35);cursor:nwse-resize;touch-action:none;}
+.ws-maatuitleg{font-size:14.5px;line-height:1.45;}
+.ws-vlak,.ws-knoppen{position:absolute;inset:0;pointer-events:none;}
+.ws-vlak{touch-action:none;cursor:move;}
+.ws-knoppen{z-index:3;}
+.ab-groot .ws-flipbalk{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);z-index:3;pointer-events:auto;display:flex;flex-wrap:wrap;gap:6px 10px;justify-content:center;align-items:center;width:max-content;background:rgba(17,22,43,.9);color:#fff;border-radius:16px;padding:7px;font-size:14px;font-weight:600;max-width:calc(100% - 20px);}
+.ab-groot .ws-flipbalk .rij{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:center;}
+.ab-groot .ws-flipbalk button{position:static;transform:none;width:auto;height:auto;min-width:40px;min-height:38px;border:0;border-radius:999px;background:#fff;color:#11162b;font-family:inherit;font-size:14px;font-weight:700;padding:7px 14px;cursor:pointer;line-height:1.2;}
+.ab-groot .ws-flipbalk button.hoofd{background:var(--blue);color:#fff;}
+.ab-groot .ws-flipbalk button:hover{filter:brightness(.94);}
+.ab-groot .ws-flipbalk span{white-space:nowrap;padding:0 2px;}
+.ws-logo.speelt{pointer-events:auto;outline:none;cursor:pointer;} .ws-logo.speelt .ws-greep,.ws-logo.speelt .ws-weglogo{display:none;}
+.ws-weglogo{position:absolute;right:-12px;top:-12px;width:24px;height:24px;border-radius:50%;background:#b42318;color:#fff;border:2px solid #fff;font-size:16px;line-height:19px;text-align:center;font-weight:700;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.35);}
+.ab-groot .ws-pluslogo{position:absolute;left:50%;top:34%;transform:translate(-50%,-50%);width:auto;height:auto;z-index:3;pointer-events:auto;border:0;border-radius:999px;background:var(--blue);color:#fff;font-family:inherit;font-size:15px;font-weight:700;padding:10px 18px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.25);}
+.ws-kanten{margin-top:4px;}
+.ws-hulp{position:absolute;pointer-events:none;z-index:1;}
+.ws-hulp-v{top:0;bottom:0;width:0;border-left:1.5px dashed rgba(37,99,235,.45);}
+.ws-hulp-h{left:0;right:0;height:0;border-top:1.5px dashed rgba(234,88,12,.75);}
+.ws-hulp-h em{position:absolute;right:8px;top:-20px;font-style:normal;font-size:11.5px;font-weight:700;color:#c2410c;background:rgba(255,255,255,.85);padding:1px 6px;border-radius:6px;}
+.ws-hulp.raak{border-color:#16a34a;border-style:solid;} .ws-hulp-h.raak em{color:#15803d;}
+.ws-kantenkop{font-weight:700;font-size:15px;margin:0 0 8px;}
+.ws-kantenrij{display:flex;gap:10px;flex-wrap:wrap;}
+.ws-kant{display:grid;gap:4px;justify-items:center;font-size:13.5px;}
+.ws-kant button{border:2px solid var(--line);border-radius:10px;padding:0;background:#fff;cursor:pointer;width:76px;height:76px;overflow:hidden;}
+.ws-kant button img{width:100%;height:100%;object-fit:contain;display:block;}
+.ws-kant.nu button{border-color:var(--blue);box-shadow:0 0 0 2px var(--blue);}
+.ws-kant label{display:flex;gap:5px;align-items:center;cursor:pointer;font-weight:600;}
+.ws-laag.zoom{background:#fff;pointer-events:auto;}
+.ab-groot img.ws-zoombeeld{position:absolute;max-width:none;object-fit:fill;pointer-events:none;}
+.ab-groot .ws-zoomknop{position:absolute;left:12px;top:12px;transform:none;width:auto;height:auto;min-height:38px;z-index:3;pointer-events:auto;border:0;border-radius:999px;background:rgba(17,22,43,.88);color:#fff;font-family:inherit;font-size:14px;font-weight:700;line-height:1.2;padding:8px 15px;cursor:pointer;}
+.ws-maatrij{display:flex;gap:6px;flex-wrap:wrap;}
+.ws-maatrij button{border:1.5px solid var(--line);background:#fff;border-radius:999px;padding:6px 14px;cursor:pointer;font:inherit;font-size:14px;}
+.ws-maatkop{font-size:13.5px;color:var(--muted);}
+@media (min-width:901px){.ab-det{grid-template-areas:"gal zij";} .ab-det .ab-oms{grid-area:auto;grid-column:1 / -1;} .ab-det .ab-gal{position:sticky;top:96px;}}
+.ws-logo img{width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 1px 1px rgba(0,0,0,.3));pointer-events:none;}
+.ws-logo span{white-space:nowrap;font-weight:800;color:#111;line-height:1;text-shadow:0 0 2px #fff,0 0 2px #fff;}
+.ws-logo.sleept{cursor:grabbing;outline:2px solid var(--blue);}
+.ws-maat{border-top:1px solid var(--line);padding-top:10px;display:grid;gap:8px;font-size:15px;}
+.ws-maat input[type=range]{width:100%;accent-color:var(--blue);}
+.ws-pos{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:14px;}
+.ws-pos button{border:1.5px solid var(--line);background:#fff;border-radius:999px;padding:6px 14px;cursor:pointer;font:inherit;font-size:14px;}
+.ws-pos button.on{border-color:var(--blue);color:var(--blue);font-weight:700;}
+.ws-sleep{color:var(--muted);font-size:13px;}
+.ws-mvb{position:relative;height:260px;border-radius:10px;overflow:hidden;background:#eef1f5;touch-action:none;}
+.ws-mvb img{position:absolute;max-width:none;display:block;}
+.ws-mvb .ws-vak{border-color:rgba(37,99,235,.9);box-shadow:none;}
 .ws-check{display:flex;gap:10px;align-items:flex-start;cursor:pointer;font-size:15px;}
 .ws-check input{width:20px;height:20px;margin-top:2px;flex:none;accent-color:var(--blue);}
 .ws-check i{font-style:normal;color:var(--muted);}
@@ -4389,6 +4567,9 @@ function ws_css() {
 .ws-item{display:grid;grid-template-columns:72px 1fr auto;gap:12px;padding:14px 0;border-bottom:1px solid var(--line);align-items:start;}
 .ws-item:first-of-type{padding-top:0;} .ws-item:last-of-type{border-bottom:0;}
 .ws-item img{width:72px;height:72px;object-fit:cover;border-radius:10px;background:var(--sky);display:block;}
+.ws-item img.ws-proef,.ws-item .ws-mini.ws-proeven img{object-fit:contain;background:#fff;border:1px solid var(--line);width:120px;height:120px;}
+.ws-item:has(img.ws-proef){grid-template-columns:120px 1fr auto;}
+@media (max-width:520px){.ws-item img.ws-proef,.ws-item .ws-mini.ws-proeven img{width:96px;height:96px;} .ws-item:has(img.ws-proef){grid-template-columns:96px 1fr auto;}}
 .ws-item b{display:block;font-size:16px;} .ws-item small{display:block;color:var(--muted);font-size:13.5px;margin-top:2px;}
 .ws-item .ws-mini{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;} .ws-item .ws-mini img{width:40px;height:40px;object-fit:contain;border:1px solid var(--line);border-radius:6px;background:#fff;}
 .ws-item .r{text-align:right;font-weight:800;white-space:nowrap;}
@@ -4440,30 +4621,77 @@ function ws_kaart($p) {
     $f = $p['fotos'][0] ?? '';
     list($pr, $vanaf) = ws_vanaf($p);
     $lab = ws_op($p) || ($p['status'] ?? '') === 'uit' ? 'Uitverkocht' : '';
-    return '<a class="ab-kaart ws-kaart' . ($lab !== '' ? ' weg' : '') . '" href="/webshop/' . h($p['slug']) . '/" data-cat="' . h($p['cat'] ?? '') . '">'
+    return '<a class="ab-kaart ws-kaart' . ($lab !== '' ? ' weg' : '') . '" href="/webshop/' . h($p['slug']) . '/" data-cat="' . h($p['cat'] ?? '') . '" data-naam="' . h(mb_strtolower($p['naam'] . ' ' . ($p['cat'] ?? ''), 'UTF-8')) . '">'
          . '<span class="ab-img">' . ($f !== '' ? ws_img($p, $f, $p['naam'], is_flip($f) ? '' : ' loading="lazy"') : '') . ($lab !== '' ? '<i class="ab-lab verkocht">' . $lab . '</i>' : '') . '</span>'
          . '<span class="ab-txt"><b>' . h($p['naam']) . '</b>' . (($p['cat'] ?? '') !== '' ? '<small>' . h($p['cat']) . '</small>' : '')
          . '<em>' . ($vanaf ? '<small>vanaf</small>' : '') . h(ws_eur($pr)) . '</em></span></a>';
 }
-function render_ws_lijst($in, $items) {
+function ws_kop_html($in, $o, $fotoUrl = null) {
+    $foto = $fotoUrl !== null ? $fotoUrl : ws_kop_foto_url($o);
+    $st = $o['kop_stijl']; if ($st === 'foto' && $foto === '') $st = 'donker';
+    $mid = $o['kop_uitlijn'] === 'midden' ? ' ws-kop-mid' : '';
+    $knop = $o['kop_knop'] !== '' ? '<a class="btn primary ws-kopknop" href="#ws-producten">' . h($o['kop_knop']) . '</a>' : '';
+    if ($st === 'geen') return '<section class="abwrap ws-kop-geen"><div class="wrap"><h1>' . h($in['titel']) . '</h1></div></section>';
+    if ($st === 'foto') {
+        $isFlip = is_flip($foto) || strpos($foto, 'data:application/flip') === 0;
+        $beeld = $isFlip ? '<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" data-flip="' . h($foto) . '" alt="" id="wsKopBeeld" />' : '<img src="' . h($foto) . '" alt="" id="wsKopBeeld" />';
+        return '<section class="ws-kop-foto' . $mid . '"><div class="wrap"><div class="ws-kf-tekst"><h1>' . h($in['titel']) . '</h1><p>' . h($in['intro']) . '</p>' . $knop . '</div><div class="ws-kf-beeld">' . $beeld . '</div></div></section>';
+    }
+    return '<section class="abhero ws-kop-' . $st . $mid . '"><div class="wrap"><h1>' . h($in['titel']) . '</h1><p>' . h($in['intro']) . '</p>' . $knop . '</div></section>';
+}
+function ws_grid($ps) { $o = '<div class="ab-grid">'; foreach ($ps as $p) { $o .= ws_kaart($p); } return $o . '</div>'; }
+function render_ws_lijst($in, $items, $o = null, $kopFoto = null) {
+    $o = $o ?: ws_opbouw();
     $cats = ws_categorieen();
     $out = site_head($in['titel'] . ' | ' . st('naam'), cut($in['intro'] . ' ' . st('naam') . (st('plaats') !== '' ? ', ' . st('plaats') : '') . '.', 160), '/webshop/', business_jsonld(), true);
-    $out .= ws_css() . "\n</head>\n<body>\n" . site_header();
-    $out .= '<main><section class="abhero"><div class="wrap"><h1>' . h($in['titel']) . '</h1><p>' . h($in['intro']) . '</p></div></section><section class="abwrap"><div class="wrap">';
-    if (count($cats) >= 2) {
-        $out .= '<div class="ws-ctgrid">'; foreach ($cats as $c) { $out .= ws_tegel($c); } $out .= '</div>';
-        foreach ($cats as $c) {
-            $out .= '<section class="ws-groep" aria-labelledby="g-' . h($c['slug']) . '"><div class="ws-groep-kop"><h2 id="g-' . h($c['slug']) . '">' . h($c['naam']) . '</h2>'
-                  . '<a href="/webshop/' . h($c['slug']) . '/">' . ($c['n'] > 3 ? 'Bekijk alle ' . $c['n'] . ' &rarr;' : 'Bekijk ' . h(mb_strtolower($c['naam'])) . ' &rarr;') . '</a></div><div class="ab-grid">';
-            foreach (array_slice($c['items'], 0, 3) as $p) { $out .= ws_kaart($p); }
-            $out .= '</div></section>';
+    $out .= ws_css($o) . "\n</head>\n<body>\n" . site_header();
+    $out .= '<main>';
+    $aan = []; foreach ($o['blokken'] as $b) { if ($b['aan']) $aan[$b['k']] = 1; }
+    if (!isset($aan['kop'])) $out .= '<h1 class="ws-vh">' . h($in['titel']) . '</h1>';
+    $anker = false;
+    $blok = function($html, $prod = false) use (&$anker) {
+        $id = ''; if ($prod && !$anker) { $anker = true; $id = ' id="ws-producten"'; }
+        return '<section class="abwrap ws-blk"' . $id . '><div class="wrap">' . $html . '</div></section>';
+    };
+    $kop = function($t) { return '<div class="ws-groep-kop"><h2>' . h($t) . '</h2></div>'; };
+    $zicht = []; foreach ($items as $p) { $zicht[$p['id']] = $p; }
+    foreach ($o['blokken'] as $b) {
+        if (!$b['aan']) continue;
+        switch ($b['k']) {
+            case 'kop': $out .= ws_kop_html($in, $o, $kopFoto); break;
+            case 'voordelen':
+                if (!$o['voordelen']) break;
+                $h = '<ul class="ws-voordelen">'; foreach ($o['voordelen'] as $v) { $h .= '<li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>' . h($v) . '</li>'; }
+                $out .= $blok($h . '</ul>'); break;
+            case 'zoeken':
+                if (!$items) break;
+                $out .= $blok('<div class="ws-zoek"><label for="wsZoek" class="ws-vh">Zoek een product</label><input type="search" id="wsZoek" placeholder="Zoek een product..." autocomplete="off" /><div class="ws-zoekleeg" id="wsZoekLeeg" hidden>Geen producten gevonden.</div></div>'); break;
+            case 'categorieen':
+                if (count($cats) < 2) break;
+                if ($o['cats_als'] === 'knoppen') { $out .= $blok(ws_chips($cats, '')); break; }
+                $h = '<div class="ws-ctgrid">'; foreach ($cats as $c) { $h .= ws_tegel($c); } $out .= $blok($h . '</div>'); break;
+            case 'uitgelicht':
+                $ps = []; foreach ($o['uitgelicht'] as $id) { if (isset($zicht[$id])) $ps[] = $zicht[$id]; }
+                if ($ps) $out .= $blok($kop($o['titel_uitgelicht']) . ws_grid($ps), true); break;
+            case 'nieuw':
+                $ps = array_slice(array_reverse(array_values(array_filter(ws_lijst(), 'ws_zichtbaar'))), 0, $o['nieuw_n']);
+                if ($ps) $out .= $blok($kop($o['titel_nieuw']) . ws_grid($ps), true); break;
+            case 'groepen':
+                if (count($cats) < 2) { if (!isset($aan['alle']) && $items) $out .= $blok(ws_grid($items), true); break; }
+                $h = '';
+                foreach ($cats as $c) {
+                    $h .= '<section class="ws-groep" aria-labelledby="g-' . h($c['slug']) . '"><div class="ws-groep-kop"><h2 id="g-' . h($c['slug']) . '">' . h($c['naam']) . '</h2>'
+                        . '<a href="/webshop/' . h($c['slug']) . '/">' . ($c['n'] > $o['per_groep'] ? 'Bekijk alle ' . $c['n'] . ' &rarr;' : 'Bekijk ' . h(mb_strtolower($c['naam'])) . ' &rarr;') . '</a></div>' . ws_grid(array_slice($c['items'], 0, $o['per_groep'])) . '</section>';
+                }
+                $los = array_values(array_filter($items, function($p) { return trim((string)($p['cat'] ?? '')) === ''; }));
+                if ($los) $h .= '<section class="ws-groep"><div class="ws-groep-kop"><h2>Overige producten</h2></div>' . ws_grid($los) . '</section>';
+                $out .= $blok($h, true); break;
+            case 'alle':
+                if ($items) $out .= $blok((count($o['blokken']) > 1 ? $kop('Alle producten') : '') . ws_grid($items), true); break;
         }
-        $los = array_values(array_filter($items, function($p) { return trim((string)($p['cat'] ?? '')) === ''; }));
-        if ($los) { $out .= '<section class="ws-groep"><div class="ws-groep-kop"><h2>Overige producten</h2></div><div class="ab-grid">'; foreach ($los as $p) { $out .= ws_kaart($p); } $out .= '</div></section>'; }
-    } else {
-        $out .= '<div class="ab-grid" id="wsGrid">'; foreach ($items as $p) { $out .= ws_kaart($p); } $out .= '</div>';
     }
-    $out .= (!$items ? '<div class="ab-leeg">Hier komen binnenkort onze producten.</div>' : '') . '</div></section></main>' . site_footer() . ws_pil();
+    if (!$items) $out .= $blok('<div class="ab-leeg">Hier komen binnenkort onze producten.</div>');
+    $out .= '</main>' . site_footer() . ws_pil();
     $out .= flip_speler_tag($out) . ws_js_tag();
     return $out . "\n</body>\n</html>\n";
 }
@@ -4480,8 +4708,14 @@ function render_ws_cat($in, $c, $cats) {
     return $out . "\n</body>\n</html>\n";
 }
 function ws_prod_json($p) {
-    return ['id' => $p['id'], 'naam' => $p['naam'], 'url' => '/webshop/' . $p['slug'] . '/', 'foto' => ws_stil($p) !== '' ? ws_foto_url($p, ws_stil($p)) : '',
-            'prijs' => (int)$p['prijs'], 'opties' => ws_opties($p['opties'] ?? ''), 'plekken' => ws_plekken($p['opdruk'] ?? ''), 'koop' => ws_te_koop($p),
+    $fotos = array_values((array)($p['fotos'] ?? [])); $pl = ws_plekken($p['opdruk'] ?? '');
+    foreach ($pl as $k => $q) {
+        $v = $p['vakken'][$q['n']] ?? null; $i = is_array($v) ? array_search((string)($v['f'] ?? ''), $fotos, true) : false;
+        if ($i !== false && $q['b'] > 0 && $q['h'] > 0 && !is_flip($fotos[$i])) $pl[$k]['vak'] = ['i' => $i, 'x' => (float)$v['x'], 'y' => (float)$v['y'], 'w' => (float)$v['w'], 'h' => (float)$v['h'], 'u' => ws_foto_url($p, $fotos[$i])];
+    }
+    $stil = []; $alle = []; foreach ($fotos as $i => $f) { if (!is_flip($f)) $stil[] = [$i, ws_foto_url($p, $f)]; $alle[] = [$i, ws_foto_url($p, $f), is_flip($f)]; }
+    return ['id' => $p['id'], 'naam' => $p['naam'], 'cat' => (string)($p['cat'] ?? ''), 'stil' => $stil, 'alle' => $alle, 'url' => '/webshop/' . $p['slug'] . '/', 'foto' => ws_stil($p) !== '' ? ws_foto_url($p, ws_stil($p)) : '',
+            'prijs' => (int)$p['prijs'], 'opties' => ws_opties($p['opties'] ?? ''), 'plekken' => $pl, 'koop' => ws_te_koop($p),
             'voorraad' => ($p['voorraad'] ?? '') === '' || $p['voorraad'] === null ? -1 : (int)$p['voorraad']];
 }
 function ws_json_html($d) { return json_encode($d, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); }
@@ -4523,9 +4757,9 @@ function render_ws_item($in, $p) {
         }
         $pl = ws_plekken($p['opdruk'] ?? '');
         if ($pl) {
-            $out .= '<div class="ws-plekken"><span class="ws-kop">Opdruk' . (count($pl) > 1 ? ': kies waar' : '') . '</span>';
+            $out .= '<div class="ws-plekken"><span class="ws-kop">Opdruk met uw eigen logo</span><p class="ws-uitleg-k">' . (count($pl) > 1 ? 'Vink aan waar u een opdruk wilt. ' : '') . 'Upload daarna direct uw logo of ontwerp. U ziet meteen of het scherp genoeg is' . (array_filter($pl, function($q) { return $q['b'] > 0; }) ? ' en u kiest zelf de grootte en de plaats' : '') . '.</p>';
             foreach ($pl as $i => $x) {
-                $out .= '<div class="ws-plek" data-i="' . $i . '"><label class="ws-check"><input type="checkbox"' . (count($pl) === 1 ? ' checked' : '') . ' /><span><b>' . h($x['n']) . '</b>' . ($x['b'] > 0 ? ', ' . h(str_replace('.', ',', (string)$x['b']) . ' x ' . str_replace('.', ',', (string)$x['h'])) . ' cm' : '') . ($x['p'] ? ' <i>+ ' . h(ws_eur($x['p'])) . '</i>' : '') . '</span></label><div class="ws-upl" hidden></div></div>';
+                $out .= '<div class="ws-plek" data-i="' . $i . '"><label class="ws-check"><input type="checkbox"' . (count($pl) === 1 ? ' checked' : '') . ' /><span><b>' . h($x['n']) . '</b>' . ($x['b'] > 0 ? ', ' . h(str_replace('.', ',', (string)$x['b']) . ' x ' . str_replace('.', ',', (string)$x['h'])) . ' cm' : '') . ($x['p'] ? ' <i>+ ' . h(ws_eur($x['p'])) . '</i>' : '') . '</span></label><small class="ws-tip">&#8593; Uw logo uploaden</small><div class="ws-upl" hidden></div></div>';
             }
             $out .= '</div>';
         }
@@ -4634,7 +4868,7 @@ function ws_js() {
   function schrijf(l) {
     geheugen = l;
     try { localStorage.setItem(SLEUTEL, JSON.stringify(l)); }
-    catch (e) { try { localStorage.setItem(SLEUTEL, JSON.stringify(l.map(function (x) { var y = JSON.parse(JSON.stringify(x)); (y.plekken || []).forEach(function (p) { p.thumb = ''; }); return y; }))); } catch (e2) {} }
+    catch (e) { try { localStorage.setItem(SLEUTEL, JSON.stringify(l.map(function (x) { var y = JSON.parse(JSON.stringify(x)); (y.plekken || []).forEach(function (p) { p.thumb = ''; p.pf = null; }); return y; }))); } catch (e2) {} }
     pil();
   }
   function eur(c) { var s = (Math.abs(c) / 100).toFixed(2).split('.'); s[0] = s[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.'); return (c < 0 ? '- ' : '') + '\u20ac ' + s[0] + ',' + s[1]; }
@@ -4660,11 +4894,29 @@ function ws_js() {
     });
   }
 
+  /* ---------- Zoeken in de webshop ---------- */
+  var zoek = document.getElementById('wsZoek');
+  if (zoek) {
+    zoek.addEventListener('input', function () {
+      var q = zoek.value.trim().toLowerCase(), n = 0;
+      document.querySelectorAll('.ws-kaart').forEach(function (k) { var ok = !q || (k.getAttribute('data-naam') || '').indexOf(q) >= 0; k.style.display = ok ? '' : 'none'; if (ok) n++; });
+      document.querySelectorAll('.ws-groep').forEach(function (g) { var z = [].some.call(g.querySelectorAll('.ws-kaart'), function (k) { return k.style.display !== 'none'; }); g.style.display = z ? '' : 'none'; });
+      document.querySelectorAll('.ws-blk').forEach(function (b) {
+        if (b.contains(zoek)) return;
+        var ks = b.querySelectorAll('.ws-kaart');
+        b.style.display = !q ? '' : (ks.length && [].some.call(ks, function (k) { return k.style.display !== 'none'; }) ? '' : 'none');
+      });
+      document.getElementById('wsZoekLeeg').hidden = !q || n > 0;
+    });
+  }
+
   /* ---------- Foto's op de productpagina ---------- */
+  var galZet = null;
   if (window.ABF && document.getElementById('abFoto')) {
     var gi = 0, gimg = document.getElementById('abFoto'), gtel = document.getElementById('abTel'), duims = document.querySelectorAll('.ab-duims button');
     var gimgs = document.querySelectorAll('.ab-groot .abF');
     var zet = function (n) { gi = (n + ABF.length) % ABF.length; if (gimgs.length > 1) { gimgs.forEach(function (im, k) { im.hidden = k !== gi; }); gimg = gimgs[gi]; } else { gimg.src = ABF[gi]; } gtel.textContent = (gi + 1) + ' / ' + ABF.length; duims.forEach(function (d, k) { d.classList.toggle('on', k === gi); }); };
+    galZet = zet;
     document.querySelector('.ab-groot .vo').onclick = function () { zet(gi - 1); };
     document.querySelector('.ab-groot .na').onclick = function () { zet(gi + 1); };
     duims.forEach(function (d) { d.onclick = function () { zet(parseInt(d.getAttribute('data-i'), 10)); }; });
@@ -4759,6 +5011,445 @@ function ws_js() {
     var selects = Array.prototype.slice.call(form.querySelectorAll('select[data-groep]'));
     var plekken = P.plekken.map(function (pl, i) { return { pl: pl, aan: P.plekken.length === 1, res: null, id: '', bewerktId: false, tekst: '', ok: false, zonderBg: false, bgBlob: null, bgThumb: '' }; });
     function keuzes() { var k = {}; selects.forEach(function (s) { k[s.getAttribute('data-groep')] = s.value; }); return k; }
+    /* ---------- Opdruk: het logo op de foto slepen en groter of kleiner maken ---------- */
+    plekken.forEach(function (x) { x.box = null; x.st = null; });
+    var groot = document.querySelector('.ab-groot'), laag = null, fotoCache = {}, actief = null;
+    if (groot && groot.querySelector('.abF')) {
+      laag = document.createElement('div'); laag.className = 'ws-laag'; groot.appendChild(laag);
+      laag.addEventListener('touchstart', function (e) { if (laag.classList.contains('zoom')) e.stopPropagation(); }, { passive: true });
+      laag.addEventListener('touchend', function (e) { if (laag.classList.contains('zoom')) e.stopPropagation(); });
+      groot.querySelectorAll('.abF').forEach(function (im) { im.addEventListener('load', function () { teken(); }); });
+      if (window.MutationObserver) new MutationObserver(function () { teken(); }).observe(groot, { subtree: true, attributes: true, attributeFilter: ['hidden'] });
+    }
+    window.addEventListener('resize', function () { if (laag) laag.zc = null; teken(); });
+    function zichtbaarIdx() { var l = groot ? groot.querySelectorAll('.abF') : []; for (var i = 0; i < l.length; i++) { if (!l[i].hidden) return i; } return 0; }
+    function heeftOntwerp(x) { return !!(x.res || x.tekst.trim()); }
+    function logoAsp(x) {
+      if (x.res && x.res.w && x.res.h) return x.res.w / x.res.h;
+      if (!x.res && x.tekst.trim()) return Math.max(0.6, Math.min(14, x.tekst.trim().length * 0.62));
+      return x.pl.b > 0 && x.pl.h > 0 ? x.pl.b / x.pl.h : 1;
+    }
+    function logoSrc(x) { if (!x.res) return ''; if (x.zonderBg && x.bgThumb) return x.bgThumb; return x.res.img ? x.res.img.src : x.res.thumb; }
+    /* Foto laden en het product erop zoeken (alles wat afwijkt van de achtergrondkleur) */
+    function zoekBb(im) {
+        var nw = im.naturalWidth, nh = im.naturalHeight, bb = { x: 0, y: 0, w: nw, h: nh };
+        try {
+          var s = Math.min(1, 240 / Math.max(nw, nh)), cw = Math.max(1, Math.round(nw * s)), ch = Math.max(1, Math.round(nh * s));
+          var c = document.createElement('canvas'); c.width = cw; c.height = ch; var cx = c.getContext('2d'); cx.drawImage(im, 0, 0, cw, ch);
+          var d = cx.getImageData(0, 0, cw, ch).data, r0 = d[0], g0 = d[1], b0 = d[2], x1 = cw, y1 = ch, x2 = -1, y2 = -1;
+          for (var y = 0; y < ch; y++) for (var xx = 0; xx < cw; xx++) {
+            var k = (y * cw + xx) * 4;
+            if (d[k + 3] > 40 && Math.max(Math.abs(d[k] - r0), Math.abs(d[k + 1] - g0), Math.abs(d[k + 2] - b0)) > 12) { if (xx < x1) x1 = xx; if (xx > x2) x2 = xx; if (y < y1) y1 = y; if (y > y2) y2 = y; }
+          }
+          if (x2 > x1 && y2 > y1 && (x2 - x1) > cw * 0.25 && (y2 - y1) > ch * 0.25) bb = { x: x1 / s, y: y1 / s, w: (x2 - x1 + 1) / s, h: (y2 - y1 + 1) / s };
+        } catch (e) {}
+        return bb;
+    }
+    function laadBeeld(u) { return new Promise(function (ok, nee) { var im = new Image(); im.onload = function () { ok(im); }; im.onerror = nee; im.src = u; }); }
+    function fotoInfo(i, url, klaar, isFlip) {
+      if (fotoCache[i]) { if (fotoCache[i].bb) klaar(fotoCache[i]); else fotoCache[i].wacht.push(klaar); return; }
+      var f = fotoCache[i] = { url: url, wacht: [klaar], bb: null };
+      function klaarMet(im) {
+        f.im = im; f.nw = im.naturalWidth; f.nh = im.naturalHeight; f.bb = zoekBb(im);
+        f.wacht.forEach(function (fn) { fn(f); }); f.wacht = [];
+      }
+      if (!isFlip) { laadBeeld(url).then(klaarMet).catch(function () { f.wacht = []; }); return; }
+      /* Een flip: alle beelden uitpakken, zodat het logo op elk beeld kan */
+      fetch(url).then(function (r) { return r.arrayBuffer(); }).then(function (ab) {
+        var u = new Uint8Array(ab), dv = new DataView(ab);
+        if (u[0] !== 70 || u[1] !== 76 || u[2] !== 73 || u[3] !== 80) throw 0;
+        var p = 5, bt = dv.getUint8(p); p += 2; var n = dv.getUint16(p); p += 2; var ms = dv.getUint16(p); p += 2; var cl = dv.getUint16(p); p += 2 + cl;
+        var mime = bt === 1 ? 'image/png' : bt === 2 ? 'image/jpeg' : 'image/webp', urls = [];
+        for (var q = 0; q < n; q++) { var fm = dv.getUint16(p); p += 2; var l = dv.getUint32(p); p += 4; urls.push(URL.createObjectURL(new Blob([u.subarray(p, p + l)], { type: mime }))); p += l; }
+        f.flip = true; f.ms = Math.max(60, ms || 100);
+        return Promise.all(urls.map(laadBeeld));
+      }).then(function (ims) { f.frames = ims; klaarMet(ims[0]); }).catch(function () { f.wacht = []; });
+    }
+    function fotoVoor(x) {
+      var alle = P.alle || []; if (!alle.length) return null;
+      if (x.pl.vak) return [x.pl.vak.i, x.pl.vak.u, false];
+      var achter = /rug|achter|back/.test(x.pl.n.toLowerCase());
+      return achter && alle.length > 1 ? alle[1] : alle[0];
+    }
+    /* Flip: per beeld een eigen plaats. Beelden zonder eigen plaats krijgen de plaats van de beelden ervoor en erna. */
+    var beeldNr = {}, speelTimer = null;
+    function huidigBeeld(i) { return beeldNr[i] || 0; }
+    function posVan(x, k) {
+      var keys = x.st.keys, n = x.st.f.frames.length;
+      if (keys[k]) return keys[k];
+      var vk = null, nk = null, dv = 0, dn = 0;
+      for (var j = 1; j < n; j++) { var a = (k - j + n) % n; if (keys[a]) { vk = keys[a]; dv = j; break; } }
+      for (var j2 = 1; j2 < n; j2++) { var b = (k + j2) % n; if (keys[b]) { nk = keys[b]; dn = j2; break; } }
+      if (!vk) return nk; if (!nk || vk === nk) return vk;
+      if (!vk.on || !nk.on) return dv <= dn ? vk : nk;
+      var t = dv / (dv + dn);
+      return { on: true, cx: vk.cx + (nk.cx - vk.cx) * t, cy: vk.cy + (nk.cy - vk.cy) * t, w: vk.w + (nk.w - vk.w) * t };
+    }
+    function laadKey(x) { if (!x.st || !x.st.flip) return; var p = posVan(x, huidigBeeld(x.st.i)); x.st.cx = p.cx; x.st.cy = p.cy; x.st.w = p.w; x.st.zicht = p.on; }
+    function bewaarKey(x) { if (!x.st || !x.st.flip) return; x.st.keys[huidigBeeld(x.st.i)] = { on: true, cx: x.st.cx, cy: x.st.cy, w: x.st.w }; x.st.zicht = true; }
+    function stopSpelen() { if (speelTimer) { clearInterval(speelTimer); speelTimer = null; } }
+    /* Wat voor product is het? Aan de naam en de categorie zien we hoe breed het ongeveer is (in cm, zoals op de foto) */
+    function productSoort() {
+      var naam = (P.naam || '').toLowerCase(), cat = (P.cat || '').toLowerCase(), kind = /kind|baby|junior|peuter/.test(naam + ' ' + cat) ? 0.7 : 1;
+      var lijst = [
+        [/t-?shirt|shirt|polo|trui|sweater|hoodie|vest|jas\b|jack|blouse|overhemd|longsleeve|top\b|tanktop|jurk|sweat|fleece|bodywarmer|romper/, 'kleding', 50],
+        [/broek|jeans|short|legging|joggingbroek|overall/, 'broek', 45],
+        [/pet\b|petje|cap\b|caps|muts|beanie|hoed|bucket/, 'pet', 20],
+        [/rugzak|backpack/, 'tas', 30], [/tas\b|tasje|shopper|tote|draagtas|sporttas|weekendtas/, 'tas', 38],
+        [/mok|beker|kop\b|kopje|tumbler|thermos/, 'mok', 12], [/fles|bidon|drinkfles/, 'fles', 8],
+        [/schort/, 'schort', 60], [/handdoek/, 'handdoek', 50], [/kussen/, 'kussen', 45], [/sjaal/, 'sjaal', 25],
+        [/muismat/, 'muismat', 22], [/hoes|hoesje|case\b/, 'hoes', 8], [/sleutelhanger/, 'klein', 5], [/sok/, 'sok', 10],
+        [/mondkap/, 'mondkap', 18], [/paraplu/, 'paraplu', 100], [/sticker|onderzetter/, 'klein', 10], [/vlag|banner/, 'vlag', 90]
+      ];
+      /* Eerst de naam van het product, dan de categorie */
+      var tt = [naam, cat];
+      for (var j = 0; j < 2; j++) { for (var i = 0; i < lijst.length; i++) { if (tt[j] && lijst[i][0].test(tt[j])) return { soort: lijst[i][1], breed: lijst[i][2] * kind }; } }
+      return { soort: '', breed: 0 };
+    }
+    function grootstePlek() { var m = 0; (P.plekken || []).forEach(function (q) { if (q.b > m) m = q.b; }); return m; }
+    /* Beginstand: de getekende plek van de winkel, of een slimme gok (borst links/rechts, voorkant, rug) */
+    function beginStand(x, f, i) {
+      var n = x.pl.n.toLowerCase(), bb = f.bb, a = logoAsp(x), st = { i: i, f: f }, k, cx, top;
+      if (x.pl.vak) {
+        var v = x.pl.vak, vx = v.x / 100 * f.nw, vy = v.y / 100 * f.nh, vw = v.w / 100 * f.nw;
+        k = vw / x.pl.b; cx = vx + vw / 2; top = vy;
+      } else {
+        var ps = productSoort(), mid = bb.x + bb.w / 2;
+        if (ps.soort === 'kleding' || (!ps.soort && /borst|rug|mouw|hart|chest/.test(n))) {
+          /* Kleding: het lijf is ongeveer 60% van de breedte met mouwen, ongeveer 50 cm (kind kleiner) */
+          var lijf = bb.w * 0.6, achter = /rug|achter|back/.test(n);
+          k = lijf / (ps.breed || 50); cx = mid; top = bb.y + bb.h * (achter ? 0.16 : 0.22);
+          if (/borst|hart|chest/.test(n)) { cx = mid + (/rechts|right/.test(n) ? -1 : 1) * lijf * 0.24; top = bb.y + bb.h * 0.2; }
+          if (/mouw|sleeve/.test(n)) { cx = mid + (/rechts|right/.test(n) ? -1 : 1) * bb.w * 0.4; top = bb.y + bb.h * 0.18; }
+        } else if (ps.breed) {
+          k = bb.w / ps.breed; cx = mid;
+          top = bb.y + bb.h * ({ pet: 0.3, broek: 0.15, tas: 0.35, mok: 0.3, fles: 0.4 }[ps.soort] || 0.3);
+          if (ps.soort === 'broek' && /pijp|been|leg|dij/.test(n)) cx = mid + (/rechts|right/.test(n) ? -1 : 1) * bb.w * 0.25;
+        } else {
+          /* Onbekend product: de grootste opdrukplek is ongeveer 70% van de breedte van het product */
+          k = bb.w * 0.7 / Math.max(3, grootstePlek() || x.pl.b || 10); cx = mid; top = bb.y + bb.h * 0.3;
+        }
+      }
+      st.k = k;
+      var maxW = maxBreed(x, st);
+      /* Beginmaat: 70% van de grootste maat, maar nooit breder dan ongeveer de helft van het product op de foto */
+      st.w = Math.max(2, Math.min(maxW * 0.7, bb.w * 0.5 / k));
+      st.cx = cx; st.cy = top + st.w / a * k / 2;
+      x.st = st; klem(x);
+      if (f.flip) {
+        st.flip = true; st.keys = {}; st.zicht = true;
+        var nk = f.frames.length <= 12 ? f.frames.length : 1;
+        for (var q = 0; q < nk; q++) st.keys[q] = { on: true, cx: st.cx, cy: st.cy, w: st.w };
+      }
+    }
+    function maxBreed(x, st) {
+      var a = logoAsp(x), m = st.f.bb.w * 0.8 / st.k;
+      if (x.pl.b > 0 && x.pl.h > 0) m = Math.min(x.pl.b, x.pl.h * a);
+      return Math.max(2, m);
+    }
+    function klem(x) {
+      var st = x.st, a = logoAsp(x), bb = st.f.bb;
+      st.w = Math.max(Math.min(2, maxBreed(x, st)), Math.min(maxBreed(x, st), st.w));
+      var lw = st.w * st.k, lh = lw / a;
+      st.cx = Math.max(bb.x, Math.min(bb.x + bb.w, st.cx));
+      st.cy = Math.max(bb.y, Math.min(bb.y + bb.h, st.cy));
+    }
+    function r1(n) { return cm(Math.round(n * 10) / 10); }
+    function plaatsTekst(x) {
+      var st = x.st; if (!st) return '';
+      var a = logoAsp(x), bb = st.f.bb, lh = st.w / a, boven = ((st.cy - lh * st.k / 2) - bb.y) / st.k, dx = (st.cx - (bb.x + bb.w / 2)) / st.k;
+      var hz = Math.abs(dx) < 1 ? 'in het midden' : r1(Math.abs(dx)) + ' cm ' + (dx < 0 ? 'links' : 'rechts') + ' van het midden (zoals op de foto)';
+      if (st.flip) return 'ongeveer ' + r1(st.w) + ' x ' + r1(lh) + ' cm, op het draaiende product (zie het proefplaatje)';
+      return 'ongeveer ' + r1(st.w) + ' x ' + r1(lh) + ' cm, ' + r1(Math.max(0, boven)) + ' cm onder de bovenkant, ' + hz;
+    }
+    function label(x) {
+      var mb = x.box && x.box.querySelector('.ws-maat'); if (!mb) return;
+      mb.querySelector('.ws-mt').textContent = x.st ? plaatsTekst(x) : '';
+    }
+    function toonFoto(i) { if (typeof galZet === 'function' && zichtbaarIdx() !== i) galZet(i); }
+    function inBeeld() {
+      if (!groot) return;
+      var r = groot.getBoundingClientRect();
+      if (r.top < 0 || r.bottom > window.innerHeight) groot.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    function bijwerk(x, ga) {
+      var mb = x.box && x.box.querySelector('.ws-maat');
+      var aan = x.aan && heeftOntwerp(x);
+      if (mb) mb.hidden = !aan;
+      if (aan && laag) {
+        var keus = fotoVoor(x);
+        if (keus) {
+          var nieuw = !x.st;
+          fotoInfo(keus[0], keus[1], function (f) {
+            if (f.flip && ga) stopSpelen();
+            if (!x.st) beginStand(x, f, keus[0]); else klem(x);
+            if (ga) actief = x;
+            label(x);
+            if (ga) { toonFoto(x.st.i); if (nieuw) inBeeld(); }
+            teken();
+          }, !!keus[2]);
+        }
+      }
+      label(x); teken();
+    }
+    function maakMaat(x, upl) {
+      upl.insertAdjacentHTML('beforeend', '<div class="ws-maat" hidden>'
+        + '<div class="ws-maatuitleg"><b>Sleep uw logo op de foto</b> naar de plek die u mooi vindt. Groter of kleiner: trek aan het blauwe rondje' + ('ontouchstart' in window ? ' of gebruik twee vingers' : '') + '.</div>'
+        + '<div class="ws-maatrij"><button type="button" data-z="0.9">Kleiner</button><button type="button" data-z="1.1">Groter</button><button type="button" class="ws-kijk">Bekijk op de foto</button></div>'
+        + '<div class="ws-maatkop">Nu: <b class="ws-mt"></b></div></div>');
+      var mb = upl.querySelector('.ws-maat');
+      mb.querySelectorAll('[data-z]').forEach(function (b) { b.addEventListener('click', function () { if (!x.st) return; stopSpelen(); laadKey(x); x.st.w *= parseFloat(b.getAttribute('data-z')); klem(x); bewaarKey(x); label(x); teken(); }); });
+      mb.querySelector('.ws-kijk').addEventListener('click', function () { if (x.st) toonFoto(x.st.i); if (groot) groot.scrollIntoView({ behavior: 'smooth', block: 'center' }); });
+    }
+    function teken() {
+      if (!laag) return;
+      if (!laag._v) {
+        laag._v = document.createElement('div'); laag._v.className = 'ws-vlak'; laag.appendChild(laag._v);
+        laag._k = document.createElement('div'); laag._k.className = 'ws-knoppen'; laag.appendChild(laag._k);
+        /* Overal op de foto slepen verplaatst het gekozen logo, ook naast het logo */
+        laag._v.addEventListener('pointerdown', function (e) {
+          if (speelTimer || e.target.closest('.ws-logo')) return;
+          var ls = laag._v.querySelectorAll('.ws-logo'), d = laag._v.querySelector('.ws-logo.gekozen') || (ls.length === 1 ? ls[0] : null);
+          if (d && d._start) { e.preventDefault(); d._start(e, laag._v); }
+        });
+        ['touchstart', 'touchend'].forEach(function (t) { laag._v.addEventListener(t, function (e) { if (laag._v.style.pointerEvents === 'auto') e.stopPropagation(); }, { passive: true }); });
+      }
+      var V = laag._v; V.innerHTML = '';
+      laag.classList.remove('zoom');
+      var idx = zichtbaarIdx(), im = groot.querySelectorAll('.abF')[idx];
+      var lijst = plekken.filter(function (x) { return x.st && x.st.i === idx && x.aan && heeftOntwerp(x); });
+      var fl = lijst.length && lijst[0].st.f.flip ? lijst[0].st.f : null, kf = huidigBeeld(idx);
+      if (!lijst.length || (!fl && (!im || !im.naturalWidth))) { knoppen('', null); if (kanten) kanten.hidden = true; V.style.pointerEvents = 'none'; return; }
+      V.style.pointerEvents = speelTimer ? 'none' : 'auto';
+      var nw = fl ? fl.nw : im.naturalWidth, nh = fl ? fl.nh : im.naturalHeight;
+      lijst.forEach(laadKey);
+      var a = actief && lijst.indexOf(actief) >= 0 ? actief : lijst[0];
+      var bw = groot.clientWidth, bh = groot.clientHeight, sc = Math.min(bw / nw, bh / nh), ox = (bw - nw * sc) / 2, oy = (bh - nh * sc) / 2;
+      /* Inzoomen als het logo klein is (op de telefoon), zodat je het goed kunt pakken */
+      var auto = lijst.some(function (x) { return x.st.w * x.st.k * sc < 56; });
+      var zoom = laag.zoom === undefined ? auto : laag.zoom;
+      if (zoom) {
+        sc = Math.max(sc, Math.min(bw, bh * 1.2) / (Math.max(46, a.st.w * 3.5) * a.st.k));
+        if (!laag.zc || laag.zc.i !== idx || laag.zc.x !== a) {
+          var bb = a.st.f.bb, hw = bw / 2 / sc, hh = bh / 2 / sc;
+          laag.zc = { i: idx, x: a, cx: bb.w > 2 * hw ? Math.max(bb.x + hw, Math.min(bb.x + bb.w - hw, a.st.cx)) : bb.x + bb.w / 2, cy: bb.h > 2 * hh ? Math.max(bb.y + hh, Math.min(bb.y + bb.h - hh, a.st.cy)) : bb.y + bb.h / 2 };
+        }
+        ox = bw / 2 - laag.zc.cx * sc; oy = bh / 2 - laag.zc.cy * sc;
+      }
+      if (zoom || fl) {
+        var zb = document.createElement('img'); zb.className = 'ws-zoombeeld'; zb.alt = ''; zb.draggable = false; zb.src = fl ? fl.frames[kf].src : (im.currentSrc || im.src);
+        zb.style.left = ox + 'px'; zb.style.top = oy + 'px'; zb.style.width = nw * sc + 'px'; zb.style.height = nh * sc + 'px';
+        V.appendChild(zb); laag.classList.add('zoom');
+      }
+      knoppen([zoom ? 1 : 0, fl ? fl.frames.length : 0, speelTimer ? 'speelt' : kf, a.pl.n, a.st.zicht ? 1 : 0, idx].join('|'), function (K) {
+        var kn = document.createElement('button'); kn.type = 'button'; kn.className = 'ws-zoomknop'; kn.textContent = zoom ? '\u2212 Uitzoomen' : '+ Inzoomen';
+        kn.addEventListener('click', function () { laag.zoom = !zoom; laag.zc = null; teken(); });
+        K.appendChild(kn);
+        if (fl) flipBalk(K, idx, fl, a);
+      });
+      if (fl) kantenStrip(idx, fl, a); else if (kanten) kanten.hidden = true;
+      /* Hulplijnen: het midden van het product, en bij een flip de hoogte van het logo op de andere kanten */
+      var hulp = {};
+      lijst.forEach(function (x) {
+        if (speelTimer || (x.st.flip && !x.st.zicht)) return;
+        var gs = sc * (x.st.f.nw ? nw / x.st.f.nw : 1), bb = x.st.f.bb, h = { refs: [], mid: null };
+        var v = document.createElement('div'); v.className = 'ws-hulp ws-hulp-v'; v.style.left = (ox + (bb.x + bb.w / 2) * gs) + 'px'; V.appendChild(v);
+        h.mid = { x: bb.x + bb.w / 2, el: v };
+        if (x.st.flip) {
+          var kfx = huidigBeeld(x.st.i), gezien = [];
+          for (var q = 0; q < x.st.f.frames.length; q++) {
+            if (q === kfx) continue; var p = posVan(x, q); if (!p || !p.on) continue;
+            if (gezien.some(function (c) { return Math.abs(c - p.cy) * gs < 3; })) continue; gezien.push(p.cy);
+            var l = document.createElement('div'); l.className = 'ws-hulp ws-hulp-h'; l.style.top = (oy + p.cy * gs) + 'px';
+            l.innerHTML = '<em>hoogte kant ' + (q + 1) + '</em>'; V.appendChild(l);
+            h.refs.push({ cy: p.cy, el: l });
+          }
+        }
+        hulp[x.pl.n] = h;
+      });
+      lijst.forEach(function (x) {
+        if (x.st.flip && !x.st.zicht) return;
+        var d = document.createElement('div'); d.className = 'ws-logo' + (speelTimer ? ' speelt' : '') + (x === a ? ' gekozen' : '');
+        var src = logoSrc(x);
+        d.innerHTML = (src ? '<img alt="" draggable="false" src="' + esc(src) + '" />' : '<span>' + esc(x.res ? 'Uw ontwerp' : x.tekst.trim()) + '</span>') + '<i class="ws-greep" title="Groter of kleiner"></i>' + (x.st.flip ? '<b class="ws-weglogo" title="Niet op deze kant">\u00D7</b>' : '');
+        var g = { sc: sc * (x.st.f.nw ? nw / x.st.f.nw : 1), ox: ox, oy: oy, hulp: hulp[x.pl.n] };
+        zetLogo(d, x, g); pak(d, x, g);
+        V.appendChild(d);
+      });
+    }
+    /* De knoppen op de foto worden alleen opnieuw gemaakt als er echt iets verandert, zodat een klik nooit wegvalt */
+    function knoppen(sig, bouw) {
+      var K = laag._k; if (K._sig === sig) return;
+      K._sig = sig; K.innerHTML = ''; if (bouw) bouw(K);
+    }
+    function flipBalk(K, idx, fl, a) {
+      var n = fl.frames.length, kf = huidigBeeld(idx);
+      var b = document.createElement('div'); b.className = 'ws-flipbalk';
+      if (speelTimer) b.innerHTML = '<button type="button" data-a="speel">\u275A\u275A Stoppen en aanpassen</button>';
+      else b.innerHTML = '<div class="rij"><button type="button" data-a="-1" aria-label="Vorige kant">\u2039</button><span>Kant ' + (kf + 1) + ' van ' + n + '</span><button type="button" data-a="1" aria-label="Volgende kant">\u203A</button></div>'
+        + '<div class="rij">' + (n > 12 ? '<button type="button" data-a="zicht">' + (a.st.zicht ? 'Niet op deze kant' : 'Wel op deze kant') + '</button>' : '') + (a.st.zicht && n <= 12 && n > 1 ? '<button type="button" data-a="gelijk">Overal even hoog</button>' : '') + '<button type="button" data-a="speel" class="hoofd">\u25B6 Laten draaien</button></div>';
+      b.addEventListener('click', function (e) {
+        var k = e.target.closest('button'); if (!k) return; var w = k.getAttribute('data-a');
+        if (w === 'speel') {
+          if (speelTimer) { stopSpelen(); teken(); return; }
+          speelTimer = setInterval(function () { beeldNr[idx] = (huidigBeeld(idx) + 1) % n; teken(); }, fl.ms);
+          teken(); return;
+        }
+        if (w === 'gelijk') { laadKey(a); for (var q = 0; q < n; q++) { if (a.st.keys[q]) { a.st.keys[q].cy = a.st.cy; a.st.keys[q].w = a.st.w; } } teken(); return; }
+        if (w === 'zicht') { laadKey(a); if (a.st.zicht) { a.st.keys[kf] = { on: false, cx: a.st.cx, cy: a.st.cy, w: a.st.w }; } else bewaarKey(a); teken(); return; }
+        beeldNr[idx] = (kf + parseInt(w, 10) + n) % n; teken();
+      });
+      b.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
+      b.addEventListener('touchstart', function (e) { e.stopPropagation(); }, { passive: true });
+      b.addEventListener('touchend', function (e) { e.stopPropagation(); });
+      K.appendChild(b);
+      if (!speelTimer && !a.st.zicht) {
+        var plus = document.createElement('button'); plus.type = 'button'; plus.className = 'ws-pluslogo'; plus.textContent = '+ Logo op deze kant';
+        plus.addEventListener('click', function () { laadKey(a); bewaarKey(a); teken(); });
+        K.appendChild(plus);
+      }
+    }
+    /* Onder de foto: alle kanten van de flip, met per kant een vinkje of het logo erop komt */
+    var kanten = null;
+    function kantenStrip(idx, fl, a) {
+      var n = fl.frames.length;
+      if (n > 12) { if (kanten) kanten.hidden = true; return; }
+      if (!kanten) { kanten = document.createElement('div'); kanten.className = 'ws-kanten'; groot.parentNode.insertBefore(kanten, groot.nextSibling); }
+      kanten.hidden = false; kanten._a = a; kanten._idx = idx;
+      var kf = huidigBeeld(idx), aanLijst = [];
+      for (var q0 = 0; q0 < n; q0++) { var p0 = posVan(a, q0); aanLijst.push(p0 && p0.on ? 1 : 0); }
+      var sig = [idx, n, a.pl.n, aanLijst.join('')].join('|');
+      if (kanten._sig !== sig) {
+        kanten._sig = sig;
+        var h = '<div class="ws-kantenkop">Op welke kanten wilt u uw logo? Vink aan of uit.</div><div class="ws-kantenrij">';
+        for (var q = 0; q < n; q++) {
+          h += '<div class="ws-kant" data-q="' + q + '"><button type="button" data-k="' + q + '" aria-label="Kant ' + (q + 1) + ' bekijken"><img alt="" src="' + fl.frames[q].src + '" /></button>'
+            + '<label><input type="checkbox" data-v="' + q + '"' + (aanLijst[q] ? ' checked' : '') + ' /> Kant ' + (q + 1) + '</label></div>';
+        }
+        kanten.innerHTML = h + '</div>';
+      }
+      kanten.querySelectorAll('.ws-kant').forEach(function (el) { el.classList.toggle('nu', parseInt(el.getAttribute('data-q'), 10) === kf); });
+      if (!kanten._klaar) {
+        kanten._klaar = true;
+        kanten.addEventListener('click', function (e) {
+          var bt = e.target.closest('button[data-k]'); if (!bt) return;
+          stopSpelen(); beeldNr[kanten._idx] = parseInt(bt.getAttribute('data-k'), 10); teken();
+        });
+        kanten.addEventListener('change', function (e) {
+          var c = e.target; if (!c.hasAttribute('data-v')) return;
+          var q = parseInt(c.getAttribute('data-v'), 10), x = kanten._a, p = posVan(x, q) || { cx: x.st.cx, cy: x.st.cy, w: x.st.w };
+          stopSpelen(); x.st.keys[q] = { on: c.checked, cx: p.cx, cy: p.cy, w: p.w }; beeldNr[kanten._idx] = q; teken();
+        });
+      }
+    }
+    function zetLogo(d, x, g) {
+      var st = x.st, lw = st.w * st.k * g.sc, lh = lw / logoAsp(x);
+      d.style.left = (g.ox + st.cx * g.sc - lw / 2) + 'px'; d.style.top = (g.oy + st.cy * g.sc - lh / 2) + 'px';
+      d.style.width = lw + 'px'; d.style.height = lh + 'px';
+      var sp = d.querySelector('span'); if (sp) sp.style.fontSize = Math.max(7, lh * 0.72) + 'px';
+    }
+    /* Slepen met muis of vinger (op het logo of ernaast), groter/kleiner met het rondje, twee vingers of het muiswiel */
+    function pak(d, x, g) {
+      var pts = {}, s0 = null, el = null, raf = 0;
+      function aantal() { return Object.keys(pts).length; }
+      function afstand() { var k = Object.keys(pts); return Math.hypot(pts[k[0]].x - pts[k[1]].x, pts[k[0]].y - pts[k[1]].y) || 1; }
+      function begin(e) {
+        var r = d.getBoundingClientRect();
+        s0 = { cx: x.st.cx, cy: x.st.cy, w: x.st.w, px: e ? e.clientX : 0, py: e ? e.clientY : 0, greep: !!(e && e.target && e.target.classList && e.target.classList.contains('ws-greep')), mx: r.left + r.width / 2, my: r.top + r.height / 2, d2: aantal() > 1 ? afstand() : 0 };
+        s0.d0 = Math.hypot(s0.px - s0.mx, s0.py - s0.my) || 1;
+      }
+      function teken1() {
+        raf = 0; if (!s0) return;
+        klem(x);
+        if (g.hulp && !s0.greep && !(aantal() > 1)) {
+          var sn = 6 / g.sc;
+          if (g.hulp.mid) { var mr = Math.abs(x.st.cx - g.hulp.mid.x) < sn; if (mr) x.st.cx = g.hulp.mid.x; g.hulp.mid.el.classList.toggle('raak', mr); }
+          var raak = null; g.hulp.refs.forEach(function (r) { if (!raak && Math.abs(x.st.cy - r.cy) < sn) raak = r; });
+          g.hulp.refs.forEach(function (r) { r.el.classList.toggle('raak', r === raak); });
+          if (raak) x.st.cy = raak.cy;
+        }
+        bewaarKey(x); zetLogo(d, x, g); label(x);
+      }
+      function mv(e) {
+        if (!pts[e.pointerId] || !s0) return;
+        pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+        if (aantal() > 1 && s0.d2) x.st.w = s0.w * afstand() / s0.d2;
+        else if (s0.greep) x.st.w = s0.w * (Math.hypot(e.clientX - s0.mx, e.clientY - s0.my) / s0.d0);
+        else { x.st.cx = s0.cx + (e.clientX - s0.px) / g.sc; x.st.cy = s0.cy + (e.clientY - s0.py) / g.sc; }
+        if (!raf) raf = requestAnimationFrame(teken1);
+      }
+      function los(e) {
+        if (raf) { cancelAnimationFrame(raf); teken1(); }
+        delete pts[e.pointerId];
+        if (aantal()) { var k = Object.keys(pts)[0]; begin({ clientX: pts[k].x, clientY: pts[k].y, target: d }); return; }
+        s0 = null; d.classList.remove('sleept');
+        if (el) { el.removeEventListener('pointermove', mv); el.removeEventListener('pointerup', los); el.removeEventListener('pointercancel', los); el = null; }
+        if (g.hulp) { if (g.hulp.mid) g.hulp.mid.el.classList.remove('raak'); g.hulp.refs.forEach(function (r) { r.el.classList.remove('raak'); }); }
+      }
+      function start(e, bron) {
+        if (el && el !== bron) return;
+        if (!el) { el = bron; el.addEventListener('pointermove', mv); el.addEventListener('pointerup', los); el.addEventListener('pointercancel', los); }
+        try { el.setPointerCapture(e.pointerId); } catch (er) {}
+        pts[e.pointerId] = { x: e.clientX, y: e.clientY }; d.classList.add('sleept'); begin(e);
+      }
+      d._start = function (e, bron) { actief = x; start({ pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY, target: null }, bron); };
+      d.addEventListener('touchstart', function (e) { e.stopPropagation(); }, { passive: true });
+      d.addEventListener('touchend', function (e) { e.stopPropagation(); });
+      d.addEventListener('pointerdown', function (e) {
+        e.preventDefault(); e.stopPropagation();
+        if (speelTimer) { stopSpelen(); actief = x; teken(); return; }
+        if (e.target.classList.contains('ws-weglogo')) { actief = x; laadKey(x); x.st.keys[huidigBeeld(x.st.i)] = { on: false, cx: x.st.cx, cy: x.st.cy, w: x.st.w }; teken(); return; }
+        if (actief !== x) { actief = x; laag._v.querySelectorAll('.ws-logo').forEach(function (o) { o.classList.toggle('gekozen', o === d); }); }
+        start(e, d);
+      });
+      d.addEventListener('wheel', function (e) { e.preventDefault(); if (speelTimer) return; x.st.w *= e.deltaY < 0 ? 1.06 : 0.94; klem(x); bewaarKey(x); zetLogo(d, x, g); label(x); }, { passive: false });
+    }
+    /* Proefplaatje voor de winkel: de foto met het logo erop, precies zoals de klant het neerzette */
+    function logoBeeld(x) { var src = logoSrc(x); return src ? laadBeeld(src).catch(function () { return null; }) : Promise.resolve(null); }
+    function tekenLogo(cx, x, li, p, s) {
+      var lw = p.w * x.st.k * s, lh = lw / logoAsp(x), lx = p.cx * s - lw / 2, ly = p.cy * s - lh / 2;
+      if (li) cx.drawImage(li, lx, ly, lw, lh);
+      else if (!x.res) { cx.fillStyle = '#111'; cx.font = '800 ' + Math.round(lh * 0.72) + 'px sans-serif'; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText(x.tekst.trim(), lx + lw / 2, ly + lh / 2, lw); }
+    }
+    /* Flip: elk beeld met het logo erop (klein, voor de winkelwagen) of alle beelden op 1 vel (voor de winkel) */
+    function flipBeelden(x, maxZ) {
+      var f = x.st.f, s = Math.min(1, maxZ / Math.max(f.nw, f.nh)), n = Math.min(f.frames.length, 16), stap = f.frames.length / n;
+      return logoBeeld(x).then(function (li) {
+        var uit = [];
+        for (var q = 0; q < n; q++) {
+          var k = Math.floor(q * stap), c = document.createElement('canvas'); c.width = Math.round(f.nw * s); c.height = Math.round(f.nh * s);
+          var cx = c.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height); cx.drawImage(f.frames[k], 0, 0, c.width, c.height);
+          var p = posVan(x, k); if (p && p.on) tekenLogo(cx, x, li, p, s);
+          uit.push(c);
+        }
+        return uit;
+      });
+    }
+    function proefKlein(x) {
+      if (x.st && x.st.flip) return flipBeelden(x, 200).then(function (cs) { return { pf: cs.map(function (c) { return c.toDataURL('image/jpeg', 0.75); }), ms: Math.round(x.st.f.ms * x.st.f.frames.length / cs.length) }; });
+      return proef(x, 320).then(function (c) { if (!c) return ''; try { return c.toDataURL('image/jpeg', 0.8); } catch (e) { return ''; } });
+    }
+    function proef(x, maxZ) {
+      if (x.st && x.st.flip && !maxZ) {
+        return flipBeelden(x, 400).then(function (cs) {
+          var kol = Math.min(4, cs.length), rij = Math.ceil(cs.length / kol), w = cs[0].width, h = cs[0].height, c = document.createElement('canvas');
+          c.width = w * kol; c.height = h * rij; var cx = c.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height);
+          cs.forEach(function (b, q) { cx.drawImage(b, (q % kol) * w, Math.floor(q / kol) * h); });
+          return new Promise(function (ok) { try { c.toBlob(function (bl) { ok(bl); }, 'image/jpeg', 0.85); } catch (e) { ok(null); } });
+        });
+      }
+      return new Promise(function (ok) {
+        if (!x.st || !x.st.f.im) return ok(null);
+        var f = x.st.f, s = Math.min(1, (maxZ || 1000) / Math.max(f.nw, f.nh)), c = document.createElement('canvas');
+        c.width = Math.round(f.nw * s); c.height = Math.round(f.nh * s);
+        var cx = c.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height); cx.drawImage(f.im, 0, 0, c.width, c.height);
+        var lw = x.st.w * x.st.k * s, lh = lw / logoAsp(x), lx = x.st.cx * s - lw / 2, ly = x.st.cy * s - lh / 2;
+        function klaar() { if (maxZ) return ok(c); try { c.toBlob(function (b) { ok(b); }, 'image/jpeg', 0.88); } catch (e) { ok(null); } }
+        var src = logoSrc(x);
+        if (src) { var li = new Image(); li.onload = function () { cx.drawImage(li, lx, ly, lw, lh); klaar(); }; li.onerror = function () { ok(null); }; li.src = src; }
+        else { cx.fillStyle = '#111'; cx.font = '800 ' + Math.round(lh * 0.72) + 'px sans-serif'; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText(x.tekst.trim(), lx + lw / 2, ly + lh / 2, lw); klaar(); }
+      });
+    }
     function nAantal() { var n = parseInt(aantal.value, 10); return isNaN(n) || n < 1 ? 1 : Math.min(999, n); }
     function prijs() {
       var s = P.prijs, vanaf = false, k = keuzes();
@@ -4776,22 +5467,24 @@ function ws_js() {
       upl.innerHTML = '<div class="ws-drop"><input type="file" accept="image/*,.pdf,.svg,.ai,.eps,.psd,.tif,.tiff,.heic,.cdr" aria-label="Ontwerp uploaden voor ' + esc(x.pl.n) + '" /><b>Upload uw logo of ontwerp</b><small>Tik om te kiezen of sleep het hierheen. PNG, JPG, PDF, SVG, AI of EPS.</small></div>'
         + '<div class="ws-res" hidden><img class="ws-thumb" alt="" /><div><div class="ws-oordeel"></div><div class="ws-naam"></div><div class="ws-klein"><button type="button" class="ws-weg">Ander bestand kiezen</button></div></div><div class="ws-bg" hidden></div><label class="ws-ok" hidden><input type="checkbox" /> Ik begrijp dat de opdruk minder scherp kan worden en wil toch bestellen.</label></div>'
         + '<div class="ws-tekstl ws-veld"><label>Tekst op de opdruk (mag leeg)</label><input type="text" maxlength="300" placeholder="Bijvoorbeeld uw bedrijfsnaam" /></div>';
+      x.box = box; maakMaat(x, upl);
       var drop = upl.querySelector('.ws-drop'), fin = drop.querySelector('input'), resBox = upl.querySelector('.ws-res'), thumb = resBox.querySelector('.ws-thumb'), oord = resBox.querySelector('.ws-oordeel'), naam = resBox.querySelector('.ws-naam'), bg = resBox.querySelector('.ws-bg'), ok = resBox.querySelector('.ws-ok');
-      function zetAan(a) { x.aan = a; cb.checked = a; upl.hidden = !a; box.classList.toggle('aan', a); prijs(); }
+      function zetAan(a) { x.aan = a; cb.checked = a; upl.hidden = !a; box.classList.toggle('aan', a); prijs(); bijwerk(x, a); }
       cb.addEventListener('change', function () { zetAan(cb.checked); });
+      var tip = box.querySelector('.ws-tip'); if (tip) tip.addEventListener('click', function () { zetAan(true); fin.click(); });
       zetAan(x.aan);
-      upl.querySelector('.ws-tekstl input').addEventListener('input', function (e) { x.tekst = e.target.value; });
+      upl.querySelector('.ws-tekstl input').addEventListener('input', function (e) { x.tekst = e.target.value; bijwerk(x, true); });
       ok.querySelector('input').addEventListener('change', function (e) { x.ok = e.target.checked; });
       ['dragenter', 'dragover'].forEach(function (t) { drop.addEventListener(t, function (e) { e.preventDefault(); drop.classList.add('over'); }); });
       ['dragleave', 'drop'].forEach(function (t) { drop.addEventListener(t, function () { drop.classList.remove('over'); }); });
       drop.addEventListener('drop', function (e) { e.preventDefault(); if (e.dataTransfer.files[0]) kies(e.dataTransfer.files[0]); });
       fin.addEventListener('change', function () { if (fin.files[0]) kies(fin.files[0]); });
-      resBox.querySelector('.ws-weg').addEventListener('click', function () { x.res = null; x.id = ''; x.bewerktId = false; x.ok = false; x.zonderBg = false; x.bgBlob = null; resBox.hidden = true; drop.hidden = false; fin.value = ''; fin.click(); });
+      resBox.querySelector('.ws-weg').addEventListener('click', function () { x.res = null; x.id = ''; x.bewerktId = false; x.ok = false; x.zonderBg = false; x.bgBlob = null; bijwerk(x); resBox.hidden = true; drop.hidden = false; fin.value = ''; fin.click(); });
       function kies(f) {
         drop.hidden = true; resBox.hidden = false; oord.className = 'ws-oordeel onbekend'; oord.innerHTML = '<b>Even kijken...</b>'; naam.textContent = f.name; thumb.removeAttribute('src');
         x.id = ''; x.bewerktId = false; x.ok = false; x.zonderBg = false; x.bgBlob = null; ok.querySelector('input').checked = false;
         bekijk(f, x.pl).then(function (res) {
-          x.res = res;
+          x.res = res; bijwerk(x, true);
           var o = oordeelHtml(res, x.pl);
           oord.className = 'ws-oordeel ' + o[0]; oord.innerHTML = '<b>' + esc(o[1]) + '</b>' + o[2];
           if (res.thumb) thumb.src = res.thumb; else thumb.removeAttribute('src');
@@ -4802,13 +5495,13 @@ function ws_js() {
             bg.innerHTML = '<div>Uw afbeelding heeft een ' + (wit ? 'witte' : 'effen') + ' achtergrond. Die wordt dan ook gedrukt.</div><label style="display:flex;gap:8px;margin-top:6px;font-weight:600"><input type="checkbox" /> Achtergrond weghalen</label><div class="ws-bgmsg" style="font-size:13px;color:var(--muted);margin-top:4px"></div>';
             var bcb = bg.querySelector('input'), bm = bg.querySelector('.ws-bgmsg');
             bcb.addEventListener('change', function () {
-              x.zonderBg = bcb.checked; x.bewerktId = false;
+              x.zonderBg = bcb.checked; x.bewerktId = false; teken();
               if (!bcb.checked) { thumb.src = res.thumb; bm.textContent = ''; return; }
               if (x.bgBlob) { thumb.src = x.bgThumb; bm.textContent = 'Bekijk het voorbeeld. Wij krijgen allebei de versies.'; return; }
               bm.textContent = 'Bezig...';
               setTimeout(function () {
                 haalAchtergrondWeg(res.img, res.bgKleur).then(function (r) {
-                  x.bgBlob = r.blob; x.bgThumb = r.thumb || URL.createObjectURL(r.blob); if (x.zonderBg) thumb.src = x.bgThumb;
+                  x.bgBlob = r.blob; x.bgThumb = r.thumb || URL.createObjectURL(r.blob); if (x.zonderBg) thumb.src = x.bgThumb; teken();
                   bm.textContent = 'Bekijk het voorbeeld. Ziet het er niet goed uit? Haal het vinkje weg. Wij krijgen allebei de versies.';
                 }).catch(function () { bm.textContent = 'Dat lukte niet bij deze afbeelding.'; bcb.checked = false; x.zonderBg = false; });
               }, 30);
@@ -4857,12 +5550,15 @@ function ws_js() {
           if (!x.id || !bl || x.bewerktId === (x.zonderBg ? 'bg' : 'png') || bl.size > WSP.max) return;
           var fd = new FormData(); fd.append('bestand', bl, 'bewerkt.png'); fd.append('id', x.id); fd.append('soort', x.zonderBg ? 'achtergrond' : 'png');
           return stuur('/admin.php?shop=upload', fd).then(function (j) { if (j.ok) x.bewerktId = x.zonderBg ? 'bg' : 'png'; });
+        }).then(function () {
+          if (!x.id || !x.st) return;
+          return proef(x).then(function (b) { if (!b) return; var fd = new FormData(); fd.append('bestand', b, 'proef.jpg'); fd.append('id', x.id); fd.append('soort', 'proef'); return stuur('/admin.php?shop=upload', fd); });
         });
       });
-      stap.then(function () {
+      stap.then(function () { return Promise.all(aanP.map(function (x) { return proefKlein(x).catch(function () { return ''; }); })); }).then(function (kl) {
         var namen = aanP.map(function (x) { return x.pl.n; });
         var item = { k: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), pid: P.id, aantal: nAantal(), keuzes: k, stuk: stukprijs(P, k, namen),
-          plekken: aanP.map(function (x) { return { n: x.pl.n, id: x.id, naam: x.res ? x.res.naam : '', tekst: x.tekst.trim(), oordeel: x.res ? x.res.oordeel : '', dpi: x.res ? x.res.dpi : 0, mail: !!(x.res && x.res.groot), gebruik: x.zonderBg && x.bgBlob ? 'bewerkt' : 'origineel', thumb: x.res ? (x.zonderBg && x.bgBlob ? x.bgThumb : x.res.thumb) : '' }; }) };
+          plekken: aanP.map(function (x, pi) { var kp = kl[pi] || ''; return { proef: typeof kp === 'string' ? kp : (kp.pf[0] || ''), pf: typeof kp === 'string' ? null : kp.pf, pfms: typeof kp === 'string' ? 0 : kp.ms, n: x.pl.n, id: x.id, naam: x.res ? x.res.naam : '', tekst: x.tekst.trim(), oordeel: x.res ? x.res.oordeel : '', dpi: x.res ? x.res.dpi : 0, mail: !!(x.res && x.res.groot), gebruik: x.zonderBg && x.bgBlob ? 'bewerkt' : 'origineel', plaats: x.st ? plaatsTekst(x) : '', thumb: x.res ? (x.zonderBg && x.bgBlob ? x.bgThumb : x.res.thumb) : '' }; }) };
         var l = lees(), samen = null;
         if (!item.plekken.length) l.forEach(function (y) { if (y.pid === item.pid && !y.plekken.length && JSON.stringify(y.keuzes) === JSON.stringify(item.keuzes)) samen = y; });
         if (samen) samen.aantal = Math.min(999, samen.aantal + item.aantal); else l.push(item);
@@ -4878,6 +5574,14 @@ function ws_js() {
   var mandBox = document.getElementById('wsMand');
   if (window.WSC && mandBox) winkelwagen();
   function winkelwagen() {
+    /* Draaiende producten (flip) met het logo erop laten draaien */
+    setInterval(function () {
+      document.querySelectorAll('img[data-anim]').forEach(function (im) {
+        if (!im._a) { try { im._a = JSON.parse(im.getAttribute('data-anim')); } catch (e) { im._a = { f: [] }; } }
+        var a = im._a; if (!a.f.length) return;
+        var k = Math.floor(Date.now() / a.ms) % a.f.length; if (im._k !== k) { im._k = k; im.src = a.f[k]; }
+      });
+    }, 60);
     var C = WSC, klant = {};
     try { klant = JSON.parse(localStorage.getItem('ffws_klant') || '{}') || {}; } catch (e) {}
     var lev = C.verzenden ? 'verzenden' : 'ophalen'; if (klant.levering && C[klant.levering]) lev = klant.levering;
@@ -4888,11 +5592,15 @@ function ws_js() {
         var P = C.prods[x.pid], st = P && P.koop ? stukprijs(P, x.keuzes || {}, (x.plekken || []).map(function (p) { return p.n; })) : null;
         if (st !== null) sub += st * x.aantal;
         var kt = P ? P.opties.map(function (g) { return g.n + ' ' + (x.keuzes || {})[g.n]; }).join(', ') : '';
-        var pt = (x.plekken || []).map(function (p) { return 'Opdruk ' + p.n.toLowerCase() + (p.naam ? ': ' + p.naam : '') + (p.tekst ? (p.naam ? ', ' : ': ') + 'tekst "' + p.tekst + '"' : '') + (p.mail ? ' (bestand stuurt u per mail)' : ''); });
-        h += '<div class="ws-item" data-k="' + esc(x.k) + '">' + (P && P.foto ? '<img src="' + esc(P.foto) + '" alt="" />' : '<span></span>')
+        var pt = (x.plekken || []).map(function (p) { return 'Opdruk ' + p.n.toLowerCase() + (p.naam ? ': ' + p.naam : '') + (p.tekst ? (p.naam ? ', ' : ': ') + 'tekst "' + p.tekst + '"' : '') + (p.plaats ? ', ' + p.plaats : '') + (p.mail ? ' (bestand stuurt u per mail)' : ''); });
+        var pp = (x.plekken || []).filter(function (p) { return p.proef; });
+        var proeven = pp.map(function (p) { return p.proef; });
+        var anim = function (p) { return p.pf && p.pf.length > 1 ? ' data-anim="' + esc(JSON.stringify({ f: p.pf, ms: p.pfms || 120 })) + '"' : ''; };
+        h += '<div class="ws-item" data-k="' + esc(x.k) + '">' + (proeven.length ? '<img class="ws-proef" src="' + esc(proeven[0]) + '"' + anim(pp[0]) + ' alt="Uw ontwerp op het product" />' : P && P.foto ? '<img src="' + esc(P.foto) + '" alt="" />' : '<span></span>')
           + '<div><b>' + (P ? '<a href="' + esc(P.url) + '" style="color:inherit">' + esc(P.naam) + '</a>' : 'Product') + '</b>' + (kt ? '<small>' + esc(kt) + '</small>' : '')
           + pt.map(function (t) { return '<small>' + esc(t) + '</small>'; }).join('')
-          + ((x.plekken || []).some(function (p) { return p.thumb; }) ? '<div class="ws-mini">' + x.plekken.filter(function (p) { return p.thumb; }).map(function (p) { return '<img src="' + esc(p.thumb) + '" alt="" />'; }).join('') + '</div>' : '')
+          + (proeven.length > 1 ? '<div class="ws-mini ws-proeven">' + pp.slice(1).map(function (p) { return '<img src="' + esc(p.proef) + '"' + anim(p) + ' alt="Uw ontwerp op het product" />'; }).join('') + '</div>' : '')
+          + (!proeven.length && (x.plekken || []).some(function (p) { return p.thumb; }) ? '<div class="ws-mini">' + x.plekken.filter(function (p) { return p.thumb; }).map(function (p) { return '<img src="' + esc(p.thumb) + '" alt="" />'; }).join('') + '</div>' : '')
           + (st === null ? '<small style="color:#b91c1c;font-weight:600">Dit product is niet meer te koop. Haal het uit uw winkelwagen.</small>' : '')
           + '<div class="acts"><div class="ws-teller"><button type="button" data-d="-1" aria-label="Minder">&minus;</button><input type="number" value="' + x.aantal + '" min="1" max="999" aria-label="Aantal" /><button type="button" data-d="1" aria-label="Meer">+</button></div><button type="button" class="ws-link ws-wis">Verwijderen</button></div></div>'
           + '<div class="r">' + (st !== null ? esc(eur(st * x.aantal)) + (x.aantal > 1 ? '<small style="font-weight:500">' + esc(eur(st)) + ' per stuk</small>' : '') : '') + '</div></div>';
@@ -4959,7 +5667,7 @@ function ws_js() {
       else if (!d.akkoord) fout = ['akkoord', 'Ga akkoord met de voorwaarden.'];
       if (fout) { m.className = 'ws-melding fout'; m.textContent = fout[1]; var veld = f[fout[0]] || document.getElementById('wsAkkoord'); if (veld && veld.focus) veld.focus(); return; }
       try { var bew = {}; ['naam', 'bedrijf', 'mail', 'tel', 'straat', 'postcode', 'plaats'].forEach(function (n) { bew[n] = d[n]; }); bew.levering = lev; localStorage.setItem('ffws_klant', JSON.stringify(bew)); } catch (e2) {}
-      d.items = lees().map(function (x) { return { pid: x.pid, aantal: x.aantal, keuzes: x.keuzes, plekken: (x.plekken || []).map(function (p) { return { n: p.n, id: p.id, tekst: p.tekst, mail: p.mail, naam: p.naam, gebruik: p.gebruik }; }) }; });
+      d.items = lees().map(function (x) { return { pid: x.pid, aantal: x.aantal, keuzes: x.keuzes, plekken: (x.plekken || []).map(function (p) { return { n: p.n, id: p.id, tekst: p.tekst, mail: p.mail, naam: p.naam, gebruik: p.gebruik, plaats: p.plaats || '' }; }) }; });
       k.disabled = true; m.className = 'ws-melding'; m.textContent = 'Even geduld...';
       var fd = new FormData(); fd.append('data', JSON.stringify(d));
       fetch('/admin.php?shop=bestel', { method: 'POST', body: fd, credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (j) {
@@ -5028,6 +5736,50 @@ function ws_voorbeeld_csv() {
 function ws_acties($action) {
     global $WS_STATUS;
     $in = ws_inst();
+    if ($action === 'ws_opbouw_vb' || $action === 'ws_opbouw_save') {
+        $oud = ws_opbouw();
+        $bl = []; foreach ((array)($_POST['blok'] ?? []) as $k) { $k = (string)$k; $bl[] = ['k' => $k, 'aan' => !empty($_POST['blok_aan'][$k])]; }
+        $g = function($k) { return (string)($_POST[$k] ?? ''); };
+        $nieuw = ['blokken' => $bl, 'kop_stijl' => $g('kop_stijl'), 'kop_foto' => $oud['kop_foto'], 'kop_knop' => $g('kop_knop'), 'kop_uitlijn' => $g('kop_uitlijn'),
+                  'voordelen' => array_map('strval', (array)($_POST['voordelen'] ?? [])), 'uitgelicht' => array_map('strval', (array)($_POST['uitgelicht'] ?? [])),
+                  'titel_uitgelicht' => $g('titel_uitgelicht'), 'titel_nieuw' => $g('titel_nieuw'), 'nieuw_n' => (int)$g('nieuw_n'), 'kolommen' => (int)$g('kolommen'), 'per_groep' => (int)$g('per_groep'),
+                  'beeld' => $g('beeld'), 'vulling' => $g('vulling'), 'cats_als' => $g('cats_als'), 'accent' => !empty($_POST['eigen_kleur']) ? $g('accent') : '',
+                  'hoek' => $g('hoek'), 'schaduw' => !empty($_POST['schaduw']), 'achtergrond' => $g('achtergrond'), 'fotogrond' => $g('fotogrond')];
+        $weg = !empty($_POST['kop_foto_weg']);
+        if ($weg) $nieuw['kop_foto'] = '';
+        $titel = cut(trim($g('titel')), 90); $intro = cut(trim($g('intro')), 300);
+        $in2 = $in; if ($titel !== '') $in2['titel'] = $titel; if ($intro !== '') $in2['intro'] = $intro;
+        $f = $_FILES['kop_foto'] ?? null; $heeftBestand = $f && ($f['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_OK && is_uploaded_file($f['tmp_name']);
+        if ($action === 'ws_opbouw_vb') {
+            /* Voorbeeld: de webshop met de keuzes van nu, nog niet bewaard */
+            $kopFoto = null;
+            if ($heeftBestand && filesize($f['tmp_name']) <= 6 * 1048576) {
+                $isFlip = is_flip($f['name']); $info = $isFlip ? null : @getimagesize($f['tmp_name']);
+                if ($isFlip) $kopFoto = 'data:application/flip;base64,' . base64_encode((string)file_get_contents($f['tmp_name']));
+                elseif ($info) $kopFoto = 'data:' . $info['mime'] . ';base64,' . base64_encode((string)file_get_contents($f['tmp_name']));
+            }
+            $o = ws_opbouw($nieuw);
+            if ($kopFoto !== null && $o['kop_stijl'] === 'foto') { $o['kop_foto'] = 'x'; }
+            $html = render_ws_lijst($in2, ws_gesorteerd(), $o, $kopFoto);
+            if (strpos($html, 'data-flip=') !== false && strpos($html, 'flipspeler.js') === false) $html = str_replace("\n</body>", '<script src="/flipspeler.js" defer></script>' . "\n</body>", $html);
+            $html = stijl_pagina($html);
+            $html = str_replace('</head>', '<style>html{scroll-behavior:auto}.ws-pil{display:none!important}</style><script>document.addEventListener("click",function(e){var a=e.target.closest("a");if(a){e.preventDefault();}},true);</script></head>', $html);
+            if (function_exists('adm_schoon_uitvoer')) adm_schoon_uitvoer();
+            header('Content-Type: text/html; charset=UTF-8'); header('Cache-Control: no-store');
+            echo $html; exit;
+        }
+        $fouten = [];
+        if ($heeftBestand) {
+            $map = UPLOAD_DIR . '/webshop/_kop'; ensure_upload_dir(); if (!is_dir($map)) mkdir($map, 0755, true);
+            $nf = is_flip($f['name']) ? save_flip($f['tmp_name'], $f['name'], $map, 'kop-', $fouten) : save_one_image($f['tmp_name'], $f['name'], $map, 'kop-', $fouten);
+            if ($nf !== '') { if ($oud['kop_foto'] !== '' && $oud['kop_foto'] !== $nf) @unlink($map . '/' . $oud['kop_foto']); $nieuw['kop_foto'] = $nf; }
+        } elseif ($weg && $oud['kop_foto'] !== '') { @unlink(UPLOAD_DIR . '/webshop/_kop/' . $oud['kop_foto']); }
+        write_json(WS_OPBOUW, ws_opbouw($nieuw));
+        $raw = read_json(WS_INST, []); if (!is_array($raw)) $raw = [];
+        $raw['titel'] = $titel; $raw['intro'] = $intro; write_json(WS_INST, $raw);
+        rebuild_everything(load_pages());
+        ws_terug('admin.php?webshop=1&t=opbouw', 'Opgeslagen. Je webshop is bijgewerkt.' . ($fouten ? ' ' . implode(' ', $fouten) : ''));
+    }
     if ($action === 'ws_inst') {
         $c = function($n) { return ab_prijs_in($_POST[$n] ?? ''); };
         $key = trim((string)($_POST['mollie'] ?? ''));
@@ -5070,16 +5822,36 @@ function ws_acties($action) {
         $x['fotos'] = array_values(array_filter((array)($x['fotos'] ?? []), function($f) use ($weg, $map) { if (in_array($f, $weg, true)) { @unlink($map . '/' . basename($f)); return false; } return true; }));
         $hoofd = (string)($_POST['foto_hoofd'] ?? '');
         if ($hoofd !== '' && in_array($hoofd, $x['fotos'], true)) { $x['fotos'] = array_values(array_merge([$hoofd], array_diff($x['fotos'], [$hoofd]))); }
+        $vervang = basename((string)($_POST['flip_vervang'] ?? ''));
+        $vPos = ($vervang !== '' && is_flip($vervang)) ? array_search($vervang, $x['fotos'], true) : false;
         if (!empty($_FILES['fotos']) && is_array($_FILES['fotos']['name'])) {
             ensure_upload_dir();
             for ($n = 0; $n < count($_FILES['fotos']['name']); $n++) {
                 $err = $_FILES['fotos']['error'][$n];
                 if ($err === UPLOAD_ERR_NO_FILE) continue;
+                if ($vPos !== false && $err === UPLOAD_ERR_OK && is_flip($_FILES['fotos']['name'][$n])) {
+                    /* Een aangepaste flip komt op de plek van de oude */
+                    $f = save_flip($_FILES['fotos']['tmp_name'][$n], $_FILES['fotos']['name'][$n], $map, '', $fouten);
+                    if ($f !== '') { @unlink($map . '/' . basename($x['fotos'][$vPos])); $x['fotos'][$vPos] = $f; }
+                    $vPos = false; continue;
+                }
                 if (count($x['fotos']) >= WS_MAX_FOTO) { $fouten[] = 'Er kunnen maximaal ' . WS_MAX_FOTO . " foto's bij."; break; }
                 if ($err !== UPLOAD_ERR_OK) { $fouten[] = upload_error_text($err, $_FILES['fotos']['name'][$n]); continue; }
                 $f = is_flip($_FILES['fotos']['name'][$n]) ? save_flip($_FILES['fotos']['tmp_name'][$n], $_FILES['fotos']['name'][$n], $map, '', $fouten) : save_one_image($_FILES['fotos']['tmp_name'][$n], $_FILES['fotos']['name'][$n], $map, '', $fouten);
                 if ($f !== '') $x['fotos'][] = $f;
             }
+        }
+        $vn = (array)($_POST['vak_n'] ?? []); $vv = (array)($_POST['vak'] ?? []);
+        if ($vn) {
+            $vakken = [];
+            foreach ($vn as $k => $nm) {
+                $d = explode('|', (string)($vv[$k] ?? ''));
+                if (count($d) !== 5 || !in_array($d[0], $x['fotos'], true) || is_flip($d[0])) continue;
+                $c = array_map(function($q) { return max(0, min(100, round((float)$q, 2))); }, array_slice($d, 1));
+                if ($c[2] < 1 || $c[3] < 1) continue;
+                $vakken[cut((string)$nm, 40)] = ['f' => $d[0], 'x' => $c[0], 'y' => $c[1], 'w' => $c[2], 'h' => $c[3]];
+            }
+            $x['vakken'] = $vakken;
         }
         if ($x['prijs'] <= 0) $fouten[] = 'Let op: er staat nog geen prijs bij. Zonder prijs kan niemand het bestellen.';
         $x['slug'] = ws_uniek_slug($x['naam'], $x['id'], $lijst);
@@ -5190,13 +5962,13 @@ function ws_acties($action) {
 function ws_tabs($t) {
     $n = ws_nieuw_aantal();
     echo '<div class="ws-tabs">';
-    foreach (['bestellingen' => 'Bestellingen' . ($n ? ' <b class="ws-tel">' . $n . '</b>' : ''), 'producten' => 'Producten', 'categorieen' => 'Categorie&euml;n', 'instellen' => 'Instellen'] as $k => $l) { echo '<a href="admin.php?webshop=1' . ($k !== 'bestellingen' ? '&t=' . $k : '') . '"' . ($t === $k ? ' class="on"' : '') . '>' . $l . '</a>'; }
+    foreach (['bestellingen' => 'Bestellingen' . ($n ? ' <b class="ws-tel">' . $n . '</b>' : ''), 'producten' => 'Producten', 'categorieen' => 'Categorie&euml;n', 'opbouw' => 'Opbouw en uiterlijk', 'instellen' => 'Instellen'] as $k => $l) { echo '<a href="admin.php?webshop=1' . ($k !== 'bestellingen' ? '&t=' . $k : '') . '"' . ($t === $k ? ' class="on"' : '') . '>' . $l . '</a>'; }
     echo '</div>';
 }
 function ws_beheer_view() {
     global $WS_STATUS;
     $in = ws_inst();
-    $t = in_array($_GET['t'] ?? '', ['producten', 'categorieen', 'instellen'], true) ? $_GET['t'] : 'bestellingen';
+    $t = in_array($_GET['t'] ?? '', ['producten', 'categorieen', 'instellen', 'opbouw'], true) ? $_GET['t'] : 'bestellingen';
     if (isset($_GET['b'])) $t = 'bestellingen';
     ?>
     <style>
@@ -5258,7 +6030,154 @@ function ws_beheer_view() {
     if ($t === 'instellen') { ws_view_instellen($in); return; }
     if ($t === 'producten') { ws_view_producten($in); return; }
     if ($t === 'categorieen') { ws_view_categorieen($in); return; }
+    if ($t === 'opbouw') { ws_view_opbouw($in); return; }
     ws_view_bestellingen($in);
+}
+function ws_view_opbouw($in) {
+    $o = ws_opbouw(); $namen = ws_blokken_namen(); $foto = ws_kop_foto_url($o);
+    $prods = array_values(array_filter(ws_lijst(), 'ws_zichtbaar'));
+    $r = function($naam, $waarde, $huidig, $label) { return '<label class="wso-keus"><input type="radio" name="' . $naam . '" value="' . h($waarde) . '"' . ($huidig === $waarde ? ' checked' : '') . ' /> <span>' . $label . '</span></label>'; };
+    $sel = function($naam, $opties, $huidig) { $x = '<select name="' . $naam . '">'; foreach ($opties as $w => $l) { $x .= '<option value="' . h((string)$w) . '"' . ((string)$huidig === (string)$w ? ' selected' : '') . '>' . $l . '</option>'; } return $x . '</select>'; };
+    ?>
+    <style>
+      .wso{display:grid;grid-template-columns:minmax(320px,460px) 1fr;gap:22px;align-items:start;}
+      .wso-form .ws-sectie{background:#fff;}
+      .wso-keuzes{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 4px;}
+      .wso-keus{display:inline-flex;align-items:center;gap:6px;border:1.5px solid var(--line);border-radius:10px;padding:7px 11px;cursor:pointer;font-weight:600;font-size:14px;background:#fff;}
+      .wso-keus:has(input:checked){border-color:#2f6bff;background:#eef3ff;}
+      .wso-rij{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;padding:7px 10px;margin:0 0 6px;background:#fff;}
+      .wso-rij label{flex:1;display:flex;gap:8px;align-items:center;font-weight:600;font-size:14.5px;cursor:pointer;margin:0;}
+      .wso-rij button{width:32px;height:32px;border:1px solid var(--line);background:#fff;border-radius:8px;cursor:pointer;font-size:15px;}
+      .wso-rij button:hover{border-color:#2f6bff;color:#2f6bff;}
+      .wso-twee{display:grid;grid-template-columns:1fr 1fr;gap:10px;} .wso-twee .field{margin:0;}
+      .wso-prods{max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:6px 10px;background:#fff;}
+      .wso-prods label{display:flex;gap:8px;align-items:center;font-weight:400;font-size:14px;padding:4px 0;margin:0;}
+      .wso-vb{position:sticky;top:12px;}
+      .wso-vbkop{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:0 0 8px;flex-wrap:wrap;}
+      .wso-vbkop b{font-size:15px;}
+      .wso-apparaat button{border:1.5px solid var(--line);background:#fff;border-radius:999px;padding:6px 12px;font:inherit;font-size:13.5px;font-weight:600;cursor:pointer;}
+      .wso-apparaat button.on{border-color:#2f6bff;color:#2f6bff;background:#eef3ff;}
+      .wso-scherm{background:#e9edf3;border-radius:14px;position:relative;overflow:hidden;height:78vh;}
+      .wso-scherm iframe{position:absolute;top:0;left:0;border:0;background:#fff;transform-origin:0 0;box-shadow:0 10px 30px -18px rgba(0,0,0,.4);}
+      .wso-laden{font-size:13px;color:var(--mut);}
+      @media (max-width:1100px){.wso{grid-template-columns:1fr;} .wso-vb{position:static;order:-1;} .wso-scherm{height:60vh;}}
+    </style>
+    <div class="wso">
+    <form class="formcard wso-form" method="post" enctype="multipart/form-data" id="wsOpb">
+      <input type="hidden" name="action" value="ws_opbouw_save" />
+      <p class="ws-mini" style="margin-top:0">Bouw je webshop zoals jij hem wilt. Wat je verandert, zie je meteen in het voorbeeld. Pas na <strong>Opslaan</strong> staat het op je website.</p>
+
+      <div class="ws-sectie"><h3>Bovenkant</h3>
+        <div class="wso-keuzes"><?= $r('kop_stijl', 'donker', $o['kop_stijl'], 'Donker') . $r('kop_stijl', 'licht', $o['kop_stijl'], 'Licht') . $r('kop_stijl', 'foto', $o['kop_stijl'], 'Met foto') . $r('kop_stijl', 'geen', $o['kop_stijl'], 'Alleen de titel') ?></div>
+        <div class="field"><label for="wsoT">Titel</label><input type="text" id="wsoT" name="titel" maxlength="90" value="<?= h($in['titel']) ?>" /></div>
+        <div class="field"><label for="wsoI">Korte tekst</label><input type="text" id="wsoI" name="intro" maxlength="300" value="<?= h($in['intro']) ?>" /></div>
+        <div class="wso-twee">
+          <div class="field"><label for="wsoK">Knop (mag leeg)</label><input type="text" id="wsoK" name="kop_knop" maxlength="40" value="<?= h($o['kop_knop']) ?>" placeholder="Bijvoorbeeld Bekijk de producten" /></div>
+          <div class="field"><label for="wsoU">Tekst uitlijnen</label><?= $sel('kop_uitlijn', ['links' => 'Links', 'midden' => 'In het midden'], $o['kop_uitlijn']) ?></div>
+        </div>
+        <div class="field" style="margin-top:10px"><label for="wsoF">Foto of flip voor de bovenkant</label>
+          <?php if ($foto !== ''): ?><div class="ws-mini" style="margin-bottom:6px">Er staat een <?= is_flip($o['kop_foto']) ? 'flip' : 'foto' ?>. <label style="display:inline;font-weight:400"><input type="checkbox" name="kop_foto_weg" value="1" /> Weghalen</label></div><?php endif; ?>
+          <input type="file" id="wsoF" name="kop_foto" accept="image/jpeg,image/png,image/webp,.flip" />
+          <div class="hint">Wordt gebruikt bij de keuze Met foto. Een bewegende flip mag ook.</div></div>
+      </div>
+
+      <div class="ws-sectie"><h3>Blokken</h3>
+        <div class="hint" style="margin:0 0 8px">Zet blokken aan of uit en zet ze met de pijltjes in de volgorde die jij wilt.</div>
+        <div id="wsoBlokken">
+        <?php foreach ($o['blokken'] as $b): ?>
+          <div class="wso-rij"><input type="hidden" name="blok[]" value="<?= h($b['k']) ?>" /><label><input type="checkbox" name="blok_aan[<?= h($b['k']) ?>]" value="1" <?= $b['aan'] ? 'checked' : '' ?> /> <?= $namen[$b['k']] ?></label><button type="button" data-r="-1" aria-label="Omhoog">&uarr;</button><button type="button" data-r="1" aria-label="Omlaag">&darr;</button></div>
+        <?php endforeach; ?>
+        </div>
+      </div>
+
+      <div class="ws-sectie"><h3>Voordelen</h3>
+        <div class="hint" style="margin:0 0 8px">Korte zinnen die laten zien waarom mensen bij jou kopen. Lege regels worden niet getoond.</div>
+        <?php for ($i = 0; $i < 4; $i++): ?><div class="field" style="margin:0 0 6px"><input type="text" name="voordelen[]" maxlength="60" value="<?= h($o['voordelen'][$i] ?? '') ?>" placeholder="<?= h(['Gratis verzending vanaf 50 euro', 'Veilig betalen met iDEAL', 'Voor 16.00 besteld, morgen in huis', 'Bedrukt in eigen werkplaats'][$i]) ?>" aria-label="Voordeel <?= $i + 1 ?>" /></div><?php endfor; ?>
+      </div>
+
+      <div class="ws-sectie"><h3>Uitgelicht en nieuw</h3>
+        <div class="field"><label for="wsoTU">Titel van Uitgelicht</label><input type="text" id="wsoTU" name="titel_uitgelicht" maxlength="60" value="<?= h($o['titel_uitgelicht']) ?>" /></div>
+        <div class="field"><label>Welke producten wil je uitlichten? (hoogstens 8)</label>
+          <div class="wso-prods" id="wsoProds"><?php if (!$prods): ?><span class="ws-mini">Nog geen producten.</span><?php endif; foreach ($prods as $p): ?><label><input type="checkbox" name="uitgelicht[]" value="<?= h($p['id']) ?>" <?= in_array($p['id'], $o['uitgelicht'], true) ? 'checked' : '' ?> /> <?= h($p['naam']) ?></label><?php endforeach; ?></div></div>
+        <div class="wso-twee">
+          <div class="field"><label for="wsoTN">Titel van Nieuw binnen</label><input type="text" id="wsoTN" name="titel_nieuw" maxlength="60" value="<?= h($o['titel_nieuw']) ?>" /></div>
+          <div class="field"><label for="wsoNN">Hoeveel nieuwe producten</label><?= $sel('nieuw_n', [3 => '3', 4 => '4', 6 => '6', 8 => '8'], $o['nieuw_n']) ?></div>
+        </div>
+      </div>
+
+      <div class="ws-sectie"><h3>Indeling</h3>
+        <div class="wso-twee">
+          <div class="field"><label>Producten naast elkaar</label><?= $sel('kolommen', [2 => '2 (groot)', 3 => '3', 4 => '4 (klein)'], $o['kolommen']) ?></div>
+          <div class="field"><label>Producten per categorie</label><?= $sel('per_groep', [3 => '3', 4 => '4', 6 => '6', 8 => '8'], $o['per_groep']) ?></div>
+          <div class="field"><label>Vorm van de foto's</label><?= $sel('beeld', ['liggend' => 'Liggend', 'vierkant' => 'Vierkant', 'staand' => 'Staand'], $o['beeld']) ?></div>
+          <div class="field"><label>Foto in het vak</label><?= $sel('vulling', ['passend' => 'Helemaal zichtbaar', 'vullend' => 'Vak helemaal vullen'], $o['vulling']) ?></div>
+          <div class="field"><label>Categorie&euml;n tonen als</label><?= $sel('cats_als', ['tegels' => 'Tegels met foto', 'knoppen' => 'Knoppen'], $o['cats_als']) ?></div>
+          <div class="field"><label>Achter de foto's</label><?= $sel('fotogrond', ['wit' => 'Wit', 'licht' => 'Lichtgrijs', 'donker' => 'Donker'], $o['fotogrond']) ?></div>
+        </div>
+      </div>
+
+      <div class="ws-sectie"><h3>Kleuren en vormen</h3>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:4px 0 10px">
+          <label class="check" style="margin:0"><input type="checkbox" name="eigen_kleur" value="1" id="wsoEK" <?= $o['accent'] !== '' ? 'checked' : '' ?> /> <span>Eigen kleur voor de webshop</span></label>
+          <input type="color" name="accent" id="wsoAC" value="<?= h($o['accent'] !== '' ? $o['accent'] : '#2563eb') ?>" aria-label="Kleur van de webshop" style="width:52px;height:36px;padding:2px;border-radius:8px" />
+        </div>
+        <div class="hint" style="margin:0 0 8px">Uit = dezelfde kleur als de rest van je website.</div>
+        <label style="font-weight:700;font-size:14px">Hoeken</label>
+        <div class="wso-keuzes"><?= $r('hoek', 'rond', $o['hoek'], 'Rond') . $r('hoek', 'klein', $o['hoek'], 'Een beetje rond') . $r('hoek', 'recht', $o['hoek'], 'Recht') ?></div>
+        <label style="font-weight:700;font-size:14px">Achtergrond</label>
+        <div class="wso-keuzes"><?= $r('achtergrond', 'licht', $o['achtergrond'], 'Lichtblauw') . $r('achtergrond', 'wit', $o['achtergrond'], 'Wit') ?></div>
+        <label class="check" style="margin-top:8px"><input type="checkbox" name="schaduw" value="1" <?= $o['schaduw'] ? 'checked' : '' ?> /> <span>Schaduw onder tegels</span></label>
+      </div>
+
+      <div class="ws-acties"><button class="btn" type="submit">Opslaan en website bijwerken</button></div>
+    </form>
+    <div class="wso-vb">
+      <div class="wso-vbkop"><b>Voorbeeld</b> <span class="wso-laden" id="wsoLaden"></span><span class="wso-apparaat"><button type="button" data-a="pc" class="on">Computer</button> <button type="button" data-a="tel">Telefoon</button></span></div>
+      <div class="wso-scherm" id="wsoScherm"><iframe id="wsoVb" title="Voorbeeld van je webshop"></iframe></div>
+    </div>
+    </div>
+    <script>
+    (function () {
+      var f = document.getElementById('wsOpb'), fr = document.getElementById('wsoVb'), laden = document.getElementById('wsoLaden'), t = null, nr = 0;
+      function ververs() {
+        clearTimeout(t);
+        t = setTimeout(function () {
+          var fd = new FormData(f); fd.set('action', 'ws_opbouw_vb'); var mijn = ++nr; laden.textContent = 'Bijwerken...';
+          fetch(location.href, { method: 'POST', body: fd, credentials: 'same-origin' }).then(function (r) { return r.text(); }).then(function (h) {
+            if (mijn !== nr) return;
+            var y = 0; try { y = fr.contentWindow.scrollY || 0; } catch (e) {}
+            fr.onload = function () { try { fr.contentWindow.scrollTo(0, y); } catch (e) {} laden.textContent = ''; };
+            fr.srcdoc = h;
+          }).catch(function () { laden.textContent = 'Voorbeeld lukt niet. Probeer het nog eens.'; });
+        }, 350);
+      }
+      f.addEventListener('input', ververs); f.addEventListener('change', ververs);
+      document.getElementById('wsoBlokken').addEventListener('click', function (e) {
+        var b = e.target.closest('button[data-r]'); if (!b) return;
+        var rij = b.parentNode, r = parseInt(b.getAttribute('data-r'), 10);
+        if (r < 0 && rij.previousElementSibling) rij.parentNode.insertBefore(rij, rij.previousElementSibling);
+        if (r > 0 && rij.nextElementSibling) rij.parentNode.insertBefore(rij.nextElementSibling, rij);
+        b.focus(); ververs();
+      });
+      var pr = document.getElementById('wsoProds');
+      pr.addEventListener('change', function (e) { var n = pr.querySelectorAll('input:checked').length; if (n > 8) { e.target.checked = false; laden.textContent = 'Je kunt hoogstens 8 producten uitlichten.'; } });
+      document.getElementById('wsoAC').addEventListener('input', function () { document.getElementById('wsoEK').checked = true; });
+      /* Het voorbeeld op echte breedte (computer 1280, telefoon 390) en verkleind zodat het past */
+      var scherm = document.getElementById('wsoScherm'), tel = false;
+      function schaal() {
+        var W = scherm.clientWidth, H = scherm.clientHeight, bw = tel ? 390 : 1280, sc = Math.min(1, (W - (tel ? 20 : 0)) / bw);
+        fr.style.width = bw + 'px'; fr.style.height = (H - (tel ? 20 : 0)) / sc + 'px'; fr.style.transform = 'scale(' + sc + ')';
+        fr.style.left = Math.max(0, (W - bw * sc) / 2) + 'px'; fr.style.top = (tel ? 10 : 0) + 'px'; fr.style.borderRadius = tel ? '18px' : '0';
+      }
+      window.addEventListener('resize', schaal); schaal();
+      document.querySelectorAll('.wso-apparaat button').forEach(function (b) { b.addEventListener('click', function () {
+        document.querySelectorAll('.wso-apparaat button').forEach(function (x) { x.classList.toggle('on', x === b); });
+        tel = b.getAttribute('data-a') === 'tel'; schaal();
+      }); });
+      ververs();
+    })();
+    </script>
+    <?php
 }
 function ws_view_instellen($in) {
     $c = function($v) { return (int)$v > 0 ? number_format($v / 100, 2, ',', '.') : ''; };
@@ -5375,8 +6294,82 @@ function ws_view_producten($in) {
             <div class="ws-voorbeeld" id="wpdVb" hidden><span class="ws-mini">Zo ziet de koper het:</span><div></div></div>
           </div>
           <div class="field"><label>Foto's</label>
-            <?php if (!empty($x['fotos'])): ?><div class="photos" style="margin-bottom:10px"><?php foreach ($x['fotos'] as $i => $f): ?><div><?= ws_admin_thumb($x, $f) ?><label><input type="radio" name="foto_hoofd" value="<?= h($f) ?>" <?= $i === 0 ? 'checked' : '' ?> /> Hoofdfoto</label><label><input type="checkbox" name="foto_weg[]" value="<?= h($f) ?>" /> Weghalen</label></div><?php endforeach; ?></div><?php endif; ?>
-            <input type="file" name="fotos[]" accept="image/*,.flip" multiple /><div class="hint">Je kunt meerdere foto's tegelijk kiezen (hoogstens <?= WS_MAX_FOTO ?>). Een bewegende flip (.flip) mag ook, bijvoorbeeld een trui die ronddraait. Zelf een flip maken van een paar foto's? Klik op Maak een flip van foto's.</div></div>
+            <?php if (!empty($x['fotos'])): ?><div class="photos ws-fotos" style="margin-bottom:10px"><?php foreach ($x['fotos'] as $i => $f): ?><div class="ws-ft"><?= ws_admin_thumb($x, $f) ?><label><input type="radio" name="foto_hoofd" value="<?= h($f) ?>" <?= $i === 0 ? 'checked' : '' ?> /> Hoofdfoto</label><?php if (is_flip($f)): ?><button type="button" class="btn ghost sm ffm-pas" data-flip="<?= h(ws_foto_url($x, $f)) ?>" data-naam="<?= h($f) ?>">Flip aanpassen</button><?php endif; ?><button type="button" class="btn ghost sm ws-fweg" data-f="<?= h($f) ?>">Verwijderen</button></div><?php endforeach; ?></div><?php endif; ?>
+            <input type="hidden" name="foto_weg[]" value="" /><input type="hidden" name="flip_vervang" value="" /><input type="file" name="fotos[]" accept="image/*,.flip" multiple /><div class="hint">Je kunt meerdere foto's tegelijk kiezen (hoogstens <?= WS_MAX_FOTO ?>). Een bewegende flip (.flip) mag ook, bijvoorbeeld een trui die ronddraait. Zelf een flip maken van een paar foto's? Klik op Maak een flip van foto's.</div></div>
+          <?php $vpl = array_values(array_filter(ws_plekken($x['opdruk'] ?? ''), function($q) { return $q['b'] > 0 && $q['h'] > 0; })); $vf = array_values(array_filter((array)($x['fotos'] ?? []), function($f) { return !is_flip($f); })); if ($vpl): ?>
+          <div class="field ws-vakken"><label>Drukvakken op de foto</label>
+            <?php if (!$vf): ?><div class="hint">Zet eerst een gewone foto van je product hierboven en klik op Opslaan. Daarna teken je hier waar de opdruk komt.</div>
+            <?php else: foreach ($vpl as $vi => $q): $vk = $x['vakken'][$q['n']] ?? null; $vfoto = (is_array($vk) && in_array((string)($vk['f'] ?? ''), $vf, true)) ? $vk['f'] : ''; ?>
+            <div class="ws-vk" data-b="<?= h((string)$q['b']) ?>" data-h="<?= h((string)$q['h']) ?>">
+              <input type="hidden" name="vak_n[<?= $vi ?>]" value="<?= h($q['n']) ?>" /><input type="hidden" name="vak[<?= $vi ?>]" value="<?= $vfoto !== '' ? h($vfoto . '|' . $vk['x'] . '|' . $vk['y'] . '|' . $vk['w'] . '|' . $vk['h']) : '' ?>" />
+              <div class="ws-vkkop"><b><?= h($q['n']) ?></b>, <?= h(str_replace('.', ',', (string)$q['b']) . ' x ' . str_replace('.', ',', (string)$q['h'])) ?> cm. Op welke foto?</div>
+              <div class="ws-vkfotos"><button type="button" data-f="">Geen</button><?php foreach ($vf as $f): ?><button type="button" data-f="<?= h($f) ?>" data-u="<?= h(ws_foto_url($x, $f)) ?>"><img src="<?= h(ws_foto_url($x, $f)) ?>" alt="" /></button><?php endforeach; ?></div>
+              <div class="ws-vkbeeld" hidden><img alt="" /><div class="ws-vkr"><span class="ws-vkg" title="Groter of kleiner"></span></div></div>
+            </div>
+            <?php endforeach; endif; ?>
+            <div class="hint">Laat zien waar de opdruk op je product komt. Kies per plek de foto, schuif het blauwe vak naar de goede plek en maak het groter of kleiner met het rondje rechtsonder. De koper ziet zijn logo dan meteen op je product en kan het zelf groter, kleiner, hoger of lager zetten. Nieuwe plek bij Opdruk gezet? Klik dan eerst op Opslaan.</div>
+          </div>
+          <style>
+          .ws-vk{border:1px solid #d6dbe4;border-radius:12px;padding:12px;margin:0 0 10px;background:#fff}
+          .ws-vkkop{font-size:14px;margin:0 0 8px}
+          .ws-vkfotos{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+          .ws-vkfotos button{border:2px solid #d6dbe4;background:#fff;border-radius:8px;padding:0;width:56px;height:56px;cursor:pointer;overflow:hidden;font:inherit;font-size:13px}
+          .ws-vkfotos button img{width:100%;height:100%;object-fit:cover;display:block}
+          .ws-vkfotos button.on{border-color:#2563eb;box-shadow:0 0 0 2px #2563eb}
+          .ws-vkbeeld{position:relative;max-width:420px;user-select:none}
+          .ws-vkbeeld img{width:100%;display:block;border-radius:8px}
+          .ws-vkr{position:absolute;border:2px dashed #2563eb;background:rgba(37,99,235,.15);cursor:move;touch-action:none;box-sizing:border-box}
+          .ws-vkg{position:absolute;right:-10px;bottom:-10px;width:20px;height:20px;background:#2563eb;border:2px solid #fff;border-radius:50%;cursor:nwse-resize;touch-action:none}
+          </style>
+          <script>
+          (function () {
+            document.querySelectorAll('.ws-vk').forEach(function (w) {
+              var hid = w.querySelector('input[name^="vak["]'), beeld = w.querySelector('.ws-vkbeeld'), img = beeld.querySelector('img'), r = beeld.querySelector('.ws-vkr'), g = r.querySelector('.ws-vkg');
+              var B = parseFloat(w.getAttribute('data-b')), HC = parseFloat(w.getAttribute('data-h')), st = null, kn = w.querySelectorAll('.ws-vkfotos button');
+              var d = hid.value.split('|'); if (d.length === 5) st = { f: d[0], x: parseFloat(d[1]), y: parseFloat(d[2]), w: parseFloat(d[3]) };
+              function hoogte() { return st.w * (img.naturalWidth / img.naturalHeight) * (HC / B); }
+              function knopVan(f) { for (var i = 0; i < kn.length; i++) { if (kn[i].getAttribute('data-f') === f) return kn[i]; } return null; }
+              function toon() {
+                kn.forEach(function (b) { b.classList.toggle('on', (st ? st.f : '') === b.getAttribute('data-f')); });
+                if (!st) { beeld.hidden = true; hid.value = ''; return; }
+                beeld.hidden = false;
+                var u = knopVan(st.f).getAttribute('data-u');
+                if (img.getAttribute('src') !== u) { img.onload = toon; img.src = u; return; }
+                if (!img.naturalWidth) return;
+                var h = hoogte();
+                if (h > 100) { st.w = st.w * 100 / h; h = 100; }
+                st.w = Math.max(3, Math.min(100, st.w)); h = hoogte();
+                st.x = Math.max(0, Math.min(100 - st.w, st.x)); st.y = Math.max(0, Math.min(100 - h, st.y));
+                r.style.left = st.x + '%'; r.style.top = st.y + '%'; r.style.width = st.w + '%'; r.style.height = h + '%';
+                hid.value = [st.f, st.x.toFixed(2), st.y.toFixed(2), st.w.toFixed(2), h.toFixed(2)].join('|');
+              }
+              kn.forEach(function (b) {
+                b.addEventListener('click', function () {
+                  var f = b.getAttribute('data-f');
+                  if (!f) st = null; else if (st) st.f = f; else st = { f: f, x: 35, y: 20, w: 30 };
+                  toon();
+                });
+              });
+              function sleep(el, groot) {
+                el.addEventListener('pointerdown', function (e) {
+                  e.preventDefault(); e.stopPropagation();
+                  var rc = img.getBoundingClientRect(), sx = e.clientX, sy = e.clientY, x0 = st.x, y0 = st.y, w0 = st.w;
+                  el.setPointerCapture(e.pointerId);
+                  function mv(ev) {
+                    var dx = (ev.clientX - sx) / rc.width * 100, dy = (ev.clientY - sy) / rc.height * 100;
+                    if (groot) st.w = w0 + dx; else { st.x = x0 + dx; st.y = y0 + dy; }
+                    toon();
+                  }
+                  function op() { el.removeEventListener('pointermove', mv); el.removeEventListener('pointerup', op); el.removeEventListener('pointercancel', op); }
+                  el.addEventListener('pointermove', mv); el.addEventListener('pointerup', op); el.addEventListener('pointercancel', op);
+                });
+              }
+              sleep(r, false); sleep(g, true);
+              toon();
+            });
+          })();
+          </script>
+          <?php endif; ?>
           <div class="ws-acties"><button class="btn" type="submit">Opslaan en website bijwerken</button></div>
         </form>
         <script>
@@ -5472,6 +6465,8 @@ function ws_view_bestellingen($in) {
                     <?= $beeld !== '' ? '<a href="admin.php?ws_bestand=' . h(rawurlencode($map) . '/' . rawurlencode($beeld)) . '&amp;zien=1" target="_blank"><img class="tn" src="admin.php?ws_bestand=' . h($map . '/' . rawurlencode($beeld)) . '&amp;zien=1" alt="" /></a>' : '<span class="tn">' . h(strtoupper(pathinfo((string)($on['origineel'] ?: $on['bestand']), PATHINFO_EXTENSION)) ?: 'Aa') . '</span>' ?>
                     <div>
                       <strong>Opdruk: <?= h($on['plek']) ?></strong><br />
+                      <?php if (($on['plaats'] ?? '') !== ''): ?>Grootte en plaats: <strong><?= h($on['plaats']) ?></strong><br /><?php endif; ?>
+                      <?php if (($on['proef'] ?? '') !== '' && $map !== ''): ?><a href="admin.php?ws_bestand=<?= h(rawurlencode($map) . '/proef.jpg') ?>&amp;zien=1" target="_blank" title="Proefplaatje: zo zette de klant het neer"><img src="admin.php?ws_bestand=<?= h($map . '/proef.jpg') ?>&amp;zien=1" alt="Proefplaatje" style="width:180px;max-width:100%;border-radius:8px;border:1px solid #d6dbe4;margin:6px 0;display:block" /></a><?php endif; ?>
                       <?php if ($ol !== '' && $map !== ''): ?><span class="ws-oo <?= h($oo) ?>"><?= h($ol) ?><?= (int)$on['dpi'] > 0 ? ' (' . (int)$on['dpi'] . ' dpi)' : '' ?></span><br /><?php endif; ?>
                       <?php if ($map !== ''): ?>
                         <a href="admin.php?ws_bestand=<?= h(rawurlencode($map) . '/' . rawurlencode($on['origineel'])) ?>">Origineel downloaden</a> <span class="ws-mini"><?= h($on['bestand']) ?><?= (int)$on['w'] > 0 ? ', ' . (int)$on['w'] . ' x ' . (int)$on['h'] . ' pixels' : '' ?></span><br />
@@ -12776,6 +13771,8 @@ function venturo_html() {
 <div class="vt-v"><h5>Kan ik veel producten tegelijk inladen?</h5><p>Ja, bij Producten onderaan, met een Excel- of CSV-bestand. Download eerst het voorbeeldbestand en gebruik dezelfde kopjes. Foto's voeg je daarna per product toe.</p></div>
 <div class="vt-v"><h5>Wat zet ik in de voorwaarden van mijn webshop?</h5><p>Bij Instellen kun je je voorwaarden kwijt. De klant moet daar bij het bestellen mee akkoord gaan. Een webshop in Nederland moet onder andere vertellen hoe het zit met de bedenktijd van 14 dagen. Voor producten die speciaal voor de klant zijn gemaakt, zoals bedrukte kleding, geldt die bedenktijd niet. Laat je voorwaarden nakijken als je twijfelt.</p></div>
 <div class="vt-v"><h5>Kan ik een bewegende foto (flip) bij een product zetten?</h5><p>Ja. Open het product en klik bij Foto's op Maak een flip van foto's. Kies een paar foto's, bijvoorbeeld een T-shirt van voren, van opzij en van achteren, kies de snelheid en klik op Flip toevoegen. Klik daarna op Opslaan. Heb je al een .flip-bestand, dan kun je dat ook gewoon kiezen. Zet altijd ook minstens 1 gewone foto bij het product, want de winkelwagen en Google gebruiken de eerste gewone foto.</p></div>
+<div class="vt-v"><h5>Kan de koper zelf de grootte en plaats van zijn logo kiezen?</h5><p>Ja. Zet bij Opdruk de plekken met de grootste maat, bijvoorbeeld Borst links 10x10 en Rug 30x40, en klik op Opslaan. Kies daarna bij Drukvakken op de foto per plek een foto en schuif het blauwe vak naar de goede plek. De koper ziet zijn logo dan meteen op je product, maakt het groter of kleiner en zet het boven, in het midden of onder, maar nooit buiten het vak. Bij de bestelling zie je precies welke grootte en plaats hij koos.</p></div>
+<div class="vt-v"><h5>Kan ik de opbouw en de kleuren van mijn webshop zelf kiezen?</h5><p>Ja. Ga naar Webshop en dan Opbouw en uiterlijk. Daar kies je de bovenkant (donker, licht, met een foto of flip), zet je blokken aan of uit en in de volgorde die jij wilt, zoals Uitgelicht, Nieuw binnen, Voordelen en Zoeken, en kies je hoeveel producten naast elkaar staan, de vorm van de foto's, een eigen kleur en ronde of rechte hoeken. Rechts zie je meteen een voorbeeld, op de computer en op de telefoon. Klik op Opslaan en website bijwerken, dan staat het op je website.</p></div>
 </div>
 </div>
 <div class="vt-g" data-param="adm"><h3>Administratie</h3>
@@ -12929,7 +13926,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-11-11-flipmaker');
+define('SITE_BOUW', '2026-11-11-opbouw');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -14367,16 +15364,62 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     + ".ffm-st img{width:76px;height:76px;object-fit:cover;border-radius:8px;border:1px solid #d6dbe4;display:block;background:#fff}"
     + ".ffm-st button{border:0;background:#e6eaf1;border-radius:6px;padding:2px 7px;margin:3px 1px 0;cursor:pointer;font-size:13px}"
     + ".ffm-vb{display:none;margin:0 0 10px}.ffm-vb img{max-width:220px;max-height:220px;border-radius:10px;border:1px solid #d6dbe4;background:#fff}"
-    + ".ffm-msg{font-size:14px;font-weight:600;margin:8px 0 0}.ffm-msg.fout{color:#b42318}.ffm-msg.goed{color:#0f7a3d}";
+    + ".ffm-msg{font-size:14px;font-weight:600;margin:8px 0 0}.ffm-msg.fout{color:#b42318}.ffm-msg.goed{color:#0f7a3d}"
+    + ".ws-ft{display:flex;flex-direction:column;gap:4px}.ws-ft .btn{width:100%;justify-content:center}.ws-fweg.zeker{background:#b42318 !important;color:#fff !important;border-color:#b42318 !important}"
+    + ".ws-ft .ws-flipb{position:relative;display:block}.ws-ft .ws-flipb i{position:absolute;left:6px;top:6px;background:#11162b;color:#fff;font-style:normal;font-weight:800;font-size:11px;letter-spacing:.06em;padding:2px 6px;border-radius:5px}";
   document.head.appendChild(st);
+  function leesFlip(ab) {
+    var u = new Uint8Array(ab), dv = new DataView(ab);
+    if (u[0] !== 70 || u[1] !== 76 || u[2] !== 73 || u[3] !== 80) return null;
+    var p = 5, bt = dv.getUint8(p); p += 2;
+    var n = dv.getUint16(p); p += 2;
+    var ms = dv.getUint16(p); p += 2;
+    var cl = dv.getUint16(p); p += 2 + cl;
+    var mime = bt === 1 ? "image/png" : bt === 2 ? "image/jpeg" : "image/webp", fr = [];
+    for (var i = 0; i < n; i++) { p += 2; var l = dv.getUint32(p); p += 4; fr.push(u.subarray(p, p + l)); p += l; }
+    return { ms: ms || 100, mime: mime, fr: fr };
+  }
+  function haalFlip(url) { return fetch(url, { credentials: "same-origin", cache: "no-store" }).then(function (r) { if (!r.ok) throw 0; return r.arrayBuffer(); }).then(leesFlip); }
+  /* Flips in het beheer laten bewegen, zodat je ziet welke flip het is */
+  document.querySelectorAll("main img[data-flip]").forEach(function (img) {
+    haalFlip(img.getAttribute("data-flip")).then(function (f) {
+      if (!f || !f.fr.length) return;
+      var urls = f.fr.map(function (b) { return URL.createObjectURL(new Blob([b], { type: f.mime })); }), k = 0;
+      img.src = urls[0];
+      if (urls.length > 1) setInterval(function () { k = (k + 1) % urls.length; img.src = urls[k]; }, f.ms);
+    }).catch(function () {});
+  });
+  function gelijk(a, b) { if (a.length !== b.length) return false; for (var i = 0; i < a.length; i += 97) { if (a[i] !== b[i]) return false; } return true; }
   velden.forEach(maak);
+  document.querySelectorAll(".ws-fweg").forEach(function (b) {
+    b.addEventListener("click", function () {
+      if (!b.classList.contains("zeker")) { b.classList.add("zeker"); b.textContent = "Zeker? Klik nog eens"; setTimeout(function () { b.classList.remove("zeker"); b.textContent = "Verwijderen"; }, 4000); return; }
+      var h = b.form.querySelector('input[name="foto_weg[]"][type=hidden]'); h.value = b.getAttribute("data-f");
+      if (b.form.requestSubmit) b.form.requestSubmit(); else b.form.submit();
+    });
+  });
+  document.querySelectorAll(".ffm-pas").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var inp = b.form && b.form.querySelector('input[type=file][accept*=".flip"]');
+      if (!inp || !inp._ffmLaad) return;
+      b.disabled = true;
+      haalFlip(b.getAttribute("data-flip")).then(function (f) {
+        b.disabled = false;
+        if (!f) return;
+        var fr = f.fr, heen = false, n = fr.length;
+        if (n >= 4 && n % 2 === 0) { heen = true; for (var j = 1; j < n / 2; j++) { if (!gelijk(fr[j], fr[n - j])) { heen = false; break; } } if (heen) fr = fr.slice(0, n / 2 + 1); }
+        var ext = f.mime === "image/png" ? "png" : f.mime === "image/jpeg" ? "jpg" : "webp";
+        inp._ffmLaad(fr.map(function (x, i) { return new File([x], "beeld-" + (i + 1) + "." + ext, { type: f.mime }); }), f.ms, heen, b.getAttribute("data-naam"));
+      }).catch(function () { b.disabled = false; });
+    });
+  });
 
   function maak(inp) {
     var knop = document.createElement("button");
     knop.type = "button"; knop.className = "btn quiet ffm-knop"; knop.textContent = "Maak een flip van foto's";
     var pan = document.createElement("div");
     pan.className = "ffm"; pan.hidden = true;
-    pan.innerHTML = '<p><b>Flip maken.</b> Kies 2 tot 60 foto\'s in de volgorde waarin ze moeten afspelen. Bijvoorbeeld een T-shirt van voren, van opzij en van achteren. '
+    pan.innerHTML = '<p><b class="ffm-titel">Flip maken.</b> Kies 2 tot 60 foto\'s (of voeg er hier nog meer toe) en zet ze met de pijltjes in de volgorde waarin ze moeten afspelen. Bijvoorbeeld een T-shirt van voren, van opzij en van achteren. '
       + 'Maak de foto\'s vanaf dezelfde plek en met hetzelfde licht, dan wordt de beweging mooi rustig.</p>'
       + '<div class="ffm-rij"><input type="file" accept="image/*" multiple class="ffm-in" /></div>'
       + '<div class="ffm-lijst"></div>'
@@ -14389,7 +15432,22 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
       + '<div class="ffm-msg" role="status"></div>';
     inp.parentNode.insertBefore(knop, inp.nextSibling);
     knop.parentNode.insertBefore(pan, knop.nextSibling);
-    var fotos = [], urls = [], timer = null;
+    var fotos = [], urls = [], timer = null, vervang = "", geleend = [];
+    var KNOP = "Maak een flip van foto's";
+    function isBeeld(f) { return /^image\//.test(f.type) && !/\.flip$/i.test(f.name); }
+    function zetBestanden(lijst) { var dt = new DataTransfer(); lijst.forEach(function (f) { dt.items.add(f); }); inp.files = dt.files; }
+    /* Foto's die al bij het gewone upload-veld gekozen zijn, gaan mee naar de flipmaker */
+    function uitHoofd() {
+      var blijf = [];
+      [].forEach.call(inp.files || [], function (f) { if (isBeeld(f) && fotos.length < 60) { fotos.push(f); urls.push(URL.createObjectURL(f)); geleend.push(f); } else blijf.push(f); });
+      if (geleend.length) zetBestanden(blijf);
+      knopTekst();
+    }
+    function knopTekst() {
+      var n = 0; [].forEach.call(inp.files || [], function (f) { if (isBeeld(f)) n++; });
+      knop.textContent = n >= 2 ? "Maak een flip van deze " + n + " foto's" : KNOP;
+    }
+    inp.addEventListener("change", knopTekst);
     var q = function (c) { return pan.querySelector(c); };
     var lijst = q(".ffm-lijst"), vb = q(".ffm-vb"), vbImg = vb.querySelector("img"), msg = q(".ffm-msg");
     function melding(t, soort) { msg.textContent = t; msg.className = "ffm-msg" + (soort ? " " + soort : ""); }
@@ -14422,13 +15480,28 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
       });
       speel();
     }
-    function sluit() {
+    function sluit(terug) {
+      if (terug === true && geleend.length) { var nu = [].slice.call(inp.files || []); zetBestanden(geleend.concat(nu)); }
+      geleend = [];
       clearTimeout(timer); urls.forEach(function (u) { URL.revokeObjectURL(u); });
-      fotos = []; urls = []; lijst.innerHTML = ""; vb.style.display = "none"; q(".ffm-in").value = "";
-      pan.hidden = true; knop.hidden = false;
+      fotos = []; urls = []; lijst.innerHTML = ""; vb.style.display = "none"; q(".ffm-in").value = ""; vervang = "";
+      q(".ffm-titel").textContent = "Flip maken."; q(".ffm-ok").textContent = "Flip toevoegen";
+      pan.hidden = true; knop.hidden = false; knopTekst();
     }
-    knop.addEventListener("click", function () { pan.hidden = false; knop.hidden = true; melding(""); });
-    q(".ffm-weg").addEventListener("click", sluit);
+    knop.addEventListener("click", function () { uitHoofd(); pan.hidden = false; knop.hidden = true; melding(""); teken(); });
+    inp._ffmLaad = function (files, ms, heen, naam) {
+      sluit();
+      files.forEach(function (f) { fotos.push(f); urls.push(URL.createObjectURL(f)); });
+      var sel = q(".ffm-ms"), gevonden = false;
+      [].forEach.call(sel.options, function (o) { if (parseInt(o.value, 10) === ms) gevonden = true; });
+      if (!gevonden) { var o = document.createElement("option"); o.value = ms; o.textContent = "Zoals het was"; sel.appendChild(o); }
+      sel.value = String(ms); q(".ffm-heen").checked = !!heen;
+      vervang = naam || "";
+      q(".ffm-titel").textContent = "Flip aanpassen."; q(".ffm-ok").textContent = "Flip vervangen";
+      pan.hidden = false; knop.hidden = true; melding("");
+      teken(); pan.scrollIntoView({ behavior: "smooth", block: "center" });
+    };
+    q(".ffm-weg").addEventListener("click", function () { sluit(true); });
     q(".ffm-ms").addEventListener("change", speel);
     q(".ffm-heen").addEventListener("change", speel);
     q(".ffm-in").addEventListener("change", function () {
@@ -14490,10 +15563,12 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
         dt.items.add(bestand);
         inp.files = dt.files;
         inp.dispatchEvent(new Event("change", { bubbles: true }));
-        var kb = Math.round(u.length / 1024);
+        var kb = Math.round(u.length / 1024), wasVervang = vervang;
+        var hv = inp.form && inp.form.querySelector('input[name="flip_vervang"]');
+        if (hv && wasVervang) hv.value = wasVervang;
         sluit();
         var m = document.createElement("div"); m.className = "ffm-msg goed";
-        m.textContent = "Je flip is klaar (" + (kb > 1024 ? (Math.round(kb / 102.4) / 10).toString().replace(".", ",") + " MB" : kb + " KB") + "). Klik nu op Opslaan.";
+        m.textContent = (wasVervang ? "Je aangepaste flip is klaar (" : "Je flip is klaar (") + (kb > 1024 ? (Math.round(kb / 102.4) / 10).toString().replace(".", ",") + " MB" : kb + " KB") + "). Klik nu op Opslaan.";
         var oud = knop.parentNode.querySelector(".ffm-klaar"); if (oud) oud.remove();
         m.classList.add("ffm-klaar"); pan.parentNode.insertBefore(m, pan.nextSibling);
       }).catch(function () { ok.disabled = false; melding("Dit lukte niet. Probeer andere foto's (jpg of png).", "fout"); });
@@ -14840,6 +15915,14 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     "f:abopties": "Wat erop of erin zit, 1 per regel. Bijvoorbeeld Airco, Navigatie of Trekhaak.",
     "lbl:Foto's@_aanbod": "Kies een of meer foto's. De eerste foto is de hoofdfoto, die staat in het overzicht op je website.",
     "f:abstatus": "Te koop: staat op je website. Gereserveerd of Verkocht: staat er met een label. Verborgen: alleen jij ziet hem.",
+    "lbl:Foto's@_webshop": "De foto's van dit product. Kies bij Hoofdfoto welke vooraan staat. Met Verwijderen haal je een foto meteen weg (klik twee keer, voor de zekerheid). Bij een flip kun je met Flip aanpassen de beelden, de volgorde en de snelheid veranderen. Nieuwe foto's voeg je hieronder toe.",
+    "lbl:Drukvakken op de foto": "Hier laat je zien waar de opdruk op je product komt, bijvoorbeeld op de borst of op de rug. Kies per plek een foto en schuif het blauwe vak naar de goede plek. Met het rondje rechtsonder maak je het vak groter of kleiner. De koper ziet zijn eigen logo dan meteen op je product. Hij kan het zelf groter of kleiner maken en hoger of lager zetten, maar nooit buiten het vak. Bij de bestelling zie je precies welke grootte en plaats hij koos.",
+    "h3:Bovenkant@_webshop": "Het bovenste stuk van je webshop. Kies Donker of Licht voor een balk met titel en tekst, Met foto voor een foto of flip naast de tekst, of Alleen de titel. Een knop brengt bezoekers meteen naar je producten.",
+    "h3:Blokken@_webshop": "De onderdelen van je webshop. Vink aan wat je wilt laten zien en zet ze met de pijltjes in de goede volgorde. Wat bovenaan staat, zien bezoekers het eerst.",
+    "h3:Voordelen@_webshop": "Korte zinnen met een groen vinkje, bijvoorbeeld Gratis verzending vanaf 50 euro. Ze staan alleen op je webshop als het blok Voordelen aan staat.",
+    "h3:Uitgelicht en nieuw@_webshop": "Bij Uitgelicht kies je zelf welke producten vooraan staan, bijvoorbeeld je best verkochte. Nieuw binnen laat vanzelf je nieuwste producten zien. Zet de blokken aan bij Blokken.",
+    "h3:Indeling@_webshop": "Hoe je producten getoond worden: hoeveel naast elkaar, de vorm van de foto en of de foto het vak vult of helemaal zichtbaar blijft. Op de telefoon worden het er vanzelf minder naast elkaar.",
+    "h3:Kleuren en vormen@_webshop": "Geef je webshop een eigen kleur, los van de rest van je website, en kies ronde of rechte hoeken. Het menu en de onderkant van je website blijven zoals ze zijn.",
     "n:foto_hoofd": "Kies welke foto de hoofdfoto is. Die staat in het overzicht op je website.",
     "n:foto_weg[]": "Vink aan en sla op om deze foto weg te halen.",
     "h1:Menukaart": "Hier maak je je menukaart: kaarten (zoals Lunch en Diner), daarin rubrieken (zoals Voorgerechten) en daarin je gerechten. Alles komt vanzelf op je website.",
@@ -15030,7 +16113,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
   /* Velden op naam (zoekvakjes, keuzes zonder eigen label, aanvinkvakjes) */
   var gehad = {};
   document.querySelectorAll("main input, main select, main textarea").forEach(function (e) {
-    if (e.type === "hidden" || e.type === "submit" || (!e.getAttribute("name") && !e.id)) return;
+    if (e.type === "hidden" || e.type === "submit" || (!e.getAttribute("name") && !e.id) || e.closest(".ws-fotos")) return;
     var nm = e.getAttribute("name") || "", tekst = (nm && ((pg !== null && H["n@" + pg + ":" + nm]) || zoek("n:" + nm))) || (e.id && e.closest("label") ? H["f:" + e.id] : "");
     if (!nm) nm = "#" + e.id;
     if (!tekst || gehad[nm]) return;
