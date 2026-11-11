@@ -5735,6 +5735,71 @@ function ws_bestand_sturen() {
     header('Content-Disposition: ' . ($zien ? 'inline' : 'attachment') . '; filename="' . basename($pad) . '"');
     readfile($pad); exit;
 }
+/* Excel-sjabloon voor de webshop: een echt .xlsx-bestand met een blad Producten en een blad Uitleg */
+function ws_voorbeeld_xlsx() {
+    if (!class_exists('ZipArchive')) ws_voorbeeld_csv();
+    $kop = ['Naam', 'Categorie', 'Prijs', 'Btw', 'Voorraad', 'Omschrijving', 'Opties', 'Opdruk'];
+    $rijen = [
+        ['Muurverf mat wit', 'Muurverf', 24.95, 21, 40, 'Goed dekkende, afwasbare muurverf voor binnen. Mat, bijna geurloos.', 'Inhoud: 2,5 liter, 5 liter +18,00, 10 liter +39,00 | Kleur: Wit, Gebroken wit, Zandkleur', ''],
+        ['Kwast plat 50 mm', 'Kwasten', 7.95, 21, '', 'Platte kwast voor lak en beits.', '', ''],
+        ['T-shirt met eigen opdruk', 'Kleding', 15, 21, '', 'Katoenen T-shirt, bedrukt met uw logo.', 'Maat: S, M, L, XL, XXL +2,00 | Kleur: Wit, Zwart, Navy', 'Voorkant: 25 x 30 cm | Rug: 30 x 40 cm +5,00'],
+    ];
+    $uitleg = [
+        ['Kolom', 'Wat vul je in', 'Voorbeeld'],
+        ['Naam', 'De naam van het product. Verplicht. Laad je het bestand later nog eens in, dan wordt een product met dezelfde naam bijgewerkt in plaats van dubbel gezet.', 'Muurverf mat wit'],
+        ['Categorie', 'De groep waar het product in komt. Elke categorie krijgt vanzelf een eigen pagina in je webshop. Schrijf dezelfde categorie steeds precies hetzelfde.', 'Muurverf'],
+        ['Prijs', 'De prijs inclusief btw in euro. Een komma of een punt mag allebei.', '24,95'],
+        ['Btw', '21, 9 of 0. Leeg is 21.', '21'],
+        ['Voorraad', 'Hoeveel je er hebt. Leeg betekent: geen voorraad bijhouden. Bij 0 staat het product op uitverkocht.', '40'],
+        ['Omschrijving', 'De tekst op de productpagina.', 'Goed dekkende muurverf voor binnen.'],
+        ['Opties', 'Keuzes voor de koper, zoals inhoud, maat of kleur. Per keuze: de naam, een dubbele punt en de mogelijkheden met komma ertussen. Kost een mogelijkheid meer, zet er dan + en het extra bedrag achter. Meerdere keuzes scheid je met een |.', 'Inhoud: 1 liter, 2,5 liter +15,00 | Kleur: Wit, Zwart'],
+        ['Opdruk', 'Alleen als je het product bedrukt met het logo van de koper. Per plek de naam en de grootste maat in cm. Kost een plek extra, zet er dan + en het bedrag achter. Meerdere plekken scheid je met een |. Laat leeg bij gewone producten.', 'Voorkant: 25 x 30 cm | Rug: 30 x 40 cm +5,00'],
+        ['', '', ''],
+        ['Tip', "Foto's voeg je na het inladen per product toe in je beheer, bij Webshop en dan Producten.", ''],
+        ['Tip', 'Haal de voorbeeldregels weg of vervang ze door je eigen producten. Laat de kopjes op de eerste regel staan.', ''],
+    ];
+    $x = function($t) { return htmlspecialchars((string)$t, ENT_XML1 | ENT_QUOTES, 'UTF-8'); };
+    $kolL = function($i) { return chr(65 + $i); };
+    $cel = function($ref, $v, $stijl = 0) use ($x) {
+        if (is_int($v) || is_float($v)) return '<c r="' . $ref . '"' . ($stijl ? ' s="' . $stijl . '"' : '') . '><v>' . $v . '</v></c>';
+        if ($v === '') return '';
+        return '<c r="' . $ref . '" t="inlineStr"' . ($stijl ? ' s="' . $stijl . '"' : '') . '><is><t xml:space="preserve">' . $x($v) . '</t></is></c>';
+    };
+    $blad = function($kopRij, $data, $breedtes, $extra = '', $numKol = []) use ($cel, $kolL) {
+        $o = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+           . '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/><cols>';
+        foreach ($breedtes as $i => $b) { $o .= '<col min="' . ($i + 1) . '" max="' . ($i + 1) . '" width="' . $b . '" customWidth="1"/>'; }
+        $o .= '</cols><sheetData><row r="1">';
+        foreach ($kopRij as $i => $k) { $o .= $cel($kolL($i) . '1', $k, 1); }
+        $o .= '</row>';
+        foreach ($data as $ri => $r) { $n = $ri + 2; $o .= '<row r="' . $n . '">'; foreach ($r as $i => $v) { $o .= $cel($kolL($i) . $n, $v, in_array($i, $numKol, true) && $i === 2 ? 3 : 2); } $o .= '</row>'; }
+        return $o . '</sheetData>' . $extra . '<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>';
+    };
+    $s1 = $blad($kop, $rijen, [34, 18, 11, 7, 10, 50, 60, 42], '<dataValidations count="1"><dataValidation type="list" allowBlank="1" showErrorMessage="1" errorTitle="Btw" error="Kies 21, 9 of 0." sqref="D2:D2000"><formula1>"21,9,0"</formula1></dataValidation></dataValidations>', [2]);
+    $s2 = $blad($uitleg[0], array_slice($uitleg, 1), [16, 90, 46]);
+    $stijl = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+           . '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font></fonts>'
+           . '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1F3A68"/><bgColor indexed="64"/></patternFill></fill></fills>'
+           . '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+           . '<cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>'
+           . '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="4" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment vertical="top"/></xf></cellXfs>'
+           . '<cellStyles count="1"><cellStyle name="Standaard" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+    $tmp = tempnam(sys_get_temp_dir(), 'wsx'); $z = new ZipArchive();
+    if ($z->open($tmp, ZipArchive::OVERWRITE) !== true) ws_voorbeeld_csv();
+    $z->addFromString('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>');
+    $z->addFromString('_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>');
+    $z->addFromString('xl/workbook.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Producten" sheetId="1" r:id="rId1"/><sheet name="Uitleg" sheetId="2" r:id="rId2"/></sheets></workbook>');
+    $z->addFromString('xl/_rels/workbook.xml.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>');
+    $z->addFromString('xl/worksheets/sheet1.xml', $s1);
+    $z->addFromString('xl/worksheets/sheet2.xml', $s2);
+    $z->addFromString('xl/styles.xml', $stijl);
+    $z->close();
+    if (function_exists('adm_schoon_uitvoer')) adm_schoon_uitvoer();
+    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    header('Content-Disposition: attachment; filename="webshop-producten.xlsx"');
+    header('Content-Length: ' . filesize($tmp));
+    readfile($tmp); @unlink($tmp); exit;
+}
 function ws_voorbeeld_csv() {
     $r = [['Naam', 'Categorie', 'Prijs', 'Btw', 'Voorraad', 'Omschrijving', 'Opties', 'Opdruk'],
           ['T-shirt met eigen opdruk', 'Kleding', '15', '21', '', 'Katoenen T-shirt, bedrukt met uw logo of tekst.', 'Maat: S, M, L, XL, XXL +2,00 | Kleur: Wit, Zwart, Navy', 'Voorkant: 25 x 30 cm | Rug: 30 x 40 cm +5,00'],
@@ -5937,18 +6002,34 @@ function ws_acties($action) {
         $kolom = [];
         foreach ($alias as $veld => $namen) { foreach ($kop as $i => $c) { if (in_array($c, $namen, true)) { $kolom[$veld] = $i; break; } } }
         if (!isset($kolom['naam'])) ws_terug('admin.php?webshop=1&t=producten#inladen', 'Ik vind geen kolom Naam. Gebruik de kopjes uit het voorbeeldbestand.');
-        $lijst = ws_lijst(); $n = 0;
+        $lijst = ws_lijst(); $n = 0; $bij = 0;
+        $opNaam = []; foreach ($lijst as $li => $q) { $opNaam[mb_strtolower(trim((string)$q['naam']), 'UTF-8')] = $li; }
         foreach (array_slice($rijen, 1, 2000) as $r) {
             $w = function($v) use ($r, $kolom) { return isset($kolom[$v]) ? trim((string)($r[$kolom[$v]] ?? '')) : ''; };
             if ($w('naam') === '') continue;
+            $sl = mb_strtolower(cut($w('naam'), 120), 'UTF-8');
+            if (isset($opNaam[$sl])) {
+                /* Bestaat al: bijwerken, foto's en de rest blijven staan */
+                $li = $opNaam[$sl]; $q = $lijst[$li];
+                if (isset($kolom['cat'])) $q['cat'] = cut($w('cat'), 40);
+                if (isset($kolom['prijs'])) $q['prijs'] = ab_prijs_in($w('prijs'));
+                if (isset($kolom['btw'])) $q['btw'] = in_array((int)$w('btw'), [21, 9, 0], true) && $w('btw') !== '' ? (int)$w('btw') : 21;
+                if (isset($kolom['voorraad'])) $q['voorraad'] = $w('voorraad') === '' ? '' : max(0, (int)$w('voorraad'));
+                if (isset($kolom['tekst'])) $q['tekst'] = cut($w('tekst'), 6000);
+                if (isset($kolom['opties'])) $q['opties'] = cut(str_replace('|', "\n", $w('opties')), 3000);
+                if (isset($kolom['opdruk'])) $q['opdruk'] = cut(str_replace('|', "\n", $w('opdruk')), 1500);
+                $q['gewijzigd'] = date('Y-m-d H:i:s'); $lijst[$li] = $q; $bij++;
+                continue;
+            }
             $x = ['id' => bin2hex(random_bytes(5)), 'aangemaakt' => date('Y-m-d H:i:s'), 'fotos' => [], 'status' => 'actief', 'naam' => cut($w('naam'), 120), 'cat' => cut($w('cat'), 40), 'prijs' => ab_prijs_in($w('prijs')),
                   'btw' => in_array((int)$w('btw'), [21, 9, 0], true) && $w('btw') !== '' ? (int)$w('btw') : 21, 'voorraad' => $w('voorraad') === '' ? '' : max(0, (int)$w('voorraad')), 'tekst' => cut($w('tekst'), 6000),
                   'opties' => cut(str_replace('|', "\n", $w('opties')), 3000), 'opdruk' => cut(str_replace('|', "\n", $w('opdruk')), 1500)];
             $x['slug'] = ws_uniek_slug($x['naam'], $x['id'], $lijst);
-            $lijst[] = $x; $n++;
+            $lijst[] = $x; $opNaam[$sl] = count($lijst) - 1; $n++;
         }
         ws_bewaar($lijst); rebuild_everything(load_pages());
-        ws_terug('admin.php?webshop=1&t=producten', $n . ' ' . ($n === 1 ? 'product' : 'producten') . " ingeladen. Voeg nu per product de foto's toe.");
+        $cn = count(array_unique(array_filter(array_map(function($q) { return trim((string)($q['cat'] ?? '')); }, $lijst))));
+        ws_terug('admin.php?webshop=1&t=producten', $n . ' ' . ($n === 1 ? 'nieuw product' : 'nieuwe producten') . ' ingeladen' . ($bij ? ' en ' . $bij . ' bijgewerkt' : '') . ', in ' . $cn . ' ' . ($cn === 1 ? 'categorie' : "categorie\u{eb}n") . ". Voeg nu per product de foto's toe.");
     }
     /* Bestellingen */
     $oid = (string)($_POST['b'] ?? '');
@@ -6454,7 +6535,11 @@ function ws_view_producten($in) {
     <form class="formcard" id="inladen" method="post" enctype="multipart/form-data" style="margin-top:22px">
       <input type="hidden" name="action" value="ws_import" />
       <h2 style="font-size:18px;margin:0 0 8px">Veel producten tegelijk inladen</h2>
-      <p class="ws-mini" style="margin:0 0 12px">Heb je een lijst in Excel, bijvoorbeeld van al je cartridges? Zet de kopjes <strong>Naam, Categorie, Prijs, Btw, Voorraad, Omschrijving</strong> erboven, en eventueel <strong>Opties</strong> en <strong>Opdruk</strong> (meerdere regels scheid je met |). <a href="admin.php?webshop=1&amp;voorbeeld=1">Download het voorbeeldbestand</a>.</p>
+      <div class="ws-uitleg" style="margin:0 0 12px"><strong>Zo werkt het:</strong><br />
+        1. <a href="admin.php?webshop=1&amp;voorbeeld=1" style="font-weight:700">Download het Excel-sjabloon</a>. Daarin staan de kopjes al klaar, met een paar voorbeelden en een blad <strong>Uitleg</strong>.<br />
+        2. Open het in Excel (of Google Spreadsheets of Numbers) en zet per regel 1 product, met de <strong>Categorie</strong> erbij. Elke categorie krijgt vanzelf een eigen pagina.<br />
+        3. Sla het op als Excel-bestand (.xlsx) en kies het hieronder. Klik op Inladen.<br />
+        Laad je het later nog eens in, dan worden producten met dezelfde naam bijgewerkt en niet dubbel gezet. Je foto's blijven staan.</div>
       <div class="ws-acties"><input type="file" name="bestand" accept=".xlsx,.csv" style="max-width:340px" /><button class="btn" type="submit">Inladen</button></div>
     </form>
     <?php
@@ -14390,7 +14475,7 @@ $showVer = $logged_in && isset($_GET['versies']);
 $showWc = $logged_in && isset($_GET['worldchat']);
 $showWs = $logged_in && isset($_GET['webshop']);
 if ($logged_in && isset($_GET['ws_bestand'])) { ws_bestand_sturen(); }
-if ($showWs && isset($_GET['voorbeeld'])) { ws_voorbeeld_csv(); }
+if ($showWs && isset($_GET['voorbeeld'])) { if (($_GET['voorbeeld'] ?? '') === 'csv') ws_voorbeeld_csv(); ws_voorbeeld_xlsx(); }
 /* Terug van de betaalpagina: betaling direct bijboeken en de chatknop aanzetten. */
 if ($showWc && empty($is_demo) && isset($_GET['sessie']) && preg_match('/^cs_[A-Za-z0-9_]+$/', (string)$_GET['sessie'])) {
     $wcNa = wc_status((string)$_GET['sessie']);
