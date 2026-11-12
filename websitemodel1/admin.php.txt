@@ -1192,7 +1192,7 @@ function stijl_pagina($html) {
     $pos = strpos($html, '</head>');
     if ($pos !== false) { $html = substr($html, 0, $pos) . $css . substr($html, $pos); }
     $pos = strpos($html, '<body>');
-    if ($pos !== false) { $html = substr($html, 0, $pos) . '<body class="' . body_klassen($s) . '">' . ($kiezer ? stijl_kiezer($s) : '') . substr($html, $pos + 6); }
+    if ($pos !== false) { $html = substr($html, 0, $pos) . '<body class="' . body_klassen($s) . '">' . ($kiezer ? stijl_kiezer($s, strpos($html, 'class="ws-opb"') !== false && (bool)preg_match('#<link rel="canonical" href="[^"]*/webshop/#', $html)) : '') . substr($html, $pos + 6); }
     /* Bewegende achtergrond: alleen op een pagina met de bovenkant, en alleen als hij aan staat of de stijlkiezer erop staat */
     if (strpos($html, '<section class="hero') !== false && (beweging() !== '' || $kiezer)) {
         $e = strrpos($html, '</body>');
@@ -1203,7 +1203,7 @@ function stijl_pagina($html) {
 /* Stijlkiezer voor de voorbeeldsite (alleen met data/demo-aan.txt).
    Bezoekers zien de hele site in elke stijl; hun keuze blijft bewaard
    terwijl ze door de pagina's klikken. Er verandert niets op de server. */
-function stijl_kiezer($huidig) {
+function stijl_kiezer($huidig, $webshop = false) {
     $data = [];
     foreach (alle_stijlen() as $k => $v) {
         $data[$k] = ['naam' => $v['naam'], 'fonts' => $v['fonts'], 'css' => $v['css'], 'foto' => !empty($v['grote_foto'])];
@@ -1211,7 +1211,18 @@ function stijl_kiezer($huidig) {
     $foto = hero_foto(load_pages());
     global $BEWEGINGEN;
     $bew = []; foreach ($BEWEGINGEN as $bk => $bv) { $bew[] = [$bk, $bv[0]]; }
-    $json = json_encode(['bew' => $bew, 'bewNu' => beweging(), 'bewS' => beweging_snelheid(), 'stijlen' => $data, 'standaard' => $huidig, 'foto' => $foto, 'vasteFoto' => opbouw('hero') === 'foto' || banner_achter(), 'banner' => banner_achter()], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    /* In de webshop: de 9 webshopstijlen, zodat de bezoeker ook de winkel anders kan bekijken */
+    $ws = [];
+    if ($webshop) {
+        $raw = read_json(WS_OPBOUW, []); if (!is_array($raw)) $raw = [];
+        $eigen = ws_opbouw($raw);
+        $ws[] = ['k' => '', 'naam' => 'zoals de eigenaar koos', 'css' => ws_opbouw_css($eigen), 'kop' => $eigen['kop_stijl']];
+        foreach (ws_stijlen() as $wk => $wv) {
+            $o = ws_opbouw(array_merge($raw, $wv[2], ['stijl' => $wk]));
+            $ws[] = ['k' => $wk, 'naam' => $wv[0], 'css' => ws_opbouw_css($o), 'kop' => $o['kop_stijl']];
+        }
+    }
+    $json = json_encode(['ws' => $ws, 'bew' => $bew, 'bewNu' => beweging(), 'bewS' => beweging_snelheid(), 'stijlen' => $data, 'standaard' => $huidig, 'foto' => $foto, 'vasteFoto' => opbouw('hero') === 'foto' || banner_achter(), 'banner' => banner_achter()], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     return <<<HTML
 <style>
 .ffk{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9999;display:flex;align-items:center;gap:6px;width:max-content;max-width:calc(100vw - 24px);padding:7px;border-radius:999px;background:rgba(17,24,39,.94);color:#fff;font:600 14px/1 'Segoe UI',Arial,sans-serif;letter-spacing:0;box-shadow:0 14px 40px -12px rgba(0,0,0,.55);backdrop-filter:blur(8px);}
@@ -1219,7 +1230,7 @@ function stijl_kiezer($huidig) {
 .ffk button{all:unset;cursor:pointer;display:grid;place-items:center;width:40px;height:40px;border-radius:50%;color:#fff;font:700 20px/1 'Segoe UI',Arial,sans-serif;background:rgba(255,255,255,.1);flex:none;}
 .ffk button:hover{background:rgba(255,255,255,.22);}
 .ffk select{appearance:none;-webkit-appearance:none;border:0;margin:0;cursor:pointer;height:40px;padding:0 36px 0 16px;border-radius:999px;background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23111827' stroke-width='2'/%3E%3C/svg%3E") no-repeat right 14px center/12px 8px;color:#111827;font:700 15px/1 'Segoe UI',Arial,sans-serif;min-width:200px;max-width:30vw;}
-.ffk select.ffk-o{min-width:240px;}.ffk select.ffk-b{min-width:200px;}
+.ffk select.ffk-o,.ffk select.ffk-w{min-width:240px;}.ffk select.ffk-b{min-width:200px;}
 .ffk button:focus-visible,.ffk select:focus-visible{outline:2px solid #fff;outline-offset:2px;}
 body{padding-bottom:84px;}
 .ffk-flits .hero .wrap,.ffk-flits #diensten .wrap,.ffk-flits #featuredSection .wrap,.ffk-flits .top .wrap,.ffk-flits .band .wrap,.ffk-flits .foot .wrap,.ffk-flits .servicebar{opacity:.2;}
@@ -1294,6 +1305,27 @@ body{padding-bottom:84px;}
     kiesB.value = bewNu;
     kiesB.onchange = function () { bewNu = kiesB.value; try { localStorage.setItem(sleutelB, bewNu); } catch (e) {} bewBijwerken(); };
   }
+  /* Pagina zonder bovenkant: beweging is daar niet te zien, dus de keuze weg */
+  /* Webshop: eigen keuze voor de webshopstijl in plaats van de indeling */
+  var kiesW = null, wsNu = 0, sleutelW = 'ff-voorbeeld-ws';
+  function zetW(i, bewaar) {
+    var w = D.ws[i]; if (!w) { i = 0; w = D.ws[0]; }
+    wsNu = i;
+    var oud = document.querySelectorAll('.ws-opb');
+    for (var j = 0; j < oud.length; j++) { oud[j].parentNode.removeChild(oud[j]); }
+    document.head.insertAdjacentHTML('beforeend', w.css);
+    var kop = document.querySelector('main .abhero');
+    if (kop && (w.kop === 'donker' || w.kop === 'licht')) { kop.classList.remove('ws-kop-donker', 'ws-kop-licht'); kop.classList.add('ws-kop-' + w.kop); }
+    kiesW.value = String(i);
+    if (bewaar) { try { localStorage.setItem(sleutelW, String(i)); } catch (e) {} }
+  }
+  if (D.ws && D.ws.length) {
+    kiesW = document.createElement('select'); kiesW.className = 'ffk-w'; kiesW.setAttribute('aria-label', 'Webshopstijl');
+    D.ws.forEach(function (w, i) { var e = document.createElement('option'); e.value = String(i); e.textContent = 'Webshop: ' + w.naam; kiesW.appendChild(e); });
+    kiesO.style.display = 'none';
+    kiesO.parentNode.insertBefore(kiesW, kiesO);
+    kiesW.onchange = function () { zetW(parseInt(kiesW.value, 10) || 0, true); };
+  }
   function zetO(i, bewaar) {
     if (!OPB[i]) i = 0;
     opbNu = i;
@@ -1318,6 +1350,7 @@ body{padding-bottom:84px;}
     if (bewaar) { try { localStorage.setItem(sleutel, k); } catch (e) {} }
   }
   function stap(n) {
+    if (kiesW) { zetW((wsNu + n + D.ws.length) % D.ws.length, true); return; }
     var i = (lijst.indexOf(kies.value) + n + lijst.length) % lijst.length;
     zet(lijst[i], true);
     zetO(1 + (i % (OPB.length - 1)), true);
@@ -1338,7 +1371,7 @@ body{padding-bottom:84px;}
   document.querySelector('.ffk .ffk-n').onclick = function(){ stap(1); };
   var start = (gekozen && D.stijlen[gekozen]) ? gekozen : D.standaard;
   var startO = parseInt(gekozenO, 10); if (!(startO >= 0 && startO < OPB.length)) startO = 0;
-  function begin() { zet(start, false); zetO(startO, null); }
+  function begin() { zet(start, false); zetO(startO, null); if (kiesB && document.body && document.querySelector('main') && !document.querySelector('.hero')) { kiesB.style.display = 'none'; } if (kiesW) { var gw = 0; try { gw = parseInt(localStorage.getItem(sleutelW), 10) || 0; } catch (e) {} zetW(gw, false); } }
   begin();
   if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', begin); }
 })();
@@ -4069,7 +4102,7 @@ function ws_kop_foto_url($o) { return $o['kop_foto'] !== '' && is_file(UPLOAD_DI
 /* De keuzes als CSS. Alleen binnen <main>, zodat het menu en de onderkant van de website hetzelfde blijven. */
 function ws_opbouw_css($o) {
     $r = ['rond' => [16, 18, 999], 'klein' => [8, 8, 10], 'recht' => [0, 0, 0]][$o['hoek']];
-    $c = '<style>';
+    $c = '<style class="ws-opb">';
     if ($o['accent'] !== '') {
         $hx = $o['accent']; $rr = hexdec(substr($hx, 1, 2)); $gg = hexdec(substr($hx, 3, 2)); $bb = hexdec(substr($hx, 5, 2));
         $c .= 'main{--blue:' . $hx . ';--ws-acc:' . $hx . ';}';
@@ -4106,7 +4139,7 @@ function ws_opbouw_css($o) {
     if ($tf && $tf[1] !== '' && (!$kf || $tf[1] !== $kf[1])) $q[] = 'family=' . $tf[1];
     if ($tf && $tf[1] !== '') $c .= 'main{font-family:"' . $tf[0] . '",system-ui,sans-serif;} main input,main select,main textarea,main button{font-family:inherit;}';
     if ($kf && $kf[1] !== '') $c .= 'main h1,main h2,main h3,main .ab-txt b,main .ws-ct b,main .ab-prijs{font-family:"' . $kf[0] . '",' . (in_array($o['font_kop'], ['playfair', 'cormorant', 'merriweather', 'dmserif'], true) ? 'Georgia,serif' : 'system-ui,sans-serif') . ';}';
-    $link = $q ? '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?' . h(implode('&', $q)) . '&amp;display=swap" />' : '';
+    $link = $q ? '<link class="ws-opb" rel="stylesheet" href="https://fonts.googleapis.com/css2?' . h(implode('&', $q)) . '&amp;display=swap" />' : '';
     return $link . $c . '</style>';
 }
 
@@ -14364,7 +14397,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-11-12-appuitleg');
+define('SITE_BOUW', '2026-11-12-kiezer');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
