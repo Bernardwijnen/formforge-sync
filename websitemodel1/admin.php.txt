@@ -13901,15 +13901,16 @@ function venturo_html() {
 <div class="vt-v"><h5>Hoe kom ik in mijn beheerpagina?</h5><p>Typ je domeinnaam met /admin.php erachter, bijvoorbeeld bakkerijjansen.nl/admin.php. Of klik helemaal onderaan je website op Website beheren. Log in met je e-mailadres en wachtwoord.</p></div>
 <div class="vt-v"><h5>Ik ben mijn wachtwoord vergeten.</h5><p>Klik op het inlogscherm op Wachtwoord vergeten. Vul je e-mailadres in, dan krijg je een mail met een link om een nieuw wachtwoord te kiezen. De link werkt 1 uur. Kijk ook in je map met ongewenste mail.</p></div>
 <div class="vt-v"><h5>Hoe verander ik mijn wachtwoord of inlog-e-mailadres?</h5><p>Klik links in het menu op Inloggegevens. Vul je nieuwe e-mailadres of wachtwoord in (minimaal 10 tekens), vul ter controle je huidige wachtwoord in en klik op Opslaan.</p></div>
-<div class="vt-v"><h5>Wat staat er in het menu links?</h5><p>Je website: Instellingen, Projecten, Aanbod, Menukaart, Versies en Beoordelingen. Klanten en geld: Berichten, Afspraakplanner, Worldchat en Administratie. Account: Inloggegevens, Website bekijken en Uitloggen. Op je telefoon open je het menu met de knop linksboven.</p></div>
+<div class="vt-v"><h5>Wat staat er in het menu links?</h5><p>Bovenaan staat de blauwe knop Opslaan en website bijwerken. Je website: Instellingen, Projecten, Aanbod, Menukaart, Versies en Beoordelingen. Klanten en geld: Berichten, Afspraakplanner, Worldchat en Administratie. Account: Inloggegevens, Website bekijken en Uitloggen. Op je telefoon open je het menu met de knop linksboven.</p></div>
 <div class="vt-v"><h5>Wat zie ik op de startpagina?</h5><p>Een overzicht: wat je nog moet doen, nieuwe afspraken, nieuwe beoordelingen, te laat betaalde facturen, en knoppen voor + Factuur, + Offerte en + Nieuw project.</p></div>
 <div class="vt-v"><h5>Wat betekent "Nog te doen" op de startpagina?</h5><p>Dingen die nog ontbreken, bijvoorbeeld je bedrijfsnaam als die nog op de voorbeeldtekst staat, je e-mailadres, of je IBAN en btw-nummer voor je facturen. Klik erop, dan ga je meteen naar de goede plek.</p></div>
 <div class="vt-v"><h5>Wat betekenen de blauwe rondjes met een i?</h5><p>Overal in je beheer staat naast een veld of onderdeel een blauw rondje met een i. Klik erop, dan zie je in gewone taal wat het is, waar het voor dient en wat je moet invullen. Klik nog een keer om het te sluiten. Staat je vraag er niet bij? Stel hem dan hier aan mij.</p></div>
 <div class="vt-v"><h5>Hoe bekijk ik mijn website?</h5><p>Klik links in het menu op Website bekijken. Je website opent in een nieuw venster.</p></div>
+<div class="vt-v"><h5>Wat doet de knop Opslaan en website bijwerken in het menu?</h5><p>Heb je op de pagina iets veranderd, dan slaat de knop dat op en werkt hij je website bij, net als de knop onder dat onderdeel. Heb je niets veranderd, dan bouwt hij je hele website en webshop opnieuw op met alles wat er al is opgeslagen. Handig als je wilt zeker weten dat alles op je website klopt.</p></div>
 </div>
 <div class="vt-o"><h4>Instellingen: je bedrijf en je teksten</h4>
 <div class="vt-v"><h5>Hoe werken de Instellingen?</h5><p>Instellingen bestaat uit tabbladen: Bedrijf, Voorpagina, Diensten, Uiterlijk, Opbouw en details, Blokken op je voorpagina en Extra. Vul ze van boven naar beneden in en klik daarna op Opslaan en website bijwerken.</p></div>
-<div class="vt-v"><h5>Ik heb iets aangepast, maar ik zie het niet op mijn website.</h5><p>Klik altijd op Opslaan en website bijwerken. Zie je het daarna nog niet? Ververs je website: op een computer met Ctrl+F5, op je telefoon door de pagina opnieuw te laden.</p></div>
+<div class="vt-v"><h5>Ik heb iets aangepast, maar ik zie het niet op mijn website.</h5><p>Klik altijd op Opslaan en website bijwerken. Die knop staat onder elk onderdeel en ook bovenaan in het menu links, zodat je hem vanaf elke pagina kunt gebruiken. Zie je het daarna nog niet? Ververs je website: op een computer met Ctrl+F5, op je telefoon door de pagina opnieuw te laden.</p></div>
 <div class="vt-v"><h5>Er gebeurt niets als ik op Opslaan klik.</h5><p>Op de knop staat dan even "Bezig...". Wacht tot de pagina klaar is. Is er een veld niet goed ingevuld, dan springt de beheerpagina vanzelf naar het tabblad met dat veld, en staat het veld rood.</p></div>
 <div class="vt-v"><h5>Waar vul ik mijn bedrijfsgegevens in?</h5><p>In Instellingen, tabblad Bedrijf: bedrijfsnaam, adres, telefoon, e-mail, KvK-nummer, btw-nummer, IBAN, openingstijden en werkgebied.</p></div>
 <div class="vt-v"><h5>Moet ik mijn adres invullen?</h5><p>Nee. Werk je vanuit huis en wil je dat niet laten zien, laat het dan leeg. Een postcode en plaats helpen wel om in Google in de buurt gevonden te worden.</p></div>
@@ -14204,7 +14205,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-11-12-knoppen');
+define('SITE_BOUW', '2026-11-12-menuopslaan');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -14259,6 +14260,15 @@ if ($logged_in && ($_GET['adm'] ?? '') === 'pakket') {
 if ($logged_in && isset($_POST['action'])) {
     $pages = load_pages();
     $action = $_POST['action'];
+    if ($action === 'site_bijwerken') {
+        @set_time_limit(120);
+        rebuild_everything(load_pages());
+        if (function_exists('verse_paginas')) verse_paginas();
+        $tg = (string)($_POST['terug'] ?? '');
+        if (!preg_match('#^admin\.php(\?[^\s<>"]*)?$#', $tg)) $tg = 'admin.php';
+        $_SESSION['ff_notice'] = 'Je website en webshop zijn bijgewerkt.';
+        header('Location: ' . $tg); exit;
+    }
     if (strpos($action, 'adm_') === 0) { adm_acties($action); }
     if (strpos($action, 'res_') === 0) { res_acties($action); }
     if (strpos($action, 'ab_') === 0) { ab_acties($action); }
@@ -14685,6 +14695,12 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
   .si:hover{background:var(--zacht);color:var(--text);}
   .si.on{background:var(--licht-blauw);color:var(--blue);font-weight:600;}
   .si.on svg{color:var(--blue);}
+  .bijwerk{margin:0 0 12px;}
+  .bijwerk-k{display:flex;align-items:center;gap:10px;width:100%;border:0;border-radius:12px;background:var(--blue);color:#fff;font:600 14px/1.25 inherit;font-family:inherit;padding:11px 12px;cursor:pointer;text-align:left;box-shadow:0 8px 18px -10px rgba(29,78,216,.7);}
+  .bijwerk-k:hover{filter:brightness(1.08);}
+  .bijwerk-k:disabled{opacity:.7;cursor:wait;}
+  .bijwerk-k svg{width:19px;height:19px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+  .bijwerk-m{margin:8px 2px 0;font-size:13px;line-height:1.4;color:#b42318;}
   .si .tel{margin-left:auto;min-width:20px;padding:0 6px;border-radius:999px;background:#e5484d;color:#fff;font-size:12px;line-height:20px;text-align:center;}
   .hoofd{flex:1;min-width:0;}
   .mobbar{display:none;}
@@ -14912,6 +14928,10 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
 <div class="app">
   <aside class="side" id="ffside" aria-label="Menu">
     <a class="brand" href="admin.php"><?php if (logo_url() !== ''): ?><img src="<?= h(logo_url()) ?>" alt="" /><?php endif; ?><span class="bn"><?= h(st('naam')) ?></span><span class="bt">Beheer</span></a>
+    <form method="post" action="admin.php" id="ffBijwerk" class="bijwerk"><input type="hidden" name="action" value="site_bijwerken" /><input type="hidden" name="terug" id="ffBijwerkTerug" value="admin.php" />
+      <button type="submit" class="bijwerk-k" id="ffBijwerkKnop"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/></svg><span>Opslaan en website bijwerken</span></button>
+      <p class="bijwerk-m" id="ffBijwerkMelding" hidden></p>
+    </form>
     <nav>
       <?= $mi('admin.php', 'Start', $showStart, '<path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1z"/>') ?>
       <div class="sg">Je website</div>
@@ -14933,6 +14953,33 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
       <?= $mi('admin.php?logout=1', 'Uitloggen', false, '<path d="M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 16l-4-4 4-4M6 12h10"/>') ?>
     </nav>
   </aside>
+  <script>
+  (function(){
+    var f=document.getElementById('ffBijwerk'),k=document.getElementById('ffBijwerkKnop'),m=document.getElementById('ffBijwerkMelding');
+    if(!f)return;
+    document.getElementById('ffBijwerkTerug').value='admin.php'+location.search;
+    var vuil=[];
+    function merk(e){var fo=e.target&&e.target.form;if(!fo||fo===f)return;if((fo.getAttribute('method')||'').toLowerCase()!=='post')return;if(vuil.indexOf(fo)<0)vuil.push(fo);}
+    document.addEventListener('input',merk,true);document.addEventListener('change',merk,true);
+    function knopVan(fo){
+      var bs=[].slice.call(fo.querySelectorAll('button[type=submit],button:not([type]),input[type=submit]'));
+      var id=fo.getAttribute('id');if(id)bs=bs.concat([].slice.call(document.querySelectorAll('[form="'+id+'"]')));
+      for(var i=0;i<bs.length;i++){var t=(bs[i].textContent||bs[i].value||'').toLowerCase();if(/opslaan|bewaren|bijwerken/.test(t)&&!bs[i].disabled)return bs[i];}
+      return null;
+    }
+    f.addEventListener('submit',function(e){
+      m.hidden=true;
+      var open=vuil.filter(function(fo){return document.body.contains(fo);});
+      if(open.length){
+        e.preventDefault();
+        var b=knopVan(open[0]);
+        if(b){if(open[0].requestSubmit){open[0].requestSubmit(b);}else{b.click();}return;}
+        m.textContent='Je hebt iets gewijzigd. Klik eerst op de knop onder dat onderdeel, anders gaat je wijziging verloren.';m.hidden=false;return;
+      }
+      k.disabled=true;k.querySelector('span').textContent='Bezig met bijwerken...';
+    });
+  })();
+  </script>
   <div class="side-dicht" onclick="document.body.classList.remove('menu-open')"></div>
   <div class="hoofd">
   <div class="mobbar"><button type="button" class="menuknop" onclick="document.body.classList.toggle('menu-open')" aria-controls="ffside"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>Menu</button><a class="bn" href="admin.php"><?= h(st('naam')) ?></a></div>
