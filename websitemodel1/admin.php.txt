@@ -207,7 +207,13 @@ function whatsapp_nummer() {
     $n = preg_replace('/[^0-9]/', '', $n);
     return strlen($n) >= 9 && strlen($n) <= 15 ? $n : '';
 }
+/* Knoppen rechtsonder per plek aan of uit: wa_site, wa_shop, wc_site, wc_shop (leeg = aan) */
+function knop_aan($k) {
+    $plek = !empty($GLOBALS['FF_IN_WEBSHOP']) ? 'shop' : 'site';
+    return st($k . '_' . $plek) !== '0';
+}
 function whatsapp_url() {
+    if (!knop_aan('wa')) return '';
     $n = whatsapp_nummer();
     if ($n === '') return '';
     $t = st('whatsapp_tekst') !== '' ? st('whatsapp_tekst') : 'Hallo ' . st('naam') . ', ik heb een vraag.';
@@ -225,6 +231,7 @@ function chat_url_eigen() {
 }
 /* Staat Worldchat aan (betaald), dan gaat de chatknop naar Worldchat. */
 function chat_url() {
+    if (!knop_aan('wc')) return '';
     $w = function_exists('wc_gastlink') ? wc_gastlink() : '';
     return $w !== '' ? $w : chat_url_eigen();
 }
@@ -1844,11 +1851,14 @@ function chat_fab() {
     if ($c === '') return '';
     return '<a class="chatfab" href="' . h($c) . '" aria-label="Chat met ' . h(st('naam')) . '"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 4v-4h0A1.5 1.5 0 0 1 4 14.5z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8 8.5h8M8 11.5h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span>' . (wc_gastlink() !== '' ? 'Chat in uw eigen taal' : 'Chat met ons') . '</span></a>' . "\n";
 }
-function site_footer() {
+function site_footer($webshop = false) {
+    $GLOBALS['FF_IN_WEBSHOP'] = $webshop;
     $y = date('Y');
-    return '<footer class="foot"><div class="wrap">' . nap_block()
+    $r = '<footer class="foot"><div class="wrap">' . nap_block()
          . '<div class="legal"><span>&copy; ' . $y . ' ' . h(st('naam')) . '</span><span class="logins"><a class="login" href="/admin.php" rel="nofollow">Website beheren</a><a class="login" href="/admin.php?adm" rel="nofollow">Administratie</a></span></div>'
          . '</div></footer>' . "\n" . chat_fab() . whatsapp_fab();
+    $GLOBALS['FF_IN_WEBSHOP'] = false;
+    return $r;
 }
 /* Blauwe balk onderaan met contactknoppen */
 function cta_band($dienstKey = '') {
@@ -4751,7 +4761,7 @@ function render_ws_lijst($in, $items, $o = null, $kopFoto = null) {
         }
     }
     if (!$items) $out .= $blok('<div class="ab-leeg">Hier komen binnenkort onze producten.</div>');
-    $out .= '</main>' . site_footer() . ws_pil();
+    $out .= '</main>' . site_footer(true) . ws_pil();
     $out .= flip_speler_tag($out) . ws_js_tag();
     return $out . "\n</body>\n</html>\n";
 }
@@ -4763,7 +4773,7 @@ function render_ws_cat($in, $c, $cats) {
     $out .= '<main><section class="abhero"><div class="wrap">' . $kr . '<h1>' . h($c['naam']) . '</h1>' . ($c['tekst'] !== '' ? '<p>' . nl2br(h($c['tekst'])) . '</p>' : '<p>' . $c['n'] . ($c['n'] === 1 ? ' product' : ' producten') . '</p>') . '</div></section>';
     $out .= '<section class="abwrap"><div class="wrap">' . ws_chips($cats, $c['slug']) . '<div class="ab-grid">';
     foreach ($c['items'] as $p) { $out .= ws_kaart($p); }
-    $out .= '</div></div></section></main>' . site_footer() . ws_pil();
+    $out .= '</div></div></section></main>' . site_footer(true) . ws_pil();
     $out .= flip_speler_tag($out) . ws_js_tag();
     return $out . "\n</body>\n</html>\n";
 }
@@ -4833,7 +4843,7 @@ function render_ws_item($in, $p, $o = null) {
         foreach (preg_split("/\n\s*\n/", trim($p['tekst'])) as $al) { $out .= '<p>' . nl2br(h(trim($al))) . '</p>'; }
         $out .= '</div>';
     }
-    $out .= '</div></div></section></main>' . site_footer() . ws_pil();
+    $out .= '</div></div></section></main>' . site_footer(true) . ws_pil();
     $cfg = ['p' => ws_prod_json($p), 'max' => ws_max_upload(), 'mail' => st('email'), 'zaak' => st('naam')];
     $out .= '<script>var WSP=' . ws_json_html($cfg) . ';</script>';
     if (count($fotos) > 1) {
@@ -4850,20 +4860,20 @@ function render_ws_mand($in, $items) {
             'voorw' => $in['voorwaarden'] !== '', 'tel' => st('tel')];
     $out = site_head('Winkelwagen | ' . st('naam'), '', '/webshop/winkelwagen/', '<meta name="robots" content="noindex" />', true);
     $out .= ws_css() . "\n</head>\n<body>\n" . ws_header(ws_opbouw(), '/webshop/', 'Verder winkelen');
-    $out .= '<main><section class="abwrap"><div class="wrap"><h1 style="margin:0 0 18px;font-size:clamp(28px,4vw,40px)">Winkelwagen</h1><div id="wsMand"><div class="ws-blok ws-leeg">Even laden...</div></div></div></section></main>' . site_footer();
+    $out .= '<main><section class="abwrap"><div class="wrap"><h1 style="margin:0 0 18px;font-size:clamp(28px,4vw,40px)">Winkelwagen</h1><div id="wsMand"><div class="ws-blok ws-leeg">Even laden...</div></div></div></section></main>' . site_footer(true);
     $out .= '<script>var WSC=' . ws_json_html($cfg) . ';</script>' . ws_js_tag();
     return $out . "\n</body>\n</html>\n";
 }
 function render_ws_bedankt($in) {
     $out = site_head('Bedankt voor uw bestelling | ' . st('naam'), '', '/webshop/bedankt/', '<meta name="robots" content="noindex" />', true);
     $out .= ws_css() . "\n</head>\n<body>\n" . ws_header(ws_opbouw(), '/webshop/', 'Naar de webshop');
-    $out .= '<main><section class="abwrap"><div class="wrap" style="max-width:720px"><div class="ws-blok" id="wsBedankt" data-tel="' . h(st('tel')) . '"><h1 style="margin:0 0 10px;font-size:clamp(26px,4vw,36px)">Bedankt voor uw bestelling</h1><p id="wsBedTekst">Even kijken of uw betaling binnen is...</p></div></div></section></main>' . site_footer();
+    $out .= '<main><section class="abwrap"><div class="wrap" style="max-width:720px"><div class="ws-blok" id="wsBedankt" data-tel="' . h(st('tel')) . '"><h1 style="margin:0 0 10px;font-size:clamp(26px,4vw,36px)">Bedankt voor uw bestelling</h1><p id="wsBedTekst">Even kijken of uw betaling binnen is...</p></div></div></section></main>' . site_footer(true);
     return $out . ws_js_tag() . "\n</body>\n</html>\n";
 }
 function render_ws_voorwaarden($in) {
     $out = site_head('Voorwaarden webshop | ' . st('naam'), '', '/webshop/voorwaarden/', '<meta name="robots" content="noindex" />', true);
     $out .= ws_css() . "\n</head>\n<body>\n" . ws_header(ws_opbouw(), '/webshop/winkelwagen/', 'Terug naar de winkelwagen');
-    $out .= '<main><section class="abwrap"><div class="wrap" style="max-width:820px"><div class="ws-blok"><h1 style="margin:0 0 14px;font-size:clamp(26px,4vw,36px)">Voorwaarden</h1><div class="ws-voorw">' . h($in['voorwaarden']) . '</div></div></div></section></main>' . site_footer();
+    $out .= '<main><section class="abwrap"><div class="wrap" style="max-width:820px"><div class="ws-blok"><h1 style="margin:0 0 14px;font-size:clamp(26px,4vw,36px)">Voorwaarden</h1><div class="ws-voorw">' . h($in['voorwaarden']) . '</div></div></div></section></main>' . site_footer(true);
     return $out . "\n</body>\n</html>\n";
 }
 function ws_blok_html($sky) {
@@ -8918,6 +8928,15 @@ function wc_acties($action) {
         }
         $terug('Betalen starten lukte niet' . ($j && !empty($j['error']) ? ': ' . $j['error'] : '. Probeer het later opnieuw.'));
     }
+    if ($action === 'wc_knop') {
+        global $ST;
+        $new = $ST;
+        foreach (['wc_site', 'wc_shop'] as $kk) { $new[$kk] = !empty($_POST[$kk]) ? '1' : '0'; }
+        save_settings($new);
+        $ST = $new;
+        rebuild_site(load_pages());
+        $terug('Opgeslagen. De website en de webshop zijn bijgewerkt.');
+    }
     if ($action === 'wc_vernieuw') {
         $w = wc_status();
         $terug($w['fout'] !== '' ? 'Controleren lukte niet: ' . $w['fout'] : 'Bijgewerkt.');
@@ -8954,6 +8973,15 @@ function wc_beheer_view() {
     <?php if (!empty($w['actief']) && $w['eigenaar'] !== ''): ?>
       <p><a class="btn" href="<?= h($w['eigenaar']) ?>" target="_blank" rel="noopener">Open je chat</a></p>
       <p class="hint">Bewaar deze knop als bladwijzer of zet hem op het beginscherm van je telefoon. Schrijft een bezoeker iets, dan krijg je ook een mail (hoogstens eens per kwartier).</p>
+    <?php endif; ?>
+    <?php if (!empty($w['actief'])): ?>
+    <h2>Waar staat de chatknop?</h2>
+    <form method="post" action="admin.php" class="wcknop"><input type="hidden" name="action" value="wc_knop" />
+      <label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" name="wc_site" value="1"<?= st('wc_site') !== '0' ? ' checked' : '' ?> /> Op de website</label>
+      <label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" name="wc_shop" value="1"<?= st('wc_shop') !== '0' ? ' checked' : '' ?> /> In de webshop</label>
+      <p class="hint">Haal een vinkje weg om de knop daar niet te tonen. Je credits blijven bewaard en de chat werkt weer zodra je het vinkje terugzet.</p>
+      <button class="btn sm" type="submit">Opslaan</button>
+    </form>
     <?php endif; ?>
     <h2><?= !empty($w['actief']) ? 'Credits bijkopen' : 'Worldchat aanzetten' ?></h2>
     <p>Een credit is een vertaald bericht. Credits verlopen niet. Eenmalig betalen, geen abonnement.</p>
@@ -13887,6 +13915,7 @@ function venturo_html() {
 <div class="vt-v"><h5>Moet ik mijn adres invullen?</h5><p>Nee. Werk je vanuit huis en wil je dat niet laten zien, laat het dan leeg. Een postcode en plaats helpen wel om in Google in de buurt gevonden te worden.</p></div>
 <div class="vt-v"><h5>Waar komen de berichten van mijn contactformulier binnen?</h5><p>Op het e-mailadres dat je in Instellingen bij Bedrijf invult, en in je beheerpagina onder Berichten.</p></div>
 <div class="vt-v"><h5>Hoe zet ik een WhatsApp-knop op mijn website?</h5><p>Vul in Instellingen bij Bedrijf je WhatsApp-nummer in. Een 06-nummer is goed. Er komt dan rechtsonder op elke pagina een groene WhatsApp-knop. Je kunt ook een eerste zin klaarzetten die de bezoeker meekrijgt.</p></div>
+<div class="vt-v"><h5>Kan ik de WhatsApp-knop uitzetten op mijn website of in mijn webshop?</h5><p>Ja. Ga naar Instellingen, bij Bedrijf staat onder je WhatsApp-nummer: Waar staat de groene WhatsApp-knop? Haal het vinkje weg bij Op de website of bij In de webshop en klik op Opslaan. Je nummer blijft bewaard, dus zet je het vinkje terug, dan staat de knop er weer.</p></div>
 <div class="vt-v"><h5>Hoe verander ik de grote titel bovenaan mijn website?</h5><p>In Instellingen, tabblad Voorpagina, bij Grote titel. Daaronder vul je de tekst onder de titel en de tekst op de hoofdknop in.</p></div>
 <div class="vt-v"><h5>Waar gaat de hoofdknop bovenaan naartoe?</h5><p>Standaard naar je contactpagina. Wil je hem ergens anders naartoe laten gaan, vul dan bij "Waar gaat de hoofdknop naartoe?" een pagina in, bijvoorbeeld /reserveren/. Begin altijd met een schuine streep en eindig met een schuine streep. Een andere website begint met https://.</p></div>
 <div class="vt-v"><h5>Hoe zet ik een balk met een actie of vakantiebericht bovenaan?</h5><p>Vul in Instellingen bij Voorpagina het veld Balk bovenaan in, bijvoorbeeld: Wij zijn met vakantie tot 18 augustus. Leeg laten betekent geen balk.</p></div>
@@ -13996,6 +14025,7 @@ function venturo_html() {
 <div class="vt-v"><h5>Hoe antwoord ik een bezoeker?</h5><p>Klik bij Worldchat op Open je chat. Bewaar die pagina als bladwijzer of zet hem op het beginscherm van je telefoon. Schrijft een bezoeker iets, dan krijg je ook een mail met een link naar je chat.</p></div>
 <div class="vt-v"><h5>Een bezoeker ziet dat de lijn bezet is. Hoe kan dat?</h5><p>Er chat een bezoeker tegelijk. Zolang die in gesprek is, en nog een paar minuten daarna, ziet de volgende bezoeker dat de lijn bezet is. Hij kan het daarna opnieuw proberen. Elke nieuwe bezoeker begint met een leeg gesprek en ziet niets van de vorige.</p></div>
 <div class="vt-v"><h5>Wat gebeurt er als mijn credits op zijn?</h5><p>Dan verdwijnt de chatknop van je website. Je hoeft niets op te zeggen. Koop je bij, dan staat de knop er weer. Bij Worldchat zie je altijd hoeveel credits je nog hebt.</p></div>
+<div class="vt-v"><h5>Kan ik de chatknop uitzetten op mijn website of in mijn webshop?</h5><p>Ja. Klik links op Worldchat. Bij Waar staat de chatknop? haal je het vinkje weg bij Op de website of bij In de webshop en klik je op Opslaan. Je credits blijven gewoon bewaard. Hetzelfde kan in Instellingen bij Extra, onder Chatlink.</p></div>
 </div>
 <div class="vt-o"><h4>Webshop</h4>
 <div class="vt-v"><h5>Wat is de webshop?</h5><p>Met de webshop verkoop je producten op je eigen website. Je klanten kiezen een product, leggen het in de winkelwagen en betalen online met iDEAL of een andere betaalmethode. De webshop zit bij de prijs inbegrepen.</p></div>
@@ -14174,7 +14204,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-11-11-mollieuit');
+define('SITE_BOUW', '2026-11-12-knoppen');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -14361,6 +14391,7 @@ if ($logged_in && isset($_POST['action'])) {
         $new['email'] = filter_var($mail, FILTER_VALIDATE_EMAIL) ? $mail : '';
         $site = rtrim(trim($_POST['site_url'] ?? ''), '/');
         $new['site_url'] = preg_match('#^https?://[a-z0-9.\-]+(:\d+)?$#i', $site) ? strtolower($site) : '';
+        if (isset($_POST['knoppen_form'])) { foreach (['wa_site', 'wa_shop', 'wc_site', 'wc_shop'] as $kk) { $new[$kk] = !empty($_POST[$kk]) ? '1' : '0'; } }
         $chat = trim($_POST['chat_url'] ?? '');
         $new['chat_url'] = preg_match('#^https://\S+$#i', $chat) ? $chat : '';
         $new['kleur_donker'] = valid_color($_POST['kleur_donker'] ?? '', '#0b1f3a');
@@ -14975,6 +15006,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
               <div class="field"><label for="tel2">Tweede telefoonnummer (optioneel)</label><input type="text" id="tel2" name="tel2" maxlength="30" value="<?= h(st('tel2')) ?>" /></div>
               <div class="field"><label for="whatsapp">WhatsApp-nummer (optioneel)</label><input type="text" id="whatsapp" name="whatsapp" maxlength="25" placeholder="Bijvoorbeeld: 06 12345678" value="<?= h(st('whatsapp')) ?>" /><div class="hint">Vul je je nummer in, dan staat er op elke pagina rechtsonder een groene WhatsApp-knop. Bezoekers sturen je dan met 1 tik een bericht.<?php if (st('whatsapp') !== '' && whatsapp_nummer() === ''): ?> <strong style="color:#c62828">Dit nummer klopt niet.</strong><?php endif; ?></div></div>
               <div class="field"><label for="whatsapp_tekst">Eerste zin van het bericht (optioneel)</label><input type="text" id="whatsapp_tekst" name="whatsapp_tekst" maxlength="140" placeholder="Hallo <?= h(st('naam')) ?>, ik heb een vraag." value="<?= h(st('whatsapp_tekst')) ?>" /><div class="hint">Deze tekst staat alvast klaar als de bezoeker op de knop tikt. Hij kan hem zelf nog aanpassen.</div></div>
+              <div class="field"><input type="hidden" name="knoppen_form" value="1" /><label>Waar staat de groene WhatsApp-knop?</label><label style="font-weight:400;display:flex;gap:8px;align-items:center"><input type="checkbox" name="wa_site" value="1"<?= st('wa_site') !== '0' ? ' checked' : '' ?> /> Op de website</label><label style="font-weight:400;display:flex;gap:8px;align-items:center"><input type="checkbox" name="wa_shop" value="1"<?= st('wa_shop') !== '0' ? ' checked' : '' ?> /> In de webshop</label><div class="hint">Haal een vinkje weg om de knop daar niet te tonen. Je nummer blijft bewaard.</div></div>
               <div class="field"><label for="email">E-mailadres</label><input type="email" id="email" name="email" value="<?= h(st('email')) ?>" /><div class="hint">Hier komen ook de berichten van het contactformulier binnen.</div></div>
               <div class="field"><label for="kvk">KvK-nummer (optioneel)</label><input type="text" id="kvk" name="kvk" maxlength="20" value="<?= h(st('kvk')) ?>" /></div>
               <?php $fi = adm_inst(); ?>
@@ -15377,6 +15409,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
           <div class="formcard">
             <h2>Extra</h2>
             <div class="field"><label for="chat_url">Chatlink (optioneel)</label><input type="url" id="chat_url" name="chat_url" placeholder="https://..." value="<?= h(st('chat_url')) ?>" /><div class="hint">Staat hier een link, dan komt er rechtsonder een chatknop op elke pagina.</div></div>
+            <div class="field"><label>Waar staat de chatknop (Worldchat of je eigen chatlink)?</label><label style="font-weight:400;display:flex;gap:8px;align-items:center"><input type="checkbox" name="wc_site" value="1"<?= st('wc_site') !== '0' ? ' checked' : '' ?> /> Op de website</label><label style="font-weight:400;display:flex;gap:8px;align-items:center"><input type="checkbox" name="wc_shop" value="1"<?= st('wc_shop') !== '0' ? ' checked' : '' ?> /> In de webshop</label><div class="hint">Haal een vinkje weg om de chatknop daar niet te tonen. Je credits blijven bewaard.</div></div>
             <div class="field"><label for="seo_titel">Titel in Google (optioneel)</label><input type="text" id="seo_titel" name="seo_titel" maxlength="70" value="<?= h(st('seo_titel')) ?>" /><div class="hint">Leeg = bedrijfsnaam en de kleine regel boven de titel.</div></div>
             <div class="field"><label for="seo_omschrijving">Omschrijving in Google (optioneel)</label><input type="text" id="seo_omschrijving" name="seo_omschrijving" maxlength="160" value="<?= h(st('seo_omschrijving')) ?>" /><div class="hint">Maximaal 160 tekens. Leeg = wordt automatisch gemaakt.</div></div>
             <div class="field"><label for="site_url">Webadres (optioneel)</label><input type="url" id="site_url" name="site_url" placeholder="https://www.bedrijf.nl" value="<?= h(st('site_url')) ?>" /><div class="hint">Leeg = het adres waarop je nu bent (<?= h(site_url()) ?>). Vul in als de site met www bereikbaar moet zijn in Google.</div></div>
