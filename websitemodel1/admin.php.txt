@@ -14120,6 +14120,7 @@ function venturo_html() {
 <div class="vt-v"><h5>Kan ik een nieuwe pagina toevoegen?</h5><p>Elke dienst en elk project krijgt vanzelf een eigen pagina. Een helemaal losse pagina maken kan niet in de beheerpagina. Met een servicepakket of Titanium kunnen wij dat op offerte voor je doen.</p></div>
 <div class="vt-v"><h5>Hoe maak ik een app-icoon voor op de telefoon?</h5><p>Ga naar Instellingen, bij Uiterlijk staat App-icoon voor op de telefoon. Kies Mijn logo, Eigen afbeelding of Letters, kies een achtergrondkleur en de grootte, en vul de naam in die onder het icoon komt. Je ziet meteen hoe het eruitziet. Klik op Opslaan. Maak je niets, dan gebruiken we je logo op je donkere hoofdkleur.</p></div>
 <div class="vt-v"><h5>Hoe zetten mijn klanten mijn website op hun telefoon?</h5><p>Op een iPhone openen ze je website in Safari, tikken op de Deel-knop en kiezen Zet op beginscherm. Op een Samsung met Samsung Internet tikken ze onderin op het menu, kiezen Toevoegen aan en dan Startscherm. Op andere Android-telefoons openen ze je website in Chrome, tikken op de drie puntjes en kiezen App installeren of Toevoegen aan startscherm. In je webshop staat deze uitleg vanzelf voor je klanten. Een app store is niet nodig.</p></div>
+<div class="vt-v"><h5>Hoe kies ik mooie kleuren voor mijn website?</h5><p>Ga naar Instellingen, bij Uiterlijk staan 24 kleurcombinaties. Klik op een combinatie en je bovenkant, knoppen en achtergrond passen meteen bij elkaar. Daaronder kies je elke kleur nog los: de bovenkant en het menu, de knoppen en de achtergrond van de pagina. Rechts zie je meteen een voorbeeld. Klik daarna op Opslaan en website bijwerken.</p></div>
 </div>
 <div class="vt-o"><h4>Het uiterlijk van je website</h4>
 <div class="vt-v"><h5>Hoe zet ik mijn logo op mijn website?</h5><p>In Instellingen, tabblad Uiterlijk, bij Logo. Kies liefst een png met een doorzichtige achtergrond, in een lichte kleur, want het logo staat op de donkere kleur van je website. Maximaal 8 MB.</p></div>
@@ -14397,7 +14398,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-11-12-kiezer');
+define('SITE_BOUW', '2026-11-12-kleuren');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -15422,6 +15423,76 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
               </div>
               <div class="hint">Je teksten, diensten en projecten blijven hetzelfde; alleen de uitstraling verandert. Je kunt altijd wisselen. Bij Etalage komt de foto van je nieuwste project groot bovenaan. Nieuwe stijlen verschijnen hier vanzelf.</div>
             </div>
+            <div class="kp" id="kleurPalet">
+              <h3 class="kp-h">Kleurcombinaties</h3>
+              <p class="hint" style="margin:0 0 10px">Klik op een combinatie: de kleuren van je bovenkant, knoppen en achtergrond passen dan bij elkaar. Daarna kun je elke kleur hieronder nog los veranderen.</p>
+              <div class="kp-pal" id="kpPal"></div>
+              <div class="kp-twee">
+                <div class="kp-kies">
+                  <h3 class="kp-h">Bovenkant en menu</h3><div class="kp-rij" id="kpDonker"></div>
+                  <h3 class="kp-h">Knoppen</h3><div class="kp-rij" id="kpKnop"></div>
+                  <h3 class="kp-h">Achtergrond van de pagina</h3><div class="kp-rij" id="kpAchter"></div>
+                  <p class="kp-st" id="kpSt"></p>
+                </div>
+                <div class="kp-vb" id="kpVb" aria-hidden="true">
+                  <div class="kp-top"><b><?= h(cut(st('naam'), 22)) ?></b><span>Diensten</span><span>Projecten</span><i>Contact</i></div>
+                  <div class="kp-hero"><small>WELKOM</small><b>Vakwerk waar je op kunt bouwen.</b><span class="kp-k">Vraag een offerte aan</span></div>
+                  <div class="kp-body"><div class="kp-kaart"><i></i><b>Onze diensten</b><span></span><span></span></div><div class="kp-kaart"><i></i><b>Projecten</b><span></span><span></span></div></div>
+                  <div class="kp-vlak"><b>Over ons</b><span></span><span class="kp-k kp-kk">Neem contact op</span></div>
+                </div>
+              </div>
+              <h3 class="kp-h" style="margin-top:16px">Of kies zelf een kleur</h3>
+            </div>
+            <style>
+              .kp-h{font-size:14px;margin:14px 0 8px;}
+              .kp-pal{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:10px;}
+              .kp-p{all:unset;cursor:pointer;border-radius:12px;overflow:hidden;border:2px solid #e3e8f0;background:#fff;display:block;}
+              .kp-p:hover{border-color:#94a3b8;} .kp-p.on{border-color:#1d4ed8;box-shadow:0 0 0 3px rgba(29,78,216,.18);}
+              .kp-p .t{display:block;height:20px;} .kp-p .m{display:flex;align-items:center;gap:6px;padding:8px;height:26px;} .kp-p .m i{display:block;width:34px;height:12px;border-radius:99px;} .kp-p .m u{display:block;flex:1;height:8px;border-radius:4px;}
+              .kp-p small{display:block;padding:0 8px 7px;font-size:12px;font-weight:600;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+              .kp-twee{display:grid;grid-template-columns:1fr 300px;gap:18px;align-items:start;} @media (max-width:900px){.kp-twee{grid-template-columns:1fr;}}
+              .kp-rij{display:flex;flex-wrap:wrap;gap:7px;}
+              .kp-s{all:unset;cursor:pointer;width:30px;height:30px;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(0,0,0,.15);position:relative;}
+              .kp-s.vk{border-radius:8px;width:44px;}
+              .kp-s.on::after{content:"";position:absolute;inset:-4px;border-radius:inherit;border:2px solid #1d4ed8;}
+              .kp-s:focus-visible{outline:2px solid #1d4ed8;outline-offset:3px;}
+              .kp-st{font-size:13px;color:#157347;min-height:1em;margin:10px 0 0;}
+              .kp-vb{--d:#0b1f3a;--a:#1d4ed8;--b:#fff;--v:#f3f5f9;border-radius:14px;overflow:hidden;border:1px solid #e3e8f0;background:var(--b);font-size:11px;position:sticky;top:12px;}
+              .kp-top{display:flex;align-items:center;gap:8px;padding:9px 10px;background:var(--d);color:#fff;} .kp-top b{flex:1;font-size:11.5px;} .kp-top span{opacity:.8;} .kp-top i{font-style:normal;background:var(--a);color:#fff;padding:3px 8px;border-radius:99px;font-weight:700;}
+              .kp-hero{background:var(--d);color:#fff;padding:16px 12px 18px;display:grid;gap:6px;border-top:1px solid rgba(255,255,255,.08);} .kp-hero small{opacity:.7;font-size:9px;letter-spacing:.1em;} .kp-hero b{font-size:17px;line-height:1.15;}
+              .kp-k{justify-self:start;background:var(--a);color:#fff;font-weight:700;padding:6px 11px;border-radius:99px;}
+              .kp-body{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px;} .kp-kaart{background:#fff;border-radius:9px;padding:9px;display:grid;gap:5px;box-shadow:0 2px 8px -4px rgba(0,0,0,.2);color:#1f2937;} .kp-kaart i{width:20px;height:20px;border-radius:50%;background:var(--a);} .kp-kaart span,.kp-vlak span:not(.kp-k){height:5px;border-radius:3px;background:#d7dce5;}
+              .kp-vlak{background:var(--v);padding:12px;display:grid;gap:6px;color:#1f2937;} .kp-kk{margin-top:4px;}
+            </style>
+            <script>
+            document.addEventListener('DOMContentLoaded',function(){
+              var K={"pal": [["Klassiek blauw", "#0b1f3a", "#1d4ed8", "#ffffff", "#f3f5f9"], ["Nacht en goud", "#111827", "#a16207", "#fbf8f1", "#f3ecdc"], ["Zee", "#0b3954", "#0e7f8a", "#f4fbfb", "#e2f3f3"], ["Bos", "#1b3a2b", "#2f855a", "#f7faf5", "#e7f0e3"], ["Terracotta", "#3b1f17", "#c2562f", "#fdf8f3", "#f6e9dd"], ["Bordeaux", "#3a0d19", "#a3243b", "#fcf7f7", "#f5e6e8"], ["Lavendel", "#2e2445", "#7c5cc4", "#faf8ff", "#efeafb"], ["Koraal", "#1f2a44", "#e5533f", "#fffaf7", "#ffeee7"], ["Salie", "#2f3b2f", "#5f8466", "#f8faf6", "#ebf0e7"], ["Petrol", "#0f3d3e", "#127f88", "#f5fafa", "#e1f0f0"], ["Aubergine", "#2d1b2e", "#b4457f", "#fdf8fb", "#f6e7f0"], ["Chocolade", "#2b1d16", "#8b5e34", "#fbf7f2", "#f1e7da"], ["Oceaan", "#0a2342", "#1f8a76", "#f6fbfa", "#e3f2ee"], ["Zand en zwart", "#161616", "#b0703f", "#faf6f0", "#efe5d6"], ["Indigo", "#1e1b4b", "#4f46e5", "#f8f8ff", "#ebebfd"], ["Kers", "#1c1917", "#dc2626", "#fafaf9", "#f2efed"], ["Mint", "#134e4a", "#0d9488", "#f6fdfb", "#dcf5ee"], ["Framboos", "#3b0a2a", "#db2777", "#fff7fb", "#fde7f2"], ["Oranje", "#1c2333", "#ea580c", "#fffaf5", "#ffeedd"], ["Grafiet en groen", "#262b30", "#15803d", "#f7f8f8", "#eceeee"], ["Herfst", "#2a1a0e", "#b45309", "#fdf9f3", "#f6ead8"], ["IJs", "#0c2d48", "#2e7db3", "#f5f9fc", "#e2eef7"], ["Paars en roze", "#2b1640", "#c026d3", "#fdf7fe", "#f6e6f9"], ["Zwart en wit", "#111111", "#333333", "#ffffff", "#f4f4f4"]], "donker": ["#0b1f3a", "#111827", "#1f2328", "#161616", "#1e1b4b", "#0a2342", "#0b3954", "#0c2d48", "#0f3d3e", "#134e4a", "#1b3a2b", "#2f3b2f", "#3b1f17", "#2b1d16", "#2a1a0e", "#3a0d19", "#3b0a2a", "#2d1b2e", "#2e2445", "#2b1640", "#1c2333", "#262b30"], "knop": ["#1d4ed8", "#2563eb", "#4f46e5", "#7c3aed", "#9333ea", "#c026d3", "#db2777", "#e11d48", "#dc2626", "#e5533f", "#ea580c", "#c2410c", "#b45309", "#a16207", "#8b5e34", "#15803d", "#2f855a", "#0d9488", "#0e7f8a", "#127f88", "#2e7db3", "#475569", "#333333", "#111827"], "achter": [["Wit", "#ffffff", "#f3f5f9"], ["Gebroken wit", "#fbfaf7", "#f1efe9"], ["Creme", "#fdf8f0", "#f5ecdc"], ["Zand", "#f7f1e6", "#ece1cd"], ["Lichtgrijs", "#f5f6f8", "#e9ecf1"], ["IJsblauw", "#f3f8fd", "#e1edf9"], ["Mint", "#f2fbf7", "#dcf3e8"], ["Salie", "#f5f8f3", "#e5ece0"], ["Citroen", "#fffdf0", "#fbf3c9"], ["Perzik", "#fff7f2", "#ffe7d9"], ["Poederroze", "#fdf6f8", "#f7e2e9"], ["Lavendel", "#f8f6fe", "#ebe5fb"]]};
+              var kd=document.getElementById('kd'),ka=document.getElementById('ka'),vb=document.getElementById('kpVb');
+              var bg=document.querySelector('input[name=kleur_achtergrond]'),bga=document.querySelector('input[name=kleur_achtergrond_aan]');
+              var vl=document.querySelector('input[name=kleur_vlak]'),vla=document.querySelector('input[name=kleur_vlak_aan]');
+              var fk=document.querySelector('input[name=feest_kleuren]'),st=document.getElementById('kpSt');
+              if(!kd||!ka||!vb)return;
+              function kl(v){return (v||'').toLowerCase();}
+              function bgNu(){return bga&&bga.checked?bg.value:'#ffffff';} function vlNu(){return vla&&vla.checked?vl.value:'#f3f5f9';}
+              function vuur(el){if(el){el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));}}
+              function teken(){
+                vb.style.setProperty('--d',kd.value);vb.style.setProperty('--a',ka.value);vb.style.setProperty('--b',bgNu());vb.style.setProperty('--v',vlNu());
+                [].forEach.call(document.querySelectorAll('.kp-s'),function(b){var w=b.getAttribute('data-w'),c=b.getAttribute('data-c');b.classList.toggle('on',(w==='d'&&kl(c)===kl(kd.value))||(w==='a'&&kl(c)===kl(ka.value))||(w==='b'&&kl(c)===kl(bgNu())));});
+                [].forEach.call(document.querySelectorAll('.kp-p'),function(b,i){var p=K.pal[i];b.classList.toggle('on',kl(p[1])===kl(kd.value)&&kl(p[2])===kl(ka.value)&&kl(p[3])===kl(bgNu()));});
+              }
+              function eigen(){if(fk&&fk.checked){fk.checked=false;vuur(fk);}st.textContent='Mooi. Klik op Opslaan en website bijwerken om het op je website te zien.';}
+              function zetBg(c,v){if(!bg||!vl)return;bg.value=c;vl.value=v;var wit=kl(c)==='#ffffff';if(bga){bga.checked=!wit;vuur(bga);}if(vla){vla.checked=!wit;vuur(vla);}vuur(bg);vuur(vl);}
+              K.pal.forEach(function(p){var b=document.createElement('button');b.type='button';b.className='kp-p';b.title=p[0];
+                b.innerHTML='<span class="t" style="background:'+p[1]+'"></span><span class="m" style="background:'+p[3]+'"><i style="background:'+p[2]+'"></i><u style="background:'+p[4]+'"></u></span><small></small>';
+                b.querySelector('small').textContent=p[0];
+                b.onclick=function(){kd.value=p[1];ka.value=p[2];vuur(kd);vuur(ka);zetBg(p[3],p[4]);eigen();teken();};document.getElementById('kpPal').appendChild(b);});
+              function rij(id,lijst,w){var r=document.getElementById(id);lijst.forEach(function(x){var c=typeof x==='string'?x:x[1],n=typeof x==='string'?x:x[0];var b=document.createElement('button');b.type='button';b.className='kp-s'+(w==='b'?' vk':'');b.style.background=c;b.title=n;b.setAttribute('aria-label',n);b.setAttribute('data-w',w);b.setAttribute('data-c',c);
+                b.onclick=function(){if(w==='d'){kd.value=c;vuur(kd);}else if(w==='a'){ka.value=c;vuur(ka);}else{zetBg(x[1],x[2]);}eigen();teken();};r.appendChild(b);});}
+              rij('kpDonker',K.donker,'d');rij('kpKnop',K.knop,'a');rij('kpAchter',K.achter,'b');
+              [kd,ka,bg,vl,bga,vla].forEach(function(e){if(e){e.addEventListener('input',teken);e.addEventListener('change',teken);}});
+              teken();
+            });
+            </script>
             <div class="colors">
               <div class="field"><input type="color" id="kd" name="kleur_donker" value="<?= h(valid_color(st('kleur_donker'), '#0b1f3a')) ?>" /><label for="kd">Donkere hoofdkleur</label></div>
               <div class="field"><input type="color" id="ka" name="kleur_accent" value="<?= h(valid_color(st('kleur_accent'), '#1d4ed8')) ?>" /><label for="ka">Accentkleur (knoppen)</label></div>
