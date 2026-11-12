@@ -67,6 +67,8 @@ function default_settings() {
         'whatsapp'         => '',
         'whatsapp_tekst'   => '',
         'logo'             => '',
+        'app_icoon'        => '',
+        'app_naam'         => '',
         'stijl'            => 'stoer',
         'opbouw_hero'      => 'standaard',
         'opbouw_diensten'  => 'standaard',
@@ -1461,7 +1463,7 @@ function foto_map_weg($rel) {
 /* Alle foto's die een versie gebruikt (pad binnen uploads/) */
 function versie_fotos($staat) {
     $s = $staat['settings']; $uit = [];
-    foreach (['banner', 'logo', 'over_foto', 'video', 'video_beeld'] as $k) { if (!empty($s[$k]) && is_string($s[$k])) $uit[] = 'site/' . basename($s[$k]); }
+    foreach (['banner', 'logo', 'over_foto', 'video', 'video_beeld', 'app_icoon'] as $k) { if (!empty($s[$k]) && is_string($s[$k])) $uit[] = 'site/' . basename($s[$k]); }
     foreach ((array)($s['banner_dia'] ?? []) as $f) { if (is_string($f) && $f !== '') $uit[] = 'site/' . basename($f); }
     foreach ((array)($s['beelden'] ?? []) as $b) { if (!empty($b['foto'])) $uit[] = 'site/' . basename($b['foto']); }
     foreach ((array)($s['voorna'] ?? []) as $v) { foreach (['voor', 'na'] as $kk) { if (!empty($v[$kk])) $uit[] = 'site/' . basename($v[$kk]); } }
@@ -1697,6 +1699,130 @@ function theme_css() {
          . "@supports (color: color-mix(in srgb, red 50%, blue)){:root{--navy-2:color-mix(in srgb,{$d} 86%,#fff);--stripe:color-mix(in srgb,{$a} 55%,#fff);--sky:color-mix(in srgb,{$a} 7%,#fff);--line:color-mix(in srgb,{$a} 14%,#e2e7ef);}}\n";
 }
 
+/* ===========================================================
+   Webapp: je website en webshop als app op de telefoon
+   Geen App Store: een manifest, iconen en een klein service worker-script.
+   =========================================================== */
+function app_naam() {
+    $n = st('app_naam') !== '' ? st('app_naam') : st('naam');
+    return cut($n, 30);
+}
+function app_icoon_url($maat = 180) {
+    $f = ROOT . '/app-icoon-' . (int)$maat . '.png';
+    return is_file($f) ? '/app-icoon-' . (int)$maat . '.png?v=' . filemtime($f) : '';
+}
+/* Maakt van een afbeelding een vierkant icoon van $maat pixels */
+function app_png_schaal($src, $maat, $doel) {
+    $d = imagecreatetruecolor($maat, $maat);
+    imagealphablending($d, false); imagesavealpha($d, true);
+    imagecopyresampled($d, $src, 0, 0, 0, 0, $maat, $maat, imagesx($src), imagesy($src));
+    @imagepng($d, $doel, 9);
+    imagedestroy($d);
+}
+/* Bron van 512 x 512: eigen icoon uit het beheer, anders het logo op de hoofdkleur */
+function app_icoon_bron() {
+    if (!function_exists('imagecreatetruecolor')) return null;
+    $eigen = st('app_icoon') !== '' ? UPLOAD_DIR . '/site/' . basename(st('app_icoon')) : '';
+    if ($eigen !== '' && is_file($eigen)) {
+        $im = @imagecreatefromstring((string)file_get_contents($eigen));
+        if ($im) return $im;
+    }
+    $logo = st('logo') !== '' ? UPLOAD_DIR . '/site/' . basename(st('logo')) : '';
+    if ($logo === '' || !is_file($logo)) return null;
+    $l = @imagecreatefromstring((string)file_get_contents($logo));
+    if (!$l) return null;
+    $im = imagecreatetruecolor(512, 512);
+    $hex = valid_color(st('kleur_donker'), '#0b1f3a');
+    $bg = imagecolorallocate($im, hexdec(substr($hex, 1, 2)), hexdec(substr($hex, 3, 2)), hexdec(substr($hex, 5, 2)));
+    imagefilledrectangle($im, 0, 0, 511, 511, $bg);
+    imagealphablending($im, true);
+    $w = imagesx($l); $hh = imagesy($l); $vak = 340;
+    $sc = min($vak / max(1, $w), $vak / max(1, $hh));
+    $nw = max(1, (int)round($w * $sc)); $nh = max(1, (int)round($hh * $sc));
+    imagecopyresampled($im, $l, (int)((512 - $nw) / 2), (int)((512 - $nh) / 2), 0, 0, $nw, $nh, $w, $hh);
+    imagedestroy($l);
+    return $im;
+}
+function app_manifest($start, $scope, $naam) {
+    $ic = [];
+    foreach ([192, 512] as $m) {
+        if (is_file(ROOT . '/app-icoon-' . $m . '.png')) {
+            $ic[] = ['src' => '/app-icoon-' . $m . '.png?v=' . filemtime(ROOT . '/app-icoon-' . $m . '.png'), 'sizes' => $m . 'x' . $m, 'type' => 'image/png', 'purpose' => 'any'];
+        }
+    }
+    if (is_file(ROOT . '/app-icoon-512.png')) $ic[] = ['src' => '/app-icoon-512.png?v=' . filemtime(ROOT . '/app-icoon-512.png'), 'sizes' => '512x512', 'type' => 'image/png', 'purpose' => 'maskable'];
+    $kleur = valid_color(st('kleur_donker'), '#0b1f3a');
+    return json_encode([
+        'id' => $start, 'name' => $naam, 'short_name' => cut(app_naam(), 30), 'start_url' => $start, 'scope' => $scope,
+        'display' => 'standalone', 'background_color' => '#ffffff', 'theme_color' => $kleur, 'lang' => 'nl', 'icons' => $ic,
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+function app_sw_js() {
+    return "/* Webapp van deze website. Haalt alles gewoon van internet; zonder verbinding een korte melding. */\n"
+         . "self.addEventListener('install', function () { self.skipWaiting(); });\n"
+         . "self.addEventListener('activate', function (e) { e.waitUntil(self.clients.claim()); });\n"
+         . "self.addEventListener('fetch', function (e) {\n"
+         . "  if (e.request.mode !== 'navigate') return;\n"
+         . "  var u = new URL(e.request.url);\n"
+         . "  if (u.origin !== location.origin || u.pathname.indexOf('/admin.php') === 0) return;\n"
+         . "  e.respondWith(fetch(e.request).catch(function () {\n"
+         . "    return new Response('<!DOCTYPE html><html lang=\"nl\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Geen verbinding</title></head><body style=\"margin:0;min-height:100vh;display:grid;place-items:center;font-family:Arial,sans-serif;text-align:center;padding:24px\"><div><h1 style=\"font-size:22px\">Geen internetverbinding</h1><p>Controleer je verbinding en probeer het opnieuw.</p><button onclick=\"location.reload()\" style=\"font-size:16px;padding:10px 18px\">Opnieuw proberen</button></div></body></html>', { headers: { 'Content-Type': 'text/html; charset=UTF-8' } });\n"
+         . "  }));\n"
+         . "});\n";
+}
+/* Iconen, manifest en service worker van de website schrijven */
+function app_bestanden_schrijven() {
+    $im = app_icoon_bron();
+    if ($im) {
+        foreach ([512, 192, 180] as $m) app_png_schaal($im, $m, ROOT . '/app-icoon-' . $m . '.png');
+        imagedestroy($im);
+    } else {
+        foreach ([512, 192, 180] as $m) { if (is_file(ROOT . '/app-icoon-' . $m . '.png')) @unlink(ROOT . '/app-icoon-' . $m . '.png'); }
+    }
+    @file_put_contents(ROOT . '/manifest.json', app_manifest('/', '/', app_naam()), LOCK_EX);
+    @file_put_contents(ROOT . '/sw.js', app_sw_js(), LOCK_EX);
+}
+/* Kopregels voor de app in elke pagina */
+function app_head($path) {
+    $winkel = strpos((string)$path, '/webshop') === 0 && is_file(ROOT . '/webshop/manifest.json');
+    $o = '<link rel="manifest" href="' . ($winkel ? '/webshop/manifest.json' : '/manifest.json') . '" />' . "\n";
+    $o .= '<meta name="theme-color" content="' . h(valid_color(st('kleur_donker'), '#0b1f3a')) . '" />' . "\n";
+    $o .= '<meta name="mobile-web-app-capable" content="yes" />' . "\n" . '<meta name="apple-mobile-web-app-capable" content="yes" />' . "\n";
+    $o .= '<meta name="apple-mobile-web-app-title" content="' . h(app_naam()) . '" />' . "\n";
+    $o .= '<script>if("serviceWorker" in navigator){window.addEventListener("load",function(){navigator.serviceWorker.register("/sw.js").catch(function(){});});}</script>' . "\n";
+    return $o;
+}
+/* Blok in de webshop: zet de winkel op je telefoon */
+function ws_app_blok($kort = false) {
+    $ic = app_icoon_url(180);
+    $naam = h(app_naam());
+    return '<section class="ws-app abwrap" id="wsApp" hidden><div class="wrap"><div class="ws-app-in">'
+        . ($ic !== '' ? '<img class="ws-app-ic" src="' . h($ic) . '" alt="" width="64" height="64" />' : '')
+        . '<div class="ws-app-tk"><h2>' . ($kort ? 'Volgende keer sneller bestellen?' : 'Zet onze winkel op je telefoon') . '</h2>'
+        . '<p>Dan open je ' . $naam . ' met 1 tik vanaf je beginscherm, net als een app. Zonder App Store, zonder account en zonder iets te downloaden.</p>'
+        . '<button type="button" class="ws-app-knop" id="wsAppKnop" hidden>Zet op mijn telefoon</button>'
+        . '<ol class="ws-app-st" id="wsAppIos" hidden><li>Open deze pagina in <b>Safari</b>.</li><li>Tik onderin op de <b>Deel-knop</b> (het vierkantje met het pijltje omhoog).</li><li>Kies <b>Zet op beginscherm</b> en tik op <b>Voeg toe</b>.</li></ol>'
+        . '<ol class="ws-app-st" id="wsAppAnd" hidden><li>Open deze pagina in <b>Chrome</b>.</li><li>Tik rechtsboven op de <b>drie puntjes</b>.</li><li>Kies <b>App installeren</b> of <b>Toevoegen aan startscherm</b>.</li></ol>'
+        . '<p class="ws-app-pc" id="wsAppPc" hidden>Op de computer: klik in Chrome of Edge rechts in de adresbalk op het icoontje <b>Installeren</b>. Of open deze pagina op je telefoon.</p>'
+        . '</div><button type="button" class="ws-app-x" id="wsAppX" aria-label="Sluiten">&times;</button></div></div></section>'
+        . '<style>.ws-app{padding:10px 0 34px}.ws-app-in{position:relative;display:flex;gap:18px;align-items:flex-start;background:#fff;color:#1c2330;border:1px solid rgba(0,0,0,.08);border-radius:18px;padding:20px 22px;box-shadow:0 14px 34px -22px rgba(0,0,0,.35)}'
+        . '.ws-app-ic{width:64px;height:64px;border-radius:15px;flex:none;box-shadow:0 6px 16px -8px rgba(0,0,0,.5)}.ws-app h2{margin:0 0 6px;font-size:20px}.ws-app p{margin:0 0 10px;opacity:.85}'
+        . '.ws-app-knop{font:inherit;font-weight:700;border:0;border-radius:999px;padding:11px 20px;cursor:pointer;background:var(--ws-acc,var(--blue,#1d4ed8));color:#fff}'
+        . '.ws-app-st{margin:4px 0 0;padding-left:20px}.ws-app-st li{margin:0 0 4px}.ws-app-x{position:absolute;right:10px;top:8px;border:0;background:none;font-size:24px;line-height:1;cursor:pointer;opacity:.5;color:#1c2330}'
+        . '@media (max-width:560px){.ws-app-in{flex-direction:column;padding:18px}.ws-app-ic{width:56px;height:56px}}</style>'
+        . '<script>(function(){var b=document.getElementById("wsApp");if(!b)return;'
+        . 'var st=(window.matchMedia&&matchMedia("(display-mode: standalone)").matches)||navigator.standalone;'
+        . 'try{if(st||localStorage.getItem("ffAppWeg")==="1")return;}catch(e){if(st)return;}'
+        . 'var ua=navigator.userAgent,ios=/iphone|ipad|ipod/i.test(ua)||(/macintosh/i.test(ua)&&navigator.maxTouchPoints>1),and=/android/i.test(ua);'
+        . 'var k=document.getElementById("wsAppKnop"),pr=null;'
+        . 'function toon(id){var e=document.getElementById(id);if(e)e.hidden=false;}'
+        . 'if(ios)toon("wsAppIos");else if(and)toon("wsAppAnd");else toon("wsAppPc");b.hidden=false;'
+        . 'window.addEventListener("beforeinstallprompt",function(e){e.preventDefault();pr=e;k.hidden=false;["wsAppAnd","wsAppPc"].forEach(function(i){var x=document.getElementById(i);if(x)x.hidden=true;});});'
+        . 'k.addEventListener("click",function(){if(!pr)return;pr.prompt();pr.userChoice.then(function(c){if(c&&c.outcome==="accepted")b.hidden=true;pr=null;});});'
+        . 'window.addEventListener("appinstalled",function(){b.hidden=true;});'
+        . 'document.getElementById("wsAppX").addEventListener("click",function(){b.hidden=true;try{localStorage.setItem("ffAppWeg","1");}catch(e){}});'
+        . '})();</script>';
+}
 function site_head($title, $desc = '', $path = '', $extra = '', $fullTitle = false, $image = '') {
     $t = h($fullTitle ? $title : $title . ' - ' . st('naam'));
     $url = site_url();
@@ -1712,7 +1838,10 @@ function site_head($title, $desc = '', $path = '', $extra = '', $fullTitle = fal
     $img = $image !== '' ? $image : logo_url();
     if ($img !== '') { $seo .= '<meta property="og:image" content="' . h($url . $img) . '" />' . "\n"; }
     $seo .= $extra;
-    $icon = logo_url() !== '' ? '<link rel="icon" href="' . h(logo_url()) . '" />' . "\n" . '<link rel="apple-touch-icon" href="' . h(logo_url()) . '" />' : '';
+    $icon = logo_url() !== '' ? '<link rel="icon" href="' . h(logo_url()) . '" />' : '';
+    $ati = app_icoon_url(180) !== '' ? app_icoon_url(180) : logo_url();
+    if ($ati !== '') $icon .= "\n" . '<link rel="apple-touch-icon" href="' . h($ati) . '" />';
+    $icon .= "\n" . app_head($path);
     $theme = theme_css();
     return <<<HTML
 <!DOCTYPE html>
@@ -2831,6 +2960,7 @@ function write_seo_files($pages) {
     file_put_contents(ROOT . '/robots.txt', $robots, LOCK_EX);
 }
 function rebuild_site($pages) {
+    app_bestanden_schrijven();
     list($featured, $projects) = site_lists($pages);
     file_put_contents(SITE_FILE, json_encode(['featured' => $featured, 'projects' => $projects, 'generated' => date('c')], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), LOCK_EX);
     schrijf_pagina(ROOT, stijl_pagina(render_home($pages)));
@@ -4761,6 +4891,7 @@ function render_ws_lijst($in, $items, $o = null, $kopFoto = null) {
         }
     }
     if (!$items) $out .= $blok('<div class="ab-leeg">Hier komen binnenkort onze producten.</div>');
+    $out .= ws_app_blok();
     $out .= '</main>' . site_footer(true) . ws_pil();
     $out .= flip_speler_tag($out) . ws_js_tag();
     return $out . "\n</body>\n</html>\n";
@@ -4867,7 +4998,7 @@ function render_ws_mand($in, $items) {
 function render_ws_bedankt($in) {
     $out = site_head('Bedankt voor uw bestelling | ' . st('naam'), '', '/webshop/bedankt/', '<meta name="robots" content="noindex" />', true);
     $out .= ws_css() . "\n</head>\n<body>\n" . ws_header(ws_opbouw(), '/webshop/', 'Naar de webshop');
-    $out .= '<main><section class="abwrap"><div class="wrap" style="max-width:720px"><div class="ws-blok" id="wsBedankt" data-tel="' . h(st('tel')) . '"><h1 style="margin:0 0 10px;font-size:clamp(26px,4vw,36px)">Bedankt voor uw bestelling</h1><p id="wsBedTekst">Even kijken of uw betaling binnen is...</p></div></div></section></main>' . site_footer(true);
+    $out .= '<main><section class="abwrap"><div class="wrap" style="max-width:720px"><div class="ws-blok" id="wsBedankt" data-tel="' . h(st('tel')) . '"><h1 style="margin:0 0 10px;font-size:clamp(26px,4vw,36px)">Bedankt voor uw bestelling</h1><p id="wsBedTekst">Even kijken of uw betaling binnen is...</p></div></div></section>' . ws_app_blok(true) . '</main>' . site_footer(true);
     return $out . ws_js_tag() . "\n</body>\n</html>\n";
 }
 function render_ws_voorwaarden($in) {
@@ -4897,6 +5028,7 @@ function write_webshop_pages() {
     if (!is_dir($dir)) mkdir($dir, 0755, true);
     @file_put_contents($dir . '/.ff-webshop', '1');
     file_put_contents($dir . '/ws.js', ws_js(), LOCK_EX);
+    @file_put_contents($dir . '/manifest.json', app_manifest('/webshop/', '/webshop/', app_naam()), LOCK_EX);
     /* een product mag niet hetzelfde adres hebben als een categorie */
     $cs = []; foreach (ws_categorieen(false) as $c) { $cs[$c['slug']] = 1; }
     $alle = ws_lijst(); $aangepast = false;
@@ -13928,6 +14060,8 @@ function venturo_html() {
 <div class="vt-v"><h5>Hoe vul ik mijn diensten in?</h5><p>In Instellingen, tabblad Diensten. Je kunt er tot 9 invullen. Per dienst: een naam, een korte omschrijving voor de voorpagina en een uitgebreide tekst voor de eigen pagina van die dienst.</p></div>
 <div class="vt-v"><h5>Hoe haal ik een dienst weg?</h5><p>Maak de naam van de dienst leeg en klik op Opslaan en website bijwerken. Een dienst zonder naam staat niet op je website.</p></div>
 <div class="vt-v"><h5>Kan ik een nieuwe pagina toevoegen?</h5><p>Elke dienst en elk project krijgt vanzelf een eigen pagina. Een helemaal losse pagina maken kan niet in de beheerpagina. Met een servicepakket of Titanium kunnen wij dat op offerte voor je doen.</p></div>
+<div class="vt-v"><h5>Hoe maak ik een app-icoon voor op de telefoon?</h5><p>Ga naar Instellingen, bij Uiterlijk staat App-icoon voor op de telefoon. Kies Mijn logo, Eigen afbeelding of Letters, kies een achtergrondkleur en de grootte, en vul de naam in die onder het icoon komt. Je ziet meteen hoe het eruitziet. Klik op Opslaan. Maak je niets, dan gebruiken we je logo op je donkere hoofdkleur.</p></div>
+<div class="vt-v"><h5>Hoe zetten mijn klanten mijn website op hun telefoon?</h5><p>Op een iPhone openen ze je website in Safari, tikken op de Deel-knop en kiezen Zet op beginscherm. Op Android openen ze je website in Chrome, tikken op de drie puntjes en kiezen App installeren of Toevoegen aan startscherm. In je webshop staat deze uitleg vanzelf voor je klanten. Een app store is niet nodig.</p></div>
 </div>
 <div class="vt-o"><h4>Het uiterlijk van je website</h4>
 <div class="vt-v"><h5>Hoe zet ik mijn logo op mijn website?</h5><p>In Instellingen, tabblad Uiterlijk, bij Logo. Kies liefst een png met een doorzichtige achtergrond, in een lichte kleur, want het logo staat op de donkere kleur van je website. Maximaal 8 MB.</p></div>
@@ -14205,7 +14339,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-11-12-menuopslaan');
+define('SITE_BOUW', '2026-11-12-webapp');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -14491,6 +14625,23 @@ if ($logged_in && isset($_POST['action'])) {
                     $new['logo'] = $f;
                 }
             }
+        }
+        // App-icoon voor op de telefoon
+        if (isset($_POST['app_naam'])) $new['app_naam'] = cut(trim(preg_replace('/\s+/', ' ', (string)$_POST['app_naam'])), 30);
+        if (!empty($_POST['app_icoon_weg']) && ($new['app_icoon'] ?? '') !== '') { foto_weg('site/' . basename($new['app_icoon'])); $new['app_icoon'] = ''; }
+        $aid = (string)($_POST['app_icoon_data'] ?? '');
+        if ($aid !== '' && strpos($aid, 'data:image/png;base64,') === 0 && strlen($aid) < 3000000) {
+            $bin = base64_decode(substr($aid, 22), true);
+            $inf = $bin !== false ? @getimagesizefromstring($bin) : false;
+            if ($inf && $inf[2] === IMAGETYPE_PNG && $inf[0] === 512 && $inf[1] === 512) {
+                ensure_upload_dir();
+                if (!is_dir(UPLOAD_DIR . '/site')) mkdir(UPLOAD_DIR . '/site', 0755, true);
+                $fn = 'app-icoon-' . date('Ymd-His') . '-' . bin2hex(random_bytes(3)) . '.png';
+                if (@file_put_contents(UPLOAD_DIR . '/site/' . $fn, $bin) !== false) {
+                    if (($new['app_icoon'] ?? '') !== '') foto_weg('site/' . basename($new['app_icoon']));
+                    $new['app_icoon'] = $fn;
+                }
+            } else { $upErrors[] = 'Het app-icoon kon niet worden bewaard. Probeer het opnieuw.'; }
         }
         // Foto's voor de blokken Voor en na en Over ons
         $foto = function($veld, $idx, $prefix) use (&$upErrors) {
@@ -15136,6 +15287,74 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
               <input type="file" id="logo" name="logo" accept="image/png,image/jpeg,image/webp,image/gif" />
               <div class="hint">Liefst een png met transparante achtergrond, in een lichte kleur (het logo staat op de donkere kleur). Ook gebruikt als icoontje in het browsertabblad.</div>
             </div>
+            <div class="field" id="appIcoonVeld">
+              <label>App-icoon voor op de telefoon</label>
+              <div class="hint" style="margin:0 0 10px">Je klanten kunnen je website en webshop op hun telefoon zetten, net als een app. Dat gaat zonder App Store: het is een webapp. Dit icoon zien ze dan op hun beginscherm. Maak het hier zelf. Maak je niets, dan gebruiken we je logo op je donkere hoofdkleur.</div>
+              <div class="aic">
+                <div class="aic-tel"><div class="aic-rij"><span class="aic-leeg"></span><span class="aic-leeg"></span><span class="aic-app"><canvas id="aicCanvas" width="512" height="512"></canvas><small id="aicNaamTxt"><?= h(app_naam()) ?></small></span><span class="aic-leeg"></span><span class="aic-leeg"></span></div></div>
+                <div class="aic-inst">
+                  <div class="aic-k" role="radiogroup" aria-label="Wat staat er op het icoon?">
+                    <label><input type="radio" name="aic_bron" value="logo" checked /> Mijn logo</label>
+                    <label><input type="radio" name="aic_bron" value="foto" /> Eigen afbeelding</label>
+                    <label><input type="radio" name="aic_bron" value="tekst" /> Letters</label>
+                  </div>
+                  <div id="aicFotoVak" hidden><input type="file" id="aicFoto" accept="image/png,image/jpeg,image/webp,image/svg+xml" /></div>
+                  <div id="aicTekstVak" hidden><input type="text" id="aicTekst" maxlength="3" value="<?= h(mb_strtoupper(mb_substr(st('naam'), 0, 2))) ?>" style="width:90px" /></div>
+                  <div class="aic-2"><label>Achtergrond <input type="color" id="aicKleur" value="<?= h(valid_color(st('kleur_donker'), '#0b1f3a')) ?>" /></label><label id="aicTkleurVak" hidden>Kleur letters <input type="color" id="aicTkleur" value="#ffffff" /></label></div>
+                  <label class="aic-sl">Grootte <input type="range" id="aicGrootte" min="30" max="100" value="66" /></label>
+                  <label class="aic-nm">Naam onder het icoon <input type="text" name="app_naam" id="aicNaam" maxlength="30" value="<?= h(st('app_naam')) ?>" placeholder="<?= h(cut(st('naam'), 30)) ?>" /></label>
+                  <div class="hint">Kort is beter: op een telefoon passen ongeveer 12 tekens onder een icoon.</div>
+                  <input type="hidden" name="app_icoon_data" id="aicData" value="" />
+                  <?php if (st('app_icoon') !== ''): ?><label style="font-weight:400;display:flex;gap:8px;align-items:center;margin-top:8px"><input type="checkbox" name="app_icoon_weg" value="1" /> Mijn eigen icoon weghalen (weer het logo gebruiken)</label><?php endif; ?>
+                  <p class="aic-st" id="aicStatus"><?= st('app_icoon') !== '' ? 'Je eigen icoon staat erop. Pas je hier iets aan, dan wordt het na Opslaan vervangen.' : '' ?></p>
+                </div>
+              </div>
+              <details class="aic-uitleg"><summary>Zo zetten je klanten je website op hun telefoon</summary>
+                <p><b>iPhone:</b> open je website in Safari, tik onderin op de Deel-knop (vierkantje met pijltje omhoog) en kies Zet op beginscherm.</p>
+                <p><b>Android:</b> open je website in Chrome, tik rechtsboven op de drie puntjes en kies App installeren of Toevoegen aan startscherm.</p>
+                <p>In je webshop staat deze uitleg vanzelf voor je klanten, met een knop waar dat kan.</p>
+              </details>
+            </div>
+            <style>
+              .aic{display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start}
+              .aic [hidden]{display:none!important}
+              .aic-tel{width:250px;border-radius:26px;padding:22px 16px;background:linear-gradient(160deg,#5b6b8c,#273449);flex:none}
+              .aic-rij{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+              .aic-leeg{aspect-ratio:1;border-radius:12px;background:rgba(255,255,255,.18)}
+              .aic-app{display:grid;justify-items:center;gap:4px;grid-column:span 2;grid-row:span 2}
+              .aic-app canvas{width:100%;max-width:96px;aspect-ratio:1;border-radius:22%;box-shadow:0 8px 18px -8px rgba(0,0,0,.6)}
+              .aic-app small{color:#fff;font-size:12px;max-width:110px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+              .aic-inst{flex:1;min-width:240px;display:grid;gap:10px}
+              .aic-k{display:flex;gap:14px;flex-wrap:wrap}.aic-k label,.aic-2 label,.aic-sl,.aic-nm{font-weight:500;display:flex;gap:8px;align-items:center}
+              .aic-2{display:flex;gap:18px;flex-wrap:wrap}.aic-sl input{flex:1}.aic-nm{flex-wrap:wrap}.aic-nm input{flex:1;min-width:160px}
+              .aic-st{margin:0;font-size:13px;color:#157347;min-height:1em}
+              .aic-uitleg{margin-top:12px}.aic-uitleg summary{cursor:pointer;font-weight:600}.aic-uitleg p{margin:8px 0}
+            </style>
+            <script>
+            (function(){
+              var c=document.getElementById('aicCanvas');if(!c||!c.getContext)return;
+              var x=c.getContext('2d'),logo=<?= json_encode(logo_url()) ?>,huidig=<?= json_encode(app_icoon_url(512)) ?>;
+              var bronImg=null,logoImg=null,aangeraakt=false,fotoImg=null;
+              function $(i){return document.getElementById(i);}
+              function bron(){var r=document.querySelector('input[name=aic_bron]:checked');return r?r.value:'logo';}
+              function laad(src,cb){var i=new Image();i.onload=function(){cb(i);};i.onerror=function(){cb(null);};i.src=src;}
+              function teken(){
+                var b=bron();$('aicFotoVak').hidden=b!=='foto';$('aicTekstVak').hidden=b!=='tekst';$('aicTkleurVak').hidden=b!=='tekst';
+                x.clearRect(0,0,512,512);x.fillStyle=$('aicKleur').value;x.fillRect(0,0,512,512);
+                var g=$('aicGrootte').value/100,im=b==='logo'?logoImg:(b==='foto'?fotoImg:null);
+                if(b==='tekst'){var t=($('aicTekst').value||'').trim().toUpperCase()||'?';x.fillStyle=$('aicTkleur').value;x.textAlign='center';x.textBaseline='middle';var fs=Math.round(512*g*(t.length>2?.42:(t.length>1?.55:.7)));x.font='700 '+fs+'px Poppins, Arial, sans-serif';x.fillText(t,256,272);}
+                else if(im){var v=512*g,sc=Math.min(v/im.naturalWidth,v/im.naturalHeight),w=im.naturalWidth*sc,h=im.naturalHeight*sc;x.drawImage(im,(512-w)/2,(512-h)/2,w,h);}
+                if(aangeraakt){try{$('aicData').value=c.toDataURL('image/png');$('aicStatus').textContent='Nieuw icoon klaar. Klik op Opslaan om het te bewaren.';}catch(e){$('aicData').value='';}}
+              }
+              function raak(){aangeraakt=true;teken();}
+              [].forEach.call(document.querySelectorAll('input[name=aic_bron]'),function(r){r.addEventListener('change',raak);});
+              ['aicKleur','aicTkleur','aicGrootte','aicTekst'].forEach(function(i){$(i).addEventListener('input',raak);});
+              $('aicNaam').addEventListener('input',function(){$('aicNaamTxt').textContent=this.value||this.placeholder;});
+              $('aicFoto').addEventListener('change',function(){var f=this.files[0];if(!f)return;var rd=new FileReader();rd.onload=function(){laad(rd.result,function(i){fotoImg=i;raak();});};rd.readAsDataURL(f);});
+              if(logo)laad(logo,function(i){logoImg=i;if(!huidig)teken();});
+              if(huidig){laad(huidig,function(i){if(i&&!aangeraakt){x.drawImage(i,0,0,512,512);}else teken();});}else teken();
+            })();
+            </script>
             <div class="field">
               <label>Stijl van de website</label>
               <div class="stijlen">
