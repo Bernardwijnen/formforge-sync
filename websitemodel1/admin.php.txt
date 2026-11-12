@@ -1792,32 +1792,57 @@ function app_head($path) {
     $o .= '<script>if("serviceWorker" in navigator){window.addEventListener("load",function(){navigator.serviceWorker.register("/sw.js").catch(function(){});});}</script>' . "\n";
     return $o;
 }
+/* Uitleg per toestel: iPhone, Samsung, andere Android en computer */
+function app_uitleg_stappen() {
+    $deel = '<svg class="ui" viewBox="0 0 24 24" aria-label="Deel-knop"><path d="M12 3v12M8 7l4-4 4 4"/><path d="M6 11v9h12v-9"/></svg>';
+    $punt = '<svg class="ui" viewBox="0 0 24 24" aria-label="drie puntjes"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>';
+    $stre = '<svg class="ui" viewBox="0 0 24 24" aria-label="menu"><path d="M4 7h16M4 12h16M4 17h16"/></svg>';
+    return [
+        'ios' => ['iPhone', '<ol><li>Open deze pagina in <b>Safari</b>.</li><li>Tik op de <b>Deel-knop</b> ' . $deel . '. Die staat onderin het scherm. Zie je hem niet? Tik dan eerst op de <b>drie puntjes</b> ' . $punt . '.</li><li>Tik op <b>Zet op beginscherm</b> en daarna op <b>Voeg toe</b>.</li></ol>'],
+        'sam' => ['Samsung', '<ol><li>Open deze pagina in <b>Samsung Internet</b>, de internetapp van Samsung.</li><li>Tik onderin op het <b>menu</b> ' . $stre . '.</li><li>Tik op <b>Toevoegen aan</b> (of <b>Pagina toevoegen aan</b>) en kies <b>Startscherm</b>.</li></ol><p class="ws-app-n">Gebruik je Chrome op je Samsung? Kijk dan bij Andere Android.</p>'],
+        'and' => ['Andere Android', '<ol><li>Open deze pagina in <b>Chrome</b>.</li><li>Tik rechtsboven op de <b>drie puntjes</b> ' . $punt . '.</li><li>Tik op <b>Toevoegen aan startscherm</b> of <b>App installeren</b>, en daarna op <b>Installeren</b>.</li></ol>'],
+        'pc'  => ['Computer', '<ol><li>Open deze pagina in <b>Chrome</b> of <b>Edge</b>.</li><li>Klik rechts in de adresbalk op het icoontje <b>Installeren</b>.</li><li>Klik op <b>Installeren</b>. Of open deze pagina op je telefoon.</li></ol>'],
+    ];
+}
 /* Blok in de webshop: zet de winkel op je telefoon */
 function ws_app_blok($kort = false) {
     $ic = app_icoon_url(180);
     $naam = h(app_naam());
+    $tabs = ''; $panelen = '';
+    foreach (app_uitleg_stappen() as $k => $t) {
+        $tabs .= '<button type="button" class="ws-app-tab" data-t="' . $k . '" aria-selected="false">' . $t[0] . '</button>';
+        $panelen .= '<div class="ws-app-p" data-p="' . $k . '" hidden>' . $t[1] . '</div>';
+    }
     return '<section class="ws-app abwrap" id="wsApp" hidden><div class="wrap"><div class="ws-app-in">'
         . ($ic !== '' ? '<img class="ws-app-ic" src="' . h($ic) . '" alt="" width="64" height="64" />' : '')
         . '<div class="ws-app-tk"><h2>' . ($kort ? 'Volgende keer sneller bestellen?' : 'Zet onze winkel op je telefoon') . '</h2>'
         . '<p>Dan open je ' . $naam . ' met 1 tik vanaf je beginscherm, net als een app. Zonder App Store, zonder account en zonder iets te downloaden.</p>'
         . '<button type="button" class="ws-app-knop" id="wsAppKnop" hidden>Zet op mijn telefoon</button>'
-        . '<ol class="ws-app-st" id="wsAppIos" hidden><li>Open deze pagina in <b>Safari</b>.</li><li>Tik onderin op de <b>Deel-knop</b> (het vierkantje met het pijltje omhoog).</li><li>Kies <b>Zet op beginscherm</b> en tik op <b>Voeg toe</b>.</li></ol>'
-        . '<ol class="ws-app-st" id="wsAppAnd" hidden><li>Open deze pagina in <b>Chrome</b>.</li><li>Tik rechtsboven op de <b>drie puntjes</b>.</li><li>Kies <b>App installeren</b> of <b>Toevoegen aan startscherm</b>.</li></ol>'
-        . '<p class="ws-app-pc" id="wsAppPc" hidden>Op de computer: klik in Chrome of Edge rechts in de adresbalk op het icoontje <b>Installeren</b>. Of open deze pagina op je telefoon.</p>'
+        . '<p class="ws-app-hoe">Zo doe je het. Kies je telefoon:</p>'
+        . '<div class="ws-app-tabs" role="tablist">' . $tabs . '</div>' . $panelen
+        . '<p class="ws-app-n">Daarna staat ons icoon op je beginscherm. Tik erop en de winkel opent als app.</p>'
         . '</div><button type="button" class="ws-app-x" id="wsAppX" aria-label="Sluiten">&times;</button></div></div></section>'
-        . '<style>.ws-app{padding:10px 0 34px}.ws-app-in{position:relative;display:flex;gap:18px;align-items:flex-start;background:#fff;color:#1c2330;border:1px solid rgba(0,0,0,.08);border-radius:18px;padding:20px 22px;box-shadow:0 14px 34px -22px rgba(0,0,0,.35)}'
-        . '.ws-app-ic{width:64px;height:64px;border-radius:15px;flex:none;box-shadow:0 6px 16px -8px rgba(0,0,0,.5)}.ws-app h2{margin:0 0 6px;font-size:20px}.ws-app p{margin:0 0 10px;opacity:.85}'
-        . '.ws-app-knop{font:inherit;font-weight:700;border:0;border-radius:999px;padding:11px 20px;cursor:pointer;background:var(--ws-acc,var(--blue,#1d4ed8));color:#fff}'
-        . '.ws-app-st{margin:4px 0 0;padding-left:20px}.ws-app-st li{margin:0 0 4px}.ws-app-x{position:absolute;right:10px;top:8px;border:0;background:none;font-size:24px;line-height:1;cursor:pointer;opacity:.5;color:#1c2330}'
+        . '<style>.ws-app{padding:10px 0 34px}.ws-app-in{position:relative;display:flex;gap:18px;align-items:flex-start;background:#fff;color:#1c2330;border:1px solid rgba(0,0,0,.08);border-radius:18px;padding:22px 24px;box-shadow:0 14px 34px -22px rgba(0,0,0,.35)}'
+        . '.ws-app-tk{flex:1;min-width:0}.ws-app-ic{width:64px;height:64px;border-radius:15px;flex:none;box-shadow:0 6px 16px -8px rgba(0,0,0,.5)}.ws-app h2{margin:0 0 6px;font-size:21px;color:#1c2330}.ws-app p{margin:0 0 12px;color:#3c4659}'
+        . '.ws-app-knop{font:inherit;font-weight:700;border:0;border-radius:999px;padding:12px 22px;cursor:pointer;background:var(--ws-acc,var(--blue,#1d4ed8));color:#fff;margin:0 0 14px}'
+        . '.ws-app-hoe{font-weight:700;color:#1c2330!important;margin:4px 0 8px!important}'
+        . '.ws-app-tabs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}.ws-app-tab{font:inherit;font-size:15px;font-weight:600;border:1px solid #d5dbe6;background:#fff;color:#1c2330;border-radius:999px;padding:8px 14px;cursor:pointer}@media (max-width:560px){.ws-app-tab{font-size:14px;padding:7px 11px}}'
+        . '.ws-app-tab[aria-selected=true]{background:#1c2330;color:#fff;border-color:#1c2330}'
+        . '.ws-app-p{background:#f4f6fa;border-radius:14px;padding:14px 16px 6px;margin:0 0 12px}.ws-app-p ol{margin:0;padding-left:22px}.ws-app-p li{margin:0 0 10px;line-height:1.55}'
+        . '.ws-app .ui{width:22px;height:22px;vertical-align:-5px;fill:none;stroke:#1d4ed8;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;background:#fff;border-radius:6px;padding:2px;box-shadow:0 0 0 1px #d5dbe6}.ws-app .ui circle{fill:#1d4ed8;stroke:none}'
+        . '.ws-app-n{font-size:14px;opacity:.85}.ws-app-x{position:absolute;right:10px;top:8px;border:0;background:none;font-size:26px;line-height:1;cursor:pointer;opacity:.5;color:#1c2330}'
         . '@media (max-width:560px){.ws-app-in{flex-direction:column;padding:18px}.ws-app-ic{width:56px;height:56px}}</style>'
         . '<script>(function(){var b=document.getElementById("wsApp");if(!b)return;'
         . 'var st=(window.matchMedia&&matchMedia("(display-mode: standalone)").matches)||navigator.standalone;'
         . 'try{if(st||localStorage.getItem("ffAppWeg")==="1")return;}catch(e){if(st)return;}'
-        . 'var ua=navigator.userAgent,ios=/iphone|ipad|ipod/i.test(ua)||(/macintosh/i.test(ua)&&navigator.maxTouchPoints>1),and=/android/i.test(ua);'
+        . 'var ua=navigator.userAgent,t="pc";'
+        . 'if(/iphone|ipad|ipod/i.test(ua)||(/macintosh/i.test(ua)&&navigator.maxTouchPoints>1))t="ios";else if(/samsungbrowser/i.test(ua))t="sam";else if(/android/i.test(ua))t="and";'
+        . 'var tabs=b.querySelectorAll(".ws-app-tab"),ps=b.querySelectorAll(".ws-app-p");'
+        . 'function kies(k){for(var i=0;i<tabs.length;i++)tabs[i].setAttribute("aria-selected",tabs[i].getAttribute("data-t")===k);for(var j=0;j<ps.length;j++)ps[j].hidden=ps[j].getAttribute("data-p")!==k;}'
+        . 'for(var i=0;i<tabs.length;i++)tabs[i].addEventListener("click",function(){kies(this.getAttribute("data-t"));});'
+        . 'kies(t);b.hidden=false;'
         . 'var k=document.getElementById("wsAppKnop"),pr=null;'
-        . 'function toon(id){var e=document.getElementById(id);if(e)e.hidden=false;}'
-        . 'if(ios)toon("wsAppIos");else if(and)toon("wsAppAnd");else toon("wsAppPc");b.hidden=false;'
-        . 'window.addEventListener("beforeinstallprompt",function(e){e.preventDefault();pr=e;k.hidden=false;["wsAppAnd","wsAppPc"].forEach(function(i){var x=document.getElementById(i);if(x)x.hidden=true;});});'
+        . 'window.addEventListener("beforeinstallprompt",function(e){e.preventDefault();pr=e;k.hidden=false;});'
         . 'k.addEventListener("click",function(){if(!pr)return;pr.prompt();pr.userChoice.then(function(c){if(c&&c.outcome==="accepted")b.hidden=true;pr=null;});});'
         . 'window.addEventListener("appinstalled",function(){b.hidden=true;});'
         . 'document.getElementById("wsAppX").addEventListener("click",function(){b.hidden=true;try{localStorage.setItem("ffAppWeg","1");}catch(e){}});'
@@ -14061,7 +14086,7 @@ function venturo_html() {
 <div class="vt-v"><h5>Hoe haal ik een dienst weg?</h5><p>Maak de naam van de dienst leeg en klik op Opslaan en website bijwerken. Een dienst zonder naam staat niet op je website.</p></div>
 <div class="vt-v"><h5>Kan ik een nieuwe pagina toevoegen?</h5><p>Elke dienst en elk project krijgt vanzelf een eigen pagina. Een helemaal losse pagina maken kan niet in de beheerpagina. Met een servicepakket of Titanium kunnen wij dat op offerte voor je doen.</p></div>
 <div class="vt-v"><h5>Hoe maak ik een app-icoon voor op de telefoon?</h5><p>Ga naar Instellingen, bij Uiterlijk staat App-icoon voor op de telefoon. Kies Mijn logo, Eigen afbeelding of Letters, kies een achtergrondkleur en de grootte, en vul de naam in die onder het icoon komt. Je ziet meteen hoe het eruitziet. Klik op Opslaan. Maak je niets, dan gebruiken we je logo op je donkere hoofdkleur.</p></div>
-<div class="vt-v"><h5>Hoe zetten mijn klanten mijn website op hun telefoon?</h5><p>Op een iPhone openen ze je website in Safari, tikken op de Deel-knop en kiezen Zet op beginscherm. Op Android openen ze je website in Chrome, tikken op de drie puntjes en kiezen App installeren of Toevoegen aan startscherm. In je webshop staat deze uitleg vanzelf voor je klanten. Een app store is niet nodig.</p></div>
+<div class="vt-v"><h5>Hoe zetten mijn klanten mijn website op hun telefoon?</h5><p>Op een iPhone openen ze je website in Safari, tikken op de Deel-knop en kiezen Zet op beginscherm. Op een Samsung met Samsung Internet tikken ze onderin op het menu, kiezen Toevoegen aan en dan Startscherm. Op andere Android-telefoons openen ze je website in Chrome, tikken op de drie puntjes en kiezen App installeren of Toevoegen aan startscherm. In je webshop staat deze uitleg vanzelf voor je klanten. Een app store is niet nodig.</p></div>
 </div>
 <div class="vt-o"><h4>Het uiterlijk van je website</h4>
 <div class="vt-v"><h5>Hoe zet ik mijn logo op mijn website?</h5><p>In Instellingen, tabblad Uiterlijk, bij Logo. Kies liefst een png met een doorzichtige achtergrond, in een lichte kleur, want het logo staat op de donkere kleur van je website. Maximaal 8 MB.</p></div>
@@ -14339,7 +14364,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-11-12-webapp');
+define('SITE_BOUW', '2026-11-12-appuitleg');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -15310,8 +15335,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
                 </div>
               </div>
               <details class="aic-uitleg"><summary>Zo zetten je klanten je website op hun telefoon</summary>
-                <p><b>iPhone:</b> open je website in Safari, tik onderin op de Deel-knop (vierkantje met pijltje omhoog) en kies Zet op beginscherm.</p>
-                <p><b>Android:</b> open je website in Chrome, tik rechtsboven op de drie puntjes en kies App installeren of Toevoegen aan startscherm.</p>
+                <?php foreach (app_uitleg_stappen() as $t): if ($t[0] === 'Computer') continue; ?><div class="aic-u"><b><?= $t[0] ?></b><?= str_replace('deze pagina', 'je website', $t[1]) ?></div><?php endforeach; ?>
                 <p>In je webshop staat deze uitleg vanzelf voor je klanten, met een knop waar dat kan.</p>
               </details>
             </div>
@@ -15329,6 +15353,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
               .aic-2{display:flex;gap:18px;flex-wrap:wrap}.aic-sl input{flex:1}.aic-nm{flex-wrap:wrap}.aic-nm input{flex:1;min-width:160px}
               .aic-st{margin:0;font-size:13px;color:#157347;min-height:1em}
               .aic-uitleg{margin-top:12px}.aic-uitleg summary{cursor:pointer;font-weight:600}.aic-uitleg p{margin:8px 0}
+              .aic-u{margin:10px 0}.aic-u ol{margin:4px 0 0;padding-left:22px}.aic-u li{margin:0 0 4px}.aic-u .ui{width:20px;height:20px;vertical-align:-5px;fill:none;stroke:#1d4ed8;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.aic-u .ui circle{fill:#1d4ed8;stroke:none}.aic-u .ws-app-n{font-size:13px;margin:4px 0}
             </style>
             <script>
             (function(){
