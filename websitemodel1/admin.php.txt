@@ -3421,6 +3421,100 @@ function res_kortste($in) {
     if ($in['soort'] !== 'afspraak' || !$in['diensten']) return max(5, (int)$in['duur']);
     return min(array_map(function($d) { return (int)$d['duur']; }, $in['diensten']));
 }
+/* ---------- SumUp: pinbetalingen ophalen (eigen account van de ondernemer) ---------- */
+define('SUMUP_FILE', DATA_DIR . '/sumup.json');
+function sumup_inst() { $x = read_json(SUMUP_FILE, []); return ['key' => (string)($x['key'] ?? ''), 'code' => (string)($x['code'] ?? ''), 'getest' => (string)($x['getest'] ?? '')]; }
+function sumup_aan() { if (!empty($GLOBALS['is_demo'])) return false; $s = sumup_inst(); return $s['key'] !== '' && $s['code'] !== ''; }
+function sumup_api($pad, $s = null) {
+    $s = $s ?: sumup_inst();
+    $basis = getenv('FF_SUMUP_URL') ?: 'https://api.sumup.com';
+    if (!function_exists('curl_init')) return [0, null];
+    $ch = curl_init($basis . $pad);
+    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 15, CURLOPT_CONNECTTIMEOUT => 6, CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $s['key'], 'Accept: application/json']]);
+    $r = curl_exec($ch); $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE); curl_close($ch);
+    $j = is_string($r) ? json_decode($r, true) : null;
+    return [$code, is_array($j) ? $j : null];
+}
+function sumup_fout($code) {
+    if ($code === 401) return 'SumUp herkent de sleutel niet. Kijk of je hem helemaal hebt gekopieerd, of maak een nieuwe aan.';
+    if ($code === 403) return 'Deze sleutel mag je betalingen niet bekijken. Maak bij SumUp een nieuwe geheime sleutel aan.';
+    if ($code === 404) return 'SumUp kent deze verkopercode niet. Je vindt hem bij SumUp onder Instellingen, onder je bedrijfsnaam.';
+    if ($code === 0) return 'Er is geen verbinding met SumUp. Probeer het straks nog eens.';
+    return 'SumUp gaf een foutmelding (code ' . $code . '). Probeer het straks nog eens.';
+}
+/* Alle gelukte betalingen van 1 dag, in centen en lokale tijd */
+function sumup_dag($dag) {
+    static $cache = [];
+    if (isset($cache[$dag])) return $cache[$dag];
+    $s = sumup_inst();
+    $tz = new DateTimeZone(date_default_timezone_get());
+    $van = new DateTime($dag . ' 00:00:00', $tz); $tot = (clone $van)->modify('+1 day');
+    $q = http_build_query(['oldest_time' => $van->format('c'), 'newest_time' => $tot->format('c'), 'limit' => 100, 'order' => 'ascending']) . '&' . rawurlencode('statuses[]') . '=SUCCESSFUL';
+    list($c, $j) = sumup_api('/v2.1/merchants/' . rawurlencode($s['code']) . '/transactions/history?' . $q, $s);
+    if ($c !== 200 || !is_array($j)) return $cache[$dag] = ['fout' => sumup_fout($c), 'items' => []];
+    $uit = [];
+    foreach ((array)($j['items'] ?? []) as $t) {
+        if (!is_array($t)) continue;
+        if (strtoupper((string)($t['status'] ?? '')) !== 'SUCCESSFUL') continue;
+        $soort = strtoupper((string)($t['type'] ?? 'PAYMENT'));
+        if ($soort !== '' && $soort !== 'PAYMENT') continue;
+        $code = (string)($t['transaction_code'] ?? ($t['id'] ?? ''));
+        $ts = strtotime((string)($t['timestamp'] ?? ''));
+        if ($code === '' || !$ts) continue;
+        $bedrag = (int)round((float)($t['amount'] ?? 0) * 100) - (int)round((float)($t['refunded_amount'] ?? 0) * 100);
+        if ($bedrag <= 0) continue;
+        $contant = stripos((string)($t['payment_type'] ?? ''), 'cash') !== false;
+        $uit[] = ['code' => preg_replace('/[^A-Za-z0-9_-]/', '', $code), 'bedrag' => $bedrag, 'ts' => $ts, 'tijd' => date('H:i', $ts), 'dag' => date('Y-m-d', $ts), 'wijze' => $contant ? 'contant' : 'pin', 'kaart' => cut((string)($t['card_type'] ?? ''), 20)];
+    }
+    return $cache[$dag] = ['fout' => '', 'items' => array_values(array_filter($uit, function($x) use ($dag) { return $x['dag'] === $dag; }))];
+}
+/* SumUp-betalingen die al zijn geboekt (bij een afspraak of als losse betaling) */
+function sumup_gebruikt() {
+    $u = [];
+    foreach (res_lijst() as $r) { if (!empty($r['afgerekend']['sumup'])) $u[(string)$r['afgerekend']['sumup']] = 1; }
+    foreach (adm_docs() as $d) { if (!empty($d['sumup'])) $u[(string)$d['sumup']] = 1; }
+    return $u;
+}
+/* Koppel betalingen aan afspraken: eerst zelfde bedrag rond de afspraaktijd, daarna elk bedrag rond die tijd */
+function sumup_koppel($open, $items) {
+    $vrij = $items; $match = [];
+    foreach ([true, false] as $exact) {
+        foreach ($open as $r) {
+            if (isset($match[$r['id']])) continue;
+            $start = strtotime($r['dag'] . ' ' . $r['tijd']); $eind = $start + max(5, (int)($r['duur'] ?? 30)) * 60;
+            $best = null; $bd = PHP_INT_MAX;
+            foreach ($vrij as $k => $t) {
+                if ($t['ts'] < $start - 20 * 60 || $t['ts'] > $eind + 120 * 60) continue;
+                if ($exact && $t['bedrag'] !== (int)($r['prijs'] ?? 0)) continue;
+                $d = abs($t['ts'] - $eind);
+                if ($d < $bd) { $bd = $d; $best = $k; }
+            }
+            if ($best !== null) { $match[$r['id']] = $vrij[$best]; unset($vrij[$best]); }
+        }
+    }
+    return [$match, array_values($vrij)];
+}
+/* Een losse betaling (zonder afspraak) als omzet boeken */
+function kassa_los($bedrag, $wijze, $oms, $dag, $sumup = '') {
+    $wijzen = ['pin' => 'pin', 'contant' => 'contant', 'anders' => 'overig'];
+    if (!isset($wijzen[$wijze])) $wijze = 'pin';
+    if ($bedrag <= 0) return 0;
+    $ainst = adm_inst();
+    $kor = !empty($ainst['kor']); $pct = $kor ? 0 : (int)$ainst['btw'];
+    $ex = $pct > 0 ? (int)round($bedrag * 100 / (100 + $pct)) : $bedrag;
+    $kl = adm_klanten(); $ki = null;
+    foreach ($kl as $n => $k) { if (($k['naam'] ?? '') === 'Losse klanten') { $ki = $n; break; } }
+    if ($ki === null) { $kl[] = ['id' => adm_id('k'), 'naam' => 'Losse klanten', 'contact' => '', 'email' => '', 'tel' => '', 'straat' => '', 'postcode' => '', 'plaats' => '', 'kvk' => '', 'btw' => '', 'notitie' => 'Voor betalingen zonder afspraak.']; adm_save_klanten($kl); $ki = count($kl) - 1; }
+    $k = $kl[$ki];
+    $nr = adm_volgnummer($ainst, 'factuur'); write_json(ADM_INST, $ainst);
+    $d = ['id' => adm_id('d'), 'soort' => 'factuur', 'kassa' => true, 'betaalwijze' => $wijzen[$wijze], 'nummer' => $nr, 'status' => 'betaald', 'credit' => false, 'van' => '', 'token' => bin2hex(random_bytes(12)),
+          'betaald_op' => $dag, 'verstuurd_op' => '', 'akkoord_op' => '', 'aangemaakt' => date('Y-m-d H:i'), 'klant_id' => $k['id'], 'klant' => adm_snap($k),
+          'datum' => $dag, 'leverdatum' => $dag, 'termijn' => 0, 'geldig_tot' => '', 'onderwerp' => '', 'opmerking' => 'Betaald met ' . $wijzen[$wijze] . '.', 'kor' => $kor, 'pdf' => '',
+          'regels' => [['oms' => $oms, 'aantal' => 1, 'eenheid' => 'stuk', 'prijs' => $ex, 'btw' => $pct]], 'vast' => ['excl' => $ex, 'pct' => $pct, 'btw' => $bedrag - $ex]];
+    if ($sumup !== '') $d['sumup'] = $sumup;
+    $docs = adm_docs(); array_unshift($docs, $d); adm_save_docs($docs);
+    return $bedrag;
+}
 /* Online annuleren: tot het begin van de afspraak, of tot een vast aantal uren van tevoren */
 function res_annuleer_kan($in, $r) {
     $start = strtotime(($r['dag'] ?? '') . ' ' . ($r['tijd'] ?? ''));
@@ -3444,7 +3538,7 @@ function res_verwacht() {
     return $uit;
 }
 /* Een afspraak afrekenen: wordt een betaalde kassabon (omzet) in de administratie */
-function res_afreken($id, $hoofd, $wijze, $eo = '', $eb = 0) {
+function res_afreken($id, $hoofd, $wijze, $eo = '', $eb = 0, $sumup = '') {
     $in = res_inst(); $lijst = res_lijst(); $r = null;
     foreach ($lijst as $x) { if (($x['id'] ?? '') === $id) { $r = $x; break; } }
     if (!$r) return [false, 'Deze afspraak bestaat niet meer.', 0];
@@ -3475,7 +3569,7 @@ function res_afreken($id, $hoofd, $wijze, $eo = '', $eb = 0) {
     $d['vast'] = ['excl' => $exTot, 'pct' => $pct, 'btw' => $inclTot - $exTot];
     $docs = adm_docs(); array_unshift($docs, $d); adm_save_docs($docs);
     $tot = adm_tot($d)['incl'];
-    res_slot(function() use ($id, $d, $tot, $wijzen, $wijze) { $l = res_lijst(); foreach ($l as $n => $x) { if (($x['id'] ?? '') === $id) { $l[$n]['factuur_id'] = $d['id']; $l[$n]['afgerekend'] = ['bedrag' => $tot, 'wijze' => $wijzen[$wijze], 'op' => date('Y-m-d H:i')]; unset($l[$n]['nietgekomen']); } } res_bewaar($l); });
+    res_slot(function() use ($id, $d, $tot, $wijzen, $wijze, $sumup) { $l = res_lijst(); foreach ($l as $n => $x) { if (($x['id'] ?? '') === $id) { $l[$n]['factuur_id'] = $d['id']; $l[$n]['afgerekend'] = ['bedrag' => $tot, 'wijze' => $wijzen[$wijze], 'op' => date('Y-m-d H:i')] + ($sumup !== '' ? ['sumup' => $sumup] : []); unset($l[$n]['nietgekomen']); } } res_bewaar($l); });
     return [true, '', $tot, $r];
 }
 function res_woord($in) { return $in['soort'] === 'afspraak' ? 'afspraak' : 'reservering'; }
@@ -4033,24 +4127,54 @@ function res_acties($action) {
     }
     if ($action === 'res_dag_afsluiten') {
         $dag = preg_match('/^\d{4}-\d\d-\d\d$/', (string)($_POST['dag'] ?? '')) ? (string)$_POST['dag'] : date('Y-m-d');
-        $keuze = (array)($_POST['afs'] ?? []); $bedragen = (array)($_POST['afs_bedrag'] ?? []);
+        $keuze = (array)($_POST['afs'] ?? []); $bedragen = (array)($_POST['afs_bedrag'] ?? []); $sucodes = (array)($_POST['afs_sumup'] ?? []);
         $n = 0; $tot = 0; $niet = 0; $per = ['pin' => 0, 'contant' => 0, 'anders' => 0]; $fout = [];
+        $gebruikt = sumup_gebruikt(); $schoon = function($c) { return preg_replace('/[^A-Za-z0-9_-]/', '', (string)$c); };
         foreach ($keuze as $id => $k) {
             $id = (string)$id; $k = (string)$k;
             if ($k === 'niet') {
                 res_slot(function() use ($id) { $l = res_lijst(); foreach ($l as $q => $x) { if (($x['id'] ?? '') === $id && empty($x['factuur_id'])) $l[$q]['nietgekomen'] = date('Y-m-d H:i'); } res_bewaar($l); });
                 $niet++;
             } elseif (isset($per[$k])) {
-                $uit = res_afreken($id, adm_cent($bedragen[$id] ?? ''), $k);
+                $suc = $schoon($sucodes[$id] ?? ''); if ($suc !== '' && isset($gebruikt[$suc])) $suc = '';
+                $uit = res_afreken($id, adm_cent($bedragen[$id] ?? ''), $k, '', 0, $suc);
+                if ($uit[0] && $suc !== '') $gebruikt[$suc] = 1;
                 if ($uit[0]) { $n++; $tot += $uit[2]; $per[$k] += $uit[2]; } else { $fout[] = $uit[1]; }
             }
         }
+        $los = 0; $losTot = 0;
+        foreach ((array)($_POST['los'] ?? []) as $c => $aan) {
+            $c = $schoon($c); if ($c === '' || isset($gebruikt[$c]) || empty($aan)) continue;
+            $b = (int)($_POST['los_bedrag'][$c] ?? 0); $w = (($_POST['los_wijze'][$c] ?? '') === 'contant') ? 'contant' : 'pin';
+            $t = preg_match('/^\d\d:\d\d$/', (string)($_POST['los_tijd'][$c] ?? '')) ? $_POST['los_tijd'][$c] : '';
+            $b = kassa_los($b, $w, 'Betaling zonder afspraak' . ($t !== '' ? ' om ' . $t : '') . ' (SumUp)', $dag, $c);
+            if ($b > 0) { $los++; $losTot += $b; $gebruikt[$c] = 1; }
+        }
         $m = [];
+        if ($los) { $m[] = $los . ($los === 1 ? ' betaling zonder afspraak geboekt: ' : ' betalingen zonder afspraak geboekt: ') . adm_eur($losTot) . '.'; }
         if ($n) { $d = []; foreach (['pin' => 'pin', 'contant' => 'contant', 'anders' => 'overig'] as $w => $wn) { if ($per[$w] > 0) $d[] = adm_eur($per[$w]) . ' ' . $wn; } $m[] = $n . ($n === 1 ? ' afspraak afgerekend' : ' afspraken afgerekend') . ': ' . adm_eur($tot) . ' (' . implode(', ', $d) . '). Het staat als omzet in je administratie.'; }
         if ($niet) { $m[] = $niet . ($niet === 1 ? ' klant is niet gekomen.' : ' klanten zijn niet gekomen.'); }
         if ($fout) { $m[] = implode(' ', array_unique($fout)); }
         $_SESSION['ff_notice'] = $m ? implode(' ', $m) : 'Er was niets aangevinkt.';
         header('Location: admin.php?reserveren=1&afsluiten=' . rawurlencode($dag) . '#dagafsluiten'); exit;
+    }
+    if ($action === 'res_sumup_opslaan' || $action === 'res_sumup_weg') {
+        if ($action === 'res_sumup_weg') { @unlink(SUMUP_FILE); $_SESSION['ff_notice'] = 'De koppeling met SumUp is weggehaald. Haal de sleutel bij SumUp ook weg als je hem nergens anders gebruikt.'; header('Location: admin.php?reserveren=1#sumup'); exit; }
+        $oud = sumup_inst();
+        $key = trim((string)($_POST['su_key'] ?? '')); $code = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', (string)($_POST['su_code'] ?? '')));
+        if ($key === '') $key = $oud['key'];
+        if ($key === '' || $code === '') { $_SESSION['ff_notice'] = 'Vul je verkopercode en je sleutel van SumUp in.'; header('Location: admin.php?reserveren=1#sumup'); exit; }
+        $s = ['key' => cut($key, 300), 'code' => cut($code, 20), 'getest' => ''];
+        list($c, $j) = sumup_api('/v2.1/merchants/' . rawurlencode($s['code']) . '/transactions/history?limit=1&order=descending', $s);
+        if ($c === 200) {
+            $s['getest'] = date('Y-m-d H:i');
+            write_json(SUMUP_FILE, $s);
+            $laatst = is_array($j['items'][0] ?? null) ? $j['items'][0] : null;
+            $_SESSION['ff_notice'] = 'Gelukt, SumUp is gekoppeld.' . ($laatst ? ' Je laatste betaling: ' . adm_eur((int)round((float)($laatst['amount'] ?? 0) * 100)) . ' op ' . date('j-n-Y \o\m H:i', strtotime((string)($laatst['timestamp'] ?? 'now'))) . '.' : '') . ' Bij Dag afsluiten worden je pinbetalingen nu vanzelf aangevinkt.';
+        } else {
+            $_SESSION['ff_notice'] = 'Het koppelen lukte niet. ' . sumup_fout($c) . ($oud['key'] !== '' ? ' Je oude koppeling is bewaard.' : '');
+        }
+        header('Location: admin.php?reserveren=1#sumup'); exit;
     }
     if ($action === 'res_niet_terug') {
         $id = (string)($_POST['id'] ?? '');
@@ -4139,6 +4263,14 @@ function res_beheer_view() {
       $afsOpen = array_filter($afs, 'res_open_afreken');
       $rv = res_verwacht();
       $klaarTot = 0; foreach ($afs as $r) { if (!empty($r['afgerekend'])) $klaarTot += (int)$r['afgerekend']['bedrag']; }
+      $suAan = sumup_aan(); $suFout = ''; $suMatch = []; $suRest = [];
+      if ($suAan && $afsDag <= $vandaag) {
+          $sd = sumup_dag($afsDag); $suFout = $sd['fout'];
+          $gb = sumup_gebruikt(); $vrijSu = array_values(array_filter($sd['items'], function($t) use ($gb) { return !isset($gb[$t['code']]); }));
+          $openL = array_values($afsOpen); usort($openL, function($a, $b) { return strcmp((string)$a['tijd'], (string)$b['tijd']); });
+          list($suMatch, $suRest) = sumup_koppel($openL, $vrijSu);
+      }
+      $teDoen = $afsOpen || $suRest;
     ?>
     <div class="formcard" id="dagafsluiten">
       <h2>Dag afsluiten</h2>
@@ -4152,13 +4284,15 @@ function res_beheer_view() {
       <?php if ($rv['openN'] > 0 && !($rv['openDag'] === $afsDag)): ?>
         <div class="da-let">Er <?= $rv['openN'] === 1 ? 'staat nog 1 afspraak' : 'staan nog ' . $rv['openN'] . ' afspraken' ?> van eerdere dagen open<?= $rv['open'] > 0 ? ', samen ' . h(adm_eur($rv['open'])) : '' ?>. <a href="admin.php?reserveren=1&amp;afsluiten=<?= h($rv['openDag']) ?>#dagafsluiten">Afsluiten vanaf <?= h(res_datum_tekst($rv['openDag'])) ?></a></div>
       <?php endif; ?>
+      <?php if ($suFout !== ''): ?><div class="da-let">De pinbetalingen van SumUp konden niet worden opgehaald. <?= h($suFout) ?> Je kunt de dag gewoon met de hand afsluiten.</div><?php endif; ?>
+      <?php if (!$suAan && empty($GLOBALS['is_demo'])): ?><p class="hint" style="margin:0 0 10px">Pin je met SumUp? <a href="#sumup">Koppel je pinautomaat</a>, dan worden je pinbetalingen hier vanzelf aangevinkt.</p><?php elseif ($suAan && $suFout === ''): ?><p class="hint" style="margin:0 0 10px">SumUp is gekoppeld. Pinbetalingen die bij een afspraak horen, staan al aangevinkt. Kijk even of het klopt.</p><?php endif; ?>
       <h3 class="da-h"><?= h(ucfirst(res_datum_tekst($afsDag))) ?></h3>
-      <?php if (!$afs): ?>
+      <?php if (!$afs && !$suRest): ?>
         <p class="hint" style="margin:0">Op deze dag staan geen <?= h($Wn) ?>.</p>
       <?php else: ?>
         <form method="post" id="daForm">
           <input type="hidden" name="action" value="res_dag_afsluiten" /><input type="hidden" name="dag" value="<?= h($afsDag) ?>" />
-          <?php if ($afsOpen): ?><div class="da-snel"><span>Snel invullen:</span><button type="button" class="btn ghost sm" data-alles="pin">Iedereen pin</button><button type="button" class="btn ghost sm" data-alles="contant">Iedereen contant</button><button type="button" class="btn ghost sm" data-alles="">Wissen</button></div><?php endif; ?>
+          <?php if ($afsOpen && !$suMatch): ?><div class="da-snel"><span>Snel invullen:</span><button type="button" class="btn ghost sm" data-alles="pin">Iedereen pin</button><button type="button" class="btn ghost sm" data-alles="contant">Iedereen contant</button><button type="button" class="btn ghost sm" data-alles="">Wissen</button></div><?php endif; ?>
           <div class="da-lijst">
           <?php foreach ($afs as $r): $rid = (string)$r['id']; ?>
             <?php if (!empty($r['factuur_id'])): ?>
@@ -4166,25 +4300,36 @@ function res_beheer_view() {
             <?php elseif (!empty($r['nietgekomen'])): ?>
               <div class="da-r niet"><div class="da-t"><?= h(res_tt($r['tijd'])) ?></div><div class="da-n"><b><?= h($r['naam']) ?></b><span><?= h((string)($r['dienst'] ?? '')) ?></span></div><div class="da-s">Niet gekomen <button type="submit" class="btn ghost sm" form="daNiet<?= h($rid) ?>">Terugzetten</button></div></div>
             <?php else: ?>
-              <?php $later = strtotime($r['dag'] . ' ' . $r['tijd']) > time(); ?>
-              <div class="da-r open<?= $later ? ' later' : '' ?>">
+              <?php $later = strtotime($r['dag'] . ' ' . $r['tijd']) > time(); $sm = $suMatch[$rid] ?? null; $bedr = $sm ? $sm['bedrag'] : (int)($r['prijs'] ?? 0); ?>
+              <div class="da-r open<?= $later ? ' later' : '' ?><?= $sm ? ' su' : '' ?>">
                 <div class="da-t"><?= h(res_tt($r['tijd'])) ?></div>
-                <div class="da-n"><b><?= h($r['naam']) ?></b><span><?= h((string)($r['dienst'] ?? '')) ?><?= $later ? ' &middot; <em>nog niet geweest</em>' : '' ?></span></div>
-                <label class="da-b"><span>&euro;</span><input type="text" inputmode="decimal" name="afs_bedrag[<?= h($rid) ?>]" value="<?= (int)($r['prijs'] ?? 0) > 0 ? h(number_format($r['prijs'] / 100, 2, ',', '')) : '' ?>" placeholder="0,00" aria-label="Bedrag van <?= h($r['naam']) ?>" /></label>
+                <div class="da-n"><b><?= h($r['naam']) ?></b><span><?= h((string)($r['dienst'] ?? '')) ?><?= $later && !$sm ? ' &middot; <em>nog niet geweest</em>' : '' ?><?= $sm ? ' &middot; <i class="da-su">SumUp ' . h(res_tt($sm['tijd'])) . ($sm['bedrag'] !== (int)($r['prijs'] ?? 0) ? ', ander bedrag' : '') . '</i>' : '' ?></span></div>
+                <?php if ($sm): ?><input type="hidden" name="afs_sumup[<?= h($rid) ?>]" value="<?= h($sm['code']) ?>" /><?php endif; ?>
+                <label class="da-b"><span>&euro;</span><input type="text" inputmode="decimal" name="afs_bedrag[<?= h($rid) ?>]" value="<?= $bedr > 0 ? h(number_format($bedr / 100, 2, ',', '')) : '' ?>" placeholder="0,00" aria-label="Bedrag van <?= h($r['naam']) ?>" /></label>
                 <div class="da-k" role="radiogroup" aria-label="Hoe betaald door <?= h($r['naam']) ?>">
-                  <label><input type="radio" name="afs[<?= h($rid) ?>]" value="pin" /><span>Pin</span></label>
-                  <label><input type="radio" name="afs[<?= h($rid) ?>]" value="contant" /><span>Contant</span></label>
+                  <label><input type="radio" name="afs[<?= h($rid) ?>]" value="pin"<?= $sm && $sm['wijze'] === 'pin' ? ' checked' : '' ?> /><span>Pin</span></label>
+                  <label><input type="radio" name="afs[<?= h($rid) ?>]" value="contant"<?= $sm && $sm['wijze'] === 'contant' ? ' checked' : '' ?> /><span>Contant</span></label>
                   <label class="nk"><input type="radio" name="afs[<?= h($rid) ?>]" value="niet" /><span>Niet gekomen</span></label>
                 </div>
               </div>
             <?php endif; ?>
           <?php endforeach; ?>
           </div>
-          <?php if ($afsOpen): ?>
+          <?php if ($suRest): ?>
+            <div class="da-los">
+              <h4>Pinbetalingen zonder afspraak</h4>
+              <p class="hint" style="margin:0 0 8px">Deze betalingen staan bij SumUp, maar horen niet bij een afspraak. Bijvoorbeeld iemand die zonder afspraak binnenliep, of een potje wax. Vink aan wat als omzet in je administratie moet.</p>
+              <?php foreach ($suRest as $t): ?>
+                <label class="da-lr"><input type="checkbox" name="los[<?= h($t['code']) ?>]" value="1" data-bedrag="<?= (int)$t['bedrag'] ?>" data-wijze="<?= h($t['wijze']) ?>" /><span class="da-t"><?= h(res_tt($t['tijd'])) ?></span><span class="da-ln"><?= $t['wijze'] === 'contant' ? 'Contant' : 'Pin' ?><?= $t['kaart'] !== '' ? ' &middot; ' . h(ucfirst(strtolower($t['kaart']))) : '' ?></span><b><?= h(adm_eur($t['bedrag'])) ?></b>
+                  <input type="hidden" name="los_bedrag[<?= h($t['code']) ?>]" value="<?= (int)$t['bedrag'] ?>" /><input type="hidden" name="los_wijze[<?= h($t['code']) ?>]" value="<?= h($t['wijze']) ?>" /><input type="hidden" name="los_tijd[<?= h($t['code']) ?>]" value="<?= h($t['tijd']) ?>" /></label>
+              <?php endforeach; ?>
+            </div>
+          <?php endif; ?>
+          <?php if ($teDoen): ?>
             <div class="da-voet"><div id="daTot">Aangevinkt: <b>&euro; 0,00</b></div><button class="btn" type="submit">Dag afsluiten</button></div>
             <p class="hint" style="margin:8px 0 0">Wat je niet aanvinkt, blijft open staan. Dat kun je later nog afsluiten. Afspraken die nog niet geweest zijn, slaat Iedereen pin of contant over. Bedragen zijn inclusief btw.</p>
           <?php else: ?>
-            <div class="da-klaar">Deze dag is afgesloten<?= $klaarTot > 0 ? ': ' . h(adm_eur($klaarTot)) . ' omzet' : '' ?>.</div>
+            <div class="da-klaar"><?= $afs ? 'Deze dag is afgesloten' : 'Alles is geboekt' ?><?= $klaarTot > 0 ? ': ' . h(adm_eur($klaarTot)) . ' omzet' : '' ?>.</div>
           <?php endif; ?>
         </form>
         <?php foreach ($afs as $r): if (empty($r['nietgekomen']) || !empty($r['factuur_id'])) continue; ?>
@@ -4210,6 +4355,10 @@ function res_beheer_view() {
         .da-k .nk input:checked + span{background:#b4234a;border-color:#b4234a;}
         .da-k input:focus-visible + span{outline:3px solid #93b4ff;outline-offset:2px;}
         .da-voet{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:14px;padding-top:12px;border-top:1px solid #dfe4ec;}
+        .da-su{font-style:normal;color:#157347;font-weight:700;} .da-r.su{border-color:#a8dcb9;}
+        .da-los{margin-top:14px;border:1px dashed #b8c2d3;border-radius:12px;padding:12px 14px;background:#fafbfd;} .da-los h4{margin:0 0 4px;font-size:15px;}
+        .da-lr{display:grid;grid-template-columns:22px 62px 1fr auto;gap:10px;align-items:center;padding:8px 0;border-top:1px solid #e6e9ef;margin:0;cursor:pointer;} .da-lr:first-of-type{border-top:0;}
+        .da-lr input[type=checkbox]{width:18px;height:18px;} .da-ln{color:#5b6577;font-size:14px;}
         .da-klaar{margin-top:12px;background:#e7f6ec;color:#157347;border-radius:12px;padding:10px 14px;font-weight:700;}
         @media (max-width:700px){.da-r{grid-template-columns:52px 1fr;} .da-b{grid-column:1 / 2;grid-row:2;} .da-b{grid-column:1 / -1;} .da-k{grid-column:1 / -1;justify-content:flex-start;} .da-r.klaar,.da-r.niet{grid-template-columns:52px 1fr;} .da-s{grid-column:1 / -1;justify-content:flex-start;}}
       </style>
@@ -4219,10 +4368,11 @@ function res_beheer_view() {
         function cent(v){v=(v||'').replace(/[^0-9,.-]/g,'');if(v.indexOf(',')>=0)v=v.replace(/\./g,'').replace(',','.');var n=parseFloat(v);return isNaN(n)?0:Math.round(n*100);}
         function eur(c){return '\u20ac '+(c/100).toFixed(2).replace('.',',').replace(/\B(?=(\d{3})+(?!\d))/g,'.');}
         function tel(){var t=0,p=0,k=0,n=0;f.querySelectorAll('.da-r.open').forEach(function(r){var c=r.querySelector('input[type=radio]:checked'),b=cent(r.querySelector('.da-b input').value);if(!c)return;if(c.value==='niet'){n++;return;}t+=b;if(c.value==='pin')p+=b;else k+=b;});
+          f.querySelectorAll('.da-lr input[type=checkbox]:checked').forEach(function(x){var b=parseInt(x.getAttribute('data-bedrag'),10)||0;t+=b;if(x.getAttribute('data-wijze')==='contant')k+=b;else p+=b;});
           var d=document.getElementById('daTot');if(d)d.innerHTML='Aangevinkt: <b>'+eur(t)+'</b>'+(p&&k?' <span style="color:#5b6577">('+eur(p)+' pin, '+eur(k)+' contant)</span>':'')+(n?' <span style="color:#b4234a">'+n+' niet gekomen</span>':'');}
         f.addEventListener('change',tel);f.addEventListener('input',tel);
         f.querySelectorAll('[data-alles]').forEach(function(b){b.addEventListener('click',function(){var w=b.getAttribute('data-alles');f.querySelectorAll('.da-r.open').forEach(function(r){if(w!==''&&r.classList.contains('later'))return;r.querySelectorAll('input[type=radio]').forEach(function(x){x.checked=w!==''&&x.value===w;});});tel();});});
-        f.addEventListener('submit',function(e){if(!f.querySelector('.da-r.open input[type=radio]:checked')){e.preventDefault();var d=document.getElementById('daTot');if(d)d.innerHTML='<b style="color:#b4234a">Vink eerst bij een klant Pin, Contant of Niet gekomen aan.</b>';}});
+        f.addEventListener('submit',function(e){if(!f.querySelector('.da-r.open input[type=radio]:checked')&&!f.querySelector('.da-lr input[type=checkbox]:checked')){e.preventDefault();var d=document.getElementById('daTot');if(d)d.innerHTML='<b style="color:#b4234a">Vink eerst bij een klant Pin, Contant of Niet gekomen aan.</b>';}});
         tel();
       })();
       </script>
@@ -4271,6 +4421,37 @@ function res_beheer_view() {
       <label class="check"><input type="checkbox" name="stuur" value="1" checked /> <span>Stuur een bevestiging als er een e-mailadres is ingevuld</span></label>
       <div style="margin-top:14px"><button class="btn" type="submit"><?= h(ucfirst($W)) ?> toevoegen</button></div>
     </form>
+
+    <?php if (empty($GLOBALS['is_demo'])): $su = sumup_inst(); $suOk = $su['key'] !== '' && $su['code'] !== ''; ?>
+    <div class="formcard" id="sumup">
+      <h2>Pinautomaat koppelen (SumUp)</h2>
+      <?php if ($suOk): ?>
+        <p class="ok" style="margin:0 0 12px">SumUp is gekoppeld met verkopercode <b><?= h($su['code']) ?></b><?= $su['getest'] !== '' ? ', sinds ' . h(date('j-n-Y', strtotime($su['getest']))) : '' ?>. Bij Dag afsluiten worden je pinbetalingen vanzelf aangevinkt.</p>
+      <?php else: ?>
+        <p class="hint" style="margin:-4px 0 12px">Pin je met SumUp? Koppel het, dan haalt FormForge je pinbetalingen op. Bij Dag afsluiten staat dan vanzelf Pin aangevinkt bij de klant die rond zijn afspraaktijd heeft gepind. Pinbetalingen zonder afspraak zie je er los onder. Dit werkt met elke pinautomaat van SumUp.</p>
+      <?php endif; ?>
+      <details class="su-hoe"<?= $suOk ? '' : ' open' ?>><summary>Zo koppel je SumUp, het duurt 2 minuten</summary>
+        <ol>
+          <li>Log op je computer in op <b>me.sumup.com</b>.</li>
+          <li>Klik links op <b>Instellingen</b>. Bovenaan staat je bedrijfsnaam met daaronder je <b>verkopercode</b>, bijvoorbeeld MAB12CD3. Vul die hieronder in.</li>
+          <li>Scroll naar <b>Voor ontwikkelaars</b> en klik op <b>Voor ontwikkelaars</b>. Kies daar <b>API-sleutels</b> (soms staat dat onder <b>Toolkit</b>).</li>
+          <li>Klik op <b>Aanmaken</b>, geef de sleutel een naam zoals FormForge, en kopieer de <b>geheime sleutel</b>. SumUp laat hem maar 1 keer zien.</li>
+          <li>Plak de sleutel hieronder en klik op <b>Koppelen en testen</b>.</li>
+        </ol>
+        <p class="hint" style="margin:0">De sleutel wordt alleen op je eigen website bewaard en wordt nergens getoond. FormForge gebruikt hem alleen om je betalingen te lezen. Een sleutel van SumUp geeft wel toegang tot je hele SumUp-account, dus deel hem met niemand. Gebruik je hem niet meer, haal hem dan bij SumUp weg. De namen van de knoppen bij SumUp kunnen een klein beetje anders zijn.</p>
+      </details>
+      <form method="post" autocomplete="off" style="margin-top:12px">
+        <input type="hidden" name="action" value="res_sumup_opslaan" />
+        <div class="su-rij">
+          <div class="field" style="margin:0"><label for="suCode">Verkopercode</label><input type="text" id="suCode" name="su_code" value="<?= h($su['code']) ?>" maxlength="20" autocapitalize="characters" spellcheck="false" /></div>
+          <div class="field" style="margin:0"><label for="suKey">Geheime sleutel</label><input type="password" id="suKey" name="su_key" value="" placeholder="<?= $suOk ? 'Opgeslagen. Laat leeg om hem te houden.' : 'Plak hier je sleutel' ?>" autocomplete="new-password" spellcheck="false" /></div>
+        </div>
+        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" type="submit">Koppelen en testen</button></div>
+      </form>
+      <?php if ($suOk): ?><form method="post" style="margin-top:8px" onsubmit="return confirm('Koppeling met SumUp weghalen?');"><input type="hidden" name="action" value="res_sumup_weg" /><button class="btn ghost sm" type="submit">Koppeling weghalen</button></form><?php endif; ?>
+      <style>.su-hoe{background:#f7f9fc;border:1px solid #dfe4ec;border-radius:12px;padding:10px 14px;} .su-hoe summary{cursor:pointer;font-weight:700;} .su-hoe ol{margin:10px 0 8px;padding-left:20px;display:grid;gap:6px;} .su-rij{display:grid;grid-template-columns:200px 1fr;gap:12px;} @media (max-width:600px){.su-rij{grid-template-columns:1fr;}}</style>
+    </div>
+    <?php endif; ?>
 
     <form class="formcard" method="post" id="instellen">
       <input type="hidden" name="action" value="res_inst" />
@@ -14601,6 +14782,7 @@ function venturo_html() {
 <div class="vt-v"><h5>Waar komen meldingen van nieuwe afspraken binnen?</h5><p>Op het adres bij Meldingen van nieuwe reserveringen naar. Laat je het leeg, dan gaan ze naar het e-mailadres van je bedrijf. De mails gaan via je gekoppelde mailbox (Administratie, tabblad E-mail).</p></div>
 <div class="vt-v"><h5>Kan ik instellen tot wanneer klanten zelf mogen annuleren?</h5><p>Ja. Ga naar Afspraakplanner en kies bij Online annuleren door de klant bijvoorbeeld Tot 24 uur van tevoren. In de bevestiging en de herinnering staat dan dat annuleren tot die tijd kan. Is de tijd voorbij, dan ziet de klant dat online annuleren niet meer kan en dat hij je moet bellen. Na annuleren komt de tijd meteen weer vrij en krijg je een mail.</p></div>
 <div class="vt-v"><h5>Hoe sluit ik aan het eind van de dag af?</h5><p>Ga naar Afspraakplanner, helemaal bovenaan staat Dag afsluiten. Je ziet alle afspraken van vandaag met het bedrag van de behandeling erbij. Vink per klant aan: Pin, Contant of Niet gekomen. Met Iedereen pin gaat het nog sneller. Wil een klant iets extra's, pas dan het bedrag aan. Klik op Dag afsluiten en alles staat als omzet in je administratie. Wat je niet aanvinkt, blijft open staan. In het overzicht van je administratie zie je ook wat je vandaag en deze week nog verwacht uit afspraken, en of er van eerdere dagen nog iets af te sluiten is.</p></div>
+<div class="vt-v"><h5>Kan ik mijn SumUp-pinautomaat koppelen?</h5><p>Ja, met elke pinautomaat van SumUp. Ga naar Afspraakplanner, helemaal onderaan staat Pinautomaat koppelen. Vul je verkopercode en een geheime sleutel van SumUp in. Waar je die vindt, staat er stap voor stap bij. Klik op Koppelen en testen. Daarna worden bij Dag afsluiten je pinbetalingen vanzelf aangevinkt bij de klant die rond zijn afspraaktijd heeft gepind. Pinbetalingen zonder afspraak, bijvoorbeeld van iemand die binnenliep, zie je er los onder en boek je met 1 vinkje. Kijk altijd even of alles klopt voordat je op Dag afsluiten klikt.</p></div>
 </div>
 <div class="vt-o"><h4>Aanbod: occasions en producten</h4>
 <div class="vt-v"><h5>Hoe zet ik auto's of producten op mijn website?</h5><p>Klik links op Aanbod. Kies onderaan of het om auto's of producten gaat, vink Aanbod op mijn website aan en klik op Opslaan en website bijwerken.</p></div>
@@ -14818,7 +15000,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-11-13-dagafsluiten');
+define('SITE_BOUW', '2026-11-13-sumup');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
