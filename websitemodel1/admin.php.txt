@@ -87,6 +87,8 @@ function default_settings() {
         'video'            => '',
         'video_beeld'      => '',
         'video_telefoon'   => '1',
+        'kop_flip'         => '',
+        'kop_flip_plek'    => 'achter',
         'feest_kleuren'    => '1',
         'blokken'          => [['k' => 'strook', 'aan' => 1], ['k' => 'diensten', 'aan' => 1], ['k' => 'projecten', 'aan' => 1], ['k' => 'voorna', 'aan' => 0], ['k' => 'werkwijze', 'aan' => 0], ['k' => 'cijfers', 'aan' => 0], ['k' => 'over', 'aan' => 0], ['k' => 'vragen', 'aan' => 0]],
         'voorna_titel'     => 'Voor en na',
@@ -478,6 +480,13 @@ $BEWEGINGEN = [
 ];
 $SNELHEDEN = ['rustig' => ['Rustig', '0.6'], 'normaal' => ['Normaal', '1'], 'snel' => ['Snel', '1.6']];
 function beweging() { global $BEWEGINGEN; $b = st('beweging'); return isset($BEWEGINGEN[$b]) ? $b : ''; }
+/* Eigen flip bovenaan: de bewegende flip van de zaak, achter de bovenkant of naast de tekst */
+function eigen_flip() {
+    if (st('beweging') !== 'eigenflip' || st('kop_flip') === '') return '';
+    $f = basename(st('kop_flip'));
+    return is_flip($f) && is_file(UPLOAD_DIR . '/site/' . $f) ? $f : '';
+}
+function kop_flip_plek() { return st('kop_flip_plek') === 'naast' ? 'naast' : 'achter'; }
 /* Eigen video bovenaan: een korte film (max 10 seconden) die steeds opnieuw speelt */
 function eigen_video() {
     if (st('beweging') !== 'eigenvideo' || st('video') === '') return '';
@@ -823,6 +832,9 @@ body:not(.l-hero-kaart) .hero.ffm-aan .btn.quiet{color:#fff !important;box-shado
 .hero.heeft-video .hero-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2;pointer-events:none;display:block;}
 .hero.heeft-video .hero-video-laag{position:absolute;inset:0;z-index:-1;pointer-events:none;background:linear-gradient(90deg,rgba(0,0,0,.6) 0,rgba(0,0,0,.32) 55%,rgba(0,0,0,.18) 100%),linear-gradient(0deg,rgba(0,0,0,.38) 0,rgba(0,0,0,0) 55%);}
 body.l-hero-kaart .hero.heeft-video .hero-video-laag{background:rgba(0,0,0,.18);}
+.hero .emblem.kop-flip img{width:100%;max-width:460px;max-height:400px;object-fit:cover;aspect-ratio:auto;border-radius:22px;filter:none !important;box-shadow:0 26px 50px -18px rgba(0,0,0,.45);}
+.l-hero-midden .hero .emblem.kop-flip img{max-width:420px;max-height:300px;}
+@media (max-width:860px){.hero .emblem.kop-flip img{max-width:100%;max-height:300px;}}
 /* opbouw: bovenkant */
 .l-hero-rechts .hero .wrap{grid-template-columns:.75fr 1.25fr;}
 .l-hero-rechts .hero .emblem{order:-1;}
@@ -1496,7 +1508,7 @@ function foto_map_weg($rel) {
 /* Alle foto's die een versie gebruikt (pad binnen uploads/) */
 function versie_fotos($staat) {
     $s = $staat['settings']; $uit = [];
-    foreach (['banner', 'logo', 'over_foto', 'video', 'video_beeld', 'app_icoon'] as $k) { if (!empty($s[$k]) && is_string($s[$k])) $uit[] = 'site/' . basename($s[$k]); }
+    foreach (['banner', 'logo', 'over_foto', 'video', 'video_beeld', 'app_icoon', 'kop_flip'] as $k) { if (!empty($s[$k]) && is_string($s[$k])) $uit[] = 'site/' . basename($s[$k]); }
     foreach ((array)($s['banner_dia'] ?? []) as $f) { if (is_string($f) && $f !== '') $uit[] = 'site/' . basename($f); }
     foreach ((array)($s['beelden'] ?? []) as $b) { if (!empty($b['foto'])) $uit[] = 'site/' . basename($b['foto']); }
     foreach ((array)($s['voorna'] ?? []) as $v) { foreach (['voor', 'na'] as $kk) { if (!empty($v[$kk])) $uit[] = 'site/' . basename($v[$kk]); } }
@@ -2436,6 +2448,18 @@ CSS;
     if ($heroDia !== '') { $heroAttr = str_replace('class="hero has-photo"', 'class="hero has-photo heeft-dia"', $heroAttr); }
     $heroVid = $foto === '' ? eigen_video() : '';
     $heroVidHtml = '';
+    $kopFlip = $foto === '' ? eigen_flip() : '';
+    $flipNaast = '';
+    if ($kopFlip !== '') {
+        $fu = '/uploads/site/' . rawurlencode($kopFlip);
+        $leeg = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+        if (kop_flip_plek() === 'naast') {
+            $flipNaast = '<div class="emblem kop-flip"><img src="' . $leeg . '" data-flip="' . h($fu) . '" alt="' . h(st('naam')) . '" /></div>';
+        } else {
+            $heroAttr = ' class="hero ffm-aan heeft-video heeft-flip"';
+            $heroVidHtml = '<img class="hero-video" src="' . $leeg . '" data-flip="' . h($fu) . '" alt="" aria-hidden="true" /><span class="hero-video-laag" aria-hidden="true"></span>';
+        }
+    }
     if ($heroVid !== '') {
         $heroAttr = ' class="hero ffm-aan heeft-video"';
         $vb = st('video_beeld') !== '' && is_file(UPLOAD_DIR . '/site/' . basename(st('video_beeld'))) ? '/uploads/site/' . rawurlencode(basename(st('video_beeld'))) : '';
@@ -2449,14 +2473,15 @@ CSS;
     }
     $out .= '<main id="home" class="view">';
     if (banner_strook()) { $sd = dia_html(); $out .= '<div class="banner-strook' . ($sd !== '' ? ' heeft-dia' : '') . '"><img src="/uploads/site/' . h(rawurlencode(st('banner'))) . '" alt="' . h(st('naam')) . '" />' . $sd . '</div>'; }
-    $out .= '<section' . $heroAttr . '>' . $heroDia . $heroVidHtml . '<span class="hero-rand" aria-hidden="true"></span><div class="wrap' . ($logo === '' ? ' solo' : '') . '"><div>';
+    $out .= '<section' . $heroAttr . '>' . $heroDia . $heroVidHtml . '<span class="hero-rand" aria-hidden="true"></span><div class="wrap' . ($logo === '' && $flipNaast === '' ? ' solo' : '') . '"><div>';
     if (st('eyebrow') !== '') $out .= '<div class="eyebrow">' . h(st('eyebrow')) . '</div>';
     $out .= '<h1>' . h(st('hero_titel')) . '</h1>';
     if (st('hero_tekst') !== '') $out .= '<p class="lead">' . h(st('hero_tekst')) . '</p>';
     $out .= '<div class="actions"><a class="btn primary" href="' . h(eigen_link(st('knop_link')) !== '' ? eigen_link(st('knop_link')) : '/contact/') . '">' . h(st('knop_tekst') !== '' ? st('knop_tekst') : 'Neem contact op') . '</a>';
     if (!empty(services())) $out .= '<a class="btn quiet" href="#diensten">' . h(st('diensten_titel')) . '</a>';
     $out .= '</div></div>';
-    if ($logo !== '') $out .= '<div class="emblem"><img src="' . h($logo) . '" alt="Logo ' . h(st('naam')) . '" /></div>';
+    if ($flipNaast !== '') $out .= $flipNaast;
+    elseif ($logo !== '') $out .= '<div class="emblem"><img src="' . h($logo) . '" alt="Logo ' . h(st('naam')) . '" /></div>';
     $out .= '</div></section>' . "\n";
 
     $sky = false;
@@ -14135,6 +14160,9 @@ function venturo_html() {
 <div class="vt-v"><h5>Ik zie de beweging niet op mijn website.</h5><p>Heb je bij Voorpagina een bannerfoto achter de titel gezet, of bij Opbouw de bovenkant op Grote foto? Dan blijft de foto staan en staat de beweging uit. Ook zien bezoekers die op hun telefoon of computer "bewegingen beperken" aan hebben staan een stilstaande achtergrond. De achtergronden in echt 3D hebben een computer of telefoon nodig die 3D kan tonen. Lukt dat niet, dan zien bezoekers vanzelf een rustige, bewegende achtergrond.</p></div>
 <div class="vt-v"><h5>Kan ik een eigen video bovenaan zetten?</h5><p>Ja. In Instellingen, tabblad Beweging, onderaan bij Je eigen video. Kies een video van je zaak, bijvoorbeeld je werkplaats of jezelf aan het werk. Hij speelt zonder geluid en begint steeds opnieuw. Hij mag maximaal 10 seconden duren. Is hij langer, dan neemt de beheerpagina de eerste 10 seconden. Een grote video wordt vanzelf kleiner gemaakt. Dat duurt even zo lang als de video zelf: blijf op de pagina tot je ziet dat hij klaar is. Klik daarna op Opslaan en website bijwerken. Met het vinkje Ook afspelen op telefoons kies je of telefoons de video zien of alleen een stilstaand beeld eruit.</p></div>
 <div class="vt-v"><h5>Mijn video lukt niet.</h5><p>Kies de video het liefst op een computer met Chrome of Edge: die maken hem zelf klaar voor je website. Filmt je iPhone in HEVC, dan kunnen niet alle browsers de video afspelen. Zet dan op je iPhone bij Instellingen, Camera, Formaten op Meest compatibel en film opnieuw. Film liggend, met een rustig beeld. Heb je bovenaan een grote foto of een bannerfoto achter de titel, dan blijft de foto staan en zie je de video niet.</p></div>
+<div class="vt-v"><h5>Kan ik een flip bovenaan mijn website zetten?</h5><p>Ja. Ga naar Instellingen, bij Beweging staat Je eigen flip. Kies een flip, of klik op Maak een flip van foto's en kies 2 tot 60 foto's, bijvoorbeeld een kale muur die steeds mooier wordt of een kapsel van voor naar na. Kies of de flip groot achter de bovenkant komt, met je tekst eroverheen, of naast je tekst op de plek van je logo. Klik daarna op Opslaan en website bijwerken. Een flip is klein, dus je website blijft snel.</p></div>
+<div class="vt-v"><h5>Kan ik kleuren kiezen die bij mijn zaak passen?</h5><p>Ja. Ga naar Instellingen, bij Uiterlijk staat onder de kleurcombinaties Kleuren uit een foto van je zaak. Kies een foto van je pand, je interieur, je bus of je werk. Je ziet de kleuren uit je foto en 3 voorstellen: Rustig, Krachtig en Strak. Klik op een voorstel en je ziet het meteen in het voorbeeld. De foto blijft op je eigen computer of telefoon en wordt niet opgeslagen. Klik daarna op Opslaan en website bijwerken.</p></div>
+<div class="vt-v"><h5>Hoe weet ik of mijn kleuren goed leesbaar zijn?</h5><p>Bij de kleurcombinaties in Instellingen staat de leesbaarheidswacht. Is alles goed, dan zie je een groene melding. Kies je een kleur waarop de tekst slecht leesbaar wordt, bijvoorbeeld een hele lichte knop met witte tekst, dan zie je een waarschuwing met een betere kleur ernaast. Klik op Gebruik deze kleur en het is opgelost.</p></div>
 </div>
 <div class="vt-o"><h4>Blokken op je voorpagina</h4>
 <div class="vt-v"><h5>Wat zijn blokken?</h5><p>De onderdelen van je voorpagina, zoals je diensten, uitgelichte projecten, voor- en na-foto's, werkwijze in stappen, cijfers, over ons, veelgestelde vragen en eigen afbeeldingen. Je vindt ze in Instellingen, tabblad Blokken op je voorpagina.</p></div>
@@ -14398,7 +14426,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-11-12-kleuren');
+define('SITE_BOUW', '2026-11-13-flipkop');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -14610,7 +14638,7 @@ if ($logged_in && isset($_POST['action'])) {
         $new['lettertype'] = array_key_exists((string)($_POST['lettertype'] ?? ''), $LETTERS) ? (string)$_POST['lettertype'] : '';
         $new['vorm'] = array_key_exists((string)($_POST['vorm'] ?? ''), $VORMEN) ? (string)$_POST['vorm'] : '';
         global $BEWEGINGEN, $SNELHEDEN;
-        $new['beweging'] = array_key_exists((string)($_POST['beweging'] ?? ''), $BEWEGINGEN) || ($_POST['beweging'] ?? '') === 'eigenvideo' ? (string)$_POST['beweging'] : '';
+        $new['beweging'] = array_key_exists((string)($_POST['beweging'] ?? ''), $BEWEGINGEN) || in_array(($_POST['beweging'] ?? ''), ['eigenvideo', 'eigenflip'], true) ? (string)$_POST['beweging'] : '';
         $new['beweging_snelheid'] = array_key_exists((string)($_POST['beweging_snelheid'] ?? ''), $SNELHEDEN) ? (string)$_POST['beweging_snelheid'] : 'normaal';
         $new['feest_kleuren'] = !empty($_POST['feest_kleuren']) ? '1' : '0';
 
@@ -14784,6 +14812,23 @@ if ($logged_in && isset($_POST['action'])) {
             }
             $new['video_telefoon'] = !empty($_POST['video_telefoon']) ? '1' : '0';
             if ($new['beweging'] === 'eigenvideo' && ($new['video'] ?? '') === '') { $new['beweging'] = ''; }
+        }
+        if (isset($_POST['kopflip_set'])) {
+            if (!empty($_POST['kop_flip_weg'])) { $weg($new['kop_flip'] ?? ''); $new['kop_flip'] = ''; }
+            $ff = $_FILES['kop_flip'] ?? null;
+            $ferr = $ff ? ($ff['error'] ?? UPLOAD_ERR_NO_FILE) : UPLOAD_ERR_NO_FILE;
+            if ($ferr !== UPLOAD_ERR_NO_FILE) {
+                if ($ferr !== UPLOAD_ERR_OK) { $upErrors[] = upload_error_text($ferr, $ff['name']); }
+                elseif (!is_flip($ff['name'])) { $upErrors[] = "'" . $ff['name'] . "' is geen flip. Kies een bestand dat eindigt op .flip, of maak er een met de knop onder het veld."; }
+                else {
+                    ensure_upload_dir();
+                    if (!is_dir(UPLOAD_DIR . '/site')) { mkdir(UPLOAD_DIR . '/site', 0755, true); }
+                    $nf = save_flip($ff['tmp_name'], $ff['name'], UPLOAD_DIR . '/site', 'kopflip-', $upErrors);
+                    if ($nf !== '') { $weg($new['kop_flip'] ?? ''); $new['kop_flip'] = $nf; $new['beweging'] = 'eigenflip'; }
+                }
+            }
+            $new['kop_flip_plek'] = ($_POST['kop_flip_plek'] ?? '') === 'naast' ? 'naast' : 'achter';
+            if ($new['beweging'] === 'eigenflip' && ($new['kop_flip'] ?? '') === '') { $new['beweging'] = ''; }
         }
         if (isset($_POST['bd_set'])) {
             global $BEELD_VORMEN;
@@ -15427,12 +15472,18 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
               <h3 class="kp-h">Kleurcombinaties</h3>
               <p class="hint" style="margin:0 0 10px">Klik op een combinatie: de kleuren van je bovenkant, knoppen en achtergrond passen dan bij elkaar. Daarna kun je elke kleur hieronder nog los veranderen.</p>
               <div class="kp-pal" id="kpPal"></div>
+              <div class="kp-foto" id="kpFoto">
+                <div class="kp-foto-kop"><b>Kleuren uit een foto van je zaak</b><span>Kies een foto van je pand, je interieur, je bus of je werk. De kleuren worden eruit gehaald en je krijgt 3 combinaties die bij jouw zaak passen. De foto blijft op je eigen computer of telefoon en wordt niet opgeslagen.</span></div>
+                <label class="btn quiet kp-foto-knop">Foto kiezen<input type="file" id="kpFotoIn" accept="image/*" hidden /></label>
+                <div class="kp-foto-uit" id="kpFotoUit" hidden><img id="kpFotoImg" alt="" /><div><div class="kp-foto-kl" id="kpFotoKl" title="De kleuren in je foto"></div><div class="kp-pal" id="kpFotoPal"></div></div></div>
+              </div>
               <div class="kp-twee">
                 <div class="kp-kies">
                   <h3 class="kp-h">Bovenkant en menu</h3><div class="kp-rij" id="kpDonker"></div>
                   <h3 class="kp-h">Knoppen</h3><div class="kp-rij" id="kpKnop"></div>
                   <h3 class="kp-h">Achtergrond van de pagina</h3><div class="kp-rij" id="kpAchter"></div>
                   <p class="kp-st" id="kpSt"></p>
+                  <div class="kp-wacht" id="kpWacht" role="status" aria-live="polite"></div>
                 </div>
                 <div class="kp-vb" id="kpVb" aria-hidden="true">
                   <div class="kp-top"><b><?= h(cut(st('naam'), 22)) ?></b><span>Diensten</span><span>Projecten</span><i>Contact</i></div>
@@ -15463,6 +15514,18 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
               .kp-k{justify-self:start;background:var(--a);color:#fff;font-weight:700;padding:6px 11px;border-radius:99px;}
               .kp-body{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px;} .kp-kaart{background:#fff;border-radius:9px;padding:9px;display:grid;gap:5px;box-shadow:0 2px 8px -4px rgba(0,0,0,.2);color:#1f2937;} .kp-kaart i{width:20px;height:20px;border-radius:50%;background:var(--a);} .kp-kaart span,.kp-vlak span:not(.kp-k){height:5px;border-radius:3px;background:#d7dce5;}
               .kp-vlak{background:var(--v);padding:12px;display:grid;gap:6px;color:#1f2937;} .kp-kk{margin-top:4px;}
+              .kp-foto{margin:14px 0 4px;padding:14px;border:1px dashed #b8c2d3;border-radius:12px;background:#fafbfd;display:grid;gap:10px;}
+              .kp-foto-kop b{display:block;font-size:14px;margin-bottom:3px;} .kp-foto-kop span{font-size:13px;color:#5b6577;}
+              .kp-foto-knop{justify-self:start;cursor:pointer;}
+              .kp-foto-uit{display:grid;grid-template-columns:150px 1fr;gap:14px;align-items:start;} .kp-foto-uit[hidden]{display:none;}
+              .kp-foto-uit img{width:150px;height:110px;object-fit:cover;border-radius:10px;border:1px solid #e3e8f0;}
+              .kp-foto-kl{display:flex;gap:5px;margin-bottom:10px;} .kp-foto-kl span{width:26px;height:26px;border-radius:6px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.12);}
+              @media (max-width:600px){.kp-foto-uit{grid-template-columns:1fr;}}
+              .kp-wacht{margin:10px 0 0;padding:10px 12px;border-radius:10px;font-size:13px;display:grid;gap:8px;}
+              .kp-wacht.goed{background:#ecfdf3;color:#067647;display:block;} .kp-wacht.fout{background:#fef3f2;color:#912018;border:1px solid #fecdca;}
+              .kp-wr{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;} .kp-wt{flex:1 1 220px;}
+              .kp-wk{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #d0d5dd;border-radius:999px;padding:4px 10px 4px 5px;font-weight:700;color:#1f2937;}
+              .kp-wk i{width:18px;height:18px;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(0,0,0,.15);} .kp-wk:hover{border-color:#1d4ed8;}
             </style>
             <script>
             document.addEventListener('DOMContentLoaded',function(){
@@ -15478,7 +15541,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
               function teken(){
                 vb.style.setProperty('--d',kd.value);vb.style.setProperty('--a',ka.value);vb.style.setProperty('--b',bgNu());vb.style.setProperty('--v',vlNu());
                 [].forEach.call(document.querySelectorAll('.kp-s'),function(b){var w=b.getAttribute('data-w'),c=b.getAttribute('data-c');b.classList.toggle('on',(w==='d'&&kl(c)===kl(kd.value))||(w==='a'&&kl(c)===kl(ka.value))||(w==='b'&&kl(c)===kl(bgNu())));});
-                [].forEach.call(document.querySelectorAll('.kp-p'),function(b,i){var p=K.pal[i];b.classList.toggle('on',kl(p[1])===kl(kd.value)&&kl(p[2])===kl(ka.value)&&kl(p[3])===kl(bgNu()));});
+                [].forEach.call(document.querySelectorAll('#kpPal .kp-p'),function(b,i){var p=K.pal[i];b.classList.toggle('on',kl(p[1])===kl(kd.value)&&kl(p[2])===kl(ka.value)&&kl(p[3])===kl(bgNu()));});
               }
               function eigen(){if(fk&&fk.checked){fk.checked=false;vuur(fk);}st.textContent='Mooi. Klik op Opslaan en website bijwerken om het op je website te zien.';}
               function zetBg(c,v){if(!bg||!vl)return;bg.value=c;vl.value=v;var wit=kl(c)==='#ffffff';if(bga){bga.checked=!wit;vuur(bga);}if(vla){vla.checked=!wit;vuur(vla);}vuur(bg);vuur(vl);}
@@ -15489,6 +15552,100 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
               function rij(id,lijst,w){var r=document.getElementById(id);lijst.forEach(function(x){var c=typeof x==='string'?x:x[1],n=typeof x==='string'?x:x[0];var b=document.createElement('button');b.type='button';b.className='kp-s'+(w==='b'?' vk':'');b.style.background=c;b.title=n;b.setAttribute('aria-label',n);b.setAttribute('data-w',w);b.setAttribute('data-c',c);
                 b.onclick=function(){if(w==='d'){kd.value=c;vuur(kd);}else if(w==='a'){ka.value=c;vuur(ka);}else{zetBg(x[1],x[2]);}eigen();teken();};r.appendChild(b);});}
               rij('kpDonker',K.donker,'d');rij('kpKnop',K.knop,'a');rij('kpAchter',K.achter,'b');
+              /* ---- Rekenen met kleuren ---- */
+              function hx(c){c=(c||'').replace('#','');if(c.length===3)c=c[0]+c[0]+c[1]+c[1]+c[2]+c[2];var n=parseInt(c,16);return isNaN(n)?[0,0,0]:[n>>16&255,n>>8&255,n&255];}
+              function nx(r){return '#'+r.map(function(v){v=Math.max(0,Math.min(255,Math.round(v)));return (v<16?'0':'')+v.toString(16);}).join('');}
+              function lum(c){var r=hx(c).map(function(v){v/=255;return v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4);});return 0.2126*r[0]+0.7152*r[1]+0.0722*r[2];}
+              function con(a,b){var x=lum(a),y=lum(b);return (Math.max(x,y)+0.05)/(Math.min(x,y)+0.05);}
+              function hsl(c){var r=hx(c).map(function(v){return v/255;}),mx=Math.max(r[0],r[1],r[2]),mn=Math.min(r[0],r[1],r[2]),h=0,s=0,l=(mx+mn)/2,d=mx-mn;
+                if(d){s=l>0.5?d/(2-mx-mn):d/(mx+mn);h=mx===r[0]?((r[1]-r[2])/d+(r[1]<r[2]?6:0)):mx===r[1]?((r[2]-r[0])/d+2):((r[0]-r[1])/d+4);h*=60;}return [h,s,l];}
+              function vanHsl(h,s,l){h=((h%360)+360)%360/360;function f(p,q,t){if(t<0)t+=1;if(t>1)t-=1;if(t<1/6)return p+(q-p)*6*t;if(t<1/2)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p;}
+                if(!s)return nx([l*255,l*255,l*255]);var q=l<0.5?l*(1+s):l+s-l*s,p=2*l-q;return nx([f(p,q,h+1/3)*255,f(p,q,h)*255,f(p,q,h-1/3)*255]);}
+              /* Maak een kleur stap voor stap donkerder (of lichter) tot hij aan de eis voldoet. Kleurtoon en verzadiging blijven. */
+              function maakGoed(c,ok,lichter){var x=hsl(c);for(var i=0;i<100;i++){var t=vanHsl(x[0],x[1],x[2]);if(ok(t))return t;x[2]=lichter?Math.min(1,x[2]+0.01):Math.max(0,x[2]-0.01);}return lichter?'#ffffff':'#111111';}
+              function getal(v){return (Math.round(v*10)/10).toString().replace('.',',');}
+
+              /* ---- Leesbaarheidswacht ---- */
+              var tk=document.querySelector('input[name=kleur_tekst]'),tka=document.querySelector('input[name=kleur_tekst_aan]');
+              var wachtEl=document.getElementById('kpWacht');
+              function tkNu(){return tka&&tka.checked?tk.value:'#1f2937';}
+              function wacht(){
+                if(!wachtEl)return;
+                var d=kd.value,a=ka.value,b=bgNu(),v=vlNu(),t=tkNu(),fout=[];
+                var okA=function(x){return con('#ffffff',x)>=4.5&&con(x,b)>=3;};
+                if(con('#ffffff',a)<3)fout.push(['a','De witte tekst op je knoppen is slecht leesbaar.',con('#ffffff',a),3,maakGoed(a,okA)]);
+                else if(con(a,b)<2)fout.push(['a','Je knoppen vallen bijna weg tegen de achtergrond.',con(a,b),3,maakGoed(a,okA)]);
+                if(con('#ffffff',d)<4.5)fout.push(['d','De witte tekst in je bovenkant en menu is slecht leesbaar.',con('#ffffff',d),4.5,maakGoed(d,function(x){return con('#ffffff',x)>=5;})]);
+                var achterDonker=lum(b)<0.4;
+                if(con(t,b)<4.5)fout.push([achterDonker?'b':'t','De tekst is slecht leesbaar op de achtergrond van je pagina.',con(t,b),4.5,achterDonker?maakGoed(b,function(x){return con(t,x)>=7;},true):maakGoed(t,function(x){return con(x,b)>=7&&con(x,v)>=4.5;})]);
+                else if(con(t,v)<4.5)fout.push(['v','De tekst is slecht leesbaar op de lichte vlakken.',con(t,v),4.5,maakGoed(v,function(x){return con(t,x)>=7;},true)]);
+                if(!fout.length){wachtEl.className='kp-wacht goed';wachtEl.innerHTML='<b>Leesbaarheid:</b> alles is goed leesbaar.';return;}
+                wachtEl.className='kp-wacht fout';wachtEl.innerHTML='<b>Let op de leesbaarheid</b>';
+                fout.forEach(function(f){var r=document.createElement('div');r.className='kp-wr';
+                  r.innerHTML='<span class="kp-wt"></span><button type="button" class="kp-wk"><i></i>Gebruik deze kleur</button>';
+                  r.querySelector('.kp-wt').textContent=f[1]+' Contrast nu '+getal(f[2])+', nodig minimaal '+getal(f[3])+'.';
+                  r.querySelector('i').style.background=f[4];
+                  r.querySelector('button').onclick=function(){
+                    if(f[0]==='a'){ka.value=f[4];vuur(ka);}else if(f[0]==='d'){kd.value=f[4];vuur(kd);}
+                    else if(f[0]==='t'){tk.value=f[4];if(tka&&!tka.checked){tka.checked=true;vuur(tka);}vuur(tk);}
+                    else if(f[0]==='b'){bg.value=f[4];if(bga&&!bga.checked){bga.checked=true;vuur(bga);}vuur(bg);}
+                    else if(f[0]==='v'){vl.value=f[4];if(vla&&!vla.checked){vla.checked=true;vuur(vla);}vuur(vl);}
+                    eigen();teken();};
+                  wachtEl.appendChild(r);});
+              }
+              var tekenZonder=teken; teken=function(){tekenZonder();wacht();};
+              [tk,tka].forEach(function(e){if(e){e.addEventListener('input',teken);e.addEventListener('change',teken);}});
+
+              /* ---- Kleuren uit een foto van je zaak ---- */
+              var fin=document.getElementById('kpFotoIn');
+              function kleurenUit(img){
+                var m=160,sc=Math.min(1,m/Math.max(img.naturalWidth,img.naturalHeight)),w=Math.max(1,Math.round(img.naturalWidth*sc)),h=Math.max(1,Math.round(img.naturalHeight*sc));
+                var c=document.createElement('canvas');c.width=w;c.height=h;var x=c.getContext('2d');x.drawImage(img,0,0,w,h);
+                var px=x.getImageData(0,0,w,h).data,pt=[];
+                for(var i=0;i<px.length;i+=4){if(px[i+3]>=128)pt.push([px[i],px[i+1],px[i+2]]);}
+                if(pt.length<10)return [];
+                var K=8,cen=[pt[Math.floor(pt.length/2)].slice()];
+                while(cen.length<K){var best=null,bd=-1;for(var j=0;j<pt.length;j+=7){var md=1e9;cen.forEach(function(q){var dd=(pt[j][0]-q[0])*(pt[j][0]-q[0])+(pt[j][1]-q[1])*(pt[j][1]-q[1])+(pt[j][2]-q[2])*(pt[j][2]-q[2]);if(dd<md)md=dd;});if(md>bd){bd=md;best=pt[j];}}if(!best||bd<30)break;cen.push(best.slice());}
+                var tel=[];
+                for(var it=0;it<10;it++){var som=cen.map(function(){return [0,0,0,0];});
+                  pt.forEach(function(p){var bi=0,md=1e9;for(var q=0;q<cen.length;q++){var dd=(p[0]-cen[q][0])*(p[0]-cen[q][0])+(p[1]-cen[q][1])*(p[1]-cen[q][1])+(p[2]-cen[q][2])*(p[2]-cen[q][2]);if(dd<md){md=dd;bi=q;}}var s=som[bi];s[0]+=p[0];s[1]+=p[1];s[2]+=p[2];s[3]++;});
+                  cen=som.map(function(s,q){return s[3]?[s[0]/s[3],s[1]/s[3],s[2]/s[3]]:cen[q];});tel=som.map(function(s){return s[3];});}
+                return cen.map(function(q,i){var hx_=nx(q),z=hsl(hx_);return {c:hx_,n:tel[i]/pt.length,h:z[0],s:z[1],l:z[2]};}).filter(function(k){return k.n>0.01;}).sort(function(a,b){return b.n-a.n;});
+              }
+              function voorstellen(kl){
+                if(!kl.length)return [];
+                var dom=kl[0],sc=function(k){return k.s*k.s*Math.sqrt(k.n)*(1-Math.abs(k.l-0.5)*1.2);},kleurig=kl.filter(function(k){return k.s>0.18&&k.l>0.12&&k.l<0.9;}).sort(function(a,b){return sc(b)-sc(a);});
+                var k1=kleurig[0]||{h:dom.h,s:Math.max(dom.s,0.5),l:0.45};
+                var k2=kleurig.filter(function(k){var dh=Math.abs(k.h-k1.h);return Math.min(dh,360-dh)>30;})[0]||k1;
+                var basis=dom.s>0.08?dom:k1;
+                var licht=kl.filter(function(k){return k.l>0.6&&k.s>0.08;}).sort(function(a,b){return b.n-a.n;})[0]||basis;
+                function knop(k){return maakGoed(vanHsl(k.h,Math.min(0.85,Math.max(k.s,0.5)),Math.min(k.l,0.52)),function(x){return con('#ffffff',x)>=3.3;});}
+                function donker(k,s,l){return maakGoed(vanHsl(k.h,s,l),function(x){return con('#ffffff',x)>=8;});}
+                function achter(k,s){return [vanHsl(k.h,s,0.975),vanHsl(k.h,s,0.93)];}
+                var r=[];
+                var a1=achter(licht,Math.min(0.45,Math.max(licht.s,0.2)));r.push(['Rustig',donker(basis,Math.min(0.45,Math.max(basis.s,0.15)),0.17),knop(k1),a1[0],a1[1]]);
+                var a2=achter(k1,0.25);
+                if(k2!==k1)r.push(['Krachtig',donker(k1,0.55,0.16),knop(k2),a2[0],a2[1]]);
+                else r.push(['Krachtig',maakGoed(vanHsl(k1.h,0.75,0.4),function(x){return con('#ffffff',x)>=4.8;}),donker(basis,0.08,0.13),a2[0],a2[1]]);
+                r.push(['Strak',donker(basis,0.08,0.12),knop(k1),vanHsl(basis.h,0.1,0.985),vanHsl(basis.h,0.12,0.945)]);
+                return r;
+              }
+              if(fin)fin.addEventListener('change',function(){
+                var f=fin.files&&fin.files[0];if(!f)return;
+                var uit=document.getElementById('kpFotoUit'),im=document.getElementById('kpFotoImg'),kl_=document.getElementById('kpFotoKl'),pal=document.getElementById('kpFotoPal');
+                var u=URL.createObjectURL(f),img=new Image();
+                img.onload=function(){
+                  var kl=kleurenUit(img);im.src=u;uit.hidden=false;kl_.innerHTML='';pal.innerHTML='';
+                  kl.slice(0,6).forEach(function(k){var s=document.createElement('span');s.style.background=k.c;s.title=k.c;kl_.appendChild(s);});
+                  voorstellen(kl).forEach(function(p){var b=document.createElement('button');b.type='button';b.className='kp-p';b.title=p[0];
+                    b.innerHTML='<span class="t" style="background:'+p[1]+'"></span><span class="m" style="background:'+p[3]+'"><i style="background:'+p[2]+'"></i><u style="background:'+p[4]+'"></u></span><small></small>';
+                    b.querySelector('small').textContent=p[0];
+                    b.onclick=function(){kd.value=p[1];ka.value=p[2];vuur(kd);vuur(ka);zetBg(p[3],p[4]);eigen();teken();[].forEach.call(pal.children,function(x){x.classList.toggle('on',x===b);});};
+                    pal.appendChild(b);});
+                };
+                img.onerror=function(){st.textContent='Deze foto kon niet worden gelezen. Probeer een jpg of png.';};
+                img.src=u;
+              });
               [kd,ka,bg,vl,bga,vla].forEach(function(e){if(e){e.addEventListener('input',teken);e.addEventListener('change',teken);}});
               teken();
             });
@@ -15497,7 +15654,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
               <div class="field"><input type="color" id="kd" name="kleur_donker" value="<?= h(valid_color(st('kleur_donker'), '#0b1f3a')) ?>" /><label for="kd">Donkere hoofdkleur</label></div>
               <div class="field"><input type="color" id="ka" name="kleur_accent" value="<?= h(valid_color(st('kleur_accent'), '#1d4ed8')) ?>" /><label for="ka">Accentkleur (knoppen)</label></div>
             </div>
-            <div class="hint" style="margin-top:12px">Op beide kleuren staat witte tekst, dus kies geen hele lichte kleuren.</div>
+            <div class="hint" style="margin-top:12px">Op beide kleuren staat witte tekst, dus kies geen hele lichte kleuren. Wordt iets slecht leesbaar, dan zie je bij de kleurcombinaties een waarschuwing met een betere kleur die je met 1 klik overneemt.</div>
             <label class="check" style="margin-top:14px"><input type="checkbox" name="feest_kleuren" value="1" <?= st('feest_kleuren') !== '0' ? 'checked' : '' ?> /> Bij branche-, seizoen- en feeststijlen (zoals Kapper, Herfst en Kerst) de kleuren van de stijl gebruiken (stijlkleuren of feestkleuren)</label>
             <div class="hint">Uitgevinkt houdt je website je eigen kleuren, en krijg je alleen de versiering, zoals sneeuw of vleermuizen.</div>
           </div>
@@ -15539,8 +15696,8 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
           <div class="formcard" id="beweging">
             <h2>Beweging</h2>
             <p class="hint" style="margin:-4px 0 16px">Een bewegende achtergrond achter de bovenkant van je voorpagina. Je teksten blijven goed leesbaar: ze worden vanzelf wit. Heb je een grote foto bovenaan gekozen, dan blijft de foto staan en staat de beweging uit.</p>
-            <?php $bwVid = st('video') !== '' && is_file(UPLOAD_DIR . '/site/' . basename(st('video'))) ? '/uploads/site/' . rawurlencode(basename(st('video'))) : ''; if (st('beweging') === 'eigenvideo') { $bwNu = 'eigenvideo'; } ?>
-            <div class="bw-voorbeeld" id="bwVoorbeeld"<?= $bwNu !== '' && $bwNu !== 'eigenvideo' ? ' data-ffm="' . h($bwNu) . '" data-ffm-s="' . h(beweging_snelheid()) . '"' : '' ?>><video class="bw-vid" id="bwVid" muted loop playsinline<?= $bwVid !== '' ? ' src="' . h($bwVid) . '"' : '' ?><?= st('video_beeld') !== '' ? ' poster="/uploads/site/' . h(rawurlencode(basename(st('video_beeld')))) . '"' : '' ?><?= $bwNu === 'eigenvideo' ? ' autoplay' : ' hidden' ?>></video><span class="bw-vid-laag" id="bwVidLaag"<?= $bwNu === 'eigenvideo' ? '' : ' hidden' ?>></span><div class="bw-tekst"><small><?= h(st('eyebrow') !== '' ? st('eyebrow') : 'Voorbeeld') ?></small><strong><?= h(st('hero_titel') !== '' ? st('hero_titel') : 'Zo ziet je bovenkant eruit') ?></strong></div></div>
+            <?php $bwVid = st('video') !== '' && is_file(UPLOAD_DIR . '/site/' . basename(st('video'))) ? '/uploads/site/' . rawurlencode(basename(st('video'))) : ''; if (st('beweging') === 'eigenvideo') { $bwNu = 'eigenvideo'; } if (st('beweging') === 'eigenflip') { $bwNu = 'eigenflip'; } $bwFlip = st('kop_flip') !== '' && is_file(UPLOAD_DIR . '/site/' . basename(st('kop_flip'))) ? '/uploads/site/' . rawurlencode(basename(st('kop_flip'))) : ''; $bwLeeg = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'; ?>
+            <div class="bw-voorbeeld" id="bwVoorbeeld"<?= $bwNu !== '' && $bwNu !== 'eigenvideo' && $bwNu !== 'eigenflip' ? ' data-ffm="' . h($bwNu) . '" data-ffm-s="' . h(beweging_snelheid()) . '"' : '' ?>><video class="bw-vid" id="bwVid" muted loop playsinline<?= $bwVid !== '' ? ' src="' . h($bwVid) . '"' : '' ?><?= st('video_beeld') !== '' ? ' poster="/uploads/site/' . h(rawurlencode(basename(st('video_beeld')))) . '"' : '' ?><?= $bwNu === 'eigenvideo' ? ' autoplay' : ' hidden' ?>></video><img class="bw-vid" id="bwFlipImg" src="<?= h($bwLeeg) ?>" alt=""<?= $bwFlip !== '' ? ' data-flip="' . h($bwFlip) . '"' : '' ?><?= $bwNu === 'eigenflip' && kop_flip_plek() === 'achter' ? '' : ' hidden' ?> /><span class="bw-vid-laag" id="bwVidLaag"<?= $bwNu === 'eigenvideo' || ($bwNu === 'eigenflip' && kop_flip_plek() === 'achter') ? '' : ' hidden' ?>></span><img class="bw-flip-naast" id="bwFlipNaast" src="<?= h($bwLeeg) ?>" alt=""<?= $bwFlip !== '' ? ' data-flip="' . h($bwFlip) . '"' : '' ?><?= $bwNu === 'eigenflip' && kop_flip_plek() === 'naast' ? '' : ' hidden' ?> /><div class="bw-tekst"><small><?= h(st('eyebrow') !== '' ? st('eyebrow') : 'Voorbeeld') ?></small><strong><?= h(st('hero_titel') !== '' ? st('hero_titel') : 'Zo ziet je bovenkant eruit') ?></strong></div></div>
             <div class="bw-lijst" role="radiogroup" aria-label="Bewegende achtergrond">
               <label class="bw-k bw-geen"><input type="radio" name="beweging" value="" <?= $bwNu === '' ? 'checked' : '' ?> /><span class="bw-s"></span><span class="bw-n">Geen beweging</span></label>
               <?php $bwKop = false; foreach ($BEWEGINGEN as $bk => $bv): ?>
@@ -15550,6 +15707,8 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
               <?php endforeach; ?>
               <div class="bw-kop">Je eigen video</div>
               <label class="bw-k"><input type="radio" name="beweging" value="eigenvideo" id="bwEigen" <?= $bwNu === 'eigenvideo' ? 'checked' : '' ?> /><span class="bw-s bw-s-video"><?php if (st('video_beeld') !== ''): ?><img src="/uploads/site/<?= h(rawurlencode(basename(st('video_beeld')))) ?>" alt="" /><?php endif; ?><span class="bw-play" aria-hidden="true">&#9654;</span></span><span class="bw-n">Eigen video</span></label>
+              <div class="bw-kop">Je eigen flip</div>
+              <label class="bw-k"><input type="radio" name="beweging" value="eigenflip" id="bwEigenFlip" <?= $bwNu === 'eigenflip' ? 'checked' : '' ?> /><span class="bw-s bw-s-video"><?php if ($bwFlip !== ''): ?><img src="<?= h($bwLeeg) ?>" data-flip="<?= h($bwFlip) ?>" alt="" /><?php endif; ?><span class="bw-play bw-fliplabel" aria-hidden="true">FLIP</span></span><span class="bw-n">Eigen flip</span></label>
             </div>
             <div class="field" style="margin-top:16px;max-width:320px"><label for="bwsnel">Snelheid</label>
               <select id="bwsnel" name="beweging_snelheid">
@@ -15569,8 +15728,23 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
               <label class="check" style="margin-top:12px"><input type="checkbox" name="video_telefoon" value="1" <?= st('video_telefoon') !== '0' ? 'checked' : '' ?> /> <span>Ook afspelen op telefoons. Uitgevinkt zien telefoons alleen een stilstaand beeld uit je video. Dat spaart mobiele data van je bezoekers.</span></label>
               <div class="hint">Mp4 van je telefoon of camera, tot <?= h(mb_tekst($vMax)) ?>. Film liggend. Het beste resultaat krijg je met een rustig beeld zonder snelle bewegingen. Klik daarna onderaan op Opslaan en website bijwerken.</div>
             </div>
+            <div class="bw-video" id="bwFlipVak">
+              <h3 style="margin:0 0 6px;font-size:16px">Je eigen flip bovenaan</h3>
+              <p class="hint" style="margin:0 0 12px">Een flip is een bewegend beeld van een paar foto's achter elkaar. Laat bovenaan je voorpagina zien wat je doet: een kale muur die steeds mooier wordt, een kapsel van voor naar na, een gerecht dat wordt opgemaakt of een product dat ronddraait. Een flip is klein, dus je website blijft snel. Flip is een eigen beeldformaat van FormForge.</p>
+              <input type="hidden" name="kopflip_set" value="1" />
+              <?php if ($bwFlip !== ''): ?><label class="check"><input type="checkbox" name="kop_flip_weg" value="1" /> <span>Flip weghalen</span></label><?php endif; ?>
+              <div class="field" style="margin:8px 0 0"><label for="bwFlipFile"><?= $bwFlip !== '' ? 'Andere flip kiezen' : 'Flip kiezen' ?></label><input type="file" id="bwFlipFile" name="kop_flip" accept=".flip" /></div>
+              <div class="field" style="margin:14px 0 0"><label>Waar komt de flip?</label>
+                <label class="check"><input type="radio" name="kop_flip_plek" value="achter" <?= kop_flip_plek() === 'achter' ? 'checked' : '' ?> /> <span>Groot achter de bovenkant, met je tekst eroverheen</span></label>
+                <label class="check"><input type="radio" name="kop_flip_plek" value="naast" <?= kop_flip_plek() === 'naast' ? 'checked' : '' ?> /> <span>Naast je tekst, op de plek van je logo</span></label>
+              </div>
+              <div class="hint">Heb je nog geen flip? Klik op "Maak een flip van foto's" en kies 2 tot 60 foto's. Maak ze vanaf dezelfde plek, dan wordt de beweging mooi rustig. Klik daarna onderaan op Opslaan en website bijwerken. Bezoekers die "bewegingen beperken" aan hebben staan, zien de eerste foto.</div>
+            </div>
           </div>
           <style>
+          .bw-flip-naast{position:absolute;right:18px;top:50%;transform:translateY(-50%);height:76%;max-width:42%;object-fit:cover;border-radius:12px;z-index:1;box-shadow:0 12px 28px -10px rgba(0,0,0,.6)}
+          .bw-flip-naast[hidden]{display:none}
+          .bw-fliplabel{width:auto !important;height:auto !important;border-radius:6px !important;padding:3px 7px !important;font-size:11px !important;font-weight:800;letter-spacing:.06em}
           .bw-vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0}
           .bw-vid-laag{position:absolute;inset:0;z-index:0;background:linear-gradient(90deg,rgba(0,0,0,.6),rgba(0,0,0,.2))}
           .bw-vid[hidden],.bw-vid-laag[hidden]{display:none}
@@ -15605,11 +15779,29 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
             var v=document.getElementById('bwVoorbeeld'), s=document.getElementById('bwsnel');
             var vid=document.getElementById('bwVid'), laag=document.getElementById('bwVidLaag');
             function nu(){var r=document.querySelector('input[name="beweging"]:checked');return r?r.value:'';}
-            function zet(){var o=s.options[s.selectedIndex],k=nu(),ev=k==='eigenvideo';window.FFM.zet(v,ev?'':k,o?o.getAttribute('data-v'):1);
-              vid.hidden=!ev;laag.hidden=!ev;if(ev&&vid.getAttribute('src')){var p=vid.play();if(p&&p.catch)p.catch(function(){});}else{vid.pause();}}
+            var fl=document.getElementById('bwFlipImg'), fln=document.getElementById('bwFlipNaast');
+            function plek(){var r=document.querySelector('input[name="kop_flip_plek"]:checked');return r?r.value:'achter';}
+            function zet(){var o=s.options[s.selectedIndex],k=nu(),ev=k==='eigenvideo',ef=k==='eigenflip',pa=plek()==='achter';window.FFM.zet(v,(ev||ef)?'':k,o?o.getAttribute('data-v'):1);
+              vid.hidden=!ev;laag.hidden=!(ev||(ef&&pa));if(fl)fl.hidden=!(ef&&pa);if(fln)fln.hidden=!(ef&&!pa);if(ev&&vid.getAttribute('src')){var p=vid.play();if(p&&p.catch)p.catch(function(){});}else{vid.pause();}}
             window.bwZet=zet;
-            document.querySelectorAll('input[name="beweging"]').forEach(function(r){r.addEventListener('change',zet);});
+            document.querySelectorAll('input[name="beweging"],input[name="kop_flip_plek"]').forEach(function(r){r.addEventListener('change',zet);});
             s.addEventListener('change',zet);
+            /* Een gekozen of net gemaakte flip meteen in het voorbeeld laten bewegen */
+            var ff=document.getElementById('bwFlipFile'),tm=null;
+            if(ff&&window.Blob&&window.DataView)ff.addEventListener('change',function(){
+              var f=ff.files&&ff.files[0];if(!f||!/\.flip$/i.test(f.name))return;
+              var rd=new FileReader();rd.onload=function(){try{
+                var ab=rd.result,u=new Uint8Array(ab),dv=new DataView(ab);if(u[0]!==70||u[1]!==76||u[2]!==73||u[3]!==80)return;
+                var p=5,bt=dv.getUint8(p);p+=2;var n=dv.getUint16(p);p+=2;var ms=dv.getUint16(p)||100;p+=2;var cl=dv.getUint16(p);p+=2+cl;
+                var mime=bt===1?'image/png':bt===2?'image/jpeg':'image/webp',fr=[];
+                for(var i=0;i<n;i++){p+=2;var l=dv.getUint32(p);p+=4;fr.push(URL.createObjectURL(new Blob([u.subarray(p,p+l)],{type:mime})));p+=l;}
+                if(!fr.length)return;clearInterval(tm);var k=0;
+                [fl,fln].forEach(function(im,j){if(!im)return;var c=im.cloneNode(false);c.removeAttribute('data-flip');im.parentNode.replaceChild(c,im);if(j===0)fl=c;else fln=c;});
+                function toon(){[fl,fln].forEach(function(im){if(im){im.src=fr[k];}});k=(k+1)%fr.length;}
+                toon();if(fr.length>1)tm=setInterval(toon,ms);
+                var r=document.getElementById('bwEigenFlip');if(r){r.checked=true;}zet();
+              }catch(e){}};rd.readAsArrayBuffer(f);
+            });
           })();
           </script>
           <script>
@@ -16270,7 +16462,7 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
     "h2:Diensten": "Wat je aanbiedt. Elke dienst krijgt een eigen pagina op je website. Een dienst met een lege naam staat niet op de site.",
     "h2:Uiterlijk": "Hoe je website eruitziet: je logo, de stijl en je kleuren. Je teksten blijven altijd hetzelfde.",
     "h2:Opbouw en details": "Hiermee maak je je website echt eigen: hoe de blokken op de voorpagina eruitzien, welk lettertype je gebruikt en hoe rond de knoppen zijn. Probeer gerust iets uit, je kunt het altijd terugzetten.",
-    "h2:Beweging": "Een bewegende achtergrond achter de bovenkant van je voorpagina. Kies er een en klik onderaan op Opslaan en website bijwerken. Je ziet hem hierboven alvast bewegen. Met Geen beweging zet je hem weer uit. Je kunt ook een eigen video van je zaak plaatsen: maximaal 10 seconden, hij speelt zonder geluid en begint steeds opnieuw.",
+    "h2:Beweging": "Een bewegende achtergrond achter de bovenkant van je voorpagina. Kies er een en klik onderaan op Opslaan en website bijwerken. Je ziet hem hierboven alvast bewegen. Met Geen beweging zet je hem weer uit. Je kunt ook een eigen video van je zaak plaatsen: maximaal 10 seconden, hij speelt zonder geluid en begint steeds opnieuw. Of zet je eigen flip bovenaan: een bewegend beeld van een paar foto's, groot achter de tekst of naast de tekst.",
     "h2:Extra": "Extra instellingen. Die heb je meestal niet nodig, maar ze kunnen handig zijn.",
     "h3:Extra kleuren (optioneel)": "Wil je nog meer eigen kleuren? Vink een kleur aan en kies hem. Uitgevinkt gebruikt je website de kleur van de stijl. Let op dat tekst goed leesbaar blijft.",
     "f:abken": "Het kenteken van de auto. Met Gegevens ophalen zoeken we merk, model, bouwjaar en meer op bij de RDW.",
