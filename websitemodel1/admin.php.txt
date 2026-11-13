@@ -3311,6 +3311,7 @@ function res_inst() {
     $in = $std;
     foreach (['aan', 'knop', 'goedkeuren', 'klant'] as $k) { if (isset($x[$k])) $in[$k] = !empty($x[$k]); }
     $in['herinner'] = in_array($x['herinner'] ?? 'dag', ['dag', 'zelfde', 'uit'], true) ? ($x['herinner'] ?? 'dag') : 'dag';
+    $in['annuleer'] = in_array((int)($x['annuleer'] ?? 0), [0, 2, 4, 12, 24, 48], true) ? (int)($x['annuleer'] ?? 0) : 0;
     if (isset($x['soort']) && in_array($x['soort'], ['tafel', 'afspraak'], true)) { $in['soort'] = $x['soort']; }
     elseif (isset($x['personen'])) { $in['soort'] = !empty($x['personen']) ? 'tafel' : 'afspraak'; }
     $in['personen'] = $in['soort'] === 'tafel';
@@ -3420,6 +3421,63 @@ function res_kortste($in) {
     if ($in['soort'] !== 'afspraak' || !$in['diensten']) return max(5, (int)$in['duur']);
     return min(array_map(function($d) { return (int)$d['duur']; }, $in['diensten']));
 }
+/* Online annuleren: tot het begin van de afspraak, of tot een vast aantal uren van tevoren */
+function res_annuleer_kan($in, $r) {
+    $start = strtotime(($r['dag'] ?? '') . ' ' . ($r['tijd'] ?? ''));
+    if (!$start) return false;
+    return time() < $start - (int)($in['annuleer'] ?? 0) * 3600;
+}
+function res_annuleer_uren($in) { $u = (int)($in['annuleer'] ?? 0); return $u > 0 ? $u . ' uur van tevoren' : ''; }
+/* Dag afsluiten: welke afspraken nog afgerekend moeten worden */
+function res_open_afreken($r) { return ($r['status'] ?? '') !== 'geannuleerd' && empty($r['factuur_id']) && empty($r['afgerekend']) && empty($r['nietgekomen']); }
+function res_verwacht() {
+    $in = res_inst(); $uit = ['vandaag' => 0, 'vandaagN' => 0, 'week' => 0, 'weekN' => 0, 'open' => 0, 'openN' => 0, 'openDag' => ''];
+    if (empty($in['aan'])) return $uit;
+    $vandaag = date('Y-m-d'); $over = date('Y-m-d', strtotime('+6 days')); $terug = date('Y-m-d', strtotime('-30 days'));
+    foreach (res_lijst() as $r) {
+        if (!res_open_afreken($r)) continue;
+        $d = (string)($r['dag'] ?? ''); $p = (int)($r['prijs'] ?? 0);
+        if ($d === $vandaag) { $uit['vandaag'] += $p; $uit['vandaagN']++; }
+        if ($d >= $vandaag && $d <= $over) { $uit['week'] += $p; $uit['weekN']++; }
+        if ($d < $vandaag && $d >= $terug) { $uit['open'] += $p; $uit['openN']++; if ($uit['openDag'] === '' || $d < $uit['openDag']) $uit['openDag'] = $d; }
+    }
+    return $uit;
+}
+/* Een afspraak afrekenen: wordt een betaalde kassabon (omzet) in de administratie */
+function res_afreken($id, $hoofd, $wijze, $eo = '', $eb = 0) {
+    $in = res_inst(); $lijst = res_lijst(); $r = null;
+    foreach ($lijst as $x) { if (($x['id'] ?? '') === $id) { $r = $x; break; } }
+    if (!$r) return [false, 'Deze afspraak bestaat niet meer.', 0];
+    if (!empty($r['factuur_id']) && adm_vind(adm_docs(), $r['factuur_id']) !== null) return [false, 'Deze afspraak is al afgerekend.', 0];
+    $wijzen = ['pin' => 'pin', 'contant' => 'contant', 'anders' => 'overig'];
+    if (!isset($wijzen[$wijze])) $wijze = 'pin';
+    $ainst = adm_inst();
+    $kor = !empty($ainst['kor']); $pct = $kor ? 0 : (int)$ainst['btw'];
+    $excl = function($incl) use ($pct) { if ($pct <= 0) return $incl; $e = (int)round($incl * 100 / (100 + $pct)); $e += $incl - ($e + (int)round($e * $pct / 100)); return $e; };
+    $regels = [];
+    $oms = ($r['dienst'] ?? '') !== '' ? $r['dienst'] : (ucfirst(res_woord($in)) . (!empty($in['personen']) ? ' ' . (int)$r['p'] . ' personen' : ''));
+    if ($hoofd > 0) $regels[] = ['oms' => $oms, 'aantal' => 1, 'eenheid' => 'stuk', 'prijs' => $excl($hoofd), 'btw' => $pct];
+    if ($eb > 0) $regels[] = ['oms' => $eo !== '' ? $eo : 'Overig', 'aantal' => 1, 'eenheid' => 'stuk', 'prijs' => $excl($eb), 'btw' => $pct];
+    if (!$regels) return [false, 'Vul een bedrag in.', 0];
+    $kl = adm_klanten(); $ki = adm_vind($kl, (string)($r['klant_id'] ?? ''));
+    if ($ki === null && filter_var($r['mail'] ?? '', FILTER_VALIDATE_EMAIL)) { foreach ($kl as $n => $k) { if (strcasecmp((string)($k['email'] ?? ''), $r['mail']) === 0) { $ki = $n; break; } } }
+    if ($ki === null) {
+        $kl[] = ['id' => adm_id('k'), 'naam' => $r['naam'], 'contact' => '', 'email' => (string)($r['mail'] ?? ''), 'tel' => (string)($r['tel'] ?? ''), 'straat' => '', 'postcode' => '', 'plaats' => '', 'kvk' => '', 'btw' => '', 'notitie' => ''];
+        adm_save_klanten($kl); $ki = count($kl) - 1;
+    }
+    $k = $kl[$ki];
+    $nr = adm_volgnummer($ainst, 'factuur'); write_json(ADM_INST, $ainst);
+    $d = ['id' => adm_id('d'), 'soort' => 'factuur', 'kassa' => true, 'betaalwijze' => $wijzen[$wijze], 'nummer' => $nr, 'status' => 'betaald', 'credit' => false, 'van' => '', 'token' => bin2hex(random_bytes(12)),
+          'betaald_op' => $r['dag'] <= date('Y-m-d') ? $r['dag'] : date('Y-m-d'), 'verstuurd_op' => '', 'akkoord_op' => '', 'aangemaakt' => date('Y-m-d H:i'), 'klant_id' => $k['id'], 'klant' => adm_snap($k),
+          'datum' => $r['dag'] <= date('Y-m-d') ? $r['dag'] : date('Y-m-d'), 'leverdatum' => $r['dag'], 'termijn' => 0, 'geldig_tot' => '', 'onderwerp' => '', 'opmerking' => 'Betaald met ' . $wijzen[$wijze] . '.', 'kor' => $kor, 'pdf' => '', 'regels' => $regels];
+    /* Vaste totalen: het bedrag dat de klant betaalde (incl. btw) klopt dan altijd tot op de cent */
+    $inclTot = max(0, (int)$hoofd) + max(0, (int)$eb); $exTot = $pct > 0 ? (int)round($inclTot * 100 / (100 + $pct)) : $inclTot;
+    $d['vast'] = ['excl' => $exTot, 'pct' => $pct, 'btw' => $inclTot - $exTot];
+    $docs = adm_docs(); array_unshift($docs, $d); adm_save_docs($docs);
+    $tot = adm_tot($d)['incl'];
+    res_slot(function() use ($id, $d, $tot, $wijzen, $wijze) { $l = res_lijst(); foreach ($l as $n => $x) { if (($x['id'] ?? '') === $id) { $l[$n]['factuur_id'] = $d['id']; $l[$n]['afgerekend'] = ['bedrag' => $tot, 'wijze' => $wijzen[$wijze], 'op' => date('Y-m-d H:i')]; unset($l[$n]['nietgekomen']); } } res_bewaar($l); });
+    return [true, '', $tot, $r];
+}
 function res_woord($in) { return $in['soort'] === 'afspraak' ? 'afspraak' : 'reservering'; }
 function res_wat($r) { return ($r['dienst'] ?? '') !== '' ? $r['dienst'] . ((int)($r['prijs'] ?? 0) > 0 ? ' (' . adm_eur((int)$r['prijs']) . ')' : '') : ''; }
 
@@ -3471,17 +3529,18 @@ function res_mail_gast($in, $r, $soort) {
             . "Op naam van: " . $r['naam'] . "\n"
             . (st('straat') !== '' ? "Adres: " . st('straat') . ', ' . trim(st('postcode') . ' ' . st('plaats')) . "\n" : '');
     $link = site_url() . '/admin.php?res=annuleer&t=' . $r['token'];
+    $tot = res_annuleer_uren($in) !== '' ? ' (dat kan tot ' . res_annuleer_uren($in) . ')' : '';
     $tel = st('tel') !== '' ? "\nOf bel ons: " . st('tel') : '';
     if ($soort === 'bevestigd') {
         $ond = 'Uw ' . $w . ' bij ' . $zaak . ': ' . $wat;
-        $txt = "Beste " . $r['naam'] . ",\n\nBedankt voor uw " . $w . " bij " . $zaak . ". Wij zien u graag.\n\n" . $regels . "\nKunt u toch niet komen? Annuleer dan via deze link:\n" . $link . $tel . "\n\nMet vriendelijke groet,\n" . $zaak;
+        $txt = "Beste " . $r['naam'] . ",\n\nBedankt voor uw " . $w . " bij " . $zaak . ". Wij zien u graag.\n\n" . $regels . "\nKunt u toch niet komen? Annuleer dan via deze link" . $tot . ":\n" . $link . $tel . "\n\nMet vriendelijke groet,\n" . $zaak;
     } elseif ($soort === 'herinnering') {
         $wanneer = $r['dag'] === date('Y-m-d') ? 'vandaag' : ($r['dag'] === date('Y-m-d', strtotime('+1 day')) ? 'morgen' : res_datum_tekst($r['dag']));
         $ond = 'Herinnering: ' . $wanneer . ' om ' . res_tt($r['tijd']) . ' uur bij ' . $zaak;
-        $txt = "Beste " . $r['naam'] . ",\n\nEven een herinnering: u heeft " . $wanneer . " een " . $w . " bij " . $zaak . ".\n\n" . $regels . "\nWij zien u graag. Kunt u toch niet komen? Laat het ons dan even weten, dan kan iemand anders uw plek krijgen. Annuleren kan via deze link:\n" . $link . $tel . "\n\nMet vriendelijke groet,\n" . $zaak;
+        $txt = "Beste " . $r['naam'] . ",\n\nEven een herinnering: u heeft " . $wanneer . " een " . $w . " bij " . $zaak . ".\n\n" . $regels . "\nWij zien u graag. Kunt u toch niet komen? Laat het ons dan even weten, dan kan iemand anders uw plek krijgen. " . (res_annuleer_kan($in, $r) ? "Annuleren kan via deze link" . $tot . ":\n" . $link . $tel : "Online annuleren kan niet meer. Kunt u toch niet komen? " . (st('tel') !== '' ? "Bel ons dan even: " . st('tel') . "." : "Laat het ons dan even weten.")) . "\n\nMet vriendelijke groet,\n" . $zaak;
     } elseif ($soort === 'aanvraag') {
         $ond = 'Wij hebben uw ' . $w . ' ontvangen: ' . $wat;
-        $txt = "Beste " . $r['naam'] . ",\n\nBedankt voor uw " . $w . " bij " . $zaak . ". Wij kijken of het lukt en sturen u zo snel mogelijk een bevestiging.\n\n" . $regels . "\nKunt u toch niet komen? Annuleer dan via deze link:\n" . $link . $tel . "\n\nMet vriendelijke groet,\n" . $zaak;
+        $txt = "Beste " . $r['naam'] . ",\n\nBedankt voor uw " . $w . " bij " . $zaak . ". Wij kijken of het lukt en sturen u zo snel mogelijk een bevestiging.\n\n" . $regels . "\nKunt u toch niet komen? Annuleer dan via deze link" . $tot . ":\n" . $link . $tel . "\n\nMet vriendelijke groet,\n" . $zaak;
     } else {
         $ond = 'Uw ' . $w . ' bij ' . $zaak . ' is geannuleerd';
         $txt = "Beste " . $r['naam'] . ",\n\nUw " . $w . " bij " . $zaak . " is geannuleerd.\n\n" . $regels . "\nWilt u een andere dag of tijd? Kijk dan op " . site_url() . "/reserveren/" . $tel . "\n\nMet vriendelijke groet,\n" . $zaak;
@@ -3630,6 +3689,7 @@ function res_openbaar() {
         $wat = res_datum_tekst($dag) . ' om ' . res_tt($tijd) . ' uur' . ($r['dienst'] !== '' ? ', ' . res_wat($r) : '') . (!empty($in['personen']) ? ', ' . $p . ($p === 1 ? ' persoon' : ' personen') : '');
         $tekst = $r['status'] === 'aanvraag' ? 'Wij hebben uw ' . res_woord($in) . ' ontvangen: ' . $wat . '. U krijgt zo snel mogelijk een bevestiging.' : 'Uw ' . res_woord($in) . ' staat vast: ' . $wat . '.';
         $tekst .= $gm ? ($r['status'] === 'aanvraag' ? ' Wij hebben een mail gestuurd naar ' . $mail . '.' : ' U krijgt een bevestiging op ' . $mail . '.') : (st('tel') !== '' ? ' Vragen? Bel ons op ' . st('tel') . '.' : '');
+        if ($gm && res_annuleer_uren($in) !== '') { $tekst .= ' Annuleren kan tot ' . res_annuleer_uren($in) . ', met de link in de mail.'; }
         res_json(['ok' => 1, 'status' => $r['status'], 'tekst' => $tekst]);
     }
     res_json(['fout' => 'Onbekend verzoek.']);
@@ -3646,6 +3706,7 @@ function res_annuleer_pagina($in) {
         $voorbij = strtotime($r['dag'] . ' ' . $r['tijd']) < time();
         if (($r['status'] ?? '') === 'geannuleerd') { $kop = 'Deze ' . res_woord($in) . ' is al geannuleerd'; $tekst = res_datum_tekst($r['dag']) . ' om ' . $r['tijd'] . ' uur, op naam van ' . $r['naam'] . '.'; }
         elseif ($voorbij) { $kop = 'Deze ' . res_woord($in) . ' is al voorbij'; $tekst = res_datum_tekst($r['dag']) . ' om ' . $r['tijd'] . ' uur.'; }
+        elseif (!res_annuleer_kan($in, $r)) { $kop = 'Online annuleren kan niet meer'; $tekst = 'U kunt tot ' . res_annuleer_uren($in) . ' online annuleren. Uw ' . res_woord($in) . ' is ' . res_datum_tekst($r['dag']) . ' om ' . res_tt($r['tijd']) . ' uur. Kunt u toch niet komen? ' . (st('tel') !== '' ? 'Bel ons dan even: ' . st('tel') . '.' : 'Laat het ons dan even weten.'); }
         elseif (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['ja'] ?? '') === '1') {
             res_slot(function() use ($t) {
                 $l = res_lijst();
@@ -3906,7 +3967,8 @@ function res_acties($action) {
         $in = res_inst();
         $soort = ($_POST['rs_soort'] ?? '') === 'afspraak' ? 'afspraak' : 'tafel';
         $herinner = in_array($_POST['rs_herinner'] ?? '', ['dag', 'zelfde', 'uit'], true) ? $_POST['rs_herinner'] : 'dag';
-        $x = ['aan' => !empty($_POST['rs_aan']), 'soort' => $soort, 'knop' => !empty($_POST['rs_knop']), 'goedkeuren' => !empty($_POST['rs_goedkeuren']), 'klant' => !empty($_POST['rs_klant']), 'herinner' => $herinner,
+        $an = (int)($_POST['rs_annuleer'] ?? 0); if (!in_array($an, [0, 2, 4, 12, 24, 48], true)) $an = 0;
+        $x = ['aan' => !empty($_POST['rs_aan']), 'soort' => $soort, 'knop' => !empty($_POST['rs_knop']), 'goedkeuren' => !empty($_POST['rs_goedkeuren']), 'klant' => !empty($_POST['rs_klant']), 'herinner' => $herinner, 'annuleer' => $an,
               'titel' => cut(trim((string)($_POST['rs_titel'] ?? '')), 80), 'intro' => cut(trim((string)($_POST['rs_intro'] ?? '')), 300),
               'plaatsen' => (int)($_POST['rs_plaatsen'] ?? 40), 'max_p' => (int)($_POST['rs_max'] ?? 8), 'duur' => (int)($_POST['rs_duur'] ?? 120), 'stap' => (int)($_POST['rs_stap'] ?? 30),
               'vooruit' => (int)($_POST['rs_vooruit'] ?? 60), 'vooraf' => (int)($_POST['rs_vooraf'] ?? 2), 'dagen' => [], 'dicht' => []];
@@ -3960,39 +4022,41 @@ function res_acties($action) {
         header('Location: admin.php?reserveren=1&dag=' . rawurlencode((string)($_POST['terug'] ?? ''))); exit;
     }
     if ($action === 'res_afrekenen') {
-        $id = (string)($_POST['id'] ?? ''); $lijst = res_lijst(); $r = null;
-        foreach ($lijst as $x) { if (($x['id'] ?? '') === $id) { $r = $x; break; } }
-        $terug = 'admin.php?reserveren=1&dag=' . rawurlencode((string)($r['dag'] ?? ''));
-        if (!$r) { $_SESSION['ff_notice'] = 'Deze afspraak bestaat niet meer.'; header('Location: admin.php?reserveren=1'); exit; }
-        if (!empty($r['factuur_id']) && adm_vind(adm_docs(), $r['factuur_id']) !== null) { $_SESSION['ff_notice'] = 'Deze afspraak is al afgerekend.'; header('Location: ' . $terug); exit; }
-        $wijzen = ['pin' => 'pin', 'contant' => 'contant', 'anders' => 'overig'];
-        $wijze = isset($wijzen[$_POST['wijze'] ?? '']) ? $_POST['wijze'] : 'pin';
-        $ainst = adm_inst();
-        $kor = !empty($ainst['kor']); $pct = $kor ? 0 : (int)$ainst['btw'];
-        $excl = function($incl) use ($pct) { if ($pct <= 0) return $incl; $e = (int)round($incl * 100 / (100 + $pct)); $e += $incl - ($e + (int)round($e * $pct / 100)); return $e; };
-        $regels = [];
-        $hoofd = adm_cent($_POST['bedrag'] ?? '');
-        $oms = ($r['dienst'] ?? '') !== '' ? $r['dienst'] : (ucfirst(res_woord($in)) . (!empty($in['personen']) ? ' ' . (int)$r['p'] . ' personen' : ''));
-        if ($hoofd > 0) $regels[] = ['oms' => $oms, 'aantal' => 1, 'eenheid' => 'stuk', 'prijs' => $excl($hoofd), 'btw' => $pct];
-        $eo = cut(trim((string)($_POST['extra_oms'] ?? '')), 200); $eb = adm_cent($_POST['extra_bedrag'] ?? '');
-        if ($eb > 0) $regels[] = ['oms' => $eo !== '' ? $eo : 'Overig', 'aantal' => 1, 'eenheid' => 'stuk', 'prijs' => $excl($eb), 'btw' => $pct];
-        if (!$regels) { $_SESSION['ff_notice'] = 'Vul een bedrag in.'; header('Location: ' . $terug); exit; }
-        $kl = adm_klanten(); $ki = adm_vind($kl, (string)($r['klant_id'] ?? ''));
-        if ($ki === null && filter_var($r['mail'] ?? '', FILTER_VALIDATE_EMAIL)) { foreach ($kl as $n => $k) { if (strcasecmp((string)($k['email'] ?? ''), $r['mail']) === 0) { $ki = $n; break; } } }
-        if ($ki === null) {
-            $kl[] = ['id' => adm_id('k'), 'naam' => $r['naam'], 'contact' => '', 'email' => (string)($r['mail'] ?? ''), 'tel' => (string)($r['tel'] ?? ''), 'straat' => '', 'postcode' => '', 'plaats' => '', 'kvk' => '', 'btw' => '', 'notitie' => ''];
-            adm_save_klanten($kl); $ki = count($kl) - 1;
-        }
-        $k = $kl[$ki];
-        $nr = adm_volgnummer($ainst, 'factuur'); write_json(ADM_INST, $ainst);
-        $d = ['id' => adm_id('d'), 'soort' => 'factuur', 'kassa' => true, 'betaalwijze' => $wijzen[$wijze], 'nummer' => $nr, 'status' => 'betaald', 'credit' => false, 'van' => '', 'token' => bin2hex(random_bytes(12)),
-              'betaald_op' => date('Y-m-d'), 'verstuurd_op' => '', 'akkoord_op' => '', 'aangemaakt' => date('Y-m-d H:i'), 'klant_id' => $k['id'], 'klant' => adm_snap($k),
-              'datum' => date('Y-m-d'), 'leverdatum' => $r['dag'], 'termijn' => 0, 'geldig_tot' => '', 'onderwerp' => '', 'opmerking' => 'Betaald met ' . $wijzen[$wijze] . '.', 'kor' => $kor, 'pdf' => '', 'regels' => $regels];
-        $docs = adm_docs(); array_unshift($docs, $d); adm_save_docs($docs);
-        $tot = adm_tot($d)['incl'];
-        res_slot(function() use ($id, $d, $tot, $wijzen, $wijze) { $l = res_lijst(); foreach ($l as $n => $x) { if (($x['id'] ?? '') === $id) { $l[$n]['factuur_id'] = $d['id']; $l[$n]['afgerekend'] = ['bedrag' => $tot, 'wijze' => $wijzen[$wijze], 'op' => date('Y-m-d H:i')]; } } res_bewaar($l); });
-        $_SESSION['ff_notice'] = 'Afgerekend: ' . adm_eur($tot) . ' met ' . $wijzen[$wijze] . ' van ' . $r['naam'] . '. Het staat als omzet in je administratie.';
+        $id = (string)($_POST['id'] ?? ''); $r0 = null;
+        foreach (res_lijst() as $x) { if (($x['id'] ?? '') === $id) { $r0 = $x; break; } }
+        $terug = 'admin.php?reserveren=1&dag=' . rawurlencode((string)($r0['dag'] ?? ''));
+        if (!$r0) { $_SESSION['ff_notice'] = 'Deze afspraak bestaat niet meer.'; header('Location: admin.php?reserveren=1'); exit; }
+        $uit = res_afreken($id, adm_cent($_POST['bedrag'] ?? ''), (string)($_POST['wijze'] ?? 'pin'), cut(trim((string)($_POST['extra_oms'] ?? '')), 200), adm_cent($_POST['extra_bedrag'] ?? ''));
+        $wn = ['pin' => 'pin', 'contant' => 'contant', 'anders' => 'overig'][(string)($_POST['wijze'] ?? 'pin')] ?? 'pin';
+        $_SESSION['ff_notice'] = $uit[0] ? 'Afgerekend: ' . adm_eur($uit[2]) . ' met ' . $wn . ' van ' . $r0['naam'] . '. Het staat als omzet in je administratie.' : $uit[1];
         header('Location: ' . $terug); exit;
+    }
+    if ($action === 'res_dag_afsluiten') {
+        $dag = preg_match('/^\d{4}-\d\d-\d\d$/', (string)($_POST['dag'] ?? '')) ? (string)$_POST['dag'] : date('Y-m-d');
+        $keuze = (array)($_POST['afs'] ?? []); $bedragen = (array)($_POST['afs_bedrag'] ?? []);
+        $n = 0; $tot = 0; $niet = 0; $per = ['pin' => 0, 'contant' => 0, 'anders' => 0]; $fout = [];
+        foreach ($keuze as $id => $k) {
+            $id = (string)$id; $k = (string)$k;
+            if ($k === 'niet') {
+                res_slot(function() use ($id) { $l = res_lijst(); foreach ($l as $q => $x) { if (($x['id'] ?? '') === $id && empty($x['factuur_id'])) $l[$q]['nietgekomen'] = date('Y-m-d H:i'); } res_bewaar($l); });
+                $niet++;
+            } elseif (isset($per[$k])) {
+                $uit = res_afreken($id, adm_cent($bedragen[$id] ?? ''), $k);
+                if ($uit[0]) { $n++; $tot += $uit[2]; $per[$k] += $uit[2]; } else { $fout[] = $uit[1]; }
+            }
+        }
+        $m = [];
+        if ($n) { $d = []; foreach (['pin' => 'pin', 'contant' => 'contant', 'anders' => 'overig'] as $w => $wn) { if ($per[$w] > 0) $d[] = adm_eur($per[$w]) . ' ' . $wn; } $m[] = $n . ($n === 1 ? ' afspraak afgerekend' : ' afspraken afgerekend') . ': ' . adm_eur($tot) . ' (' . implode(', ', $d) . '). Het staat als omzet in je administratie.'; }
+        if ($niet) { $m[] = $niet . ($niet === 1 ? ' klant is niet gekomen.' : ' klanten zijn niet gekomen.'); }
+        if ($fout) { $m[] = implode(' ', array_unique($fout)); }
+        $_SESSION['ff_notice'] = $m ? implode(' ', $m) : 'Er was niets aangevinkt.';
+        header('Location: admin.php?reserveren=1&afsluiten=' . rawurlencode($dag) . '#dagafsluiten'); exit;
+    }
+    if ($action === 'res_niet_terug') {
+        $id = (string)($_POST['id'] ?? '');
+        res_slot(function() use ($id) { $l = res_lijst(); foreach ($l as $q => $x) { if (($x['id'] ?? '') === $id) unset($l[$q]['nietgekomen']); } res_bewaar($l); });
+        $_SESSION['ff_notice'] = 'Teruggezet. Je kunt deze afspraak weer afrekenen.';
+        header('Location: admin.php?reserveren=1&afsluiten=' . rawurlencode((string)($_POST['dag'] ?? '')) . '#dagafsluiten'); exit;
     }
     if ($action === 'res_zelf') {
         $in = res_inst();
@@ -4068,6 +4132,102 @@ function res_beheer_view() {
       <p style="margin:-6px 0 18px"><a class="btn ghost sm" href="/reserveren/" target="_blank">Bekijk de afspraakplanner op je website</a></p>
     <?php endif; ?>
 
+    <?php
+      $afsDag = preg_match('/^\d{4}-\d\d-\d\d$/', (string)($_GET['afsluiten'] ?? '')) ? (string)$_GET['afsluiten'] : $vandaag;
+      $afs = array_values(array_filter($lijst, function($r) use ($afsDag) { return ($r['dag'] ?? '') === $afsDag && ($r['status'] ?? '') !== 'geannuleerd'; }));
+      usort($afs, function($a, $b) { return strcmp((string)$a['tijd'], (string)$b['tijd']); });
+      $afsOpen = array_filter($afs, 'res_open_afreken');
+      $rv = res_verwacht();
+      $klaarTot = 0; foreach ($afs as $r) { if (!empty($r['afgerekend'])) $klaarTot += (int)$r['afgerekend']['bedrag']; }
+    ?>
+    <div class="formcard" id="dagafsluiten">
+      <h2>Dag afsluiten</h2>
+      <p class="hint" style="margin:-4px 0 12px">Aan het eind van de dag vink je per klant aan hoe er betaald is. Met 1 klik staat alles als omzet in je administratie. De bedragen van de behandelingen staan er al in. Wil een klant iets extra's, pas dan het bedrag aan.</p>
+      <div class="da-kies">
+        <a class="btn <?= $afsDag === $vandaag ? '' : 'ghost ' ?>sm" href="admin.php?reserveren=1&amp;afsluiten=<?= h($vandaag) ?>#dagafsluiten">Vandaag</a>
+        <a class="btn ghost sm" href="admin.php?reserveren=1&amp;afsluiten=<?= h(date('Y-m-d', strtotime($afsDag . ' -1 day'))) ?>#dagafsluiten">&larr; Dag ervoor</a>
+        <?php if ($afsDag < $vandaag): ?><a class="btn ghost sm" href="admin.php?reserveren=1&amp;afsluiten=<?= h(date('Y-m-d', strtotime($afsDag . ' +1 day'))) ?>#dagafsluiten">Dag erna &rarr;</a><?php endif; ?>
+        <form method="get" class="da-datum"><input type="hidden" name="reserveren" value="1" /><input type="date" name="afsluiten" value="<?= h($afsDag) ?>" max="<?= h($vandaag) ?>" onchange="this.form.submit()" aria-label="Kies een dag" /></form>
+      </div>
+      <?php if ($rv['openN'] > 0 && !($rv['openDag'] === $afsDag)): ?>
+        <div class="da-let">Er <?= $rv['openN'] === 1 ? 'staat nog 1 afspraak' : 'staan nog ' . $rv['openN'] . ' afspraken' ?> van eerdere dagen open<?= $rv['open'] > 0 ? ', samen ' . h(adm_eur($rv['open'])) : '' ?>. <a href="admin.php?reserveren=1&amp;afsluiten=<?= h($rv['openDag']) ?>#dagafsluiten">Afsluiten vanaf <?= h(res_datum_tekst($rv['openDag'])) ?></a></div>
+      <?php endif; ?>
+      <h3 class="da-h"><?= h(ucfirst(res_datum_tekst($afsDag))) ?></h3>
+      <?php if (!$afs): ?>
+        <p class="hint" style="margin:0">Op deze dag staan geen <?= h($Wn) ?>.</p>
+      <?php else: ?>
+        <form method="post" id="daForm">
+          <input type="hidden" name="action" value="res_dag_afsluiten" /><input type="hidden" name="dag" value="<?= h($afsDag) ?>" />
+          <?php if ($afsOpen): ?><div class="da-snel"><span>Snel invullen:</span><button type="button" class="btn ghost sm" data-alles="pin">Iedereen pin</button><button type="button" class="btn ghost sm" data-alles="contant">Iedereen contant</button><button type="button" class="btn ghost sm" data-alles="">Wissen</button></div><?php endif; ?>
+          <div class="da-lijst">
+          <?php foreach ($afs as $r): $rid = (string)$r['id']; ?>
+            <?php if (!empty($r['factuur_id'])): ?>
+              <div class="da-r klaar"><div class="da-t"><?= h(res_tt($r['tijd'])) ?></div><div class="da-n"><b><?= h($r['naam']) ?></b><span><?= h((string)($r['dienst'] ?? '')) ?></span></div><div class="da-s ok">Afgerekend <?= !empty($r['afgerekend']) ? h(adm_eur((int)$r['afgerekend']['bedrag'])) . ' ' . h($r['afgerekend']['wijze']) : '' ?></div></div>
+            <?php elseif (!empty($r['nietgekomen'])): ?>
+              <div class="da-r niet"><div class="da-t"><?= h(res_tt($r['tijd'])) ?></div><div class="da-n"><b><?= h($r['naam']) ?></b><span><?= h((string)($r['dienst'] ?? '')) ?></span></div><div class="da-s">Niet gekomen <button type="submit" class="btn ghost sm" form="daNiet<?= h($rid) ?>">Terugzetten</button></div></div>
+            <?php else: ?>
+              <?php $later = strtotime($r['dag'] . ' ' . $r['tijd']) > time(); ?>
+              <div class="da-r open<?= $later ? ' later' : '' ?>">
+                <div class="da-t"><?= h(res_tt($r['tijd'])) ?></div>
+                <div class="da-n"><b><?= h($r['naam']) ?></b><span><?= h((string)($r['dienst'] ?? '')) ?><?= $later ? ' &middot; <em>nog niet geweest</em>' : '' ?></span></div>
+                <label class="da-b"><span>&euro;</span><input type="text" inputmode="decimal" name="afs_bedrag[<?= h($rid) ?>]" value="<?= (int)($r['prijs'] ?? 0) > 0 ? h(number_format($r['prijs'] / 100, 2, ',', '')) : '' ?>" placeholder="0,00" aria-label="Bedrag van <?= h($r['naam']) ?>" /></label>
+                <div class="da-k" role="radiogroup" aria-label="Hoe betaald door <?= h($r['naam']) ?>">
+                  <label><input type="radio" name="afs[<?= h($rid) ?>]" value="pin" /><span>Pin</span></label>
+                  <label><input type="radio" name="afs[<?= h($rid) ?>]" value="contant" /><span>Contant</span></label>
+                  <label class="nk"><input type="radio" name="afs[<?= h($rid) ?>]" value="niet" /><span>Niet gekomen</span></label>
+                </div>
+              </div>
+            <?php endif; ?>
+          <?php endforeach; ?>
+          </div>
+          <?php if ($afsOpen): ?>
+            <div class="da-voet"><div id="daTot">Aangevinkt: <b>&euro; 0,00</b></div><button class="btn" type="submit">Dag afsluiten</button></div>
+            <p class="hint" style="margin:8px 0 0">Wat je niet aanvinkt, blijft open staan. Dat kun je later nog afsluiten. Afspraken die nog niet geweest zijn, slaat Iedereen pin of contant over. Bedragen zijn inclusief btw.</p>
+          <?php else: ?>
+            <div class="da-klaar">Deze dag is afgesloten<?= $klaarTot > 0 ? ': ' . h(adm_eur($klaarTot)) . ' omzet' : '' ?>.</div>
+          <?php endif; ?>
+        </form>
+        <?php foreach ($afs as $r): if (empty($r['nietgekomen']) || !empty($r['factuur_id'])) continue; ?>
+          <form method="post" id="daNiet<?= h((string)$r['id']) ?>" hidden><input type="hidden" name="action" value="res_niet_terug" /><input type="hidden" name="id" value="<?= h((string)$r['id']) ?>" /><input type="hidden" name="dag" value="<?= h($afsDag) ?>" /></form>
+        <?php endforeach; ?>
+      <?php endif; ?>
+      <style>
+        .da-kies{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 12px;} .da-datum{margin:0;} .da-datum input{padding:7px 10px;font-size:14px;width:auto;}
+        .da-let{background:#fff6dc;border:1px solid #f5d98b;color:#7a4b00;border-radius:12px;padding:10px 14px;margin:0 0 12px;font-size:14px;} .da-let a{color:#7a4b00;font-weight:700;}
+        .da-h{margin:4px 0 10px;font-size:17px;}
+        .da-snel{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px;font-size:14px;color:#5b6577;}
+        .da-lijst{display:grid;gap:8px;}
+        .da-r{display:grid;grid-template-columns:62px 1fr 120px auto;gap:10px;align-items:center;padding:10px 12px;border:1px solid #dfe4ec;border-radius:12px;background:#fff;}
+        .da-r.klaar,.da-r.niet{grid-template-columns:62px 1fr auto;background:#f7f9fc;}
+        .da-r.niet .da-n b{text-decoration:line-through;color:#5b6577;}
+        .da-t{font-weight:800;font-size:18px;} .da-n{display:grid;} .da-n span{font-size:13px;color:#5b6577;} .da-n em{font-style:normal;color:#8a5a00;font-weight:600;}
+        .da-s{font-size:14px;font-weight:700;color:#5b6577;display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;} .da-s.ok{color:#157347;}
+        .da-b{display:flex;align-items:center;gap:4px;margin:0;} .da-b span{color:#5b6577;font-weight:700;} .da-b input{padding:8px 10px;text-align:right;}
+        .da-k{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;}
+        .da-k label{margin:0;cursor:pointer;} .da-k input{position:absolute;opacity:0;pointer-events:none;}
+        .da-k span{display:inline-block;padding:8px 14px;border:1.5px solid #cfd6e2;border-radius:999px;font-weight:700;font-size:14px;background:#fff;user-select:none;}
+        .da-k input:checked + span{background:#157347;border-color:#157347;color:#fff;}
+        .da-k .nk input:checked + span{background:#b4234a;border-color:#b4234a;}
+        .da-k input:focus-visible + span{outline:3px solid #93b4ff;outline-offset:2px;}
+        .da-voet{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:14px;padding-top:12px;border-top:1px solid #dfe4ec;}
+        .da-klaar{margin-top:12px;background:#e7f6ec;color:#157347;border-radius:12px;padding:10px 14px;font-weight:700;}
+        @media (max-width:700px){.da-r{grid-template-columns:52px 1fr;} .da-b{grid-column:1 / 2;grid-row:2;} .da-b{grid-column:1 / -1;} .da-k{grid-column:1 / -1;justify-content:flex-start;} .da-r.klaar,.da-r.niet{grid-template-columns:52px 1fr;} .da-s{grid-column:1 / -1;justify-content:flex-start;}}
+      </style>
+      <script>
+      (function(){
+        var f=document.getElementById('daForm');if(!f)return;
+        function cent(v){v=(v||'').replace(/[^0-9,.-]/g,'');if(v.indexOf(',')>=0)v=v.replace(/\./g,'').replace(',','.');var n=parseFloat(v);return isNaN(n)?0:Math.round(n*100);}
+        function eur(c){return '\u20ac '+(c/100).toFixed(2).replace('.',',').replace(/\B(?=(\d{3})+(?!\d))/g,'.');}
+        function tel(){var t=0,p=0,k=0,n=0;f.querySelectorAll('.da-r.open').forEach(function(r){var c=r.querySelector('input[type=radio]:checked'),b=cent(r.querySelector('.da-b input').value);if(!c)return;if(c.value==='niet'){n++;return;}t+=b;if(c.value==='pin')p+=b;else k+=b;});
+          var d=document.getElementById('daTot');if(d)d.innerHTML='Aangevinkt: <b>'+eur(t)+'</b>'+(p&&k?' <span style="color:#5b6577">('+eur(p)+' pin, '+eur(k)+' contant)</span>':'')+(n?' <span style="color:#b4234a">'+n+' niet gekomen</span>':'');}
+        f.addEventListener('change',tel);f.addEventListener('input',tel);
+        f.querySelectorAll('[data-alles]').forEach(function(b){b.addEventListener('click',function(){var w=b.getAttribute('data-alles');f.querySelectorAll('.da-r.open').forEach(function(r){if(w!==''&&r.classList.contains('later'))return;r.querySelectorAll('input[type=radio]').forEach(function(x){x.checked=w!==''&&x.value===w;});});tel();});});
+        f.addEventListener('submit',function(e){if(!f.querySelector('.da-r.open input[type=radio]:checked')){e.preventDefault();var d=document.getElementById('daTot');if(d)d.innerHTML='<b style="color:#b4234a">Vink eerst bij een klant Pin, Contant of Niet gekomen aan.</b>';}});
+        tel();
+      })();
+      </script>
+    </div>
+
     <div class="formcard">
       <h2><?= h(ucfirst($Wn)) ?></h2>
       <?php if (!$perDag): ?><p class="hint" style="margin:0">Er zijn nog geen <?= h($Wn) ?>.</p><?php endif; ?>
@@ -4078,7 +4238,7 @@ function res_beheer_view() {
           <?php foreach ($rs as $r): ?>
             <div class="rs-r<?= $r['status'] === 'geannuleerd' ? ' weg' : '' ?>">
               <div class="rs-t"><?= h(str_replace(':', '.', $r['tijd'])) ?></div>
-              <div><span class="rs-n"><?= h($r['naam']) ?></span><?php if (!empty($in['personen'])): ?> <span class="rs-k">&middot; <?= (int)$r['p'] ?> pers.</span><?php endif; ?><?php if (res_wat($r) !== ''): ?> <span class="rs-k">&middot; <?= h(res_wat($r)) ?></span><?php endif; ?><span class="rs-b <?= h($r['status']) ?>"><?= $r['status'] === 'aanvraag' ? 'wacht op jou' : h($r['status']) ?></span>
+              <div><span class="rs-n"><?= h($r['naam']) ?></span><?php if (!empty($in['personen'])): ?> <span class="rs-k">&middot; <?= (int)$r['p'] ?> pers.</span><?php endif; ?><?php if (res_wat($r) !== ''): ?> <span class="rs-k">&middot; <?= h(res_wat($r)) ?></span><?php endif; ?><span class="rs-b <?= h($r['status']) ?>"><?= $r['status'] === 'aanvraag' ? 'wacht op jou' : h($r['status']) ?></span><?php if (!empty($r['nietgekomen'])): ?><span class="rs-b geannuleerd">niet gekomen</span><?php endif; ?>
                 <div class="rs-k"><?php if (($r['tel'] ?? '') !== ''): ?><a href="tel:<?= h(preg_replace('/[^0-9+]/', '', $r['tel'])) ?>"><?= h($r['tel']) ?></a><?php endif; ?><?php if (($r['mail'] ?? '') !== ''): ?> &middot; <a href="mailto:<?= h($r['mail']) ?>"><?= h($r['mail']) ?></a><?php endif; ?><?= ($r['bron'] ?? '') === 'zelf' ? ' &middot; zelf ingevoerd' : '' ?><?= !empty($r['herinnerd']) ? ' &middot; herinnering verstuurd' : '' ?></div>
                 <?php if (($r['opm'] ?? '') !== ''): ?><div class="rs-k">&ldquo;<?= h($r['opm']) ?>&rdquo;</div><?php endif; ?>
               </div>
@@ -4164,6 +4324,7 @@ function res_beheer_view() {
       <div class="field"><label for="rsdicht">Gesloten dagen (mag leeg)</label><textarea id="rsdicht" name="rs_dicht" class="short" placeholder="Bijvoorbeeld: 24-12-2026 25-12-2026 31-12-2026"><?= h(implode("\n", array_map(function($d) { return date('d-m-Y', strtotime($d)); }, $in['dicht']))) ?></textarea><div class="hint">Vakantie of een feestdag? Zet de datums hier, &#xE9;&#xE9;n per regel. Die dagen kan niemand reserveren.</div></div>
       <label class="check"><input type="checkbox" name="rs_goedkeuren" value="1" <?= !empty($in['goedkeuren']) ? 'checked' : '' ?> /> <span>Ik wil elke reservering eerst zelf bevestigen</span></label>
       <div class="field" style="margin-top:12px"><label for="rsherinner">Herinnering per mail aan de klant</label><select id="rsherinner" name="rs_herinner"><?php foreach (['dag' => 'De dag ervoor, \'s ochtends (aanbevolen)', 'zelfde' => 'Op de dag zelf, \'s ochtends', 'uit' => 'Geen herinnering'] as $o => $l): ?><option value="<?= $o ?>"<?= $in['herinner'] === $o ? ' selected' : '' ?>><?= $l ?></option><?php endforeach; ?></select><div class="hint">Zo vergeten minder klanten hun afspraak. In de mail staan de dag, de tijd, je adres en een link om af te zeggen, zodat je de plek nog aan iemand anders kunt geven.</div></div>
+      <div class="field" style="margin-top:12px"><label for="rsannuleer">Online annuleren door de klant</label><select id="rsannuleer" name="rs_annuleer"><?php foreach ([0 => 'Kan tot het begin van de afspraak', 2 => 'Tot 2 uur van tevoren', 4 => 'Tot 4 uur van tevoren', 12 => 'Tot 12 uur van tevoren', 24 => 'Tot 24 uur van tevoren', 48 => 'Tot 48 uur van tevoren'] as $o => $l): ?><option value="<?= $o ?>"<?= (int)$in['annuleer'] === $o ? ' selected' : '' ?>><?= $l ?></option><?php endforeach; ?></select><div class="hint">In de bevestiging staat een link waarmee de klant zelf kan annuleren. Is de tijd voorbij, dan ziet de klant dat online annuleren niet meer kan en dat hij je moet bellen. De tijd komt na annuleren meteen weer vrij voor een ander.</div></div>
       <label class="check"><input type="checkbox" name="rs_klant" value="1" <?= !empty($in['klant']) ? 'checked' : '' ?> /> <span>Zet nieuwe klanten ook bij <strong>Klanten</strong> in de administratie</span></label>
       <div class="field" style="margin-top:12px"><label for="rsmelding">Meldingen van nieuwe reserveringen naar (mag leeg)</label><input type="email" id="rsmelding" name="rs_melding" maxlength="120" value="<?= h($in['melding']) ?>" placeholder="<?= h(st('email')) ?>" /><div class="hint">Leeg = het e-mailadres van je bedrijf. Mails gaan via je gekoppelde mailbox (Administratie, tabblad E-mail).</div></div>
       <div style="margin-top:16px"><button class="btn" type="submit">Opslaan en website bijwerken</button></div>
@@ -13747,6 +13908,9 @@ function adm_v_overzicht($docs, $inst) {
       <a class="adm-stat" href="admin.php?adm=docs&amp;soort=factuur&amp;f=open"><small>Nog te ontvangen</small><strong><?= h(adm_eur($open)) ?></strong><span><?= $openN ?> open <?= $openN === 1 ? 'factuur' : 'facturen' ?></span></a>
       <a class="adm-stat<?= $laatN ? ' rood' : '' ?>" href="admin.php?adm=docs&amp;soort=factuur&amp;f=telaat"><small>Te laat betaald</small><strong><?= h(adm_eur($laat)) ?></strong><span><?= $laatN ? $laatN . ($laatN === 1 ? ' factuur, stuur een herinnering' : ' facturen, stuur een herinnering') : 'Alles op tijd' ?></span></a>
       <a class="adm-stat groen" href="admin.php?adm&amp;jaar=<?= h(date('Y')) ?>"><small>Omzet dit kwartaal (excl. btw)</small><strong><?= h(adm_eur($jaar === date('Y') ? $q[$nu]['excl'] : adm_kwartalen($docs, date('Y'))[$nu]['excl'])) ?></strong><span>Kwartaal <?= $nu ?> van <?= h(date('Y')) ?></span></a>
+      <?php $rvA = res_verwacht(); if (!empty(res_inst()['aan']) && ($rvA['weekN'] > 0 || $rvA['openN'] > 0)): ?>
+      <a class="adm-stat<?= $rvA['openN'] > 0 ? ' rood' : '' ?>" href="admin.php?reserveren=1&amp;afsluiten=<?= h($rvA['openN'] > 0 ? $rvA['openDag'] : date('Y-m-d')) ?>#dagafsluiten"><small>Verwacht uit afspraken</small><strong><?= h(adm_eur($rvA['vandaag'])) ?></strong><span><?= $rvA['openN'] > 0 ? $rvA['openN'] . ($rvA['openN'] === 1 ? ' afspraak' : ' afspraken') . ' van eerdere dagen nog afsluiten' : 'Vandaag ' . $rvA['vandaagN'] . ($rvA['vandaagN'] === 1 ? ' afspraak' : ' afspraken') . ', deze week ' . h(adm_eur($rvA['week'])) ?></span></a>
+      <?php endif; ?>
       <a class="adm-stat" href="admin.php?adm=docs&amp;soort=offerte&amp;f=verstuurd"><small>Offertes uitstaand</small><strong><?= h(adm_eur($uit)) ?></strong><span><?= $uitN ?> wacht<?= $uitN === 1 ? '' : 'en' ?> op antwoord</span></a>
     </div>
 
@@ -14435,6 +14599,8 @@ function venturo_html() {
 <div class="vt-v"><h5>Hoe annuleer ik een afspraak?</h5><p>Klik bij de afspraak op Annuleren.</p></div>
 <div class="vt-v"><h5>Kan ik een opvallende knop "Afspraak maken" bovenaan mijn website zetten?</h5><p>Ja. Vink in de afspraakplanner aan dat er bovenaan een opvallende knop komt in plaats van Contact, en vul de tekst in, bijvoorbeeld Boek nu.</p></div>
 <div class="vt-v"><h5>Waar komen meldingen van nieuwe afspraken binnen?</h5><p>Op het adres bij Meldingen van nieuwe reserveringen naar. Laat je het leeg, dan gaan ze naar het e-mailadres van je bedrijf. De mails gaan via je gekoppelde mailbox (Administratie, tabblad E-mail).</p></div>
+<div class="vt-v"><h5>Kan ik instellen tot wanneer klanten zelf mogen annuleren?</h5><p>Ja. Ga naar Afspraakplanner en kies bij Online annuleren door de klant bijvoorbeeld Tot 24 uur van tevoren. In de bevestiging en de herinnering staat dan dat annuleren tot die tijd kan. Is de tijd voorbij, dan ziet de klant dat online annuleren niet meer kan en dat hij je moet bellen. Na annuleren komt de tijd meteen weer vrij en krijg je een mail.</p></div>
+<div class="vt-v"><h5>Hoe sluit ik aan het eind van de dag af?</h5><p>Ga naar Afspraakplanner, helemaal bovenaan staat Dag afsluiten. Je ziet alle afspraken van vandaag met het bedrag van de behandeling erbij. Vink per klant aan: Pin, Contant of Niet gekomen. Met Iedereen pin gaat het nog sneller. Wil een klant iets extra's, pas dan het bedrag aan. Klik op Dag afsluiten en alles staat als omzet in je administratie. Wat je niet aanvinkt, blijft open staan. In het overzicht van je administratie zie je ook wat je vandaag en deze week nog verwacht uit afspraken, en of er van eerdere dagen nog iets af te sluiten is.</p></div>
 </div>
 <div class="vt-o"><h4>Aanbod: occasions en producten</h4>
 <div class="vt-v"><h5>Hoe zet ik auto's of producten op mijn website?</h5><p>Klik links op Aanbod. Kies onderaan of het om auto's of producten gaat, vink Aanbod op mijn website aan en klik op Opslaan en website bijwerken.</p></div>
@@ -14652,7 +14818,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-11-13-vijf');
+define('SITE_BOUW', '2026-11-13-dagafsluiten');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
