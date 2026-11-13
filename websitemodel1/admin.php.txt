@@ -89,6 +89,10 @@ function default_settings() {
         'video_telefoon'   => '1',
         'kop_flip'         => '',
         'kop_flip_plek'    => 'achter',
+        'avond_stand'      => '',
+        'avond_van'        => '19',
+        'avond_tot'        => '7',
+        'avond_systeem'    => '0',
         'feest_kleuren'    => '1',
         'blokken'          => [['k' => 'strook', 'aan' => 1], ['k' => 'diensten', 'aan' => 1], ['k' => 'projecten', 'aan' => 1], ['k' => 'voorna', 'aan' => 0], ['k' => 'werkwijze', 'aan' => 0], ['k' => 'cijfers', 'aan' => 0], ['k' => 'over', 'aan' => 0], ['k' => 'vragen', 'aan' => 0]],
         'voorna_titel'     => 'Voor en na',
@@ -487,6 +491,7 @@ function eigen_flip() {
     return is_flip($f) && is_file(UPLOAD_DIR . '/site/' . $f) ? $f : '';
 }
 function kop_flip_plek() { return st('kop_flip_plek') === 'naast' ? 'naast' : 'achter'; }
+function eigen_video_bestaat($s) { $f = basename((string)($s['video'] ?? '')); return $f !== '' && is_file(UPLOAD_DIR . '/site/' . $f); }
 /* Eigen video bovenaan: een korte film (max 10 seconden) die steeds opnieuw speelt */
 function eigen_video() {
     if (st('beweging') !== 'eigenvideo' || st('video') === '') return '';
@@ -772,6 +777,53 @@ function ffm_js() {
 })();
 FFMJS;
 }
+/* Voorbeeld op je telefoon: de opmaak die je nog niet hebt opgeslagen, 2 uur lang te zien via een geheime link */
+define('PROEF_DIR', DATA_DIR . '/proef');
+function proef_bewaren($s) {
+    if (!is_dir(PROEF_DIR)) { @mkdir(PROEF_DIR, 0755, true); @file_put_contents(PROEF_DIR . '/.htaccess', "Require all denied\nDeny from all\n"); }
+    foreach ((array)glob(PROEF_DIR . '/*.json') as $f) { if (is_file($f) && filemtime($f) < time() - 7200) @unlink($f); }
+    $t = bin2hex(random_bytes(16));
+    unset($s['looks']);
+    @file_put_contents(PROEF_DIR . '/' . $t . '.json', json_encode($s, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), LOCK_EX);
+    $basis = st('site_url') !== '' ? st('site_url') : ((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https' : 'http') . '://' . preg_replace('/[^a-zA-Z0-9.\-:]/', '', (string)($_SERVER['HTTP_HOST'] ?? '')));
+    header('Content-Type: application/json; charset=utf-8'); header('Cache-Control: no-store');
+    echo json_encode(['ok' => true, 'url' => rtrim($basis, '/') . '/admin.php?proef=' . $t]);
+    exit;
+}
+function proef_tonen() {
+    global $ST;
+    header('Cache-Control: no-store'); header('X-Robots-Tag: noindex, nofollow');
+    $t = (string)($_GET['proef'] ?? ''); $f = PROEF_DIR . '/' . $t . '.json';
+    if (!preg_match('/^[a-f0-9]{32}$/', $t) || !is_file($f) || filemtime($f) < time() - 7200) {
+        http_response_code(404); header('Content-Type: text/html; charset=utf-8');
+        echo '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Voorbeeld verlopen</title><body style="font-family:system-ui,sans-serif;padding:32px;line-height:1.5"><h1 style="font-size:22px">Dit voorbeeld is verlopen</h1><p>Een voorbeeld is 2 uur te zien. Maak in het beheer een nieuw voorbeeld met de knop Bekijk op je telefoon.</p></body>';
+        exit;
+    }
+    $d = json_decode((string)file_get_contents($f), true);
+    if (!is_array($d)) { http_response_code(404); exit; }
+    $ST = array_merge(default_settings(), $d);
+    $html = stijl_pagina(render_home(load_pages()));
+    $html = str_replace('</head>', '<meta name="robots" content="noindex,nofollow" />' . "\n</head>", $html);
+    $balk = '<div style="position:sticky;top:0;z-index:2147483000;background:#111827;color:#fff;font:600 14px/1.4 system-ui,sans-serif;padding:10px 16px;text-align:center">Voorbeeld van je nieuwe opmaak. Nog niet opgeslagen. <span style="font-weight:400;opacity:.8">Bevalt het? Klik in het beheer op Opslaan en website bijwerken.</span></div>';
+    $html = preg_replace('/(<body[^>]*>)/', '$1' . $balk, $html, 1);
+    header('Content-Type: text/html; charset=utf-8');
+    echo $html; exit;
+}
+/* Looks: alleen het uiterlijk van de website, zonder teksten en foto's. De laatste 5 worden bewaard. */
+function look_sleutels() {
+    global $OPBOUW;
+    $k = ['stijl', 'kleur_donker', 'kleur_accent', 'kleur_achtergrond', 'kleur_vlak', 'kleur_tekst', 'feest_kleuren', 'lettertype', 'vorm', 'beweging', 'beweging_snelheid', 'kop_flip_plek', 'avond_stand', 'avond_van', 'avond_tot', 'avond_systeem'];
+    foreach (array_keys($OPBOUW) as $d) { $k[] = 'opbouw_' . $d; }
+    return $k;
+}
+function look_van($s) { $o = []; foreach (look_sleutels() as $k) { $o[$k] = (string)($s[$k] ?? ''); } return $o; }
+function looks_bewaren($oud, $nieuw) {
+    $a = look_van($oud); $b = look_van($nieuw);
+    if ($a === $b) return (array)($nieuw['looks'] ?? []);
+    $l = array_values(array_filter((array)($oud['looks'] ?? []), function($x) use ($a) { return is_array($x) && isset($x['l']) && $x['l'] !== $a; }));
+    array_unshift($l, ['t' => date('Y-m-d H:i'), 'l' => $a]);
+    return array_slice($l, 0, 5);
+}
 function opbouw($deel) {
     global $OPBOUW;
     $v = st('opbouw_' . $deel);
@@ -780,6 +832,114 @@ function opbouw($deel) {
 function body_klassen($s) {
     return 't-' . $s . ' l-hero-' . opbouw('hero') . ' l-dienst-' . opbouw('diensten') . ' l-proj-' . opbouw('projecten')
          . ' l-menu-' . opbouw('menu') . ' l-strook-' . opbouw('strook') . ' l-afsl-' . opbouw('afsluiter') . ' l-voet-' . opbouw('voet');
+}
+/* Avondstand: 's avonds (op de klok van de bezoeker) een donkere, rustige website in de tinten van de eigen hoofdkleur */
+function avond_stand() { $v = st('avond_stand'); return in_array($v, ['avond', 'altijd'], true) ? $v : ''; }
+function avond_uur($k, $std, $min, $max) { $v = st($k); return ($v !== '' && ctype_digit($v) && (int)$v >= $min && (int)$v <= $max) ? (int)$v : $std; }
+function avond_kleuren() {
+    $d = valid_color(st('kleur_donker'), '#0b1f3a');
+    $r = hexdec(substr($d, 1, 2)) / 255; $g = hexdec(substr($d, 3, 2)) / 255; $b = hexdec(substr($d, 5, 2)) / 255;
+    $mx = max($r, $g, $b); $mn = min($r, $g, $b); $l = ($mx + $mn) / 2; $h = 0; $s = 0; $dd = $mx - $mn;
+    if ($dd > 0) {
+        $s = $l > 0.5 ? $dd / (2 - $mx - $mn) : $dd / ($mx + $mn);
+        if ($mx == $r) $h = fmod(($g - $b) / $dd + ($g < $b ? 6 : 0), 6); elseif ($mx == $g) $h = ($b - $r) / $dd + 2; else $h = ($r - $g) / $dd + 4;
+        $h *= 60;
+    }
+    $s = min($s, 0.32);
+    $mk = function($ll) use ($h, $s) { return 'hsl(' . round($h) . ',' . round($s * 100) . '%,' . round($ll * 100, 1) . '%)'; };
+    return ['bg' => $mk(0.085), 'vl' => $mk(0.12), 'k' => $mk(0.155), 'l' => 'rgba(255,255,255,.13)', 't' => '#ece8e2', 'm' => '#c2bcb3'];
+}
+function avond_js() {
+    return <<<'AVJS'
+(function(){
+  var A=__AVOND__;
+  function kies(){
+    var q=location.search;
+    if(/[?&]avond=1/.test(q))return true;
+    if(/[?&]avond=0/.test(q))return false;
+    if(A.stand==='altijd')return true;
+    var h=new Date().getHours(),av=A.van>A.tot?(h>=A.van||h<A.tot):(h>=A.van&&h<A.tot);
+    if(av)return true;
+    return !!(A.sys&&window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches);
+  }
+  if(!kies())return;
+  var R=document.documentElement;R.classList.add('ff-avond');
+  function rgb(s){var m=/rgba?\(([^)]+)\)/.exec(s||'');if(!m)return [0,0,0,0];var p=m[1].split(/[ ,\/]+/).filter(Boolean).map(parseFloat);return [p[0],p[1],p[2],p.length>3?p[3]:1];}
+  function hx(c){var n=parseInt(c.slice(1),16);return [n>>16&255,n>>8&255,n&255,1];}
+  function lum(c){var r=[c[0],c[1],c[2]].map(function(v){v/=255;return v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4);});return 0.2126*r[0]+0.7152*r[1]+0.0722*r[2];}
+  function con(a,b){var x=lum(a),y=lum(b);return (Math.max(x,y)+0.05)/(Math.min(x,y)+0.05);}
+  function kl(x){return x.charAt(0)==='#'?hx(x):rgb(x);}
+  function verz(c){var mx=Math.max(c[0],c[1],c[2]),mn=Math.min(c[0],c[1],c[2]);return mx?(mx-mn)/mx:0;}
+  function lichter(c,doel,bg){var x=[c[0],c[1],c[2],1];for(var i=0;i<40&&con(x,bg)<doel;i++){x=[x[0]+(255-x[0])*0.12,x[1]+(255-x[1])*0.12,x[2]+(255-x[2])*0.12,1];}return 'rgb('+Math.round(x[0])+','+Math.round(x[1])+','+Math.round(x[2])+')';}
+  var NIET='IMG,VIDEO,CANVAS,SVG,PATH,IFRAME,SCRIPT,STYLE,NOSCRIPT,PICTURE,SOURCE,BR,HR'.split(',');
+  var NIET_IN='.ffk,.ab-img,.ab-groot,.ab-duim,.ws-ct,[data-ffa-niet],.hero-video,.hero-dia';
+  function zet(el,p,v){if(!el.hasAttribute('data-ffa'))el.setAttribute('data-ffa',el.getAttribute('style')||'');el.style.setProperty(p,v,'important');}
+  function overslaan(el){return NIET.indexOf(el.tagName)>=0||(el.closest&&el.closest(NIET_IN));}
+  function grondVan(el){
+    for(var e=el;e&&e.nodeType===1;e=e.parentElement){var cs=getComputedStyle(e);
+      var bi=cs.backgroundImage||'none';
+      if(bi!=='none'&&/url\(/.test(bi))return null;
+      var b=rgb(cs.backgroundColor);if(b[3]>0.5)return b;
+      if(bi!=='none')return null;}
+    return hx(A.bg);
+  }
+  function verwerk(root){
+    var lijst=[root].concat([].slice.call(root.querySelectorAll('*'))),bw=window.innerWidth||1200;
+    lijst.forEach(function(el){
+      if(el.nodeType!==1||overslaan(el))return;
+      var cs=getComputedStyle(el),b=rgb(cs.backgroundColor),bi=cs.backgroundImage||'';
+      if(/gradient/.test(bi)&&!/url\(/.test(bi)){
+        var kl_=bi.match(/rgba?\([^)]+\)/g)||[],tl=0,nn=0;kl_.forEach(function(x){var q=rgb(x);if(q[3]>0.3){tl+=lum(q);nn++;}});
+        if(b[3]>0.5){tl+=lum(b);nn++;}
+        if(nn&&tl/nn>0.6){var br=el===document.body||el.getBoundingClientRect().width>=(window.innerWidth||1200)*0.9;zet(el,'background-image','none');zet(el,'background-color',br?A.bg:A.k);return;}
+      }
+      if(b[3]>0.5&&(bi==='none'||!bi||(/gradient/.test(bi)&&!/url\(/.test(bi)))){
+        var L=lum(b);
+        if(L>0.45){
+          var breed=el===document.body||el.getBoundingClientRect().width>=bw*0.9;
+          zet(el,'background-color',breed?(L>0.88?A.bg:A.vl):A.k);
+        }
+      }
+      ['Top','Right','Bottom','Left'].forEach(function(z){if(parseFloat(cs['border'+z+'Width'])>0){var c=rgb(cs['border'+z+'Color']);if(c[3]>0.3&&lum(c)>0.5)zet(el,'border-'+z.toLowerCase()+'-color',A.l);}});
+      if(parseFloat(cs.outlineWidth)>0&&lum(rgb(cs.outlineColor))>0.5)zet(el,'outline-color',A.l);
+    });
+    lijst.forEach(function(el){
+      if(el.nodeType!==1||overslaan(el))return;
+      var tekst=false;for(var n=el.firstChild;n;n=n.nextSibling){if(n.nodeType===3&&n.nodeValue.trim()){tekst=true;break;}}
+      var tag=el.tagName;if(!tekst&&tag!=='INPUT'&&tag!=='TEXTAREA'&&tag!=='SELECT')return;
+      var cs=getComputedStyle(el),c=rgb(cs.color),g=grondVan(el);if(!g)return;
+      if(c[3]<0.2)return;
+      var fs=parseFloat(cs.fontSize)||16,groot=fs>=24||(fs>=18.6&&+cs.fontWeight>=700),eis=groot?3:4.5;
+      if(con(c,g)>=eis)return;
+      var kop=/^H[1-6]$/.test(tag),opties=lum(g)<0.2?[verz(c)<0.25?(lum(c)<0.18||kop?A.t:A.m):lichter(c,kop?8:6,g),A.t,'#ffffff','#111111']:['#111111','#ffffff'];
+      var beste=opties[0],bk=0;
+      for(var i=0;i<opties.length;i++){var k=con(kl(opties[i]),g);if(k>=eis){beste=opties[i];bk=-1;break;}if(k>bk){bk=k;beste=opties[i];}}
+      zet(el,'color',beste);
+    });
+  }
+  function reset(){[].forEach.call(document.querySelectorAll('[data-ffa]'),function(el){var o=el.getAttribute('data-ffa');if(o)el.setAttribute('style',o);else el.removeAttribute('style');el.removeAttribute('data-ffa');});}
+  var bezig=false,wacht=null;
+  function alles(){if(bezig)return;bezig=true;try{verwerk(document.body);}catch(e){}bezig=false;}
+  function later(opnieuw){clearTimeout(wacht);wacht=setTimeout(function(){if(opnieuw)reset();alles();},120);}
+  function start(){
+    alles();
+    if(!window.MutationObserver)return;
+    new MutationObserver(function(ms){if(bezig)return;for(var i=0;i<ms.length;i++){if(ms[i].addedNodes.length){later(false);return;}}}).observe(document.body,{childList:true,subtree:true});
+    new MutationObserver(function(){later(true);}).observe(document.head,{childList:true,subtree:true,characterData:true});
+    window.addEventListener('load',function(){later(false);});
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+AVJS;
+}
+function avond_head() {
+    if (avond_stand() === '') return '';
+    $k = avond_kleuren();
+    $data = $k + ['stand' => avond_stand(), 'van' => avond_uur('avond_van', 19, 15, 23), 'tot' => avond_uur('avond_tot', 7, 3, 11), 'sys' => st('avond_systeem') === '1'];
+    return '<style id="ff-avond">html.ff-avond{background:' . $k['bg'] . ';color-scheme:dark;}html.ff-avond body{background:' . $k['bg'] . ' !important;}'
+        . 'html.ff-avond main .ab-img img,html.ff-avond main .ab-groot img,html.ff-avond main .ws-ct img{mix-blend-mode:normal !important;}'
+        . 'html.ff-avond ::placeholder{color:' . $k['m'] . ';}</style>' . "\n"
+        . '<script>' . str_replace('__AVOND__', json_encode($data, JSON_HEX_TAG | JSON_HEX_AMP | JSON_UNESCAPED_SLASHES), avond_js()) . '</script>' . "\n";
 }
 function maatwerk_css() {
     global $LETTERS;
@@ -1162,7 +1322,7 @@ body.l-hero-kaart .hero.heeft-video .hero-video-laag{background:rgba(0,0,0,.18);
 .l-voet-streep .foot{border-top:6px solid var(--blue);}
 .l-voet-groot .nap > div:first-child strong{display:inline-block;font-size:clamp(28px,3.4vw,40px);letter-spacing:-.02em;line-height:1.1;margin-bottom:8px;}
 CSS;
-    return $link . "<style id=\"ff-maatwerk\">\n" . $css . "\n</style>\n";
+    return $link . "<style id=\"ff-maatwerk\">\n" . $css . "\n</style>\n" . avond_head();
 }
 /* Grote foto bovenaan: bij de stijl Etalage, of als de klant dat kiest */
 function banner_achter() { return st('banner') !== '' && st('banner_vorm') !== 'strook'; }
@@ -4119,12 +4279,58 @@ function ws_opbouw($x = null) {
         'font_tekst' => isset(ws_fonts()[(string)($x['font_tekst'] ?? '')]) ? (string)($x['font_tekst'] ?? '') : '',
         'stijl' => isset(ws_stijlen()[(string)($x['stijl'] ?? '')]) ? (string)$x['stijl'] : '',
         'fotogrond' => $kies('fotogrond', ['wit', 'licht', 'donker'], 'wit'),
+        'foto_gelijk' => !empty($x['foto_gelijk']),
+        'foto_opgaan' => !empty($x['foto_opgaan']),
+        'foto_fris' => !empty($x['foto_fris']),
         'menu' => $kies('menu', ['eigen', 'website'], 'eigen'),
         'terug_tekst' => cut(trim((string)($x['terug_tekst'] ?? '')), 30) ?: 'Naar de website',
     ];
 }
 function ws_kop_foto_url($o) { return $o['kop_foto'] !== '' && is_file(UPLOAD_DIR . '/webshop/_kop/' . $o['kop_foto']) ? '/uploads/webshop/_kop/' . rawurlencode($o['kop_foto']) : ''; }
 /* De keuzes als CSS. Alleen binnen <main>, zodat het menu en de onderkant van de website hetzelfde blijven. */
+/* Productfoto's even groot: lege rand om het product weg (alleen bij een effen witte of doorzichtige achtergrond) */
+function ws_gelijk_js() {
+    return <<<'GLJS'
+(function(){
+  function doe(img){
+    if(img.getAttribute('data-ffg')||img.hasAttribute('data-flip'))return;
+    img.setAttribute('data-ffg','1');
+    function go(){try{
+      var w=img.naturalWidth,h=img.naturalHeight;if(!w||!h)return;
+      var s=Math.min(1,140/Math.max(w,h)),cw=Math.max(2,Math.round(w*s)),ch=Math.max(2,Math.round(h*s));
+      var c=document.createElement('canvas');c.width=cw;c.height=ch;var x=c.getContext('2d');x.drawImage(img,0,0,cw,ch);
+      var d=x.getImageData(0,0,cw,ch).data;
+      function px(i,j){var k=(j*cw+i)*4;return [d[k],d[k+1],d[k+2],d[k+3]];}
+      var hk=[px(0,0),px(cw-1,0),px(0,ch-1),px(cw-1,ch-1)],door=hk.every(function(p){return p[3]<20;});
+      var bg=[0,0,0];
+      if(!door){
+        if(hk.some(function(p){return p[3]<200;}))return;
+        hk.forEach(function(p){bg[0]+=p[0]/4;bg[1]+=p[1]/4;bg[2]+=p[2]/4;});
+        if(bg[0]+bg[1]+bg[2]<600)return;
+        if(hk.some(function(p){return Math.abs(p[0]-bg[0])+Math.abs(p[1]-bg[1])+Math.abs(p[2]-bg[2])>45;}))return;
+      }
+      var x0=cw,y0=ch,x1=-1,y1=-1;
+      for(var j=0;j<ch;j++)for(var i=0;i<cw;i++){var k=(j*cw+i)*4,a=d[k+3];
+        var mee=door?a>24:(a>24&&Math.abs(d[k]-bg[0])+Math.abs(d[k+1]-bg[1])+Math.abs(d[k+2]-bg[2])>40);
+        if(mee){if(i<x0)x0=i;if(i>x1)x1=i;if(j<y0)y0=j;if(j>y1)y1=j;}}
+      if(x1<0)return;
+      var bw=(x1-x0+1)/cw,bh=(y1-y0+1)/ch;
+      if(bw>0.9&&bh>0.9)return;
+      if(bw<0.05||bh<0.05)return;
+      var m=0.04,X0=Math.max(0,(x0/cw-m*bw))*w,Y0=Math.max(0,(y0/ch-m*bh))*h,X1=Math.min(1,((x1+1)/cw+m*bw))*w,Y1=Math.min(1,((y1+1)/ch+m*bh))*h;
+      var vw=X1-X0,vh=Y1-Y0,f=Math.min(1,1200/Math.max(vw,vh)),o=document.createElement('canvas');
+      o.width=Math.max(1,Math.round(vw*f));o.height=Math.max(1,Math.round(vh*f));
+      var ox=o.getContext('2d');if(!door){ox.fillStyle='rgb('+Math.round(bg[0])+','+Math.round(bg[1])+','+Math.round(bg[2])+')';ox.fillRect(0,0,o.width,o.height);}
+      ox.drawImage(img,X0,Y0,vw,vh,0,0,o.width,o.height);
+      img.src=o.toDataURL(door?'image/png':'image/jpeg',0.9);
+    }catch(e){}}
+    if(img.complete&&img.naturalWidth)go();else img.addEventListener('load',go,{once:true});
+  }
+  function alles(){var l=document.querySelectorAll('main .ab-kaart .ab-img img');for(var i=0;i<l.length;i++)doe(l[i]);}
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',alles);else alles();
+})();
+GLJS;
+}
 function ws_opbouw_css($o) {
     $r = ['rond' => [16, 18, 999], 'klein' => [8, 8, 10], 'recht' => [0, 0, 0]][$o['hoek']];
     $c = '<style class="ws-opb">';
@@ -4148,6 +4354,9 @@ function ws_opbouw_css($o) {
     $grond = ['wit' => '#fff', 'licht' => '#f1f4f9', 'donker' => '#111'][$o['fotogrond']];
     $c .= 'main .ab-img,main .ab-groot{background:' . $grond . ';}';
     if ($o['vulling'] === 'passend') $c .= 'main .ab-kaart .ab-img img{object-fit:contain;padding:6%;box-sizing:border-box;}';
+    /* Productfoto's gelijktrekken: witte achtergrond laten opgaan in het vak, en iets frisser */
+    if (!empty($o['foto_opgaan']) && $o['fotogrond'] !== 'donker') $c .= 'main .ab-img img,main .ab-groot img,main .ab-duim img{mix-blend-mode:multiply;}';
+    if (!empty($o['foto_fris'])) $c .= 'main .ab-img img,main .ab-groot img,main .ws-ct img,main .ab-duim img{filter:brightness(1.03) contrast(1.06) saturate(1.08);}';
     /* Productkaarten */
     if ($o['kaart'] === 'zwevend') $c .= 'main .ab-kaart{border:0;background:transparent;box-shadow:none;overflow:visible;} main .ab-kaart .ab-img{border-radius:' . $r[0] . 'px;' . ($o['schaduw'] ? 'box-shadow:0 14px 30px -22px rgba(0,0,0,.45);' : '') . '} main .ab-kaart .ab-txt{padding:12px 2px 4px;} main .ab-kaart:hover{box-shadow:none;}';
     if ($o['kaart'] === 'overlay') $c .= 'main .ab-kaart{position:relative;} main .ab-kaart .ab-txt{position:absolute;left:0;right:0;bottom:0;padding:40px 16px 14px;background:linear-gradient(transparent,rgba(0,0,0,.72));} main .ab-kaart .ab-txt b,main .ab-kaart .ab-txt em,main .ab-kaart .ab-txt em small{color:#fff !important;} main .ab-kaart .ab-txt small{color:rgba(255,255,255,.8);} main .ab-kaart .ab-img{aspect-ratio:3/4;}';
@@ -4165,7 +4374,9 @@ function ws_opbouw_css($o) {
     if ($tf && $tf[1] !== '') $c .= 'main{font-family:"' . $tf[0] . '",system-ui,sans-serif;} main input,main select,main textarea,main button{font-family:inherit;}';
     if ($kf && $kf[1] !== '') $c .= 'main h1,main h2,main h3,main .ab-txt b,main .ws-ct b,main .ab-prijs{font-family:"' . $kf[0] . '",' . (in_array($o['font_kop'], ['playfair', 'cormorant', 'merriweather', 'dmserif'], true) ? 'Georgia,serif' : 'system-ui,sans-serif') . ';}';
     $link = $q ? '<link class="ws-opb" rel="stylesheet" href="https://fonts.googleapis.com/css2?' . h(implode('&', $q)) . '&amp;display=swap" />' : '';
-    return $link . $c . '</style>';
+    $g = '';
+    if (!empty($o['foto_gelijk']) && $o['vulling'] === 'passend') $g = '<script class="ws-opb">' . ws_gelijk_js() . '</script>';
+    return $link . $c . '</style>' . $g;
 }
 
 function ws_mollie_ok($k) { return (bool)preg_match('/^(live|test)_[A-Za-z0-9]{20,}$/', (string)$k); }
@@ -6104,6 +6315,7 @@ function ws_acties($action) {
                   'titel_uitgelicht' => $g('titel_uitgelicht'), 'titel_nieuw' => $g('titel_nieuw'), 'nieuw_n' => (int)$g('nieuw_n'), 'kolommen' => (int)$g('kolommen'), 'per_groep' => (int)$g('per_groep'),
                   'beeld' => $g('beeld'), 'vulling' => $g('vulling'), 'cats_als' => $g('cats_als'), 'accent' => !empty($_POST['eigen_kleur']) ? $g('accent') : '',
                   'hoek' => $g('hoek'), 'schaduw' => !empty($_POST['schaduw']), 'achtergrond' => $g('achtergrond'), 'fotogrond' => $g('fotogrond'),
+                  'foto_gelijk' => !empty($_POST['foto_gelijk']), 'foto_opgaan' => !empty($_POST['foto_opgaan']), 'foto_fris' => !empty($_POST['foto_fris']),
                   'menu' => $g('menu'), 'terug_tekst' => $g('terug_tekst'), 'kaart' => $g('kaart'), 'pp_foto' => $g('pp_foto'), 'knop_tekst' => $g('knop_tekst'),
                   'font_kop' => $g('font_kop'), 'font_tekst' => $g('font_tekst'), 'stijl' => $g('stijl')];
         $weg = !empty($_POST['kop_foto_weg']);
@@ -6515,6 +6727,14 @@ function ws_view_opbouw($in) {
           <div class="field"><label>Achter de foto's</label><?= $sel('fotogrond', ['wit' => 'Wit', 'licht' => 'Lichtgrijs', 'donker' => 'Donker'], $o['fotogrond']) ?></div>
           <div class="field"><label>Productkaarten</label><?= $sel('kaart', ['rand' => 'Met rand', 'zwevend' => 'Zonder rand (zwevend)', 'overlay' => 'Tekst over de foto', 'lijst' => 'Als lijst, foto links'], $o['kaart']) ?></div>
         </div>
+        <div class="wso-gelijk">
+          <b>Productfoto's gelijktrekken</b>
+          <p class="hint" style="margin:2px 0 8px">Foto's van verschillende momenten en telefoons zien er zo uit als 1 nette serie. Je eigen foto's blijven zoals ze zijn: het gebeurt alleen op de webshop.</p>
+          <label class="check"><input type="checkbox" name="foto_gelijk" value="1" <?= $o['foto_gelijk'] ? 'checked' : '' ?> /> <span>Elk product even groot in zijn vak. De lege witte rand om het product wordt weggelaten. Werkt bij foto's met een effen witte of doorzichtige achtergrond, en bij Foto in het vak: Helemaal zichtbaar.</span></label>
+          <label class="check"><input type="checkbox" name="foto_opgaan" value="1" <?= $o['foto_opgaan'] ? 'checked' : '' ?> /> <span>Witte achtergrond van de foto laten opgaan in het vak, zodat alle vakken dezelfde kleur hebben. Niet bij een donkere achtergrond achter de foto's.</span></label>
+          <label class="check"><input type="checkbox" name="foto_fris" value="1" <?= $o['foto_fris'] ? 'checked' : '' ?> /> <span>Foto's iets helderder en frisser maken.</span></label>
+        </div>
+        <style>.wso-gelijk{margin:14px 0 0;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:#fafbfd}.wso-gelijk b{font-size:14.5px}.wso-gelijk .check{margin:6px 0 0}</style>
       </div>
 
       <div class="ws-sectie"><h3>Kleuren en vormen</h3>
@@ -14037,6 +14257,7 @@ define('DEMO_FILE', DATA_DIR . '/demo-aan.txt');
 if (isset($_GET['doc']) || (($_POST['action'] ?? '') === 'adm_akkoord')) { adm_publiek(); }
 if (isset($_GET['taak']) || isset($_GET['agenda']) || isset($_GET['download']) || isset($_GET['herinnering']) || isset($_GET['bijlage'])) { adm_openbaar(); }
 if (isset($_GET['res'])) { res_openbaar(); }
+if (isset($_GET['proef'])) { proef_tonen(); }
 if (isset($_GET['shop'])) { ws_openbaar(); }
 if (isset($_GET['beoordeel'])) { bd_formulier(); }
 $demoEnabled = $config && file_exists(DEMO_FILE);
@@ -14163,6 +14384,10 @@ function venturo_html() {
 <div class="vt-v"><h5>Kan ik een flip bovenaan mijn website zetten?</h5><p>Ja. Ga naar Instellingen, bij Beweging staat Je eigen flip. Kies een flip, of klik op Maak een flip van foto's en kies 2 tot 60 foto's, bijvoorbeeld een kale muur die steeds mooier wordt of een kapsel van voor naar na. Kies of de flip groot achter de bovenkant komt, met je tekst eroverheen, of naast je tekst op de plek van je logo. Klik daarna op Opslaan en website bijwerken. Een flip is klein, dus je website blijft snel.</p></div>
 <div class="vt-v"><h5>Kan ik kleuren kiezen die bij mijn zaak passen?</h5><p>Ja. Ga naar Instellingen, bij Uiterlijk staat onder de kleurcombinaties Kleuren uit een foto van je zaak. Kies een foto van je pand, je interieur, je bus of je werk. Je ziet de kleuren uit je foto en 3 voorstellen: Rustig, Krachtig en Strak. Klik op een voorstel en je ziet het meteen in het voorbeeld. De foto blijft op je eigen computer of telefoon en wordt niet opgeslagen. Klik daarna op Opslaan en website bijwerken.</p></div>
 <div class="vt-v"><h5>Hoe weet ik of mijn kleuren goed leesbaar zijn?</h5><p>Bij de kleurcombinaties in Instellingen staat de leesbaarheidswacht. Is alles goed, dan zie je een groene melding. Kies je een kleur waarop de tekst slecht leesbaar wordt, bijvoorbeeld een hele lichte knop met witte tekst, dan zie je een waarschuwing met een betere kleur ernaast. Klik op Gebruik deze kleur en het is opgelost.</p></div>
+<div class="vt-v"><h5>Kan mijn website 's avonds donker worden?</h5><p>Ja. Ga naar Instellingen, Avondstand. Kies 's Avonds vanzelf donker en vanaf welk uur. Je website wordt dan op de klok van je bezoeker donker en rustig, in de tinten van je eigen hoofdkleur. Lichte vlakken worden donker en donkere tekst wordt licht, zodat alles goed leesbaar blijft. Je kunt ook Altijd donker kiezen. Klik op Opslaan en website bijwerken. Met Bekijk je website in de avondstand zie je het ook overdag.</p></div>
+<div class="vt-v"><h5>Kan ik kleuren kiezen die bij mijn logo passen?</h5><p>Ja. Ga naar Instellingen, Uiterlijk. Onder de kleurcombinaties staat Kleuren uit mijn logo. Klik erop en je krijgt 3 voorstellen in de kleuren van je logo. Klik op een voorstel en je ziet het meteen in het voorbeeld. Klik daarna op Opslaan en website bijwerken. De knop staat er alleen als je een logo hebt geplaatst.</p></div>
+<div class="vt-v"><h5>Kan ik mijn nieuwe opmaak eerst op mijn telefoon bekijken?</h5><p>Ja. Klik onderaan Instellingen op Bekijk op je telefoon. Er verschijnt een QR-code. Scan die met de camera van je telefoon en tik op de link. Je ziet je voorpagina met alles wat je hebt veranderd, ook als je nog niet hebt opgeslagen. Het voorbeeld is 2 uur te zien. Bevalt het? Klik dan op Opslaan en website bijwerken.</p></div>
+<div class="vt-v"><h5>Hoe zet ik mijn vorige look terug?</h5><p>Ga naar Instellingen, Uiterlijk. Bij Je vorige looks staan de laatste 5 looks van je website, met de stijl, de kleuren en de datum. Klik op Terugzetten en je website krijgt die look weer. Alleen het uiterlijk verandert: je teksten en foto's blijven staan. De look die je net had, komt in de lijst, dus je kunt altijd weer terug.</p></div>
 </div>
 <div class="vt-o"><h4>Blokken op je voorpagina</h4>
 <div class="vt-v"><h5>Wat zijn blokken?</h5><p>De onderdelen van je voorpagina, zoals je diensten, uitgelichte projecten, voor- en na-foto's, werkwijze in stappen, cijfers, over ons, veelgestelde vragen en eigen afbeeldingen. Je vindt ze in Instellingen, tabblad Blokken op je voorpagina.</p></div>
@@ -14273,6 +14498,7 @@ function venturo_html() {
 <div class="vt-v"><h5>Kan de koper zelf de grootte en plaats van zijn logo kiezen?</h5><p>Ja. Zet bij Opdruk de plekken met de grootste maat, bijvoorbeeld Borst links 10x10 en Rug 30x40, en klik op Opslaan. Kies daarna bij Drukvakken op de foto per plek een foto en schuif het blauwe vak naar de goede plek. De koper ziet zijn logo dan meteen op je product, maakt het groter of kleiner en zet het boven, in het midden of onder, maar nooit buiten het vak. Bij de bestelling zie je precies welke grootte en plaats hij koos.</p></div>
 <div class="vt-v"><h5>Kan ik de opbouw en de kleuren van mijn webshop zelf kiezen?</h5><p>Ja. Ga naar Webshop en dan Opbouw en uiterlijk. Daar kies je de bovenkant (donker, licht, met een foto of flip), zet je blokken aan of uit en in de volgorde die jij wilt, zoals Uitgelicht, Nieuw binnen, Voordelen en Zoeken, en kies je hoeveel producten naast elkaar staan, de vorm van de foto's, een eigen kleur en ronde of rechte hoeken. Rechts zie je meteen een voorbeeld, op de computer en op de telefoon. Klik op Opslaan en website bijwerken, dan staat het op je website. Wil je het snel? Kies bovenaan een van de 9 stijlen, zoals Modern, Boetiek, Bouwmarkt of Luxe. Je kunt ook een eigen lettertype kiezen, de vorm van de productkaarten, en bij Productpagina waar de foto staat en welke tekst op de bestelknop komt.</p></div>
 <div class="vt-v"><h5>Mollie stort het geld in 1 keer. Hoe zie ik bij welke bestellingen dat hoort?</h5><p>Laad je bankbestand in bij Administratie, Bank. Een storting van Mollie wordt vanzelf gekoppeld aan de webshopbestellingen die erbij horen, van oud naar nieuw. Je ziet welke bestellingen het zijn, hoeveel ze samen waren en hoeveel kosten Mollie heeft ingehouden. Die kosten staan op de maandfactuur van Mollie. Bij de bestelling zelf zie je op welke dag Mollie het geld heeft gestort.</p></div>
+<div class="vt-v"><h5>Hoe zorg ik dat al mijn productfoto's er hetzelfde uitzien?</h5><p>Ga naar Webshop, Opbouw. Bij Indeling staat Productfoto's gelijktrekken. Vink aan wat je wilt: elk product even groot in zijn vak, de witte achtergrond van de foto laten opgaan in het vak, en foto's iets helderder en frisser. Je eigen foto's blijven zoals ze zijn, het gebeurt alleen op de webshop. Even groot werkt bij foto's met een effen witte of doorzichtige achtergrond en bij Foto in het vak: Helemaal zichtbaar.</p></div>
 </div>
 </div>
 <div class="vt-g" data-param="adm"><h3>Administratie</h3>
@@ -14426,7 +14652,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-11-13-flipkop');
+define('SITE_BOUW', '2026-11-13-vijf');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
@@ -14591,6 +14817,29 @@ if ($logged_in && isset($_POST['action'])) {
         $_SESSION['ff_notice'] = $f !== '' ? $f : 'De website is teruggezet. Bevalt het toch niet? Zet hieronder gewoon een andere versie terug.';
         header('Location: admin.php?versies=1'); exit;
     }
+    if ($action === 'settings' && isset($_POST['look_terug'])) {
+        $n = (int)$_POST['look_terug']; $looks = array_values((array)($ST['looks'] ?? []));
+        if (isset($looks[$n]['l']) && is_array($looks[$n]['l'])) {
+            $new = $ST;
+            foreach (look_sleutels() as $k) { if (array_key_exists($k, $looks[$n]['l'])) $new[$k] = (string)$looks[$n]['l'][$k]; }
+            if ($new['beweging'] === 'eigenvideo' && eigen_video_bestaat($new) === false) $new['beweging'] = '';
+            if ($new['beweging'] === 'eigenflip' && (($new['kop_flip'] ?? '') === '' || !is_file(UPLOAD_DIR . '/site/' . basename($new['kop_flip'])))) $new['beweging'] = '';
+            unset($looks[$n]);
+            $new['looks'] = array_values($looks);
+            $new['looks'] = looks_bewaren(array_merge($ST, ['looks' => $new['looks']]), $new);
+            save_settings($new);
+            $ST = $new;
+            rebuild_everything($pages);
+            $_SESSION['ff_notice'] = 'Je vorige look staat weer op je website. Je teksten en foto\'s zijn hetzelfde gebleven. De look van net staat nu bij Je vorige looks.';
+        }
+        header('Location: admin.php?instellingen=1#vorigeLooks'); exit;
+    }
+    if ($action === 'settings' && !empty($_POST['ff_proef'])) {
+        /* Voorbeeld op de telefoon: niets opslaan, geen bestanden ontvangen of weghalen */
+        $_FILES = [];
+        foreach (array_keys($_POST) as $pk) { if (preg_match('/(_weg$|^remove_|_data$)/', (string)$pk)) unset($_POST[$pk]); }
+        $GLOBALS['FF_PROEF'] = true;
+    }
     if ($action === 'settings') {
         $new = $ST;
         $mlMsgs = [];
@@ -14641,6 +14890,12 @@ if ($logged_in && isset($_POST['action'])) {
         $new['beweging'] = array_key_exists((string)($_POST['beweging'] ?? ''), $BEWEGINGEN) || in_array(($_POST['beweging'] ?? ''), ['eigenvideo', 'eigenflip'], true) ? (string)$_POST['beweging'] : '';
         $new['beweging_snelheid'] = array_key_exists((string)($_POST['beweging_snelheid'] ?? ''), $SNELHEDEN) ? (string)$_POST['beweging_snelheid'] : 'normaal';
         $new['feest_kleuren'] = !empty($_POST['feest_kleuren']) ? '1' : '0';
+        if (isset($_POST['avond_set'])) {
+            $new['avond_stand'] = in_array((string)($_POST['avond_stand'] ?? ''), ['avond', 'altijd'], true) ? (string)$_POST['avond_stand'] : '';
+            $av = (int)($_POST['avond_van'] ?? 19); $new['avond_van'] = (string)($av >= 15 && $av <= 23 ? $av : 19);
+            $at = (int)($_POST['avond_tot'] ?? 7); $new['avond_tot'] = (string)($at >= 3 && $at <= 11 ? $at : 7);
+            $new['avond_systeem'] = !empty($_POST['avond_systeem']) ? '1' : '0';
+        }
 
         // Blokken op de voorpagina: volgorde, aan/uit en inhoud
         global $BLOKKEN;
@@ -14856,6 +15111,8 @@ if ($logged_in && isset($_POST['action'])) {
         }
         $msgs = array_merge($msgs, $upErrors);
 
+        if (!empty($GLOBALS['FF_PROEF'])) { proef_bewaren($new); }
+        $new['looks'] = looks_bewaren($ST, $new);
         save_settings($new);
         $ST = $new;
         if (isset($_POST['adm_iban']) && !adm_voorbeeld()) {
@@ -15468,13 +15725,44 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
               </div>
               <div class="hint">Je teksten, diensten en projecten blijven hetzelfde; alleen de uitstraling verandert. Je kunt altijd wisselen. Bij Etalage komt de foto van je nieuwste project groot bovenaan. Nieuwe stijlen verschijnen hier vanzelf.</div>
             </div>
+            <?php $LOOKS = array_values(array_filter((array)($ST['looks'] ?? []), function($x) { return is_array($x) && isset($x['l']); })); $STN = alle_stijlen(); ?>
+            <div class="vl" id="vorigeLooks">
+              <h3 class="kp-h">Je vorige looks</h3>
+              <?php if (!$LOOKS): ?>
+                <p class="hint" style="margin:0">Hier komen je laatste 5 looks te staan zodra je iets aan het uiterlijk verandert en opslaat. Zo kun je altijd met 1 klik terug. Je teksten en foto's blijven daarbij gewoon staan.</p>
+              <?php else: ?>
+                <p class="hint" style="margin:0 0 10px">Probeer gerust iets nieuws: met Terugzetten heb je je vorige look met 1 klik terug. Alleen het uiterlijk verandert, je teksten en foto's blijven staan.</p>
+                <div class="vl-rij">
+                <?php foreach ($LOOKS as $li => $lk): $l = $lk['l']; $ld = valid_color($l['kleur_donker'] ?? '', '#0b1f3a'); $la = valid_color($l['kleur_accent'] ?? '', '#1d4ed8'); $lb = valid_color($l['kleur_achtergrond'] ?? '', '#ffffff'); $lv = valid_color($l['kleur_vlak'] ?? '', '#f3f5f9'); $lt = strtotime((string)($lk['t'] ?? '')); ?>
+                  <div class="vl-k">
+                    <span class="vl-mini" style="background:<?= h($lb) ?>"><i style="background:<?= h($ld) ?>"></i><b style="background:<?= h($la) ?>"></b><u style="background:<?= h($lv) ?>"></u></span>
+                    <strong><?= h($STN[$l['stijl'] ?? '']['naam'] ?? 'Eigen stijl') ?></strong>
+                    <small><?= $lt ? h(date('j-n-Y', $lt) . ' om ' . date('H:i', $lt)) : '' ?></small>
+                    <button type="submit" class="btn quiet vl-terug" name="look_terug" value="<?= (int)$li ?>">Terugzetten</button>
+                  </div>
+                <?php endforeach; ?>
+                </div>
+              <?php endif; ?>
+            </div>
+            <style>
+              .vl{margin:6px 0 18px;padding:14px;border:1px solid #e3e8f0;border-radius:12px;background:#fafbfd;}
+              .vl .kp-h{margin-top:0;}
+              .vl-rij{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;}
+              .vl-k{display:grid;gap:4px;background:#fff;border:1px solid #e3e8f0;border-radius:12px;padding:10px;font-size:13px;}
+              .vl-k small{color:#5b6577;}
+              .vl-mini{display:block;position:relative;height:54px;border-radius:8px;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08);}
+              .vl-mini i{position:absolute;left:0;right:0;top:0;height:22px;}
+              .vl-mini b{position:absolute;left:8px;top:30px;width:34px;height:12px;border-radius:99px;}
+              .vl-mini u{position:absolute;left:50px;right:8px;top:32px;height:8px;border-radius:4px;}
+              .vl-terug{justify-content:center;padding:6px 10px !important;font-size:13px !important;}
+            </style>
             <div class="kp" id="kleurPalet">
               <h3 class="kp-h">Kleurcombinaties</h3>
               <p class="hint" style="margin:0 0 10px">Klik op een combinatie: de kleuren van je bovenkant, knoppen en achtergrond passen dan bij elkaar. Daarna kun je elke kleur hieronder nog los veranderen.</p>
               <div class="kp-pal" id="kpPal"></div>
               <div class="kp-foto" id="kpFoto">
-                <div class="kp-foto-kop"><b>Kleuren uit een foto van je zaak</b><span>Kies een foto van je pand, je interieur, je bus of je werk. De kleuren worden eruit gehaald en je krijgt 3 combinaties die bij jouw zaak passen. De foto blijft op je eigen computer of telefoon en wordt niet opgeslagen.</span></div>
-                <label class="btn quiet kp-foto-knop">Foto kiezen<input type="file" id="kpFotoIn" accept="image/*" hidden /></label>
+                <div class="kp-foto-kop"><b>Kleuren uit een foto van je zaak of uit je logo</b><span>Kies een foto van je pand, je interieur, je bus of je werk, of gebruik je logo. De kleuren worden eruit gehaald en je krijgt 3 combinaties die bij jouw zaak passen. De foto blijft op je eigen computer of telefoon en wordt niet opgeslagen.</span></div>
+                <div class="kp-foto-knoppen"><label class="btn quiet kp-foto-knop">Foto kiezen<input type="file" id="kpFotoIn" accept="image/*" hidden /></label><?php if (logo_url() !== ''): ?><button type="button" class="btn quiet kp-foto-knop" id="kpLogoKnop" data-logo="<?= h(logo_url()) ?>">Kleuren uit mijn logo</button><?php endif; ?></div>
                 <div class="kp-foto-uit" id="kpFotoUit" hidden><img id="kpFotoImg" alt="" /><div><div class="kp-foto-kl" id="kpFotoKl" title="De kleuren in je foto"></div><div class="kp-pal" id="kpFotoPal"></div></div></div>
               </div>
               <div class="kp-twee">
@@ -15516,9 +15804,9 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
               .kp-vlak{background:var(--v);padding:12px;display:grid;gap:6px;color:#1f2937;} .kp-kk{margin-top:4px;}
               .kp-foto{margin:14px 0 4px;padding:14px;border:1px dashed #b8c2d3;border-radius:12px;background:#fafbfd;display:grid;gap:10px;}
               .kp-foto-kop b{display:block;font-size:14px;margin-bottom:3px;} .kp-foto-kop span{font-size:13px;color:#5b6577;}
-              .kp-foto-knop{justify-self:start;cursor:pointer;}
+              .kp-foto-knop{cursor:pointer;} .kp-foto-knoppen{display:flex;flex-wrap:wrap;gap:8px;}
               .kp-foto-uit{display:grid;grid-template-columns:150px 1fr;gap:14px;align-items:start;} .kp-foto-uit[hidden]{display:none;}
-              .kp-foto-uit img{width:150px;height:110px;object-fit:cover;border-radius:10px;border:1px solid #e3e8f0;}
+              .kp-foto-uit img{width:150px;height:110px;object-fit:cover;border-radius:10px;border:1px solid #e3e8f0;} .kp-foto-uit img.logo{object-fit:contain;background:#fff;padding:8px;box-sizing:border-box;}
               .kp-foto-kl{display:flex;gap:5px;margin-bottom:10px;} .kp-foto-kl span{width:26px;height:26px;border-radius:6px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.12);}
               @media (max-width:600px){.kp-foto-uit{grid-template-columns:1fr;}}
               .kp-wacht{margin:10px 0 0;padding:10px 12px;border-radius:10px;font-size:13px;display:grid;gap:8px;}
@@ -15598,11 +15886,11 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
 
               /* ---- Kleuren uit een foto van je zaak ---- */
               var fin=document.getElementById('kpFotoIn');
-              function kleurenUit(img){
+              function kleurenUit(img,zonderWit){
                 var m=160,sc=Math.min(1,m/Math.max(img.naturalWidth,img.naturalHeight)),w=Math.max(1,Math.round(img.naturalWidth*sc)),h=Math.max(1,Math.round(img.naturalHeight*sc));
                 var c=document.createElement('canvas');c.width=w;c.height=h;var x=c.getContext('2d');x.drawImage(img,0,0,w,h);
                 var px=x.getImageData(0,0,w,h).data,pt=[];
-                for(var i=0;i<px.length;i+=4){if(px[i+3]>=128)pt.push([px[i],px[i+1],px[i+2]]);}
+                for(var i=0;i<px.length;i+=4){if(px[i+3]>=128&&!(zonderWit&&px[i]>236&&px[i+1]>236&&px[i+2]>236))pt.push([px[i],px[i+1],px[i+2]]);}
                 if(pt.length<10)return [];
                 var K=8,cen=[pt[Math.floor(pt.length/2)].slice()];
                 while(cen.length<K){var best=null,bd=-1;for(var j=0;j<pt.length;j+=7){var md=1e9;cen.forEach(function(q){var dd=(pt[j][0]-q[0])*(pt[j][0]-q[0])+(pt[j][1]-q[1])*(pt[j][1]-q[1])+(pt[j][2]-q[2])*(pt[j][2]-q[2]);if(dd<md)md=dd;});if(md>bd){bd=md;best=pt[j];}}if(!best||bd<30)break;cen.push(best.slice());}
@@ -15630,12 +15918,12 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
                 r.push(['Strak',donker(basis,0.08,0.12),knop(k1),vanHsl(basis.h,0.1,0.985),vanHsl(basis.h,0.12,0.945)]);
                 return r;
               }
-              if(fin)fin.addEventListener('change',function(){
-                var f=fin.files&&fin.files[0];if(!f)return;
+              function toonVoorstellen(u,zonderWit){
                 var uit=document.getElementById('kpFotoUit'),im=document.getElementById('kpFotoImg'),kl_=document.getElementById('kpFotoKl'),pal=document.getElementById('kpFotoPal');
-                var u=URL.createObjectURL(f),img=new Image();
+                var img=new Image();
                 img.onload=function(){
-                  var kl=kleurenUit(img);im.src=u;uit.hidden=false;kl_.innerHTML='';pal.innerHTML='';
+                  var kl=kleurenUit(img,zonderWit);im.src=u;im.classList.toggle('logo',!!zonderWit);uit.hidden=false;kl_.innerHTML='';pal.innerHTML='';
+                  if(!kl.length){st.textContent='In dit beeld zitten te weinig kleuren om voorstellen te maken.';return;}
                   kl.slice(0,6).forEach(function(k){var s=document.createElement('span');s.style.background=k.c;s.title=k.c;kl_.appendChild(s);});
                   voorstellen(kl).forEach(function(p){var b=document.createElement('button');b.type='button';b.className='kp-p';b.title=p[0];
                     b.innerHTML='<span class="t" style="background:'+p[1]+'"></span><span class="m" style="background:'+p[3]+'"><i style="background:'+p[2]+'"></i><u style="background:'+p[4]+'"></u></span><small></small>';
@@ -15643,9 +15931,12 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
                     b.onclick=function(){kd.value=p[1];ka.value=p[2];vuur(kd);vuur(ka);zetBg(p[3],p[4]);eigen();teken();[].forEach.call(pal.children,function(x){x.classList.toggle('on',x===b);});};
                     pal.appendChild(b);});
                 };
-                img.onerror=function(){st.textContent='Deze foto kon niet worden gelezen. Probeer een jpg of png.';};
+                img.onerror=function(){st.textContent='Dit beeld kon niet worden gelezen. Probeer een jpg of png.';};
                 img.src=u;
-              });
+              }
+              if(fin)fin.addEventListener('change',function(){var f=fin.files&&fin.files[0];if(f)toonVoorstellen(URL.createObjectURL(f),false);});
+              var lk=document.getElementById('kpLogoKnop');
+              if(lk)lk.addEventListener('click',function(){toonVoorstellen(lk.getAttribute('data-logo'),true);});
               [kd,ka,bg,vl,bga,vla].forEach(function(e){if(e){e.addEventListener('input',teken);e.addEventListener('change',teken);}});
               teken();
             });
@@ -15690,6 +15981,50 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
               <?php endforeach; ?>
             </div>
             <div class="hint">Vink een kleur aan om hem te gebruiken. Uitgevinkt = de kleur van de stijl. Zorg dat de tekst goed leesbaar blijft op de achtergrond.</div>
+          </div>
+
+          <?php $avS = avond_stand(); $avV = avond_uur('avond_van', 19, 15, 23); $avT = avond_uur('avond_tot', 7, 3, 11); $avK = avond_kleuren(); ?>
+          <div class="formcard" id="avondstand">
+            <h2>Avondstand</h2>
+            <p class="hint" style="margin:-4px 0 14px">'s Avonds wordt je website vanzelf donker en rustig, in de tinten van je eigen hoofdkleur. Fijn voor je ogen, en een restaurant of kapper voelt 's avonds ook echt als avond. Het gaat op de klok van je bezoeker. Alles blijft goed leesbaar: lichte vlakken worden donker en donkere tekst wordt licht.</p>
+            <input type="hidden" name="avond_set" value="1" />
+            <div class="av-twee">
+              <div>
+                <label class="check"><input type="radio" name="avond_stand" value="" <?= $avS === '' ? 'checked' : '' ?> /> <span>Uit: altijd licht</span></label>
+                <label class="check"><input type="radio" name="avond_stand" value="avond" <?= $avS === 'avond' ? 'checked' : '' ?> /> <span>'s Avonds vanzelf donker</span></label>
+                <label class="check"><input type="radio" name="avond_stand" value="altijd" <?= $avS === 'altijd' ? 'checked' : '' ?> /> <span>Altijd donker</span></label>
+                <div class="av-uren">
+                  <div class="field"><label for="avVan">Donker vanaf</label><select id="avVan" name="avond_van"><?php for ($u = 15; $u <= 23; $u++): ?><option value="<?= $u ?>" <?= $avV === $u ? 'selected' : '' ?>><?= $u ?>:00 uur</option><?php endfor; ?></select></div>
+                  <div class="field"><label for="avTot">Weer licht vanaf</label><select id="avTot" name="avond_tot"><?php for ($u = 3; $u <= 11; $u++): ?><option value="<?= $u ?>" <?= $avT === $u ? 'selected' : '' ?>><?= $u ?>:00 uur</option><?php endfor; ?></select></div>
+                </div>
+                <label class="check"><input type="checkbox" name="avond_systeem" value="1" <?= st('avond_systeem') === '1' ? 'checked' : '' ?> /> <span>Ook overdag donker voor bezoekers die op hun telefoon of computer de donkere modus aan hebben staan</span></label>
+                <?php if ($avS !== ''): ?><p style="margin:12px 0 0"><a class="btn quiet" href="/?avond=1" target="_blank" rel="noopener">Bekijk je website in de avondstand</a></p><?php endif; ?>
+                <div class="hint">Klik daarna onderaan op Opslaan en website bijwerken. Met de knop hierboven zie je de avondstand ook overdag.</div>
+              </div>
+              <div class="av-vb" aria-hidden="true" style="--ab:<?= h($avK['bg']) ?>;--av:<?= h($avK['vl']) ?>;--ak:<?= h($avK['k']) ?>;--ad:<?= h(valid_color(st('kleur_donker'), '#0b1f3a')) ?>;--aa:<?= h(valid_color(st('kleur_accent'), '#1d4ed8')) ?>">
+                <div class="av-top"><b><?= h(cut(st('naam'), 20)) ?></b><i>Contact</i></div>
+                <div class="av-hero"><small>'S AVONDS</small><b>Zo ziet je website er 's avonds uit.</b><span>Afspraak maken</span></div>
+                <div class="av-body"><div><i></i><b>Diensten</b><u></u></div><div><i></i><b>Projecten</b><u></u></div></div>
+              </div>
+            </div>
+            <style>
+              .av-twee{display:grid;grid-template-columns:1fr 260px;gap:20px;align-items:start;} @media (max-width:860px){.av-twee{grid-template-columns:1fr;}}
+              .av-uren{display:flex;gap:12px;flex-wrap:wrap;margin:10px 0 4px;} .av-uren .field{margin:0;min-width:140px;}
+              .av-vb{border-radius:14px;overflow:hidden;background:var(--ab);font-size:11px;color:#ece8e2;border:1px solid #2a2f3a;}
+              .av-top{display:flex;align-items:center;gap:8px;padding:9px 10px;background:var(--ad);} .av-top b{flex:1;} .av-top i{font-style:normal;background:var(--aa);color:#fff;padding:3px 8px;border-radius:99px;font-weight:700;}
+              .av-hero{background:var(--ad);padding:14px 12px;display:grid;gap:6px;color:#fff;} .av-hero small{opacity:.7;font-size:9px;letter-spacing:.1em;} .av-hero b{font-size:15px;line-height:1.2;} .av-hero span{justify-self:start;background:var(--aa);padding:5px 10px;border-radius:99px;font-weight:700;}
+              .av-body{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px;background:var(--av);} .av-body div{background:var(--ak);border:1px solid rgba(255,255,255,.13);border-radius:9px;padding:9px;display:grid;gap:5px;} .av-body i{width:18px;height:18px;border-radius:50%;background:var(--aa);} .av-body u{height:5px;border-radius:3px;background:rgba(255,255,255,.25);}
+            </style>
+            <script>
+            document.addEventListener('DOMContentLoaded',function(){
+              var vb=document.querySelector('.av-vb'),kd=document.getElementById('kd'),ka=document.getElementById('ka');if(!vb||!kd||!ka)return;
+              function hsl(c){var n=parseInt(c.slice(1),16),r=(n>>16&255)/255,g=(n>>8&255)/255,b=(n&255)/255,mx=Math.max(r,g,b),mn=Math.min(r,g,b),h=0,s=0,l=(mx+mn)/2,d=mx-mn;
+                if(d){s=l>0.5?d/(2-mx-mn):d/(mx+mn);h=mx===r?((g-b)/d+(g<b?6:0)):mx===g?((b-r)/d+2):((r-g)/d+4);h*=60;}return [Math.round(h),Math.round(Math.min(s,0.32)*100)];}
+              function zet(){var x=hsl(kd.value);vb.style.setProperty('--ad',kd.value);vb.style.setProperty('--aa',ka.value);
+                vb.style.setProperty('--ab','hsl('+x[0]+','+x[1]+'%,8.5%)');vb.style.setProperty('--av','hsl('+x[0]+','+x[1]+'%,12%)');vb.style.setProperty('--ak','hsl('+x[0]+','+x[1]+'%,15.5%)');}
+              [kd,ka].forEach(function(e){e.addEventListener('input',zet);e.addEventListener('change',zet);});
+            });
+            </script>
           </div>
 
           <?php global $BEWEGINGEN, $SNELHEDEN; $bwNu = beweging(); ?>
@@ -16002,8 +16337,50 @@ $host = preg_replace('/^www\./', '', preg_replace('/[^a-zA-Z0-9.\-:]/', '', (str
             <div class="field"><label for="site_url">Webadres (optioneel)</label><input type="url" id="site_url" name="site_url" placeholder="https://www.bedrijf.nl" value="<?= h(st('site_url')) ?>" /><div class="hint">Leeg = het adres waarop je nu bent (<?= h(site_url()) ?>). Vul in als de site met www bereikbaar moet zijn in Google.</div></div>
           </div>
 
-          <div class="savebar"><button class="btn" type="submit">Opslaan en website bijwerken</button><a class="btn ghost" href="admin.php">Annuleren</a></div>
+          <div class="savebar"><button class="btn" type="submit">Opslaan en website bijwerken</button><button class="btn quiet" type="button" id="ffProefKnop"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="vertical-align:-3px;margin-right:6px"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg>Bekijk op je telefoon</button><a class="btn ghost" href="admin.php">Annuleren</a></div>
         </form>
+        <div class="pf-achter" id="pfVenster" hidden>
+          <div class="pf-doos" role="dialog" aria-modal="true" aria-labelledby="pfTitel">
+            <button type="button" class="pf-dicht" id="pfDicht" aria-label="Sluiten">&times;</button>
+            <h2 id="pfTitel">Bekijk je nieuwe opmaak op je telefoon</h2>
+            <p class="pf-st" id="pfSt">Voorbeeld maken...</p>
+            <div class="pf-qr" id="pfQr"></div>
+            <p class="hint" id="pfUitleg" hidden>Open de camera van je telefoon en richt hem op de code. Tik op de link die verschijnt. Je ziet je voorpagina met alles wat je hier hebt veranderd, ook als je nog niet hebt opgeslagen. Het voorbeeld is 2 uur te zien. Bevalt het? Klik dan op Opslaan en website bijwerken.</p>
+            <div class="pf-knoppen" id="pfKnoppen" hidden><a class="btn" id="pfOpen" href="#" target="_blank" rel="noopener">Open het voorbeeld hier</a><button type="button" class="btn quiet" id="pfKopie">Link kopi&euml;ren</button></div>
+          </div>
+        </div>
+        <style>
+          .pf-achter{position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;}
+          .pf-achter[hidden]{display:none;}
+          .pf-doos{position:relative;background:#fff;border-radius:16px;max-width:420px;width:100%;padding:24px;text-align:center;box-shadow:0 30px 60px -20px rgba(0,0,0,.5);}
+          .pf-doos h2{font-size:19px;margin:0 28px 8px;}
+          .pf-dicht{position:absolute;right:10px;top:8px;border:0;background:none;font-size:28px;line-height:1;cursor:pointer;color:#5b6577;}
+          .pf-qr svg{width:220px;height:220px;display:block;margin:6px auto 10px;}
+          .pf-st{margin:0 0 6px;font-weight:600;} .pf-st.fout{color:#b42318;}
+          .pf-knoppen{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:12px;}
+        </style>
+        <script>var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],f={},c=function(t,r){o=function(t){for(var r=new Array(t),e=0;e<t;e+=1){r[e]=new Array(t);for(var n=0;n<t;n+=1)r[e][n]=null}return r}(i=4*e+17),l(0,0),l(i-7,0),l(0,i-7),s(),h(),d(t,r),e>=7&&v(t),null==a&&(a=p(e,n,u)),w(a,r)},l=function(t,r){for(var e=-1;e<=7;e+=1)if(!(t+e<=-1||i<=t+e))for(var n=-1;n<=7;n+=1)r+n<=-1||i<=r+n||(o[t+e][r+n]=0<=e&&e<=6&&(0==n||6==n)||0<=n&&n<=6&&(0==e||6==e)||2<=e&&e<=4&&2<=n&&n<=4)},h=function(){for(var t=8;t<i-8;t+=1)null==o[t][6]&&(o[t][6]=t%2==0);for(var r=8;r<i-8;r+=1)null==o[6][r]&&(o[6][r]=r%2==0)},s=function(){for(var t=B.getPatternPosition(e),r=0;r<t.length;r+=1)for(var n=0;n<t.length;n+=1){var i=t[r],a=t[n];if(null==o[i][a])for(var u=-2;u<=2;u+=1)for(var f=-2;f<=2;f+=1)o[i+u][a+f]=-2==u||2==u||-2==f||2==f||0==u&&0==f}},v=function(t){for(var r=B.getBCHTypeNumber(e),n=0;n<18;n+=1){var a=!t&&1==(r>>n&1);o[Math.floor(n/3)][n%3+i-8-3]=a}for(n=0;n<18;n+=1){a=!t&&1==(r>>n&1);o[n%3+i-8-3][Math.floor(n/3)]=a}},d=function(t,r){for(var e=n<<3|r,a=B.getBCHTypeInfo(e),u=0;u<15;u+=1){var f=!t&&1==(a>>u&1);u<6?o[u][8]=f:u<8?o[u+1][8]=f:o[i-15+u][8]=f}for(u=0;u<15;u+=1){f=!t&&1==(a>>u&1);u<8?o[8][i-u-1]=f:u<9?o[8][15-u-1+1]=f:o[8][15-u-1]=f}o[i-8][8]=!t},w=function(t,r){for(var e=-1,n=i-1,a=7,u=0,f=B.getMaskFunction(r),c=i-1;c>0;c-=2)for(6==c&&(c-=1);;){for(var g=0;g<2;g+=1)if(null==o[n][c-g]){var l=!1;u<t.length&&(l=1==(t[u]>>>a&1)),f(n,c-g)&&(l=!l),o[n][c-g]=l,-1==(a-=1)&&(u+=1,a=7)}if((n+=e)<0||i<=n){n-=e,e=-e;break}}},p=function(t,r,e){for(var n=A.getRSBlocks(t,r),o=b(),i=0;i<e.length;i+=1){var a=e[i];o.put(a.getMode(),4),o.put(a.getLength(),B.getLengthInBits(a.getMode(),t)),a.write(o)}var u=0;for(i=0;i<n.length;i+=1)u+=n[i].dataCount;if(o.getLengthInBits()>8*u)throw"code length overflow. ("+o.getLengthInBits()+">"+8*u+")";for(o.getLengthInBits()+4<=8*u&&o.put(0,4);o.getLengthInBits()%8!=0;)o.putBit(!1);for(;!(o.getLengthInBits()>=8*u||(o.put(236,8),o.getLengthInBits()>=8*u));)o.put(17,8);return function(t,r){for(var e=0,n=0,o=0,i=new Array(r.length),a=new Array(r.length),u=0;u<r.length;u+=1){var f=r[u].dataCount,c=r[u].totalCount-f;n=Math.max(n,f),o=Math.max(o,c),i[u]=new Array(f);for(var g=0;g<i[u].length;g+=1)i[u][g]=255&t.getBuffer()[g+e];e+=f;var l=B.getErrorCorrectPolynomial(c),h=k(i[u],l.getLength()-1).mod(l);for(a[u]=new Array(l.getLength()-1),g=0;g<a[u].length;g+=1){var s=g+h.getLength()-a[u].length;a[u][g]=s>=0?h.getAt(s):0}}var v=0;for(g=0;g<r.length;g+=1)v+=r[g].totalCount;var d=new Array(v),w=0;for(g=0;g<n;g+=1)for(u=0;u<r.length;u+=1)g<i[u].length&&(d[w]=i[u][g],w+=1);for(g=0;g<o;g+=1)for(u=0;u<r.length;u+=1)g<a[u].length&&(d[w]=a[u][g],w+=1);return d}(o,n)};f.addData=function(t,r){var e=null;switch(r=r||"Byte"){case"Numeric":e=M(t);break;case"Alphanumeric":e=x(t);break;case"Byte":e=m(t);break;case"Kanji":e=L(t);break;default:throw"mode:"+r}u.push(e),a=null},f.isDark=function(t,r){if(t<0||i<=t||r<0||i<=r)throw t+","+r;return o[t][r]},f.getModuleCount=function(){return i},f.make=function(){if(e<1){for(var t=1;t<40;t++){for(var r=A.getRSBlocks(t,n),o=b(),i=0;i<u.length;i++){var a=u[i];o.put(a.getMode(),4),o.put(a.getLength(),B.getLengthInBits(a.getMode(),t)),a.write(o)}var g=0;for(i=0;i<r.length;i++)g+=r[i].dataCount;if(o.getLengthInBits()<=8*g)break}e=t}c(!1,function(){for(var t=0,r=0,e=0;e<8;e+=1){c(!0,e);var n=B.getLostPoint(f);(0==e||t>n)&&(t=n,r=e)}return r}())},f.createTableTag=function(t,r){t=t||2;var e="";e+='<table style="',e+=" border-width: 0px; border-style: none;",e+=" border-collapse: collapse;",e+=" padding: 0px; margin: "+(r=void 0===r?4*t:r)+"px;",e+='">',e+="<tbody>";for(var n=0;n<f.getModuleCount();n+=1){e+="<tr>";for(var o=0;o<f.getModuleCount();o+=1)e+='<td style="',e+=" border-width: 0px; border-style: none;",e+=" border-collapse: collapse;",e+=" padding: 0px; margin: 0px;",e+=" width: "+t+"px;",e+=" height: "+t+"px;",e+=" background-color: ",e+=f.isDark(n,o)?"#000000":"#ffffff",e+=";",e+='"/>';e+="</tr>"}return e+="</tbody>",e+="</table>"},f.createSvgTag=function(t,r,e,n){var o={};"object"==typeof arguments[0]&&(t=(o=arguments[0]).cellSize,r=o.margin,e=o.alt,n=o.title),t=t||2,r=void 0===r?4*t:r,(e="string"==typeof e?{text:e}:e||{}).text=e.text||null,e.id=e.text?e.id||"qrcode-description":null,(n="string"==typeof n?{text:n}:n||{}).text=n.text||null,n.id=n.text?n.id||"qrcode-title":null;var i,a,u,c,g=f.getModuleCount()*t+2*r,l="";for(c="l"+t+",0 0,"+t+" -"+t+",0 0,-"+t+"z ",l+='<svg version="1.1" xmlns="http://www.w3.org/2000/svg"',l+=o.scalable?"":' width="'+g+'px" height="'+g+'px"',l+=' viewBox="0 0 '+g+" "+g+'" ',l+=' preserveAspectRatio="xMinYMin meet"',l+=n.text||e.text?' role="img" aria-labelledby="'+y([n.id,e.id].join(" ").trim())+'"':"",l+=">",l+=n.text?'<title id="'+y(n.id)+'">'+y(n.text)+"</title>":"",l+=e.text?'<description id="'+y(e.id)+'">'+y(e.text)+"</description>":"",l+='<rect width="100%" height="100%" fill="white" cx="0" cy="0"/>',l+='<path d="',a=0;a<f.getModuleCount();a+=1)for(u=a*t+r,i=0;i<f.getModuleCount();i+=1)f.isDark(a,i)&&(l+="M"+(i*t+r)+","+u+c);return l+='" stroke="transparent" fill="black"/>',l+="</svg>"},f.createDataURL=function(t,r){t=t||2,r=void 0===r?4*t:r;var e=f.getModuleCount()*t+2*r,n=r,o=e-r;return I(e,e,(function(r,e){if(n<=r&&r<o&&n<=e&&e<o){var i=Math.floor((r-n)/t),a=Math.floor((e-n)/t);return f.isDark(a,i)?0:1}return 1}))},f.createImgTag=function(t,r,e){t=t||2,r=void 0===r?4*t:r;var n=f.getModuleCount()*t+2*r,o="";return o+="<img",o+=' src="',o+=f.createDataURL(t,r),o+='"',o+=' width="',o+=n,o+='"',o+=' height="',o+=n,o+='"',e&&(o+=' alt="',o+=y(e),o+='"'),o+="/>"};var y=function(t){for(var r="",e=0;e<t.length;e+=1){var n=t.charAt(e);switch(n){case"<":r+="&lt;";break;case">":r+="&gt;";break;case"&":r+="&amp;";break;case'"':r+="&quot;";break;default:r+=n}}return r};return f.createASCII=function(t,r){if((t=t||1)<2)return function(t){t=void 0===t?2:t;var r,e,n,o,i,a=1*f.getModuleCount()+2*t,u=t,c=a-t,g={"\u2588\u2588":"\u2588","\u2588 ":"\u2580"," \u2588":"\u2584","  ":" "},l={"\u2588\u2588":"\u2580","\u2588 ":"\u2580"," \u2588":" ","  ":" "},h="";for(r=0;r<a;r+=2){for(n=Math.floor((r-u)/1),o=Math.floor((r+1-u)/1),e=0;e<a;e+=1)i="\u2588",u<=e&&e<c&&u<=r&&r<c&&f.isDark(n,Math.floor((e-u)/1))&&(i=" "),u<=e&&e<c&&u<=r+1&&r+1<c&&f.isDark(o,Math.floor((e-u)/1))?i+=" ":i+="\u2588",h+=t<1&&r+1>=c?l[i]:g[i];h+="\n"}return a%2&&t>0?h.substring(0,h.length-a-1)+Array(a+1).join("\u2580"):h.substring(0,h.length-1)}(r);t-=1,r=void 0===r?2*t:r;var e,n,o,i,a=f.getModuleCount()*t+2*r,u=r,c=a-r,g=Array(t+1).join("\u2588\u2588"),l=Array(t+1).join("  "),h="",s="";for(e=0;e<a;e+=1){for(o=Math.floor((e-u)/t),s="",n=0;n<a;n+=1)i=1,u<=n&&n<c&&u<=e&&e<c&&f.isDark(o,Math.floor((n-u)/t))&&(i=0),s+=i?g:l;for(o=0;o<t;o+=1)h+=s+"\n"}return h.substring(0,h.length-1)},f.renderTo2dContext=function(t,r){r=r||2;for(var e=f.getModuleCount(),n=0;n<e;n++)for(var o=0;o<e;o++)t.fillStyle=f.isDark(n,o)?"black":"white",t.fillRect(n*r,o*r,r,r)},f};t.stringToBytes=(t.stringToBytesFuncs={default:function(t){for(var r=[],e=0;e<t.length;e+=1){var n=t.charCodeAt(e);r.push(255&n)}return r}}).default,t.createStringToBytes=function(t,r){var e=function(){for(var e=S(t),n=function(){var t=e.read();if(-1==t)throw"eof";return t},o=0,i={};;){var a=e.read();if(-1==a)break;var u=n(),f=n()<<8|n();i[String.fromCharCode(a<<8|u)]=f,o+=1}if(o!=r)throw o+" != "+r;return i}(),n="?".charCodeAt(0);return function(t){for(var r=[],o=0;o<t.length;o+=1){var i=t.charCodeAt(o);if(i<128)r.push(i);else{var a=e[t.charAt(o)];"number"==typeof a?(255&a)==a?r.push(a):(r.push(a>>>8),r.push(255&a)):r.push(n)}}return r}};var r,e,n,o,i,a=1,u=2,f=4,c=8,g={L:1,M:0,Q:3,H:2},l=0,h=1,s=2,v=3,d=4,w=5,p=6,y=7,B=(r=[[],[6,18],[6,22],[6,26],[6,30],[6,34],[6,22,38],[6,24,42],[6,26,46],[6,28,50],[6,30,54],[6,32,58],[6,34,62],[6,26,46,66],[6,26,48,70],[6,26,50,74],[6,30,54,78],[6,30,56,82],[6,30,58,86],[6,34,62,90],[6,28,50,72,94],[6,26,50,74,98],[6,30,54,78,102],[6,28,54,80,106],[6,32,58,84,110],[6,30,58,86,114],[6,34,62,90,118],[6,26,50,74,98,122],[6,30,54,78,102,126],[6,26,52,78,104,130],[6,30,56,82,108,134],[6,34,60,86,112,138],[6,30,58,86,114,142],[6,34,62,90,118,146],[6,30,54,78,102,126,150],[6,24,50,76,102,128,154],[6,28,54,80,106,132,158],[6,32,58,84,110,136,162],[6,26,54,82,110,138,166],[6,30,58,86,114,142,170]],e=1335,n=7973,i=function(t){for(var r=0;0!=t;)r+=1,t>>>=1;return r},(o={}).getBCHTypeInfo=function(t){for(var r=t<<10;i(r)-i(e)>=0;)r^=e<<i(r)-i(e);return 21522^(t<<10|r)},o.getBCHTypeNumber=function(t){for(var r=t<<12;i(r)-i(n)>=0;)r^=n<<i(r)-i(n);return t<<12|r},o.getPatternPosition=function(t){return r[t-1]},o.getMaskFunction=function(t){switch(t){case l:return function(t,r){return(t+r)%2==0};case h:return function(t,r){return t%2==0};case s:return function(t,r){return r%3==0};case v:return function(t,r){return(t+r)%3==0};case d:return function(t,r){return(Math.floor(t/2)+Math.floor(r/3))%2==0};case w:return function(t,r){return t*r%2+t*r%3==0};case p:return function(t,r){return(t*r%2+t*r%3)%2==0};case y:return function(t,r){return(t*r%3+(t+r)%2)%2==0};default:throw"bad maskPattern:"+t}},o.getErrorCorrectPolynomial=function(t){for(var r=k([1],0),e=0;e<t;e+=1)r=r.multiply(k([1,C.gexp(e)],0));return r},o.getLengthInBits=function(t,r){if(1<=r&&r<10)switch(t){case a:return 10;case u:return 9;case f:case c:return 8;default:throw"mode:"+t}else if(r<27)switch(t){case a:return 12;case u:return 11;case f:return 16;case c:return 10;default:throw"mode:"+t}else{if(!(r<41))throw"type:"+r;switch(t){case a:return 14;case u:return 13;case f:return 16;case c:return 12;default:throw"mode:"+t}}},o.getLostPoint=function(t){for(var r=t.getModuleCount(),e=0,n=0;n<r;n+=1)for(var o=0;o<r;o+=1){for(var i=0,a=t.isDark(n,o),u=-1;u<=1;u+=1)if(!(n+u<0||r<=n+u))for(var f=-1;f<=1;f+=1)o+f<0||r<=o+f||0==u&&0==f||a==t.isDark(n+u,o+f)&&(i+=1);i>5&&(e+=3+i-5)}for(n=0;n<r-1;n+=1)for(o=0;o<r-1;o+=1){var c=0;t.isDark(n,o)&&(c+=1),t.isDark(n+1,o)&&(c+=1),t.isDark(n,o+1)&&(c+=1),t.isDark(n+1,o+1)&&(c+=1),0!=c&&4!=c||(e+=3)}for(n=0;n<r;n+=1)for(o=0;o<r-6;o+=1)t.isDark(n,o)&&!t.isDark(n,o+1)&&t.isDark(n,o+2)&&t.isDark(n,o+3)&&t.isDark(n,o+4)&&!t.isDark(n,o+5)&&t.isDark(n,o+6)&&(e+=40);for(o=0;o<r;o+=1)for(n=0;n<r-6;n+=1)t.isDark(n,o)&&!t.isDark(n+1,o)&&t.isDark(n+2,o)&&t.isDark(n+3,o)&&t.isDark(n+4,o)&&!t.isDark(n+5,o)&&t.isDark(n+6,o)&&(e+=40);var g=0;for(o=0;o<r;o+=1)for(n=0;n<r;n+=1)t.isDark(n,o)&&(g+=1);return e+=Math.abs(100*g/r/r-50)/5*10},o),C=function(){for(var t=new Array(256),r=new Array(256),e=0;e<8;e+=1)t[e]=1<<e;for(e=8;e<256;e+=1)t[e]=t[e-4]^t[e-5]^t[e-6]^t[e-8];for(e=0;e<255;e+=1)r[t[e]]=e;var n={glog:function(t){if(t<1)throw"glog("+t+")";return r[t]},gexp:function(r){for(;r<0;)r+=255;for(;r>=256;)r-=255;return t[r]}};return n}();function k(t,r){if(void 0===t.length)throw t.length+"/"+r;var e=function(){for(var e=0;e<t.length&&0==t[e];)e+=1;for(var n=new Array(t.length-e+r),o=0;o<t.length-e;o+=1)n[o]=t[o+e];return n}(),n={getAt:function(t){return e[t]},getLength:function(){return e.length},multiply:function(t){for(var r=new Array(n.getLength()+t.getLength()-1),e=0;e<n.getLength();e+=1)for(var o=0;o<t.getLength();o+=1)r[e+o]^=C.gexp(C.glog(n.getAt(e))+C.glog(t.getAt(o)));return k(r,0)},mod:function(t){if(n.getLength()-t.getLength()<0)return n;for(var r=C.glog(n.getAt(0))-C.glog(t.getAt(0)),e=new Array(n.getLength()),o=0;o<n.getLength();o+=1)e[o]=n.getAt(o);for(o=0;o<t.getLength();o+=1)e[o]^=C.gexp(C.glog(t.getAt(o))+r);return k(e,0).mod(t)}};return n}var A=function(){var t=[[1,26,19],[1,26,16],[1,26,13],[1,26,9],[1,44,34],[1,44,28],[1,44,22],[1,44,16],[1,70,55],[1,70,44],[2,35,17],[2,35,13],[1,100,80],[2,50,32],[2,50,24],[4,25,9],[1,134,108],[2,67,43],[2,33,15,2,34,16],[2,33,11,2,34,12],[2,86,68],[4,43,27],[4,43,19],[4,43,15],[2,98,78],[4,49,31],[2,32,14,4,33,15],[4,39,13,1,40,14],[2,121,97],[2,60,38,2,61,39],[4,40,18,2,41,19],[4,40,14,2,41,15],[2,146,116],[3,58,36,2,59,37],[4,36,16,4,37,17],[4,36,12,4,37,13],[2,86,68,2,87,69],[4,69,43,1,70,44],[6,43,19,2,44,20],[6,43,15,2,44,16],[4,101,81],[1,80,50,4,81,51],[4,50,22,4,51,23],[3,36,12,8,37,13],[2,116,92,2,117,93],[6,58,36,2,59,37],[4,46,20,6,47,21],[7,42,14,4,43,15],[4,133,107],[8,59,37,1,60,38],[8,44,20,4,45,21],[12,33,11,4,34,12],[3,145,115,1,146,116],[4,64,40,5,65,41],[11,36,16,5,37,17],[11,36,12,5,37,13],[5,109,87,1,110,88],[5,65,41,5,66,42],[5,54,24,7,55,25],[11,36,12,7,37,13],[5,122,98,1,123,99],[7,73,45,3,74,46],[15,43,19,2,44,20],[3,45,15,13,46,16],[1,135,107,5,136,108],[10,74,46,1,75,47],[1,50,22,15,51,23],[2,42,14,17,43,15],[5,150,120,1,151,121],[9,69,43,4,70,44],[17,50,22,1,51,23],[2,42,14,19,43,15],[3,141,113,4,142,114],[3,70,44,11,71,45],[17,47,21,4,48,22],[9,39,13,16,40,14],[3,135,107,5,136,108],[3,67,41,13,68,42],[15,54,24,5,55,25],[15,43,15,10,44,16],[4,144,116,4,145,117],[17,68,42],[17,50,22,6,51,23],[19,46,16,6,47,17],[2,139,111,7,140,112],[17,74,46],[7,54,24,16,55,25],[34,37,13],[4,151,121,5,152,122],[4,75,47,14,76,48],[11,54,24,14,55,25],[16,45,15,14,46,16],[6,147,117,4,148,118],[6,73,45,14,74,46],[11,54,24,16,55,25],[30,46,16,2,47,17],[8,132,106,4,133,107],[8,75,47,13,76,48],[7,54,24,22,55,25],[22,45,15,13,46,16],[10,142,114,2,143,115],[19,74,46,4,75,47],[28,50,22,6,51,23],[33,46,16,4,47,17],[8,152,122,4,153,123],[22,73,45,3,74,46],[8,53,23,26,54,24],[12,45,15,28,46,16],[3,147,117,10,148,118],[3,73,45,23,74,46],[4,54,24,31,55,25],[11,45,15,31,46,16],[7,146,116,7,147,117],[21,73,45,7,74,46],[1,53,23,37,54,24],[19,45,15,26,46,16],[5,145,115,10,146,116],[19,75,47,10,76,48],[15,54,24,25,55,25],[23,45,15,25,46,16],[13,145,115,3,146,116],[2,74,46,29,75,47],[42,54,24,1,55,25],[23,45,15,28,46,16],[17,145,115],[10,74,46,23,75,47],[10,54,24,35,55,25],[19,45,15,35,46,16],[17,145,115,1,146,116],[14,74,46,21,75,47],[29,54,24,19,55,25],[11,45,15,46,46,16],[13,145,115,6,146,116],[14,74,46,23,75,47],[44,54,24,7,55,25],[59,46,16,1,47,17],[12,151,121,7,152,122],[12,75,47,26,76,48],[39,54,24,14,55,25],[22,45,15,41,46,16],[6,151,121,14,152,122],[6,75,47,34,76,48],[46,54,24,10,55,25],[2,45,15,64,46,16],[17,152,122,4,153,123],[29,74,46,14,75,47],[49,54,24,10,55,25],[24,45,15,46,46,16],[4,152,122,18,153,123],[13,74,46,32,75,47],[48,54,24,14,55,25],[42,45,15,32,46,16],[20,147,117,4,148,118],[40,75,47,7,76,48],[43,54,24,22,55,25],[10,45,15,67,46,16],[19,148,118,6,149,119],[18,75,47,31,76,48],[34,54,24,34,55,25],[20,45,15,61,46,16]],r=function(t,r){var e={};return e.totalCount=t,e.dataCount=r,e},e={};return e.getRSBlocks=function(e,n){var o=function(r,e){switch(e){case g.L:return t[4*(r-1)+0];case g.M:return t[4*(r-1)+1];case g.Q:return t[4*(r-1)+2];case g.H:return t[4*(r-1)+3];default:return}}(e,n);if(void 0===o)throw"bad rs block @ typeNumber:"+e+"/errorCorrectionLevel:"+n;for(var i=o.length/3,a=[],u=0;u<i;u+=1)for(var f=o[3*u+0],c=o[3*u+1],l=o[3*u+2],h=0;h<f;h+=1)a.push(r(c,l));return a},e}(),b=function(){var t=[],r=0,e={getBuffer:function(){return t},getAt:function(r){var e=Math.floor(r/8);return 1==(t[e]>>>7-r%8&1)},put:function(t,r){for(var n=0;n<r;n+=1)e.putBit(1==(t>>>r-n-1&1))},getLengthInBits:function(){return r},putBit:function(e){var n=Math.floor(r/8);t.length<=n&&t.push(0),e&&(t[n]|=128>>>r%8),r+=1}};return e},M=function(t){var r=a,e=t,n={getMode:function(){return r},getLength:function(t){return e.length},write:function(t){for(var r=e,n=0;n+2<r.length;)t.put(o(r.substring(n,n+3)),10),n+=3;n<r.length&&(r.length-n==1?t.put(o(r.substring(n,n+1)),4):r.length-n==2&&t.put(o(r.substring(n,n+2)),7))}},o=function(t){for(var r=0,e=0;e<t.length;e+=1)r=10*r+i(t.charAt(e));return r},i=function(t){if("0"<=t&&t<="9")return t.charCodeAt(0)-"0".charCodeAt(0);throw"illegal char :"+t};return n},x=function(t){var r=u,e=t,n={getMode:function(){return r},getLength:function(t){return e.length},write:function(t){for(var r=e,n=0;n+1<r.length;)t.put(45*o(r.charAt(n))+o(r.charAt(n+1)),11),n+=2;n<r.length&&t.put(o(r.charAt(n)),6)}},o=function(t){if("0"<=t&&t<="9")return t.charCodeAt(0)-"0".charCodeAt(0);if("A"<=t&&t<="Z")return t.charCodeAt(0)-"A".charCodeAt(0)+10;switch(t){case" ":return 36;case"$":return 37;case"%":return 38;case"*":return 39;case"+":return 40;case"-":return 41;case".":return 42;case"/":return 43;case":":return 44;default:throw"illegal char :"+t}};return n},m=function(r){var e=f,n=t.stringToBytes(r),o={getMode:function(){return e},getLength:function(t){return n.length},write:function(t){for(var r=0;r<n.length;r+=1)t.put(n[r],8)}};return o},L=function(r){var e=c,n=t.stringToBytesFuncs.SJIS;if(!n)throw"sjis not supported.";!function(t,r){var e=n("\u53cb");if(2!=e.length||38726!=(e[0]<<8|e[1]))throw"sjis not supported."}();var o=n(r),i={getMode:function(){return e},getLength:function(t){return~~(o.length/2)},write:function(t){for(var r=o,e=0;e+1<r.length;){var n=(255&r[e])<<8|255&r[e+1];if(33088<=n&&n<=40956)n-=33088;else{if(!(57408<=n&&n<=60351))throw"illegal char at "+(e+1)+"/"+n;n-=49472}n=192*(n>>>8&255)+(255&n),t.put(n,13),e+=2}if(e<r.length)throw"illegal char at "+(e+1)}};return i},D=function(){var t=[],r={writeByte:function(r){t.push(255&r)},writeShort:function(t){r.writeByte(t),r.writeByte(t>>>8)},writeBytes:function(t,e,n){e=e||0,n=n||t.length;for(var o=0;o<n;o+=1)r.writeByte(t[o+e])},writeString:function(t){for(var e=0;e<t.length;e+=1)r.writeByte(t.charCodeAt(e))},toByteArray:function(){return t},toString:function(){var r="";r+="[";for(var e=0;e<t.length;e+=1)e>0&&(r+=","),r+=t[e];return r+="]"}};return r},S=function(t){var r=t,e=0,n=0,o=0,i={read:function(){for(;o<8;){if(e>=r.length){if(0==o)return-1;throw"unexpected end of file./"+o}var t=r.charAt(e);if(e+=1,"="==t)return o=0,-1;t.match(/^\s$/)||(n=n<<6|a(t.charCodeAt(0)),o+=6)}var i=n>>>o-8&255;return o-=8,i}},a=function(t){if(65<=t&&t<=90)return t-65;if(97<=t&&t<=122)return t-97+26;if(48<=t&&t<=57)return t-48+52;if(43==t)return 62;if(47==t)return 63;throw"c:"+t};return i},I=function(t,r,e){for(var n=function(t,r){var e=t,n=r,o=new Array(t*r),i={setPixel:function(t,r,n){o[r*e+t]=n},write:function(t){t.writeString("GIF87a"),t.writeShort(e),t.writeShort(n),t.writeByte(128),t.writeByte(0),t.writeByte(0),t.writeByte(0),t.writeByte(0),t.writeByte(0),t.writeByte(255),t.writeByte(255),t.writeByte(255),t.writeString(","),t.writeShort(0),t.writeShort(0),t.writeShort(e),t.writeShort(n),t.writeByte(0);var r=a(2);t.writeByte(2);for(var o=0;r.length-o>255;)t.writeByte(255),t.writeBytes(r,o,255),o+=255;t.writeByte(r.length-o),t.writeBytes(r,o,r.length-o),t.writeByte(0),t.writeString(";")}},a=function(t){for(var r=1<<t,e=1+(1<<t),n=t+1,i=u(),a=0;a<r;a+=1)i.add(String.fromCharCode(a));i.add(String.fromCharCode(r)),i.add(String.fromCharCode(e));var f,c,g,l=D(),h=(f=l,c=0,g=0,{write:function(t,r){if(t>>>r!=0)throw"length over";for(;c+r>=8;)f.writeByte(255&(t<<c|g)),r-=8-c,t>>>=8-c,g=0,c=0;g|=t<<c,c+=r},flush:function(){c>0&&f.writeByte(g)}});h.write(r,n);var s=0,v=String.fromCharCode(o[s]);for(s+=1;s<o.length;){var d=String.fromCharCode(o[s]);s+=1,i.contains(v+d)?v+=d:(h.write(i.indexOf(v),n),i.size()<4095&&(i.size()==1<<n&&(n+=1),i.add(v+d)),v=d)}return h.write(i.indexOf(v),n),h.write(e,n),h.flush(),l.toByteArray()},u=function(){var t={},r=0,e={add:function(n){if(e.contains(n))throw"dup key:"+n;t[n]=r,r+=1},size:function(){return r},indexOf:function(r){return t[r]},contains:function(r){return void 0!==t[r]}};return e};return i}(t,r),o=0;o<r;o+=1)for(var i=0;i<t;i+=1)n.setPixel(i,o,e(i,o));var a=D();n.write(a);for(var u=function(){var t=0,r=0,e=0,n="",o={},i=function(t){n+=String.fromCharCode(a(63&t))},a=function(t){if(t<0);else{if(t<26)return 65+t;if(t<52)return t-26+97;if(t<62)return t-52+48;if(62==t)return 43;if(63==t)return 47}throw"n:"+t};return o.writeByte=function(n){for(t=t<<8|255&n,r+=8,e+=1;r>=6;)i(t>>>r-6),r-=6},o.flush=function(){if(r>0&&(i(t<<6-r),t=0,r=0),e%3!=0)for(var o=3-e%3,a=0;a<o;a+=1)n+="="},o.toString=function(){return n},o}(),f=a.toByteArray(),c=0;c<f.length;c+=1)u.writeByte(f[c]);return u.flush(),"data:image/gif;base64,"+u};return t}();qrcode.stringToBytesFuncs["UTF-8"]=function(t){return function(t){for(var r=[],e=0;e<t.length;e++){var n=t.charCodeAt(e);n<128?r.push(n):n<2048?r.push(192|n>>6,128|63&n):n<55296||n>=57344?r.push(224|n>>12,128|n>>6&63,128|63&n):(e++,n=65536+((1023&n)<<10|1023&t.charCodeAt(e)),r.push(240|n>>18,128|n>>12&63,128|n>>6&63,128|63&n))}return r}(t)},function(t){"function"==typeof define&&define.amd?define([],t):"object"==typeof exports&&(module.exports=t())}((function(){return qrcode}));</script>
+        <script>
+        (function(){
+          var k=document.getElementById('ffProefKnop');if(!k||!window.fetch||!window.FormData)return;
+          var v=document.getElementById('pfVenster'),st=document.getElementById('pfSt'),qr=document.getElementById('pfQr'),ui=document.getElementById('pfUitleg'),kn=document.getElementById('pfKnoppen'),op=document.getElementById('pfOpen'),kp=document.getElementById('pfKopie'),url='';
+          function dicht(){v.hidden=true;}
+          document.getElementById('pfDicht').onclick=dicht;v.addEventListener('click',function(e){if(e.target===v)dicht();});
+          document.addEventListener('keydown',function(e){if(e.key==='Escape'&&!v.hidden)dicht();});
+          k.addEventListener('click',function(){
+            var f=k.form,fd=new FormData(f),uit=new FormData();
+            fd.forEach(function(val,naam){if(typeof val!=='string')return;if(/(_weg|^remove_|_data$|_weg\[)/.test(naam))return;uit.append(naam,val);});
+            uit.set('action','settings');uit.append('ff_proef','1');
+            v.hidden=false;st.className='pf-st';st.textContent='Voorbeeld maken...';qr.innerHTML='';ui.hidden=true;kn.hidden=true;
+            fetch(f.getAttribute('action')||'admin.php',{method:'POST',body:uit,credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
+              if(!d||!d.url)throw 0;url=d.url;
+              var q=qrcode(0,'M');q.addData(url);q.make();qr.innerHTML=q.createSvgTag({cellSize:4,margin:2,scalable:true});
+              st.textContent='Scan deze code met je telefoon';ui.hidden=false;kn.hidden=false;op.href=url;
+            }).catch(function(){st.className='pf-st fout';st.textContent='Het voorbeeld maken lukte niet. Probeer het opnieuw, of klik op Opslaan en website bijwerken.';});
+          });
+          kp.addEventListener('click',function(){if(navigator.clipboard)navigator.clipboard.writeText(url).then(function(){kp.textContent='Gekopieerd';setTimeout(function(){kp.innerHTML='Link kopi\u00EBren';},2000);});});
+        })();
+        </script>
 
       <?php elseif ($showForm): ?>
         <?php $cur = $editing ? page_folder($editing) : 'projects'; ?>
