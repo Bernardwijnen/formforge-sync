@@ -418,13 +418,41 @@ function stijlen_server() {
 /* Alle stijlen: eerst de ingebouwde, aangevuld en eventueel verbeterd door de server */
 function alle_stijlen() {
     global $STIJLEN;
+    static $klaar = null;
+    if ($klaar !== null) return $klaar;
     $uit = [];
     foreach ($STIJLEN as $k => $v) {
         $ib = stijl_css_ingebouwd($k);
         $uit[$k] = ['naam' => $v['naam'], 'tekst' => $v['tekst'], 'fonts' => $ib['fonts'], 'css' => $ib['css'], 'grote_foto' => $k === 'etalage'];
     }
     foreach (stijlen_server() as $k => $v) { $uit[$k] = $v; }
-    return $uit;
+    /* Elke stijl heeft 3 varianten met een andere versiering bovenaan (Luxe Donker 1, 2 en 3) */
+    $met = [];
+    foreach ($uit as $k => $v) {
+        $met[$k] = $v;
+        if (preg_match('/-v[1-9]$/', $k)) continue;
+        foreach (stijl_varianten() as $n => $sv) {
+            if (isset($uit[$k . '-v' . $n])) continue;
+            $met[$k . '-v' . $n] = ['naam' => cut($v['naam'], 36) . ' ' . $n, 'tekst' => 'Zoals ' . $v['naam'] . ', ' . $sv[0] . '.', 'fonts' => $v['fonts'], 'css' => $v['css'] . "\n/* variant " . $n . " */\n" . $sv[1], 'grote_foto' => !empty($v['grote_foto']), 'basis' => $k, 'variant' => $n];
+        }
+    }
+    return $klaar = $met;
+}
+/* De versiering bovenaan in de kop. De foto-overlay van een kop met foto blijft altijd staan. */
+function stijl_varianten() {
+    $p = 'html body .hero:not(.has-photo)';
+    $uit = 'content:"";position:absolute;pointer-events:none;z-index:0;transform:none!important;animation:none!important;filter:none;opacity:1;inset:auto;margin:0;';
+    return [
+        1 => ['zonder versiering bovenaan', $p . '::before,html body .hero::after,html body .hero .emblem{display:none!important;}'],
+        2 => ['met dunne ringen bovenaan', $p . '::before,' . $p . '::after{display:block!important;' . $uit . 'border-radius:50%!important;background:none!important;box-shadow:none!important;}'
+            . $p . '::before{right:8%!important;top:14%!important;width:clamp(170px,24vw,330px)!important;height:clamp(170px,24vw,330px)!important;border:1.5px solid color-mix(in srgb,var(--blue) 80%,transparent)!important;}'
+            . $p . '::after{right:calc(8% - clamp(40px,5vw,75px))!important;top:calc(14% - clamp(40px,5vw,75px))!important;width:calc(clamp(170px,24vw,330px) + 2 * clamp(40px,5vw,75px))!important;height:calc(clamp(170px,24vw,330px) + 2 * clamp(40px,5vw,75px))!important;border:1px solid color-mix(in srgb,var(--blue) 45%,transparent)!important;}'
+            . 'html body .hero .emblem{display:none!important;}'
+            . '@media (max-width:860px){' . $p . '::before,' . $p . '::after{opacity:.55;}}'],
+        3 => ['met een zachte gloed bovenaan', $p . '::before{display:block!important;' . $uit . 'right:4%!important;top:4%!important;width:clamp(240px,38vw,560px)!important;height:clamp(240px,38vw,560px)!important;border:0!important;border-radius:50%!important;box-shadow:none!important;background:radial-gradient(circle at 50% 50%,color-mix(in srgb,var(--blue) 42%,transparent) 0%,color-mix(in srgb,var(--blue) 14%,transparent) 45%,transparent 70%)!important;}'
+            . 'html body .hero::after,html body .hero .emblem{display:none!important;}'
+            . '@media (max-width:860px){' . $p . '::before{opacity:.7;}}'],
+    ];
 }
 function stijl() {
     $alle = alle_stijlen();
@@ -1382,8 +1410,10 @@ function stijl_pagina($html) {
 function stijl_kiezer($huidig, $webshop = false) {
     $data = [];
     foreach (alle_stijlen() as $k => $v) {
-        $data[$k] = ['naam' => $v['naam'], 'fonts' => $v['fonts'], 'css' => $v['css'], 'foto' => !empty($v['grote_foto'])];
+        $data[$k] = isset($v['basis']) ? ['naam' => $v['naam'], 'fonts' => $v['fonts'], 'b' => $v['basis'], 'v' => $v['variant'], 'foto' => !empty($v['grote_foto'])]
+                                       : ['naam' => $v['naam'], 'fonts' => $v['fonts'], 'css' => $v['css'], 'foto' => !empty($v['grote_foto'])];
     }
+    $varCss = []; foreach (stijl_varianten() as $n => $sv) { $varCss[$n] = $sv[1]; }
     $foto = hero_foto(load_pages());
     global $BEWEGINGEN;
     $bew = []; foreach ($BEWEGINGEN as $bk => $bv) { $bew[] = [$bk, $bv[0]]; }
@@ -1398,7 +1428,7 @@ function stijl_kiezer($huidig, $webshop = false) {
             $ws[] = ['k' => $wk, 'naam' => $wv[0], 'css' => ws_opbouw_css($o), 'kop' => $o['kop_stijl']];
         }
     }
-    $json = json_encode(['ws' => $ws, 'bew' => $bew, 'bewNu' => beweging(), 'bewS' => beweging_snelheid(), 'stijlen' => $data, 'standaard' => $huidig, 'foto' => $foto, 'vasteFoto' => opbouw('hero') === 'foto' || banner_achter(), 'banner' => banner_achter()], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $json = json_encode(['var' => $varCss, 'ws' => $ws, 'bew' => $bew, 'bewNu' => beweging(), 'bewS' => beweging_snelheid(), 'stijlen' => $data, 'standaard' => $huidig, 'foto' => $foto, 'vasteFoto' => opbouw('hero') === 'foto' || banner_achter(), 'banner' => banner_achter()], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     return <<<HTML
 <style>
 .ffk{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9999;display:flex;align-items:center;gap:6px;width:max-content;max-width:calc(100vw - 24px);padding:7px;border-radius:999px;background:rgba(17,24,39,.94);color:#fff;font:600 14px/1 'Segoe UI',Arial,sans-serif;letter-spacing:0;box-shadow:0 14px 40px -12px rgba(0,0,0,.55);backdrop-filter:blur(8px);}
@@ -1518,7 +1548,7 @@ body{padding-bottom:84px;}
   }
   function zet(k, bewaar) {
     var s = D.stijlen[k]; if (!s) return;
-    document.getElementById('ff-stijl').textContent = s.css;
+    document.getElementById('ff-stijl').textContent = s.b ? ((D.stijlen[s.b] || {}).css || '') + '\\n' + (D['var'][s.v] || '') : s.css;
     document.getElementById('ff-fonts').href = s.fonts ? 'https://fonts.googleapis.com/css2?' + s.fonts + '&display=swap' : 'data:text/css,';
     document.body.className = (document.body.className.replace(/(^|\s)t-[a-z0-9-]+/g, ' ') + ' t-' + k).replace(/\s+/g, ' ').trim();
     kies.value = k;
@@ -14802,7 +14832,7 @@ function venturo_html() {
 <div class="vt-o"><h4>Het uiterlijk van je website</h4>
 <div class="vt-v"><h5>Hoe zet ik mijn logo op mijn website?</h5><p>In Instellingen, tabblad Uiterlijk, bij Logo. Kies liefst een png met een doorzichtige achtergrond, in een lichte kleur, want het logo staat op de donkere kleur van je website. Maximaal 8 MB.</p></div>
 <div class="vt-v"><h5>Ik heb nog geen logo.</h5><p>Je kunt er een laten maken met AI, bijvoorbeeld ChatGPT. Vraag om een png met een transparante achtergrond. Zie je een grijs-wit geblokt patroon achter je logo, dan is de achtergrond niet echt doorzichtig. Vraag dan opnieuw.</p></div>
-<div class="vt-v"><h5>Hoe kies ik een andere stijl?</h5><p>In Instellingen, tabblad Uiterlijk, bij Stijl van de website. Klik op een stijl en daarna op Opslaan en website bijwerken. Je teksten, diensten en projecten blijven hetzelfde. Je kunt altijd terugwisselen.</p></div>
+<div class="vt-v"><h5>Hoe kies ik een andere stijl?</h5><p>In Instellingen, tabblad Uiterlijk, bij Stijl van de website. Klik op een stijl en daarna op Opslaan en website bijwerken. Elke stijl staat er 4 keer in, bijvoorbeeld Luxe Donker, Luxe Donker 1, 2 en 3. Variant 1 heeft geen versiering bovenaan, variant 2 dunne ringen en variant 3 een zachte gloed. Je teksten, diensten en projecten blijven hetzelfde. Je kunt altijd terugwisselen.</p></div>
 <div class="vt-v"><h5>Hoe kies ik mijn eigen kleuren?</h5><p>In Instellingen bij Uiterlijk: een donkere hoofdkleur voor het menu, de bovenkant en de onderkant, en een accentkleur voor knoppen. Op beide staat witte tekst, dus kies geen hele lichte kleuren.</p></div>
 <div class="vt-v"><h5>Wat doet het vinkje bij de branche- en feeststijlen?</h5><p>Aangevinkt gebruiken stijlen zoals Kapper of Kerst hun eigen kleuren. Uitgevinkt houdt je website je eigen kleuren en krijg je alleen de versiering, zoals sneeuw of vleermuizen.</p></div>
 <div class="vt-v"><h5>Hoe verander ik de opbouw van mijn pagina?</h5><p>In Instellingen, tabblad Opbouw en details. Per onderdeel heb je 10 keuzes: het menu, de bovenkant, de balk met diensten, je diensten, je projecten, het contactblok onderaan en de onderkant. Probeer gerust iets uit, je kunt altijd terug.</p></div>
@@ -15087,7 +15117,7 @@ function venturo_html() {
 VTHTML;
 }
 /* Na een update van admin.php de pagina's een keer opnieuw opbouwen, zodat nieuwe onderdelen (zoals de onderkant) overal staan */
-define('SITE_BOUW', '2026-11-13-sumupauto');
+define('SITE_BOUW', '2026-11-14-varianten');
 if ($ADM_ALLEEN_LEZEN && $logged_in) {
     $alleenTekst = 'Je abonnement is gestopt, daarom kun je niets meer wijzigen of versturen. Je administratie kun je nog wel bekijken en downloaden.';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') !== 'login') { $_SESSION['ff_notice'] = $alleenTekst; header('Location: admin.php?adm=inst#alles'); exit; }
