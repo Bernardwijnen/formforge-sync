@@ -112,8 +112,48 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
     rec.subscriptionId = typeof s.subscription === "string" ? s.subscription : (rec.subscriptionId || "");
     if(betaald && !rec.paid){ rec.paid = true; rec.betaaldOp = new Date().toISOString(); rec.status = "betaald"; }
     save();
+    if(rec.paid) await stuurBetaaldMail(rec);
     return rec;
   }
+
+  /* Zelf doen: direct na het betalen een mail met een link naar stap 3.
+     Zo kan de klant later verder, ook als hij het venster heeft gesloten of
+     op een ander apparaat zit. Eenmalig per bestelling; niet bij servicepakketten. */
+  async function stuurBetaaldMail(rec){
+    if(!rec || !rec.paid || rec.betaaldMail || rec.pakket || rec.status === "geinstalleerd" || !rec.email) return;
+    rec.betaaldMail = new Date().toISOString(); save();
+    const link = PAGE_URL + (PAGE_URL.includes("?") ? "&" : "?") + "sessie=" + encodeURIComponent(rec.sessie) + "#s3";
+    const tekst = [
+      "Bedankt voor je betaling. Je website voor " + rec.domein + " staat voor je klaar.",
+      "Nog 1 stap: neem de 4 regels uit het groene blok FTP Gegevens over. Dat blok staat in de mail van WebReus met de titel \"WebReus login gegevens\". Daarna zetten wij je website er meteen op.",
+      "Open deze link om de gegevens in te vullen:",
+      link,
+      "Heb je de mail van WebReus nog niet? Wacht dan tot die binnen is en open daarna deze link. De link blijft werken, ook op een andere telefoon of computer.",
+      "Lukt het niet? Mail naar info@formforge.nl en vertel bij welke stap je bent."
+    ];
+    const html = "<p>" + esc(tekst[0]) + "</p><p>" + esc(tekst[1]) + "</p>"
+      + '<p><a href="' + esc(link) + '" style="display:inline-block;background:#2f6fed;color:#ffffff;font-weight:bold;text-decoration:none;padding:12px 22px;border-radius:999px">Gegevens invullen</a></p>'
+      + '<p style="font-size:13px;color:#5a6680">Werkt de knop niet? Kopieer dan deze link: ' + esc(link) + "</p>"
+      + "<p>" + esc(tekst[4]) + "</p><p>" + esc(tekst[5]) + "</p><p>FormForge</p>";
+    try{
+      await sendResendEmail({ to: rec.email, subject: "Betaling gelukt: zet nu je website op " + rec.domein, text: tekst.join("\r\n\r\n") + "\r\n\r\nFormForge\r\n", html });
+    }catch(e){
+      rec.betaaldMail = ""; save();
+      console.error("Websitemodel: betaalmail naar klant mislukt:", (e && e.message) || e);
+    }
+  }
+
+  /* Vangnet: sluit de klant na betalen meteen het venster, dan zien we de
+     betaling hier alsnog en gaat de mail er toch uit (elke 10 minuten, bestellingen tot 3 dagen oud). */
+  const betaalVangnet = setInterval(async () => {
+    const grens = Date.now() - 3 * 24 * 3600 * 1000;
+    for(const sessie of Object.keys(orders)){
+      const o = orders[sessie];
+      if(!o || o.paid || o.pakket || o.status !== "wacht op betaling" || Date.parse(o.aangemaakt) < grens) continue;
+      try{ await checkPaid(sessie); }catch(e){ console.error("Websitemodel: vangnet betaling mislukt:", (e && e.message) || e); }
+    }
+  }, 10 * 60 * 1000);
+  if(betaalVangnet.unref) betaalVangnet.unref();
 
   /* ---------- 1. bestellen: Stripe-betaling aanmaken ---------- */
   app.post("/api/website/bestellen", async (req, res) => {
@@ -635,6 +675,7 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
       "Alternatief 1: " + (a.domein2 || "-"),
       "Alternatief 2: " + (a.domein3 || "-"),
       "Heeft de domeinnaam al ergens anders: " + (a.heeftDomein ? "ja, verhuiscode opvragen" : "nee"),
+      "Heeft al een Powerpakket bij WebReus: " + (a.heeftWebreus ? "JA, niets aanvragen; wacht op de doorgestuurde mail WebReus login gegevens" : "nee"),
       "",
       (titanium ? "WENSEN" : "OPMERKINGEN"),
       a.wensen || "-",
@@ -659,11 +700,17 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
         "Beste " + naam + ",", "",
         (betaald ? "Bedankt voor je aanvraag en je betaling. Je pakket: " : "Bedankt voor je aanvraag. Je hebt gekozen voor: ") + PAKKETTEN[a.pakket] + ".", "",
         "Zo gaat het verder:",
+        ...(a.heeftWebreus ? [
+        "1. Je hebt al een Power-pakket bij WebReus voor " + a.domein + ". Daar hoeven wij dus niets meer aan te vragen.",
+        "2. Stuur de mail van WebReus met de titel \"WebReus login gegevens\" door naar info@formforge.nl. Daarin staat het blok FTP Gegevens.",
+        "3. Wij zetten je website erop binnen 1 werkdag (niet in het weekend) nadat we je mail hebben, en sturen je de link naar je beheerpagina."
+        ] : [
         "1. Wij vragen binnen 1 werkdag (niet in het weekend) op jouw naam het Power-pakket en de domeinnaam " + a.domein + " aan bij WebReus.",
         "2. Je krijgt van WebReus een mail over de betaling. Domein en hosting betaal je zelf aan WebReus, ongeveer 45 euro per jaar incl. btw. Betaal die factuur binnen 8 dagen.",
         "3. Na je betaling stuurt WebReus je een mail met je gegevens, met daarin het blok FTP Gegevens. Stuur die mail door naar info@formforge.nl.",
         "4. Wij zetten je website erop en sturen je de link naar je beheerpagina.",
-        a.heeftDomein ? "Je gaf aan dat je de domeinnaam al hebt. Dan vragen we je nog om de verhuiscode bij je huidige aanbieder." : "",
+        a.heeftDomein ? "Je gaf aan dat je de domeinnaam al hebt. Dan vragen we je nog om de verhuiscode bij je huidige aanbieder." : ""
+        ]),
         "",
         "Door je aanvraag en het doorsturen van de mail van WebReus machtig je FormForge om namens jou je pakket aan te vragen, in te loggen op je hosting en je website te plaatsen en aan te passen. Dat staat in artikel 23 van onze voorwaarden: https://formforge.nl/voorwaarden/#a23",
         "",
@@ -721,6 +768,7 @@ module.exports = function({ app, fs, path, crypto, DATA_DIR, safeWriteFileSync, 
       telefoon: veld(b.telefoon, 30), email: cleanEmail(b.email),
       domein: cleanDomain(b.domein), domein2: cleanDomain(b.domein2), domein3: cleanDomain(b.domein3),
       heeftDomein: b.heeftDomein === true || b.heeftDomein === "1",
+      heeftWebreus: b.webreus === true || b.webreus === "1",
       wensen: tekstveld(b.wensen, 3000)
     };
     if(!a.achternaam) return res.status(400).json({ error: "Vul je achternaam in." });
